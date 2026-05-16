@@ -5,7 +5,7 @@
         <span class="material-symbols-outlined is-size-1 mr-2">add_business</span>
         Form a Zero-Human Company
       </h1>
-      <button class="button is-medium is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
+      <button class="bz-btn is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
         <span class="material-symbols-outlined is-size-3 mr-2">close</span>
         Cancel
       </button>
@@ -55,7 +55,7 @@
       <div class="field-row">
         <div class="field">
           <label class="label fira-sans-condensed-black-italic">Currency</label>
-          <div class="select is-fullwidth is-medium">
+          <div class="select skill-fullwidth is-medium">
             <select v-model="form.currency">
               <option v-for="c in currencies" :key="c" :value="c">{{ c }}</option>
             </select>
@@ -199,7 +199,7 @@
             <div class="role-desc">{{ roleLibrary[roleKey].description }}</div>
           </div>
           <div class="col-companion">
-            <div class="select is-fullwidth is-small">
+            <div class="select skill-fullwidth is-small">
               <select v-model="form.companions[roleKey]">
                 <option :value="null">— inherit —</option>
                 <option v-for="comp in companions" :key="comp.id" :value="comp.id">
@@ -209,7 +209,7 @@
             </div>
           </div>
           <div class="col-llm">
-            <div class="select is-fullwidth is-small">
+            <div class="select skill-fullwidth is-small">
               <select v-model="form.llms[roleKey]">
                 <option :value="null">— current —</option>
                 <option v-for="llm in llmOptions" :key="llm.key" :value="llm.key">
@@ -222,7 +222,7 @@
       </div>
 
       <div class="advanced-toggle">
-        <button class="button is-small is-outlined is-info fira-sans-condensed-black-italic" @click="showAdvanced = !showAdvanced">
+        <button class="bz-btn bz-btn--sm bz-btn--ghost is-info fira-sans-condensed-black-italic" @click="showAdvanced = !showAdvanced">
           <span class="material-symbols-outlined is-size-3 mr-1">
             {{ showAdvanced ? 'expand_less' : 'expand_more' }}
           </span>
@@ -233,22 +233,22 @@
 
     <!-- ── Submit ──────────────────────────────────────── -->
     <hr />
-    <div v-if="errors.length" class="notification is-danger">
+    <div v-if="errors.length" class="bz-notice bz-notice--danger">
       <ul>
         <li v-for="(err, i) in errors" :key="i">{{ err }}</li>
       </ul>
     </div>
     <div class="submit-row">
       <button
-        class="button is-large is-success fira-sans-condensed-black-italic mr-5"
-        :class="{ 'is-loading': busy }"
+        class="bz-btn bz-btn--lg is-success fira-sans-condensed-black-italic mr-5"
+        :class="{ 'bz-btn--running': busy }"
         :disabled="busy"
         @click="submit"
       >
         <span class="material-symbols-outlined is-size-3 mr-2">add_business</span>
         Form Company
       </button>
-      <button class="button is-large is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
+      <button class="bz-btn bz-btn--lg is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
         <span class="material-symbols-outlined is-size-3 mr-2">close</span>
         Cancel
       </button>
@@ -397,7 +397,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 1), transparent);
+  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
 }
 .material-symbols-outlined {
   font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
@@ -442,7 +442,6 @@ hr {
   margin-bottom: 1.5em;
   padding: 2em 2.5em !important;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px) !important;
   border-radius: 4px !important;
   background: var(--bz-scrim);
 }
@@ -476,7 +475,6 @@ hr {
   background: var(--bz-card) !important;
   border: 2px solid rgba(255, 255, 255, 0.18) !important;
   color: var(--bz-fg) !important;
-  backdrop-filter: blur(8px);
 }
 .input:focus, .textarea:focus, .select select:focus {
   border-color: var(--bz-emerald-500) !important;
@@ -597,7 +595,6 @@ hr {
 .notification.is-danger {
   background: rgba(241, 70, 104, 0.18) !important;
   border: 1px solid var(--bz-danger) !important;
-  backdrop-filter: blur(32px);
   color: var(--bz-fg) !important;
 }
 .notification.is-danger ul {

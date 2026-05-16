@@ -2465,6 +2465,16 @@ def encode_image_to_webp(image, quality: int = 90) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+def image_webp_payload(image, image_b64: str) -> dict:
+    """Return common JSON metadata for WebP image responses."""
+    return {
+        "image": image_b64,
+        "width": getattr(image, "width", None),
+        "height": getattr(image, "height", None),
+        "mime_type": "image/webp",
+    }
+
+
 def convert_wav_to_mp3(wav_path: str, bitrate: str = "128k") -> Optional[str]:
     """
     Convert a WAV file to MP3 using ffmpeg.
@@ -2867,7 +2877,7 @@ def image_standard_sdxl():
         return jsonify(_json_sanitize({
             "prompt": prompt,
             "negative_prompt": negative_prompt,
-            "image": encoded,
+            **image_webp_payload(image, encoded),
             "image_path": str(out_path) if 'out_path' in dir() else None,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url()
@@ -3015,7 +3025,7 @@ def z_image_quality():
             "ok": True,
             "prompt": prompt,
             "negative_prompt": negative_prompt,
-            "image": encoded,
+            **image_webp_payload(image, encoded),
             "image_path": str(out_path) if 'out_path' in dir() else None,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
@@ -3100,7 +3110,7 @@ def image_turbo_flux_klein():
         genbus.finish(gen_id, {"ok": True})
 
         return jsonify(_json_sanitize({
-            "prompt": prompt, "image": b64,
+            "prompt": prompt, **image_webp_payload(image, b64),
             "image_path": str(out_path) if 'out_path' in dir() else None,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url()
@@ -3198,7 +3208,7 @@ def image_turbo_flux_klein_i2i():
         genbus.finish(gen_id, {"ok": True})
 
         return jsonify(_json_sanitize({
-            "prompt": prompt, "image": b64, "generation_id": gen_id,
+            "prompt": prompt, **image_webp_payload(image, b64), "generation_id": gen_id,
             "generation_websocket_url": generation_url()
         })), 201
 

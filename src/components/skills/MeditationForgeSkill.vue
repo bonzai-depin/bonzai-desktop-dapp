@@ -1,34 +1,13 @@
 <template>
   <div class="meditation-skill">
-    <!-- Skill Header (hidden in fullscreen) -->
-    <div v-if="!isFullscreen" class="models__activity--payouts mb-4 has-text-left">
-      <div class="columns is-vcentered">
-        <div class="column">
-          <h3 class="skill-name is-size-1 fira-sans-condensed-black-italic">
-            <span
-              class="material-symbols-outlined mr-2"
-              style="font-size: 48px; color: var(--bulma-primary)"
-            >
-              self_improvement
-            </span>
-            {{ skill?.name || 'Meditation Forge' }}
-          </h3>
-          <p class="skill-description is-size-5 mt-3">
-            {{ skill?.description || 'Create personalized guided meditations with calming visuals and ASMR narration.' }}
-          </p>
-        </div>
-      </div>
-    </div>
-
     <!-- Scenario Selector (hidden in fullscreen) -->
-    <div
+    <section
       v-if="!isFullscreen"
-      class="models__activity--payouts pt-5 pb-5"
-      style="position: relative; bottom: -40px; z-index: 11"
+      class="meditation-journey-panel skill-panel"
     >
-      <div class="columns">
-        <div class="column is-12">
-          <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4">
+      <div>
+        <div>
+          <h2 class="bz-h2 skill-section-title">
             Choose Your Journey
           </h2>
           <span class="category-selector">
@@ -41,8 +20,8 @@
                 :checked="selectedScenario?.id === scenario.id"
                 @change="selectScenario(scenario)"
               />
-              <label :for="'meditation_' + scenario.id" class="radio category pt-3 pb-3">
-                <span class="material-symbols-outlined mr-1" style="font-size: 18px;">
+              <label :for="'meditation_' + scenario.id" class="radio category">
+                <span class="material-symbols-outlined" style="font-size: 18px;">
                   {{ scenario.icon }}
                 </span>
                 {{ scenario.name }}
@@ -53,24 +32,42 @@
       </div>
 
       <!-- Scenario Description -->
-      <div v-if="selectedScenario" class="notification is-info mt-5 has-text-left">
-        <h4 class="fira-sans-condensed-black-italic is-size-4 mb-2">
-          {{ selectedScenario.name }}
-        </h4>
-        <p class="is-size-6">{{ selectedScenario.description }}</p>
-        <div class="tags mt-3">
-          <span class="tag is-dark">{{ selectedScenario.intention }}</span>
-          <span class="tag is-dark">{{ selectedScenario.environment }}</span>
+      <div v-if="selectedScenario" class="bz-notice bz-notice--info scenario-notice">
+        <span class="bz-notice__icon"><span class="material-symbols-outlined">spa</span></span>
+        <div class="bz-notice__body">
+          <div class="bz-notice__title">{{ selectedScenario.name }}</div>
+          <p class="bz-notice__text">{{ selectedScenario.description }}</p>
+          <div class="scenario-tags">
+            <span class="skill-chip">{{ selectedScenario.intention }}</span>
+            <span class="skill-chip">{{ selectedScenario.environment }}</span>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <hr v-if="!isFullscreen" />
+    <div v-if="!isFullscreen" class="meditation-session-strip">
+      <div class="meditation-session-cell">
+        <span>Journey</span>
+        <strong>{{ selectedScenario?.name || 'Choose' }}</strong>
+      </div>
+      <div class="meditation-session-cell">
+        <span>Breath</span>
+        <strong>{{ breathingText }}</strong>
+      </div>
+      <div class="meditation-session-cell">
+        <span>Progress</span>
+        <strong>{{ sessionProgress }}%</strong>
+      </div>
+      <div class="meditation-session-cell">
+        <span>Audio</span>
+        <strong>{{ Math.round(volume * 100) }}%</strong>
+      </div>
+    </div>
 
     <!-- Meditation Visualization Area -->
     <div
       ref="meditationDisplay"
-      class="meditation-display"
+      class="meditation-display meditation-stage"
       :class="{ 'is-active': isPlaying, 'is-fullscreen': isFullscreen }"
     >
       <!-- Background Image with Ken Burns Effect -->
@@ -83,32 +80,29 @@
       </div>
 
       <!-- Content Overlay -->
-      <div class="meditation-content" :class="{ 'm-5': isFullscreen }">
+      <div class="meditation-content" :class="{ 'fullscreen-pad': isFullscreen }">
         <!-- Loading State -->
         <div v-if="isGenerating" class="meditation-loading">
-          <span class="material-symbols-outlined rotating" style="font-size: 64px; color: white;">
+          <span class="material-symbols-outlined rotating" style="font-size: 64px; color: var(--bz-fg);">
             progress_activity
           </span>
-          <p class="is-size-4 has-text-white mt-4 fira-sans-condensed-black-italic">
+          <p class="meditation-status bz-h3">
             {{ generationStatus }}
           </p>
-          <progress
+          <BonzaiPulse
             v-if="generationProgress > 0"
-            class="progress is-info mt-4"
-            :value="generationProgress"
-            max="100"
-            style="max-width: 300px;"
-          >
-            {{ generationProgress }}%
-          </progress>
+            variant="bar"
+            :percent="generationProgress"
+            width="300px"
+          />
         </div>
 
         <!-- Idle State -->
         <div v-else-if="!meditationData && !isPlaying" class="meditation-idle">
-          <span class="material-symbols-outlined" style="font-size: 120px; color: rgba(255,255,255,0.3);">
+          <span class="material-symbols-outlined" style="font-size: 120px; color: var(--bz-fg-faint);">
             spa
           </span>
-          <p class="is-size-4 has-text-white-ter mt-4">
+          <p class="meditation-status bz-body">
             Select a scenario and begin your meditation
           </p>
         </div>
@@ -116,24 +110,24 @@
         <!-- Playing State -->
         <div v-else-if="isPlaying" class="meditation-playing">
           <div class="breathing-circle" :class="breathingPhase">
-            <span class="material-symbols-outlined" style="font-size: 48px; color: white;">
+            <span class="material-symbols-outlined" style="font-size: 48px; color: var(--bz-fg);">
               {{ breathingPhase === 'inhale' ? 'air' : breathingPhase === 'hold' ? 'pause' : 'airwave' }}
             </span>
           </div>
-          <p class="breathing-text is-size-3 has-text-white mt-4 fira-sans-condensed-black-italic">
+          <p class="breathing-text bz-h2">
             {{ breathingText }}
           </p>
         </div>
 
         <!-- Completed State -->
         <div v-else-if="meditationData && !isPlaying" class="meditation-completed">
-          <span class="material-symbols-outlined" style="font-size: 80px; color: rgba(255,255,255,0.8);">
+          <span class="material-symbols-outlined" style="font-size: 80px; color: var(--bz-fg-mid);">
             check_circle
           </span>
-          <h3 class="is-size-3 has-text-white mt-4 fira-sans-condensed-black-italic">
+          <h3 class="meditation-ready-title bz-h2">
             {{ meditationData.title }}
           </h3>
-          <p class="is-size-6 has-text-white-ter mt-2">
+          <p class="meditation-status bz-body">
             Session ready - Press play to begin
           </p>
         </div>
@@ -142,7 +136,7 @@
       <!-- Fullscreen Toggle Button -->
       <button
         class="fullscreen-toggle"
-        :class="{ 'm-5': isFullscreen }"
+        :class="{ 'fullscreen-offset': isFullscreen }"
         @click="toggleFullscreen"
         :title="isFullscreen ? 'Exit Fullscreen (ESC)' : 'Enter Fullscreen'"
       >
@@ -162,45 +156,45 @@
     </div>
 
     <!-- Controls (hidden in fullscreen) -->
-    <div v-if="!isFullscreen" class="meditation-controls models__activity--payouts mt-5">
-      <div class="columns is-vcentered is-centered">
-        <div class="column is-narrow">
+    <section v-if="!isFullscreen" class="meditation-controls meditation-console skill-panel">
+      <div class="skill-action-row">
+        <div>
           <!-- Generate Button -->
           <button
             v-if="!meditationData && !isGenerating"
-            class="button is-success is-large"
+            class="bz-btn bz-btn--success bz-btn--lg"
             :disabled="!selectedScenario"
             @click="generateMeditation"
           >
-            <span class="material-symbols-outlined mr-2">auto_awesome</span>
+            <span class="material-symbols-outlined">auto_awesome</span>
             Create Meditation
           </button>
 
           <!-- Play/Pause Controls -->
-          <div v-else class="buttons is-centered">
+          <div v-else class="skill-action-row">
             <button
               v-if="!isPlaying"
-              class="button is-success is-large mr-5"
+              class="bz-btn bz-btn--success bz-btn--lg"
               :disabled="isGenerating || !meditationData"
               @click="playMeditation"
             >
-              <span class="material-symbols-outlined mr-2">play_arrow</span>
+              <span class="material-symbols-outlined">play_arrow</span>
               {{ audioEnded ? 'Replay' : 'Begin Session' }}
             </button>
             <button
               v-else
-              class="button is-warning is-large"
+              class="bz-btn bz-btn--warning bz-btn--lg"
               @click="pauseMeditation"
             >
-              <span class="material-symbols-outlined mr-2">pause</span>
+              <span class="material-symbols-outlined">pause</span>
               Pause
             </button>
             <button
-              class="button is-danger is-large"
+              class="bz-btn bz-btn--destructive bz-btn--lg"
               @click="resetMeditation"
               :disabled="isGenerating"
             >
-              <span class="material-symbols-outlined mr-2">stop</span>
+              <span class="material-symbols-outlined">stop</span>
               End Session
             </button>
           </div>
@@ -208,17 +202,14 @@
       </div>
 
       <!-- Volume Control -->
-      <div v-if="meditationData" class="volume-control mt-4">
-        <div class="columns is-centered is-vcentered">
-          <div class="column is-narrow">
-            <span class="material-symbols-outlined has-text-white mr-2">
+      <div v-if="meditationData" class="volume-control volume-row">
+        <span class="material-symbols-outlined volume-icon">
               {{ volume === 0 ? 'volume_off' : volume < 0.5 ? 'volume_down' : 'volume_up' }}
-            </span>
-          </div>
-          <div class="column is-4">
+        </span>
+          <div class="volume-slider">
             <input
               type="range"
-              class="slider is-fullwidth"
+              class="skill-range"
               :min="0"
               :max="1"
               :step="0.1"
@@ -226,43 +217,40 @@
               @input="updateVolume"
             />
           </div>
-          <div class="column is-narrow">
-            <span class="has-text-white fira-sans-condensed-black-italic">
+          <div>
+            <span class="bz-shout">
               {{ Math.round(volume * 100) }}%
             </span>
           </div>
-        </div>
       </div>
-    </div>
+    </section>
 
     <!-- Session History (hidden in fullscreen) -->
-    <div v-if="!isFullscreen && sessionHistory.length > 0" class="models__activity--payouts mt-5 has-text-left">
-      <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-brand has-text-left mb-4">
-        Recent Sessions
-      </h2>
+    <div v-if="!isFullscreen && sessionHistory.length > 0" class="meditation-history skill-panel">
+      <h2 class="bz-h2 skill-section-title">Recent Sessions</h2>
       <div
         v-for="session in sessionHistory.slice(0, 5)"
         :key="session.id"
-        class="session-card p-4 mb-3"
+        class="session-card"
         @click="loadSession(session)"
       >
-        <div class="columns is-vcentered is-mobil has-text-white">
-          <div class="column is-narrow">
+        <div class="session-card-row">
+          <div class="session-card-icon">
             <span class="material-symbols-outlined" style="font-size: 32px;">
               {{ getScenarioIcon(session.scenarioId) }}
             </span>
           </div>
-          <div class="column">
-            <p class="fira-sans-condensed-black-italic is-size-5 has-text-white">
+          <div class="session-card-body">
+            <p class="session-card-title">
               {{ session.title }}
             </p>
-            <p class="is-size-7 has-text-grey-light">
+            <p class="session-card-meta bz-meta">
               {{ session.scenarioName }} - {{ formatDate(session.createdAt) }}
             </p>
           </div>
-          <div class="column is-narrow">
+          <div>
             <button
-              class="button is-small is-danger"
+              class="bz-iconbtn bz-iconbtn--sm danger-icon"
               @click="deleteSession(session.id, $event)"
               title="Delete session"
             >
@@ -279,6 +267,7 @@
 
 <script>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import BonzaiPulse from '../BonzaiPulse.vue';
 import { getAuthHeaders } from '../../services/auth.service.js';
 import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
 
@@ -312,6 +301,7 @@ async function unloadLLM() {
 
 export default {
   name: 'MeditationForgeSkill',
+  components: { BonzaiPulse },
   props: {
     skill: {
       type: Object,
@@ -665,6 +655,10 @@ Go create something beautiful. Namaste.`,
         };
       }
       return {};
+    });
+    const sessionProgress = computed(() => {
+      if (!totalDuration.value) return meditationData.value ? 100 : 0;
+      return Math.min(100, Math.round((elapsedTime.value / totalDuration.value) * 100));
     });
 
     // Fullscreen handling
@@ -1128,6 +1122,7 @@ Output ONLY the meditation script text, nothing else.`;
       sessionHistory,
       // Computed
       backgroundStyle,
+      sessionProgress,
       // Methods
       selectScenario,
       generateMeditation,
@@ -1150,8 +1145,92 @@ Output ONLY the meditation script text, nothing else.`;
 
 <style scoped>
 .meditation-skill {
-  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+  color: var(--bz-fg);
 }
+.skill-panel {
+  padding: var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+.skill-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-4);
+}
+.skill-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 42px !important;
+  line-height: 1;
+}
+.skill-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-4);
+  color: var(--bz-fg);
+}
+.scenario-notice { margin-top: var(--bz-space-4); }
+.scenario-tags,
+.skill-action-row,
+.volume-row,
+.session-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  flex-wrap: wrap;
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-fg-mid);
+  background: var(--bz-canvas);
+  font-size: var(--bz-size-meta);
+}
+.meditation-status,
+.meditation-ready-title,
+.breathing-text {
+  margin-top: var(--bz-space-4);
+  color: var(--bz-fg);
+}
+.volume-row { margin-top: var(--bz-space-4); justify-content: center; }
+.volume-icon { color: var(--bz-fg-mid); }
+.volume-slider { min-width: 260px; flex: 0 1 360px; }
+.skill-range {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-border-strong);
+  outline: none;
+}
+.skill-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-purple-300);
+  border: 2px solid var(--bz-fg);
+  cursor: pointer;
+}
+.session-card-row { width: 100%; flex-wrap: nowrap; }
+.session-card-body { flex: 1; min-width: 0; }
+.session-card-icon { color: var(--bz-purple-100); }
+.session-card-title {
+  margin: 0;
+  color: var(--bz-fg);
+  overflow-wrap: anywhere;
+}
+.session-card-meta { margin: var(--bz-space-1) 0 0; }
+.danger-icon { color: var(--bz-danger); }
+
 
 /* Selector styles matching Browse tab */
 .category-selector {
@@ -1185,7 +1264,6 @@ Output ONLY the meditation script text, nothing else.`;
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
-  backdrop-filter: blur(32px);
 }
 
 .category-selector input[type='radio'] + label.radio.category:hover {
@@ -1195,10 +1273,9 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .category-selector input[type='radio']:checked + label.radio.category {
-  color: rgba(255, 255, 255, 1);
-  border: 1px solid rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border: 1px solid var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 
 /* Meditation Display Area */
@@ -1208,7 +1285,7 @@ Output ONLY the meditation script text, nothing else.`;
   height: 500px;
   border-radius: 12px;
   overflow: hidden;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  background: linear-gradient(135deg, var(--bz-card) 0%, #16213e 50%, #0f3460 100%);
   transition: all 0.5s ease;
 }
 
@@ -1308,7 +1385,7 @@ Output ONLY the meditation script text, nothing else.`;
   padding: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
-  color: white;
+  color: var(--bz-fg);
 }
 
 .fullscreen-toggle:hover {
@@ -1316,7 +1393,7 @@ Output ONLY the meditation script text, nothing else.`;
   border-color: var(--bz-fg-mid);
 }
 
-.fullscreen-toggle.m-5 {
+.fullscreen-toggle.fullscreen-offset {
   bottom: 1.25rem;
   right: 1.25rem;
 }
@@ -1375,7 +1452,7 @@ Output ONLY the meditation script text, nothing else.`;
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--bulma-primary);
+  background: var(--bz-purple-500);
   cursor: pointer;
 }
 
@@ -1397,7 +1474,6 @@ Output ONLY the meditation script text, nothing else.`;
 .models__activity--payouts {
   padding: 2em;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 
@@ -1423,7 +1499,7 @@ Output ONLY the meditation script text, nothing else.`;
 }
 
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 @keyframes rotate {
@@ -1444,4 +1520,105 @@ Output ONLY the meditation script text, nothing else.`;
 .tag.is-dark {
   text-transform: uppercase;
 }
+
+/* Agentic redesign: Session Forge */
+.meditation-journey-panel {
+  background:
+    linear-gradient(135deg, rgba(24, 144, 255, 0.12), transparent 46%),
+    var(--bz-panel);
+}
+.meditation-journey-panel .category-selector {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.meditation-journey-panel label.radio.category {
+  min-height: 74px;
+  justify-content: flex-start !important;
+  gap: var(--bz-space-2);
+  text-align: left;
+}
+.meditation-stage {
+  min-height: clamp(460px, 55vh, 720px);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+}
+.meditation-stage::after {
+  content: '';
+  position: absolute;
+  inset: var(--bz-space-3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: calc(var(--bz-r) - 2px);
+  pointer-events: none;
+}
+.meditation-console {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.5fr);
+  gap: var(--bz-space-4);
+  align-items: center;
+  background: var(--bz-panel);
+}
+.meditation-console .skill-action-row {
+  justify-content: flex-start;
+}
+.meditation-console .volume-row {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+.meditation-history .session-card {
+  padding: var(--bz-space-3);
+}
+@media (max-width: 900px) {
+  .meditation-console {
+    grid-template-columns: 1fr;
+  }
+  .meditation-console .volume-row {
+    justify-content: flex-start;
+  }
+}
+
+
+/* Signature upgrade: meditation session instrument */
+.meditation-session-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: var(--bz-space-3);
+}
+.meditation-session-cell {
+  min-height: 82px;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background:
+    linear-gradient(135deg, rgba(24, 144, 255, 0.1), transparent 55%),
+    var(--bz-panel);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.meditation-session-cell span {
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.meditation-session-cell strong {
+  color: var(--bz-fg);
+  font-size: 18px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.meditation-journey-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+  gap: var(--bz-space-4);
+  align-items: stretch;
+}
+.meditation-journey-panel > div:first-child,
+.meditation-journey-panel .scenario-notice {
+  min-width: 0;
+}
+@media (max-width: 980px) {
+  .meditation-session-strip,
+  .meditation-journey-panel { grid-template-columns: 1fr; }
+}
+
 </style>

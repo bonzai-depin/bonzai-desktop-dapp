@@ -238,6 +238,23 @@ export async function clearAudit() {
   await svc.clearAudit(_state.activeId);
   await refreshActive();
 }
+export async function removeAuditEntry(entryId) {
+  if (!_state.activeId) return false;
+  const ok = await svc.removeAuditEntry(_state.activeId, entryId);
+  await refreshActive();
+  return ok;
+}
+export async function clearCatalog() {
+  if (!_state.activeId) return;
+  await svc.clearCatalog(_state.activeId);
+  await refreshActive();
+}
+export async function removeContent(contentId) {
+  if (!_state.activeId) return false;
+  const ok = await svc.removeContent(_state.activeId, contentId);
+  await refreshActive();
+  return ok;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Connectors
@@ -308,10 +325,24 @@ export async function approve(pendingId) {
   await svc.approveAction(_state.activeId, pendingId);
   await refreshActive();
 }
+export async function approveMany(pendingIds) {
+  if (!_state.activeId) return;
+  for (const pendingId of pendingIds || []) {
+    await svc.approveAction(_state.activeId, pendingId);
+  }
+  await refreshActive();
+}
 
 export async function reject(pendingId, reason) {
   if (!_state.activeId) return;
   await svc.rejectAction(_state.activeId, pendingId, reason);
+  await refreshActive();
+}
+export async function rejectMany(pendingIds, reason) {
+  if (!_state.activeId) return;
+  for (const pendingId of pendingIds || []) {
+    await svc.rejectAction(_state.activeId, pendingId, reason);
+  }
   await refreshActive();
 }
 
@@ -414,7 +445,9 @@ export const companyStore = {
   tickNow,
   tickRoleNow,
   approve,
+  approveMany,
   reject,
+  rejectMany,
   recordRevenue,
   paySupplier,
   exportActive,
@@ -436,6 +469,10 @@ export const companyStore = {
   previewTemplate,
   // audit
   clearAudit,
+  removeAuditEntry,
+  // production catalog
+  clearCatalog,
+  removeContent,
   // streaming
   beginStream, appendStream, endStream,
   // connectors

@@ -53,20 +53,23 @@
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
   direction: ltr;
-  display: inline-block;
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
   font-family: 'Material Symbols Outlined';
   font-feature-settings: 'liga';
   font-size: 24px;
   font-style: normal;
   font-weight: normal;
+  height: 1em;
+  justify-content: center;
   letter-spacing: normal;
   line-height: 1;
+  min-width: 1em;
   text-transform: none;
   white-space: nowrap;
   word-wrap: normal;
-  /* Prevent text placeholder flash: constrain width to icon size until font loads */
-  overflow: hidden;
-  max-width: 1em;
+  width: 1em;
 }
 
 /* Fira Sans Condensed Black Italic helper class */

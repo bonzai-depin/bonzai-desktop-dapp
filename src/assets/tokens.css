@@ -102,7 +102,7 @@
      only on hover or active states. */
   --bz-elev-1: 0 1px 2px rgba(0, 0, 0, 0.35);
   --bz-elev-2: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --bz-elev-3: 0 24px 64px rgba(0, 0, 0, 0.55);
+  --bz-elev-3: 0 24px 64px var(--bz-scrim);
   --bz-elev-brand:
     0 0 0 1px var(--bz-border-brand),
     0 0 32px var(--bz-purple-glow);
@@ -208,6 +208,7 @@
   font-size: var(--bz-size-display);
   line-height: var(--bz-line-display);
   letter-spacing: var(--bz-track-display);
+  color: var(--bz-fg);
 }
 
 /* H1 + H2 — section headings carry the BRAND VOICE.
@@ -222,6 +223,7 @@
   font-size: var(--bz-size-h1);
   line-height: var(--bz-line-tight);
   letter-spacing: -0.01em;
+  color: var(--bz-fg);
 }
 
 .bz-h2 {
@@ -231,6 +233,122 @@
   font-size: var(--bz-size-h2);
   line-height: var(--bz-line-tight);
   letter-spacing: -0.005em;
+  color: var(--bz-fg);
+}
+
+.bz-title-icon,
+.bz-section-icon {
+  font-size: 1em !important;
+  margin-right: var(--bz-space-2);
+  vertical-align: -0.12em;
+}
+
+.bz-title-icon {
+  color: var(--bz-purple-300);
+}
+
+.bz-screen-titleblock .bz-title-icon {
+  font-size: 28px !important;
+  margin-right: 0;
+}
+
+.bz-field-input,
+.bz-field-textarea {
+  width: 100%;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  line-height: var(--bz-line-body);
+  outline: 0;
+  box-shadow: none;
+  transition:
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    background var(--bz-dur-fast) var(--bz-ease-out);
+}
+
+.bz-field-input {
+  min-height: 42px;
+  padding: 0 var(--bz-space-3);
+}
+
+.bz-field-textarea {
+  min-height: 96px;
+  padding: var(--bz-space-3);
+  resize: vertical;
+}
+
+.bz-field-input:focus,
+.bz-field-textarea:focus {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-panel);
+}
+
+.bz-field-input::placeholder,
+.bz-field-textarea::placeholder {
+  color: var(--bz-fg-faint);
+}
+
+.bz-pill {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: 999px;
+  background: var(--bz-panel);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.bz-screen-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  padding-bottom: var(--bz-space-4);
+  margin-bottom: var(--bz-space-5);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.bz-screen-titleblock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-1);
+  min-width: 0;
+}
+
+.bz-screen-titleblock .bz-eyebrow {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  line-height: 1.2;
+  font-weight: 400;
+  text-align: left;
+}
+
+.bz-screen-titleblock h1 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+}
+
+.bz-screen-subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
+}
+
+.bz-screen-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  flex-shrink: 0;
 }
 
 /* H3 stays calm — row titles, card titles, inline label headings.
@@ -410,3 +528,59 @@
   outline-offset: 2px;
   border-radius: var(--bz-r-sm);
 }
+
+
+/* ─── Legacy-free shared workflow chips/cards ─────────────────────
+   Used by dense operational surfaces while they migrate off Bulma. */
+.skill-card,
+.bz-card-shell {
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 24px;
+  padding: 2px var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.skill-chip--brand { background: var(--bz-purple-soft); border-color: var(--bz-border-brand); color: var(--bz-fg); }
+.skill-chip--success { background: var(--bz-emerald-soft); border-color: var(--bz-emerald-500); color: var(--bz-emerald-300); }
+.skill-chip--warning { background: var(--bz-warning-soft); border-color: var(--bz-warning); color: var(--bz-warning); }
+.skill-chip--info { background: var(--bz-info-soft); border-color: var(--bz-info); color: var(--bz-info); }
+.skill-chip--danger { background: var(--bz-danger-soft); border-color: var(--bz-danger); color: var(--bz-danger); }
+.skill-chip--muted { background: var(--bz-panel); border-color: var(--bz-border); color: var(--bz-fg-low); }
+.skill-table {
+  border-collapse: collapse;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+.skill-table td,
+.skill-table th {
+  padding: var(--bz-space-2) 0;
+  border-bottom: 1px solid var(--bz-border);
+}
+.skill-table tr:last-child td { border-bottom: 0; }
+.skill-table th { color: var(--bz-fg-low); font-size: var(--bz-size-micro); text-transform: uppercase; }
+.skill-unit {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+  color: var(--bz-fg-low);
+}
+.skill-fullwidth { width: 100%; }
+.skill-float-right { margin-left: auto; }

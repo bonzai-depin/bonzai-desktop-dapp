@@ -5,14 +5,13 @@
         <div class="rewards-modal">
           <!-- Header -->
           <div class="rewards-modal-header">
-            <h2
-              class="fira-sans-condensed-black-italic is-size-3 has-text-white"
-            >
-              <span class="material-symbols-outlined mr-2 is-size-2">
-                redeem
-              </span>
-              Rewards
-            </h2>
+            <div class="rewards-titleblock">
+              <p class="bz-eyebrow">Rewards</p>
+              <h2 class="bz-h2">
+                <span class="material-symbols-outlined" aria-hidden="true">redeem</span>
+                Epoch Vault
+              </h2>
+            </div>
             <BzCloseButton
               size="md"
               aria-label="Close rewards"
@@ -22,11 +21,9 @@
 
           <div class="rewards-modal-body">
             <!-- Loading State -->
-            <div v-if="isLoading" class="has-text-centered p-6">
-              <span class="material-symbols-outlined rotating is-size-1 has-text-warning">
-                progress_activity
-              </span>
-              <p class="has-text-grey-light mt-3">Loading pool data...</p>
+            <div v-if="isLoading" class="rewards-loading">
+              <span class="material-symbols-outlined rotating" aria-hidden="true">progress_activity</span>
+              <p class="bz-meta">Loading pool data...</p>
             </div>
 
             <!-- Error State -->
@@ -44,97 +41,97 @@
             </div>
 
             <template v-else>
-              <!-- Epoch Info Section -->
-              <div class="epoch-info-section p-4">
-                <div class="columns is-mobile is-multiline">
-                  <div class="column is-4-desktop is-6-mobile">
-                    <div class="epoch-stat">
-                      <span class="stat-label">Current Epoch</span>
-                      <span class="stat-value fira-sans-condensed-black-italic">
-                        #{{ poolState.currentEpoch }}
-                      </span>
-                    </div>
+              <section class="rewards-hero">
+                <div class="rewards-hero__main">
+                  <span class="rewards-live-pill">
+                    <span class="rewards-live-pill__dot"></span>
+                    Epoch #{{ poolState.currentEpoch }}
+                  </span>
+                  <h3 class="rewards-hero__amount bz-shout">
+                    {{ formatEth(totalPoolBalance) }} ETH
+                  </h3>
+                  <p class="rewards-hero__meta bz-meta">
+                    {{ qualifiedPoolCount }} / {{ pools.length }} pools unlocked · {{ epochCountdown }} left
+                  </p>
+                </div>
+                <div class="rewards-hero__action">
+                  <button
+                    v-if="!poolState.isRegisteredCurrentEpoch && hasQualifiedPool"
+                    type="button"
+                    class="bz-btn bz-btn--primary rewards-primary-cta"
+                    @click="handleRegister"
+                    :disabled="isRegistering"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">app_registration</span>
+                    {{ isRegistering ? 'Registering…' : `Enter Epoch #${poolState.currentEpoch}` }}
+                  </button>
+                  <div v-else-if="poolState.isRegisteredCurrentEpoch" class="rewards-registered-card">
+                    <span class="material-symbols-outlined" aria-hidden="true">verified</span>
+                    <span class="bz-shout">Registered</span>
                   </div>
-                  <div class="column is-4-desktop is-6-mobile">
-                    <div class="epoch-stat">
-                      <span class="stat-label">Time Remaining</span>
-                      <span class="stat-value fira-sans-condensed-black-italic">
-                        {{ epochCountdown }}
-                      </span>
-                    </div>
-                  </div>
-                  <div class="column is-4-desktop is-12-mobile">
-                    <div class="epoch-stat">
-                      <span class="stat-label">Total Pool Balance</span>
-                      <span class="stat-value fira-sans-condensed-black-italic has-text-warning">
-                        {{ formatEth(totalPoolBalance) }} ETH
-                      </span>
-                    </div>
+                  <div v-else class="rewards-locked-card">
+                    <span class="material-symbols-outlined" aria-hidden="true">lock</span>
+                    <span>{{ nextUnlockLabel }}</span>
                   </div>
                 </div>
-              </div>
+              </section>
+
+              <section v-if="totalAvailableRewards > 0" class="rewards-claim-banner">
+                <div>
+                  <p class="bz-eyebrow">Ready</p>
+                  <strong class="bz-shout">{{ formatEth(totalAvailableRewards) }} ETH claimable</strong>
+                </div>
+                <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+              </section>
 
               <!-- Pool Cards -->
-              <div class="pool-cards-section p-4">
-                <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 20px; vertical-align: middle;">
-                    layers
-                  </span>
+              <div class="pool-cards-section">
+                <h3 class="bz-h2 rewards-section-title">
+                  <span class="material-symbols-outlined" aria-hidden="true">layers</span>
                   Revenue Pools
                 </h3>
-                <div class="columns is-multiline">
+                <div class="pool-grid">
                   <div
                     v-for="(pool, index) in pools"
                     :key="index"
-                    class="column is-4-desktop is-6-tablet is-12-mobile"
+                    class="pool-card"
+                    :class="{ qualified: pool.qualified }"
                   >
-                    <div class="pool-card" :class="{ qualified: pool.qualified }">
-                      <div class="pool-card-header">
-                        <span class="material-symbols-outlined pool-icon">
-                          {{ pool.icon }}
+                    <div class="pool-card-header">
+                      <span class="material-symbols-outlined pool-icon" aria-hidden="true">
+                        {{ pool.icon }}
+                      </span>
+                      <span class="pool-name bz-shout">{{ pool.label }}</span>
+                      <span class="qualification-badge" :class="pool.qualified ? 'is-success' : 'is-danger'">
+                        <span class="material-symbols-outlined" aria-hidden="true">
+                          {{ pool.qualified ? 'check_circle' : 'lock' }}
                         </span>
-                        <span class="pool-name fira-sans-condensed-black-italic">
-                          {{ pool.label }}
-                        </span>
-                        <span
-                          class="qualification-badge"
-                          :class="pool.qualified ? 'is-success' : 'is-danger'"
-                          :title="pool.qualified ? 'Qualified' : `Need ${pool.threshold.toLocaleString()} BONZAI`"
-                        >
-                          <span class="material-symbols-outlined" style="font-size: 16px;">
-                            {{ pool.qualified ? 'check_circle' : 'cancel' }}
-                          </span>
-                        </span>
+                      </span>
+                    </div>
+                    <div class="pool-card-body">
+                      <div class="pool-balance">
+                        <span class="pool-balance-label">Balance</span>
+                        <span class="pool-balance-value bz-mono">{{ formatEth(pool.balance) }} ETH</span>
                       </div>
-                      <div class="pool-card-body">
-                        <div class="pool-balance">
-                          <span class="pool-balance-label">Pool Balance</span>
-                          <span class="pool-balance-value">{{ formatEth(pool.balance) }} ETH</span>
-                        </div>
-                        <div class="pool-threshold">
-                          <span class="pool-threshold-label">Threshold</span>
-                          <span class="pool-threshold-value">{{ pool.threshold.toLocaleString() }} BONZAI</span>
-                        </div>
-                        <div class="pool-registration">
-                          <span v-if="poolState.isRegisteredCurrentEpoch" class="tag is-success is-light">
-                            <span class="material-symbols-outlined mr-1" style="font-size: 14px;">how_to_reg</span>
-                            Registered
-                          </span>
-                          <button
-                            v-else-if="pool.qualified"
-                            type="button"
-                            class="bz-btn bz-btn--success bz-btn--sm"
-                            style="width: 100%;"
-                            @click="handleRegister"
-                            :disabled="isRegistering"
-                          >
-                            <span class="material-symbols-outlined">app_registration</span>
-                            {{ isRegistering ? 'Registering…' : `Register for Epoch #${poolState.currentEpoch}` }}
-                          </button>
-                          <span v-else class="tag is-dark" style="white-space: normal; height: auto">
-                            Hold {{ pool.threshold.toLocaleString() }} BONZAI or unlock with 1 ETH
-                          </span>
-                        </div>
+                      <div class="pool-threshold">
+                        <span class="pool-threshold-label">Threshold</span>
+                        <span class="pool-threshold-value bz-mono">{{ pool.threshold.toLocaleString() }} BONZAI</span>
+                      </div>
+                      <div class="pool-progress" :title="`${Math.round(pool.progress)}%`">
+                        <span :style="{ width: `${Math.min(100, pool.progress)}%` }"></span>
+                      </div>
+                      <div class="pool-registration">
+                        <span v-if="poolState.isRegisteredCurrentEpoch" class="rewards-state-pill rewards-state-pill--success">
+                          <span class="material-symbols-outlined" aria-hidden="true">how_to_reg</span>
+                          Registered
+                        </span>
+                        <span v-else-if="pool.qualified" class="rewards-state-pill rewards-state-pill--ready">
+                          <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+                          Ready
+                        </span>
+                        <span v-else class="rewards-state-pill">
+                          {{ pool.missing.toLocaleString() }} BONZAI away
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -142,23 +139,13 @@
               </div>
 
               <!-- Claimable Section -->
-              <div class="claimable-section p-4" v-if="poolState.currentEpoch > 0">
-                <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 20px; vertical-align: middle;">
-                    savings
-                  </span>
+              <div class="claimable-section" v-if="poolState.currentEpoch > 0">
+                <h3 class="bz-h2 rewards-section-title">
+                  <span class="material-symbols-outlined" aria-hidden="true">savings</span>
                   Claim Rewards
                 </h3>
 
-                <!-- Total Available Rewards -->
-                <div v-if="totalAvailableRewards > 0" class="bz-notice bz-notice--success mb-3">
-                  <span class="bz-notice__icon"><span class="material-symbols-outlined">savings</span></span>
-                  <div class="bz-notice__body">
-                    <p class="bz-notice__title">{{ formatEth(totalAvailableRewards) }} ETH available to claim</p>
-                  </div>
-                </div>
-
-                <div v-if="!isConnected" class="bz-notice mb-3">
+                <div v-if="!isConnected" class="bz-notice rewards-inline-notice">
                   <span class="bz-notice__icon"><span class="material-symbols-outlined">account_balance_wallet</span></span>
                   <div class="bz-notice__body">
                     <p class="bz-notice__text">Connect your wallet to view claimable rewards.</p>
@@ -167,7 +154,7 @@
 
                 <template v-else>
                   <!-- Previous Epoch Claims -->
-                  <div v-if="claimableEpochs.length === 0" class="bz-notice mb-3">
+                  <div v-if="claimableEpochs.length === 0" class="bz-notice rewards-inline-notice">
                     <span class="bz-notice__icon"><span class="material-symbols-outlined">inbox</span></span>
                     <div class="bz-notice__body">
                       <p class="bz-notice__text">No claimable epochs found. Register for the current epoch to earn rewards.</p>
@@ -177,11 +164,11 @@
                   <div
                     v-for="epoch in claimableEpochs"
                     :key="epoch.epochId"
-                    class="claimable-epoch-card mb-3"
+                    class="claimable-epoch-card"
                   >
                     <div class="epoch-card-header">
                       <span class="fira-sans-condensed-black-italic">Epoch #{{ epoch.epochId }}</span>
-                      <span class="epoch-total has-text-warning fira-sans-condensed-black-italic">
+                      <span class="epoch-total bz-shout">
                         {{ formatEth(epoch.totalClaimable) }} ETH
                       </span>
                     </div>
@@ -199,7 +186,7 @@
                       <button
                         v-if="!epoch.confirmed"
                         type="button"
-                        class="bz-btn bz-btn--warning bz-btn--sm"
+                        class="bz-btn bz-btn--primary bz-btn--sm"
                         @click="handleConfirmClaim(epoch.epochId)"
                         :disabled="isClaiming"
                       >
@@ -222,19 +209,17 @@
               </div>
 
               <!-- Skill Revenue Section -->
-              <div class="skill-revenue-section p-4" v-if="isConnected">
-                <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">
-                  <span class="material-symbols-outlined mr-1" style="font-size: 20px; vertical-align: middle;">
-                    monetization_on
-                  </span>
+              <div class="skill-revenue-section" v-if="isConnected">
+                <h3 class="bz-h2 rewards-section-title">
+                  <span class="material-symbols-outlined" aria-hidden="true">monetization_on</span>
                   Skill Revenue
                 </h3>
 
-                <div v-if="isLoadingSkillRevenue" class="has-text-centered p-3">
-                  <span class="material-symbols-outlined rotating has-text-grey-light" style="font-size: 24px;">progress_activity</span>
+                <div v-if="isLoadingSkillRevenue" class="rewards-mini-loading">
+                  <span class="material-symbols-outlined rotating">progress_activity</span>
                 </div>
 
-                <div v-else-if="parseFloat(unclaimedSkillRevenue) === 0" class="bz-notice mb-3">
+                <div v-else-if="parseFloat(unclaimedSkillRevenue) === 0" class="bz-notice rewards-inline-notice">
                   <span class="bz-notice__icon"><span class="material-symbols-outlined">monetization_on</span></span>
                   <div class="bz-notice__body">
                     <p class="bz-notice__text">No unclaimed skill revenue. Register companions as skill co-owners to earn.</p>
@@ -244,14 +229,13 @@
                 <div v-else class="skill-revenue-card">
                   <div class="skill-revenue-row">
                     <span class="skill-revenue-label">Unclaimed ETH</span>
-                    <span class="skill-revenue-value has-text-warning fira-sans-condensed-black-italic">
+                    <span class="skill-revenue-value bz-shout">
                       {{ formatEth(parseFloat(unclaimedSkillRevenue)) }} ETH
                     </span>
                   </div>
                   <button
                     type="button"
-                    class="bz-btn bz-btn--primary mt-3"
-                    style="width: 100%;"
+                    class="bz-btn bz-btn--primary rewards-full-btn"
                     @click="handleClaimSkillRevenue"
                     :disabled="isClaimingSkillRevenue"
                   >
@@ -262,8 +246,8 @@
               </div>
 
               <!-- Status Messages -->
-              <div v-if="statusMessage" class="status-bar p-3" :class="statusType">
-                <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle;">
+              <div v-if="statusMessage" class="status-bar" :class="statusType">
+                <span class="material-symbols-outlined" aria-hidden="true">
                   {{ statusType === 'is-success' ? 'check_circle' : statusType === 'is-danger' ? 'error' : 'info' }}
                 </span>
                 {{ statusMessage }}
@@ -321,9 +305,11 @@ const walletAddress = computed(() => web3Service.state.walletAddress);
 const POOL_ICONS = ['chat', 'headphones', 'image', 'movie', '3d_rotation', 'exercise'];
 const POOL_THRESHOLDS = [1000, 5000, 10000, 25000, 33000, 50000];
 
+const totalBonzaiBalance = computed(() => web3Service.state.balances?.total || 0);
+
 const pools = computed(() => {
   // Total BONZAI balance across ALL chains (Ethereum + Arbitrum + Base)
-  const totalBalance = web3Service.state.balances?.total || 0;
+  const totalBalance = totalBonzaiBalance.value;
   // Check if user has unlocked all levels via 1 ETH payment
   const allUnlocked = poolState.value.allUnlocked || false;
 
@@ -336,6 +322,8 @@ const pools = computed(() => {
 
     // Qualify if: unlocked OR multi-chain total balance >= threshold
     const qualified = allUnlocked || totalBalance >= threshold;
+    const progress = allUnlocked ? 100 : threshold > 0 ? (totalBalance / threshold) * 100 : 0;
+    const missing = Math.max(0, Math.ceil(threshold - totalBalance));
 
     return {
       label,
@@ -343,8 +331,18 @@ const pools = computed(() => {
       balance: poolState.value.totalDeposited[index] || 0,
       threshold,
       qualified,
+      progress,
+      missing,
     };
   });
+});
+
+const qualifiedPoolCount = computed(() => pools.value.filter((pool) => pool.qualified).length);
+const hasQualifiedPool = computed(() => qualifiedPoolCount.value > 0);
+const nextUnlockLabel = computed(() => {
+  const next = pools.value.find((pool) => !pool.qualified);
+  if (!next) return 'Connect wallet to enter';
+  return `${next.missing.toLocaleString()} BONZAI to ${next.label}`;
 });
 
 const totalPoolBalance = computed(() => {
@@ -576,12 +574,10 @@ defineExpose({ hasClaimableRewards });
 </script>
 
 <style scoped>
-/* Overlay */
 .rewards-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(16px);
+  background: var(--bz-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -589,79 +585,240 @@ defineExpose({ hasClaimableRewards });
 }
 
 .rewards-modal {
-  width: 95%;
-  max-width: 800px;
-  max-height: 90vh;
-  background: #0a0a0f;
+  width: min(960px, calc(100vw - 32px));
+  max-height: min(900px, 90vh);
+  background: var(--bz-card);
   border: 1px solid var(--bz-border);
-  border-radius: 16px;
+  border-radius: var(--bz-r-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  box-shadow: var(--bz-shadow-lg);
 }
 
-/* Header */
 .rewards-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  background: var(--bz-scrim);
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-5);
+  background: var(--bz-panel);
   border-bottom: 1px solid var(--bz-border);
 }
 
-.rewards-modal-header h2 {
-  display: flex;
-  align-items: center;
+.rewards-titleblock {
+  display: grid;
+  gap: var(--bz-space-1);
+}
+
+.rewards-titleblock .bz-eyebrow,
+.rewards-titleblock h2 {
   margin: 0;
 }
 
-/* Body */
+.rewards-titleblock h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg);
+}
+
+.rewards-titleblock .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 24px !important;
+}
+
 .rewards-modal-body {
   flex: 1;
   overflow-y: auto;
-  padding: 0;
-}
-
-/* Epoch Info */
-.epoch-info-section {
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid var(--bz-canvas);
-}
-
-.epoch-stat {
+  padding: var(--bz-space-5);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--bz-space-5);
 }
 
-.stat-label {
-  font-size: 12px;
-  color: rgba(240, 240, 245, 0.5);
+.rewards-loading {
+  min-height: 340px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--bz-space-3);
+  color: var(--bz-fg-mid);
+}
+
+.rewards-loading .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 42px !important;
+}
+
+.rewards-mini-loading {
+  min-height: 72px;
+  display: grid;
+  place-items: center;
+  color: var(--bz-fg-low);
+}
+
+.rewards-mini-loading .material-symbols-outlined {
+  font-size: 24px !important;
+}
+
+.rewards-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--bz-space-5);
+  align-items: stretch;
+  padding: var(--bz-space-5);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+
+.rewards-hero__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+}
+
+.rewards-live-pill,
+.rewards-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-micro);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--bz-track-eyebrow);
 }
 
-.stat-value {
-  font-size: 1.25rem;
-  color: #f0f0f5;
+.rewards-live-pill {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-100);
 }
 
-/* Pool Cards */
-.pool-cards-section {
-  border-bottom: 1px solid var(--bz-canvas);
+.rewards-live-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-purple-300);
+  box-shadow: 0 0 14px var(--bz-purple-300);
+}
+
+.rewards-hero__amount {
+  margin: 0;
+  color: var(--bz-fg);
+  font-size: clamp(32px, 6vw, 56px);
+  line-height: 1;
+}
+
+.rewards-hero__meta {
+  margin: 0;
+}
+
+.rewards-hero__action {
+  min-width: min(260px, 34vw);
+  display: flex;
+}
+
+.rewards-primary-cta,
+.rewards-registered-card,
+.rewards-locked-card {
+  width: 100%;
+  min-height: 100%;
+  justify-content: center;
+}
+
+.rewards-registered-card,
+.rewards-locked-card {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-4);
+  border-radius: var(--bz-r);
+  border: 1px solid var(--bz-border);
+  background: var(--bz-panel);
+  color: var(--bz-fg-mid);
+}
+
+.rewards-registered-card {
+  border-color: var(--bz-emerald-soft);
+  background: var(--bz-emerald-soft);
+  color: var(--bz-emerald-300);
+}
+
+.rewards-claim-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-4) var(--bz-space-5);
+  border: 1px solid var(--bz-emerald-soft);
+  border-radius: var(--bz-r);
+  background: var(--bz-emerald-soft);
+  color: var(--bz-fg);
+}
+
+.rewards-claim-banner .bz-eyebrow,
+.rewards-claim-banner strong {
+  margin: 0;
+}
+
+.rewards-claim-banner .material-symbols-outlined {
+  color: var(--bz-emerald-300);
+}
+
+.pool-cards-section,
+.claimable-section,
+.skill-revenue-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+}
+
+.rewards-section-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg);
+}
+
+.rewards-section-title .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 22px !important;
+}
+
+.pool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+
+.pool-card,
+.claimable-epoch-card,
+.skill-revenue-card {
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  overflow: hidden;
 }
 
 .pool-card {
-  background: var(--bz-canvas);
-  border: 1px solid var(--bz-card);
-  border-radius: 12px;
-  padding: 16px;
-  transition: border-color 0.2s;
+  padding: var(--bz-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
 }
 
 .pool-card.qualified {
-  border-color: var(--bz-emerald-soft);
+  border-color: var(--bz-border-brand);
+  background: linear-gradient(180deg, var(--bz-purple-soft), var(--bz-canvas));
 }
 
 .pool-card:hover {
@@ -671,24 +828,28 @@ defineExpose({ hasClaimableRewards });
 .pool-card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--bz-space-2);
 }
 
 .pool-icon {
-  font-size: 24px;
-  color: var(--bz-warning);
+  font-size: 22px !important;
+  color: var(--bz-purple-300);
 }
 
 .pool-name {
   flex: 1;
-  font-size: 1rem;
-  color: #f0f0f5;
+  min-width: 0;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-h3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .qualification-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  color: var(--bz-fg-low);
 }
 
 .qualification-badge.is-success {
@@ -696,138 +857,145 @@ defineExpose({ hasClaimableRewards });
 }
 
 .qualification-badge.is-danger {
-  color: var(--bz-danger);
+  color: var(--bz-fg-low);
 }
 
 .pool-card-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--bz-space-2);
 }
 
 .pool-balance,
-.pool-threshold {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.pool-balance-label,
-.pool-threshold-label {
-  font-size: 12px;
-  color: rgba(240, 240, 245, 0.5);
-}
-
-.pool-balance-value {
-  font-size: 14px;
-  color: var(--bz-warning);
-  font-weight: 600;
-}
-
-.pool-threshold-value {
-  font-size: 13px;
-  color: rgba(240, 240, 245, 0.7);
-}
-
-.pool-registration {
-  margin-top: 8px;
-}
-
-/* Claimable Section */
-.claimable-section {
-  border-bottom: 1px solid var(--bz-canvas);
-}
-
-.claimable-epoch-card {
-  background: var(--bz-canvas);
-  border: 1px solid var(--bz-card);
-  border-radius: 12px;
-  overflow: hidden;
-}
-
+.pool-threshold,
+.skill-revenue-row,
+.epoch-pool-row,
 .epoch-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
-  background: var(--bz-scrim-soft);
-  border-bottom: 1px solid var(--bz-canvas);
+  gap: var(--bz-space-3);
 }
 
-.epoch-card-header span:first-child {
-  color: #f0f0f5;
+.pool-balance-label,
+.pool-threshold-label,
+.skill-revenue-label,
+.epoch-pool-label {
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-low);
 }
 
-.epoch-total {
-  font-size: 1rem;
+.pool-balance-value,
+.pool-threshold-value,
+.epoch-pool-amount,
+.epoch-total,
+.skill-revenue-value {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+}
+
+.pool-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-panel);
+}
+
+.pool-progress span {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+  background: var(--bz-gradient-brand);
+}
+
+.pool-registration {
+  margin-top: var(--bz-space-1);
+}
+
+.rewards-state-pill--success {
+  border-color: var(--bz-emerald-soft);
+  background: var(--bz-emerald-soft);
+  color: var(--bz-emerald-300);
+}
+
+.rewards-state-pill--ready {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-100);
+}
+
+.claimable-epoch-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.claimable-epoch-card + .claimable-epoch-card {
+  margin-top: var(--bz-space-3);
+}
+
+.rewards-inline-notice {
+  margin: 0;
+}
+
+.epoch-card-header {
+  padding: var(--bz-space-3) var(--bz-space-4);
+  background: var(--bz-panel);
+  border-bottom: 1px solid var(--bz-border);
+  color: var(--bz-fg);
+}
+
+.epoch-total,
+.skill-revenue-value {
+  color: var(--bz-emerald-300);
 }
 
 .epoch-card-body {
-  padding: 12px 16px;
-}
-
-.epoch-pool-row {
+  padding: var(--bz-space-3) var(--bz-space-4);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 0;
-}
-
-.epoch-pool-label {
-  font-size: 13px;
-  color: rgba(240, 240, 245, 0.7);
-}
-
-.epoch-pool-amount {
-  font-size: 13px;
-  color: var(--bz-warning);
+  flex-direction: column;
+  gap: var(--bz-space-2);
 }
 
 .epoch-card-actions {
-  padding: 12px 16px;
-  border-top: 1px solid var(--bz-canvas);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  border-top: 1px solid var(--bz-border);
   display: flex;
   justify-content: flex-end;
 }
 
-/* Skill Revenue */
 .skill-revenue-card {
-  background: var(--bz-canvas);
-  border: 1px solid var(--bz-card);
-  border-radius: 12px;
-  padding: 16px;
+  padding: var(--bz-space-4);
 }
 
-.skill-revenue-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.rewards-full-btn {
+  width: 100%;
+  margin-top: var(--bz-space-3);
 }
 
-.skill-revenue-label {
-  font-size: 14px;
-  color: rgba(240, 240, 245, 0.7);
-}
-
-.skill-revenue-value {
-  font-size: 1.25rem;
-}
-
-/* Status Bar */
 .status-bar {
-  margin: 0;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bz-space-2);
+  margin: 0 calc(var(--bz-space-5) * -1) calc(var(--bz-space-5) * -1);
+  padding: var(--bz-space-3) var(--bz-space-5);
+  font-size: var(--bz-size-meta);
   text-align: center;
-  border-top: 1px solid var(--bz-canvas);
+  border-top: 1px solid var(--bz-border);
+}
+
+.status-bar .material-symbols-outlined {
+  font-size: 16px !important;
 }
 
 .status-bar.is-success {
   background: var(--bz-emerald-soft);
-  color: var(--bz-emerald-500);
+  color: var(--bz-emerald-300);
 }
 
 .status-bar.is-danger {
-  background: rgba(241, 70, 104, 0.1);
+  background: var(--bz-danger-soft);
   color: var(--bz-danger);
 }
 
@@ -836,19 +1004,13 @@ defineExpose({ hasClaimableRewards });
   color: var(--bz-info);
 }
 
-/* Animations */
 .rotating {
-  animation: rotate 1s linear infinite;
-}
-
-@keyframes rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  animation: bz-spin 1s linear infinite;
 }
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.25s ease;
+  transition: opacity var(--bz-dur-base) var(--bz-ease-out);
 }
 
 .fade-enter-from,
@@ -856,7 +1018,6 @@ defineExpose({ hasClaimableRewards });
   opacity: 0;
 }
 
-/* Scrollbar */
 .rewards-modal-body::-webkit-scrollbar {
   width: 6px;
 }
@@ -867,10 +1028,35 @@ defineExpose({ hasClaimableRewards });
 
 .rewards-modal-body::-webkit-scrollbar-thumb {
   background: var(--bz-border-strong);
-  border-radius: 3px;
+  border-radius: var(--bz-r-pill);
 }
 
-.rewards-modal-body::-webkit-scrollbar-thumb:hover {
-  background: var(--bz-border-strong);
+@media (max-width: 860px) {
+  .rewards-modal {
+    width: min(100vw - 16px, 640px);
+  }
+
+  .rewards-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .rewards-hero__action {
+    min-width: 0;
+  }
+
+  .pool-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .rewards-modal-body,
+  .rewards-modal-header {
+    padding: var(--bz-space-4);
+  }
+
+  .pool-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

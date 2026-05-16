@@ -12,8 +12,13 @@
            ───────────────────────────────────────────────────────────── -->
       <ChatLayout
         class="bz-text-chat"
-        :messages="[]"
+        :messages="threadInferences"
         :autoscroll="false"
+        :busy="isLoading"
+        :rail-collapsed="isHistoryCollapsed"
+        rail-label="chat history"
+        :rail-count="railEntries.length"
+        @toggle-rail="toggleHistoryRail"
       >
         <!-- LEFT RAIL — date-grouped history -->
         <template #rail>
@@ -21,6 +26,7 @@
             :inferences="railEntries"
             :active-id="activeRailId"
             @select="selectFromRail"
+            @toggle-pin="togglePinnedInference"
           />
         </template>
 
@@ -34,6 +40,18 @@
               </h1>
             </div>
             <div class="bz-text-chat__head-actions">
+              <button
+                type="button"
+                class="bz-iconbtn"
+                :title="isHistoryCollapsed ? 'Show chat history' : 'Hide chat history'"
+                :aria-label="isHistoryCollapsed ? 'Show chat history' : 'Hide chat history'"
+                :aria-expanded="(!isHistoryCollapsed).toString()"
+                @click="toggleHistoryRail"
+              >
+                <span class="material-symbols-outlined">
+                  {{ isHistoryCollapsed ? 'left_panel_open' : 'left_panel_close' }}
+                </span>
+              </button>
               <button type="button" class="bz-iconbtn" title="Browse models" aria-label="Browse models" @click="openModelPicker">
                 <span class="material-symbols-outlined">folder_open</span>
               </button>
@@ -59,7 +77,7 @@
               level="LVL1"
               @access-changed="onAccessChanged"
             />
-            <div v-if="pipelineError" class="bz-notice bz-notice--danger mt-3">
+            <div v-if="pipelineError" class="bz-notice bz-notice--danger bz-pipeline-notice mt-3">
               <span class="bz-notice__icon"><span class="material-symbols-outlined">error</span></span>
               <div class="bz-notice__body">
                 <p class="bz-notice__title">Pipeline error</p>
@@ -73,147 +91,252 @@
             </div>
           </div>
 
-          <!-- Model not available — prompt to download before chatting -->
-          <div v-if="!isModel || (currentModel.isMultimodal && !isMmprojAvailable)" class="bz-text-chat__setup">
+          <!-- Model not available — prompt to download/load before chatting -->
+          <div v-if="!isChatReady" class="bz-text-chat__setup">
             <EmptyChat
-              :model-name="currentModel.modelname"
+              model-name=""
               headline="Model required"
-              :subhead="`Download ${currentModel.modelname} (${currentModel.filesize}) to start chatting.`"
+              :subhead="modelRequiredSubhead"
+              :prompts="[]"
+              :show-browse-models="false"
               @pick="pickPrompt"
               @browse-models="openModelPicker"
             />
             <div class="bz-text-chat__setup-cta">
               <button
-                v-if="!isModel"
                 type="button"
                 class="bz-btn bz-btn--primary bz-btn--lg"
-                :class="{ 'bz-btn--running': isLoading }"
-                :disabled="isLoading"
-                @click="downloadModel(currentModel.url, currentModel.filename)"
+                @click="openModelPicker"
               >
-                <span class="material-symbols-outlined">deployed_code_update</span>
-                <span v-if="isLoading && downloadProgress">
-                  Downloading · {{ downloadProgress }}%
-                </span>
-                <span v-else>Download · {{ currentModel.filesize }}</span>
+                <span class="material-symbols-outlined">play_arrow</span>
+                <span>Load model</span>
               </button>
+            </div>
+            <div v-if="recommendedModels.length" class="bz-text-chat__recommendations">
               <button
-                v-if="isModel && currentModel.isMultimodal && !isMmprojAvailable"
+                v-for="model in recommendedModels"
+                :key="model.filename"
                 type="button"
-                class="bz-btn bz-btn--primary bz-btn--lg"
-                :class="{ 'bz-btn--running': isLoading }"
-                :disabled="isLoading"
-                @click="downloadMmproj(currentModel)"
+                class="bz-model-rec"
+                :class="{ 'bz-model-rec--downloading': modelDownloading[model.filename] }"
+                :disabled="isLoading && !modelDownloading[model.filename]"
+                @click="handleRecommendedModel(model)"
               >
-                <span class="material-symbols-outlined">visibility</span>
-                <span v-if="isLoading && mmprojDownloadProgress">
-                  Downloading vision · {{ mmprojDownloadProgress }}%
+                <span class="bz-model-rec__main">
+                  <span class="bz-model-rec__name">{{ model.modelname }}</span>
+                  <span class="bz-model-rec__fit bz-mono">{{ model.fitLabel }}</span>
                 </span>
-                <span v-else>Download vision · {{ currentModel.mmprojFilesize }}</span>
+                <span class="bz-model-rec__meta">
+                  {{ model.filesize }} · {{ model.vramGB }} GB VRAM
+                </span>
+                <span class="bz-model-rec__action">
+                  {{ recommendedModelAction(model) }}
+                </span>
               </button>
             </div>
           </div>
 
           <!-- Default empty state when model is ready but no conversation is active -->
-          <EmptyChat
-            v-else-if="!activeInference"
-            :model-name="currentModel.modelname"
-            :headline="`What are we making with ${currentModel.modelname}?`"
-            subhead="Streaming, vision, code, roleplay — same input. Local first, remote if you want to."
-            @pick="pickPrompt"
-            @browse-models="openModelPicker"
-          />
-
-          <!-- Active conversation (rail selection or currently streaming) -->
-          <div v-else class="bz-text-chat__messages">
-            <!-- User -->
-            <ChatMessage
-              :data-inference-id="activeInference.id"
-              role="user"
-              :content="activeInference.question"
-              :ts="activeInference.timestamp"
+          <div v-else-if="!threadInferences.length" class="bz-text-chat__empty">
+            <EmptyChat
+              :model-name="currentModel.modelname"
+              :headline="`What are we making with ${currentModel.modelname}?`"
+              subhead=""
+              @pick="pickPrompt"
+              @browse-models="openModelPicker"
             />
+          </div>
 
-            <!-- Assistant -->
-            <ChatMessage
-              role="assistant"
-              :model="activeInference.model"
-              :ts="activeInference.timestamp"
-              :streaming="isLoading && activeInference.answer.id === streamingInferenceId"
-              @inspect="onInspectInference(activeInference)"
-            >
-              <div class="answer markdown-body" @click="handleAnswerClick">
-                <div
-                  v-if="activeInference.tokensPerSecond || (activeInference.networkMode && activeInference.networkMode !== 'local')"
-                  class="bz-msg-extra-meta"
-                >
-                  <span v-if="activeInference.tokensPerSecond" class="bz-mono bz-meta">
-                    {{ activeInference.tokensPerSecond }} tok/s
-                  </span>
-                  <span
-                    v-if="activeInference.networkMode && activeInference.networkMode !== 'local'"
-                    class="network-mode-tag"
-                    :class="'nm-' + activeInference.networkMode"
+          <!-- Active conversation thread (rail selection or currently streaming) -->
+          <div v-else class="bz-text-chat__messages" ref="messagesContainer">
+            <template v-for="inf in threadInferences" :key="inf.id">
+              <!-- User -->
+              <ChatMessage
+                :data-inference-id="inf.id"
+                role="user"
+                :content="inf.question"
+                :ts="inf.timestamp"
+                @edit="editMessage(inf)"
+                @delete="deleteMessage(inf)"
+              />
+
+              <!-- Assistant -->
+              <ChatMessage
+                role="assistant"
+                :model="inf.model"
+                :content="stripThinkBlocks(inf.answer.text)"
+                :ts="inf.timestamp"
+                :streaming="isLoading && inf.answer.id === streamingInferenceId"
+                :error="inf.error"
+                :error-message="inf.errorMessage"
+                :stopped="!!inf.stopped"
+                :can-switch-local="canSwitchInferenceToLocal(inf)"
+                :mintable="!!inf.answer.text"
+                :minted="!!inf.nft"
+                @inspect="onInspectInference(inf)"
+                @regenerate="regenerateMessage(inf)"
+                @retry="retryMessage(inf)"
+                @switch-local="switchInferenceToLocal(inf)"
+                @mint="openMint(inf)"
+                @delete="deleteMessage(inf)"
+              >
+                <div class="answer markdown-body" @click="handleAnswerClick">
+                  <div
+                    v-if="inf.tokensPerSecond || (inf.networkMode && inf.networkMode !== 'local')"
+                    class="bz-msg-extra-meta"
                   >
-                    <span class="material-symbols-outlined" style="font-size: 12px">
-                      {{ activeInference.networkMode === 'private' ? 'lock' : 'cloud' }}
+                    <span v-if="inf.tokensPerSecond" class="bz-mono bz-meta">
+                      {{ inf.tokensPerSecond }} tok/s
                     </span>
-                    {{ activeInference.networkMode === 'private' ? 'Private' : 'Remote' }}
-                  </span>
-                </div>
+                    <span
+                      v-if="inf.networkMode && inf.networkMode !== 'local'"
+                      class="network-mode-tag"
+                      :class="'nm-' + inf.networkMode"
+                    >
+                      <span class="material-symbols-outlined" style="font-size: 12px">
+                        {{ inf.networkMode === 'private' ? 'lock' : 'cloud' }}
+                      </span>
+                      {{ inf.networkMode === 'private' ? 'PRIVATE' : 'Remote' }}
+                    </span>
+                  </div>
 
-                <template
-                  v-for="(seg, segIdx) in splitThinkSegments(activeInference.answer.text)"
-                  :key="`${activeInference.answer.id}-seg-${segIdx}`"
-                >
-                  <details
-                    v-if="seg.type === 'think' && reasoningEnabled"
-                    class="thought-bubble"
-                    :class="{ 'thought-bubble--partial': seg.partial }"
-                    open
+                  <template
+                    v-for="(seg, segIdx) in splitThinkSegments(inf.answer.text)"
+                    :key="`${inf.answer.id}-seg-${segIdx}`"
                   >
-                    <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
-                      <span class="material-symbols-outlined">network_intelligence_history</span>
-                    </summary>
-                    <div class="thought-bubble__body">
-                      <vue-markdown :source="seg.text" />
-                    </div>
-                  </details>
-                  <vue-markdown
-                    v-else-if="seg.type === 'content'"
-                    :source="seg.text"
-                  />
-                </template>
+                    <details
+                      v-if="seg.type === 'think' && reasoningEnabled"
+                      class="thought-bubble"
+                      :class="{ 'thought-bubble--partial': seg.partial }"
+                      open
+                    >
+                      <summary :title="seg.partial ? 'Thinking…' : 'Thought process'">
+                        <span class="material-symbols-outlined">network_intelligence_history</span>
+                      </summary>
+                      <div class="thought-bubble__body">
+                        <vue-markdown
+                          :source="seg.text"
+                          :options="markdownOptions"
+                          :plugins="markdownPlugins"
+                        />
+                      </div>
+                    </details>
+                    <vue-markdown
+                      v-else-if="seg.type === 'content'"
+                      :source="seg.text"
+                      :options="markdownOptions"
+                      :plugins="markdownPlugins"
+                    />
+                  </template>
 
-                <GenerativeActions
-                  :actions="actionsFor(activeInference)"
-                  @action="(id) => handleAction(id, activeInference)"
-                />
+                </div>
+              </ChatMessage>
+              <!-- Suggestion chips — shown after a completed assistant turn -->
+              <div
+                v-if="!isLoading && !inf.error && inf.answer.text && inf.answer.id !== streamingInferenceId"
+                class="bz-suggestion-chips"
+              >
+                <button
+                  v-for="chip in suggestionChips"
+                  :key="chip.id"
+                  type="button"
+                  class="bz-suggestion-chip"
+                  :title="chip.title"
+                  @click="sendMessage(buildSuggestionPrompt(chip, inf))"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">{{ chip.icon }}</span>
+                  {{ chip.label }}
+                </button>
               </div>
-            </ChatMessage>
+            </template>
           </div>
         </template>
 
         <!-- INPUT — composer docks at the bottom of the main column -->
         <template #input>
+          <div
+            v-if="chatParamsOpen"
+            id="chat-params-panel"
+            class="bz-chat-params"
+          >
+            <label class="bz-chat-param">
+              <span class="bz-chat-param__label bz-meta">Temperature</span>
+              <input
+                v-model.number="chatParams.temperature"
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                :disabled="isLoading"
+              />
+              <span class="bz-chat-param__value bz-mono">
+                {{ chatParams.temperature.toFixed(1) }}
+              </span>
+            </label>
+            <label class="bz-chat-param">
+              <span class="bz-chat-param__label bz-meta">Max tokens</span>
+              <input
+                v-model.number="chatParams.maxTokens"
+                type="number"
+                min="128"
+                max="8192"
+                step="128"
+                :disabled="isLoading"
+              />
+            </label>
+            <label class="bz-chat-param">
+              <span class="bz-chat-param__label bz-meta">Seed</span>
+              <input
+                v-model="chatParams.seed"
+                type="number"
+                min="0"
+                max="2147483647"
+                placeholder="Random"
+                :disabled="isLoading"
+              />
+            </label>
+            <label class="bz-chat-param bz-chat-param--system">
+              <span class="bz-chat-param__label bz-meta">System prompt</span>
+              <textarea
+                v-model="chatParams.systemPrompt"
+                rows="2"
+                placeholder="Optional"
+                :disabled="isLoading"
+              ></textarea>
+            </label>
+          </div>
           <ChatInput
             ref="chatInputRef"
             v-model="form.prompt"
-            :placeholder="
-              isMultimodalModel
-                ? 'Ask about an image or just chat…'
-                : `Message ${currentModel.modelname}…`
-            "
+            placeholder="Ask anything..."
+            aria-label="Chat message input"
             :streaming="isLoading"
-            :disabled="!hasAccess"
+            :disabled="!hasAccess || !isChatReady"
             :attachments="chatAttachments"
             :enable-attachments="isMultimodalModel && isMmprojAvailable"
-            :hint="reasoningEnabled && isThinkingModel ? 'Reasoning ON' : ''"
+            :slash-commands="slashCommands"
+            :hint="composerHint"
             @submit="hasAccess && sendMessage(form.prompt)"
+            @stop="stopGeneration"
             @attach="triggerImageAttach"
             @remove-attachment="removeAttachedImage"
+            @run-command="runSlashCommand"
           >
             <template #tools>
+              <button
+                type="button"
+                class="bz-chat-tool"
+                :class="{ 'bz-chat-tool--on': chatParamsOpen }"
+                :aria-expanded="chatParamsOpen.toString()"
+                aria-controls="chat-params-panel"
+                title="Advanced parameters"
+                :disabled="isLoading"
+                @click="chatParamsOpen = !chatParamsOpen"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">
+                  tune
+                </span>
+              </button>
               <button
                 v-if="isThinkingModel"
                 type="button"
@@ -245,6 +368,26 @@
           />
         </template>
       </ChatLayout>
+
+      <Transition name="bz-chat-toast">
+        <div
+          v-if="pendingDelete"
+          class="bz-chat-delete-toast"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+          <span class="bz-chat-delete-toast__body">
+            Delete this message?
+          </span>
+          <button type="button" class="bz-chat-delete-toast__ghost" @click="dismissDeleteToast">
+            Cancel
+          </button>
+          <button type="button" class="bz-chat-delete-toast__danger" @click="confirmDeleteMessage">
+            Delete
+          </button>
+        </div>
+      </Transition>
     </div>
   </div>
 
@@ -275,7 +418,6 @@ import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
 import MintModal from "./MintModal.vue";
 import { modelStore } from "../stores/modelStore.js";
-import { addTextInference } from "../stores/inferenceStore.js";
 import {
   LLM_BASE_MODELS,
   LLM_TIER_ORDER,
@@ -283,15 +425,6 @@ import {
   listAllLLMs,
   resolveLLM,
 } from "../skills/flagship.js";
-
-// Debounce utility for persistence
-const debounce = (fn, delay) => {
-  let timeoutId;
-  return (...args) => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn(...args), delay);
-  };
-};
 
 /**
  * Split a model output string into ordered segments of either visible
@@ -357,6 +490,149 @@ function stripThinkBlocks(text) {
     .trim();
 }
 
+function estimateTokenCount(text) {
+  const clean = stripThinkBlocks(text || "");
+  if (!clean) return 0;
+  const words = clean.match(/\S+/g)?.length || 0;
+  return Math.max(words, Math.ceil(clean.length / 4));
+}
+
+function inferDurationMs(inference, tokenCount = 0) {
+  if (Number.isFinite(Number(inference?.durationMs)) && Number(inference.durationMs) > 0) {
+    return Number(inference.durationMs);
+  }
+  const speed = Number(inference?.tokensPerSecond);
+  if (speed > 0 && tokenCount > 0) {
+    return Math.round((tokenCount / speed) * 1000);
+  }
+  return null;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function normalizeCodeLang(lang) {
+  return String(lang || "")
+    .trim()
+    .split(/\s+/)[0]
+    .replace(/^language-/, "")
+    .toLowerCase();
+}
+
+const KEYWORDS = {
+  js: new Set("await async break case catch class const continue default delete do else export extends finally for function if import in instanceof let new return switch throw try typeof var void while with yield true false null undefined this super".split(" ")),
+  ts: new Set("await async break case catch class const continue default delete do else enum export extends finally for function if implements import in interface instanceof let namespace new private protected public readonly return switch throw try type typeof var void while with yield true false null undefined this super".split(" ")),
+  py: new Set("and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self".split(" ")),
+  css: new Set("align-items background border color display flex grid height justify-content margin padding position width".split(" ")),
+  sh: new Set("case do done elif else esac export fi for function if in local readonly return set shift then while".split(" ")),
+  json: new Set("true false null".split(" ")),
+};
+
+function keywordSetForLang(lang) {
+  if (["javascript", "jsx", "mjs", "cjs"].includes(lang)) return KEYWORDS.js;
+  if (["typescript", "tsx"].includes(lang)) return KEYWORDS.ts;
+  if (["python", "py"].includes(lang)) return KEYWORDS.py;
+  if (["bash", "shell", "zsh", "sh"].includes(lang)) return KEYWORDS.sh;
+  if (["css", "scss"].includes(lang)) return KEYWORDS.css;
+  if (["json", "jsonc"].includes(lang)) return KEYWORDS.json;
+  return new Set();
+}
+
+function highlightCode(source, lang = "") {
+  const normalized = normalizeCodeLang(lang);
+  if (["html", "xml", "vue"].includes(normalized)) {
+    return escapeHtml(source).replace(
+      /(&lt;\/?)([A-Za-z][\w:-]*)([^&]*?)(\/?&gt;)/g,
+      (_, open, tag, attrs, close) =>
+        `<span class="bz-code-token bz-code-token--punct">${open}</span><span class="bz-code-token bz-code-token--tag">${tag}</span>${attrs}<span class="bz-code-token bz-code-token--punct">${close}</span>`,
+    );
+  }
+
+  const keywords = keywordSetForLang(normalized);
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const rest = source.slice(i);
+    const ch = source[i];
+
+    if (rest.startsWith("/*")) {
+      const end = source.indexOf("*/", i + 2);
+      const next = end === -1 ? source.length : end + 2;
+      out += `<span class="bz-code-token bz-code-token--comment">${escapeHtml(source.slice(i, next))}</span>`;
+      i = next;
+      continue;
+    }
+
+    if (rest.startsWith("//") || ((normalized === "py" || normalized === "sh") && ch === "#")) {
+      const end = source.indexOf("\n", i + 1);
+      const next = end === -1 ? source.length : end;
+      out += `<span class="bz-code-token bz-code-token--comment">${escapeHtml(source.slice(i, next))}</span>`;
+      i = next;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let next = i + 1;
+      while (next < source.length) {
+        if (source[next] === "\\") {
+          next += 2;
+          continue;
+        }
+        if (source[next] === ch) {
+          next += 1;
+          break;
+        }
+        next += 1;
+      }
+      out += `<span class="bz-code-token bz-code-token--string">${escapeHtml(source.slice(i, next))}</span>`;
+      i = next;
+      continue;
+    }
+
+    const number = rest.match(/^\b\d+(?:\.\d+)?\b/);
+    if (number) {
+      out += `<span class="bz-code-token bz-code-token--number">${escapeHtml(number[0])}</span>`;
+      i += number[0].length;
+      continue;
+    }
+
+    const ident = rest.match(/^[A-Za-z_$][\w$-]*/);
+    if (ident) {
+      const token = ident[0];
+      out += keywords.has(token)
+        ? `<span class="bz-code-token bz-code-token--keyword">${escapeHtml(token)}</span>`
+        : escapeHtml(token);
+      i += token.length;
+      continue;
+    }
+
+    out += escapeHtml(ch);
+    i += 1;
+  }
+  return out;
+}
+
+function renderCodeBlock(code, lang) {
+  const normalizedLang = normalizeCodeLang(lang);
+  const displayLang = normalizedLang || "code";
+  const highlighted = highlightCode(code, normalizedLang);
+  return `<figure class="bz-code" data-lang="${escapeHtml(displayLang)}"><header class="bz-code__head"><span class="bz-code__lang bz-mono">${escapeHtml(displayLang)}</span><button type="button" class="bz-code__copy" title="Copy code" aria-label="Copy code"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></header><pre class="bz-code__body"><code class="language-${escapeHtml(displayLang)}">${highlighted}</code></pre></figure>`;
+}
+
+function bonzaiCodeBlockPlugin(md) {
+  md.renderer.rules.fence = (tokens, idx) => {
+    const token = tokens[idx];
+    return `${renderCodeBlock(token.content, token.info)}\n`;
+  };
+  md.renderer.rules.code_block = (tokens, idx) =>
+    `${renderCodeBlock(tokens[idx].content, "")}\n`;
+}
+
 /**
  * Compute RAM and VRAM memory requirements for a model.
  *
@@ -391,7 +667,6 @@ import ChatMessage from "./chat/ChatMessage.vue";
 import ChatInput from "./chat/ChatInput.vue";
 import ChatHistoryRail from "./chat/ChatHistoryRail.vue";
 import EmptyChat from "./chat/EmptyChat.vue";
-import GenerativeActions from "./generative/GenerativeActions.vue";
 import BzCloseButton from "./BzCloseButton.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
@@ -411,7 +686,6 @@ export default {
     ChatInput,
     ChatHistoryRail,
     EmptyChat,
-    GenerativeActions,
   },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
@@ -420,10 +694,11 @@ export default {
     const mintTarget = ref(null);
 
     const openMint = (inference) => {
+      const visibleAnswer = stripThinkBlocks(inference.answer?.text || "");
       mintTarget.value = {
         inferenceType: "text",
         inferenceId: inference.id,
-        content: inference.answer?.text,
+        content: visibleAnswer,
         contentType: "text/plain",
         prompt: inference.question,
         generation: {
@@ -435,12 +710,13 @@ export default {
       };
     };
 
-    const onMinted = (result) => {
+    const onMinted = async (result) => {
       // Trigger re-render for shallowRef
       const arr = [...inferences.value];
       const inf = arr.find((i) => i.id === mintTarget.value?.inferenceId);
       if (inf) inf.nft = result;
       inferences.value = arr;
+      await persistInferences([...inferences.value]);
       mintTarget.value = null;
     };
 
@@ -450,7 +726,11 @@ export default {
     const openModel = ref(false);
     const openChat = ref(false);
     const pipelineError = ref(null);
+    const pendingDelete = ref(null);
+    const branchDraft = ref(null);
     let pipelineErrorUnsub = null;
+    let modelChangedUnsub = null;
+    let pendingDeleteTimer = null;
     const reasoningEnabled = ref(false);
 
     // Model directory
@@ -460,6 +740,7 @@ export default {
     const modelAvailabilityMap = reactive({});
     const modelDownloading = reactive({});
     const modelDownloadProgress = reactive({});
+    const modelDownloadErrors = reactive({});
 
     // Migration progress state
     const migrationProgress = reactive({
@@ -554,10 +835,64 @@ export default {
       });
       return enriched;
     });
+    const recommendedModels = computed(() => {
+      if (!sysInfo.value) {
+        return [...sortedModels.value]
+          .sort((a, b) => (a.vramGB || 0) - (b.vramGB || 0))
+          .slice(0, 3);
+      }
+      const fitting = sortedModels.value.filter((model) => model.fitTier <= 2);
+      return (fitting.length ? fitting : sortedModels.value).slice(0, 3);
+    });
 
     // Default model sourced from the registry — Qwen3.5 0.8B Q4 is the
     // lightest option and always has a single tier, so it's safe as a start.
     const currentModel = ref(_entryFromResolved(resolveLLM("qwen3_5_0_8b")));
+    const loadedModel = ref(null);
+
+    const sameModelFile = (a, b) =>
+      !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
+
+    const isCurrentModelLoaded = computed(() =>
+      sameModelFile(loadedModel.value?.filename, currentModel.value?.filename),
+    );
+
+    const isChatReady = computed(() => isCurrentModelLoaded.value);
+
+    const modelRequiredSubhead = computed(() => {
+      if (!isModel.value) {
+        return `Download ${currentModel.value.modelname} (${currentModel.value.filesize}) to start chatting.`;
+      }
+      if (currentModel.value.isMultimodal && !isMmprojAvailable.value) {
+        return `Download vision support for ${currentModel.value.modelname} to start chatting.`;
+      }
+      return `Load ${currentModel.value.modelname} to start chatting.`;
+    });
+
+    const syncCurrentModelFromLoaded = (loaded) => {
+      if (!loaded?.filename) return;
+      const match = Object.values(availableModels.value).find((m) =>
+        sameModelFile(m.filename, loaded.filename),
+      );
+      currentModel.value = match
+        ? { ...match }
+        : { ...currentModel.value, ...loaded };
+    };
+
+    const refreshLoadedModel = async () => {
+      const loaded = await window.electronAPI?.getLoadedModel?.();
+      loadedModel.value = loaded || null;
+      if (loaded) {
+        syncCurrentModelFromLoaded(loaded);
+        isModel.value = true;
+        if (currentModel.value.isMultimodal && currentModel.value.mmproj) {
+          isMmprojAvailable.value = await window.electronAPI.checkMmproj(
+            currentModel.value.mmproj,
+          );
+        }
+      }
+      return loadedModel.value;
+    };
 
     const pickModel = async (model) => {
       currentModel.value = { ...model };
@@ -591,18 +926,17 @@ export default {
         }
       });
 
-      const success = await window.electronAPI.downloadModel(url, filename);
+      const result = await window.electronAPI.downloadModel(url, filename);
       isLoading.value = false;
       downloadProgress.value = 0;
 
-      if (success) {
+      if (downloadSucceeded(result)) {
         isModel.value = true;
         modelAvailabilityMap[filename] = true;
         console.log("Model download success!");
       } else {
         console.error("Model download failure...");
       }
-      isLoading.value = false;
     };
 
     const deleteModel = async (filename) => {
@@ -636,10 +970,18 @@ export default {
       );
     };
 
+    const downloadSucceeded = (result) => {
+      if (result === true) return true;
+      if (!result || result.canceled || result.error) return false;
+      return !!result.savedPath;
+    };
+
     // Download a model from the model list
     const downloadModelInList = async (model) => {
       modelDownloading[model.filename] = true;
       modelDownloadProgress[model.filename] = 0;
+      delete modelDownloadErrors[model.filename];
+      let success = false;
 
       const progressHandler = (_e, data) => {
         if (data.filename === model.filename) {
@@ -651,19 +993,36 @@ export default {
       window.electronAPI.onDownloadProgress(progressHandler);
 
       try {
-        const success = await window.electronAPI.downloadModel(
+        const result = await window.electronAPI.downloadModel(
           model.url,
           model.filename,
         );
+        success = downloadSucceeded(result);
         if (success) {
           modelAvailabilityMap[model.filename] = true;
+        } else if (result?.canceled) {
+          modelDownloadErrors[model.filename] = "Canceled";
+        } else {
+          modelDownloadErrors[model.filename] = result?.error || "Download failed";
         }
       } catch (e) {
+        modelDownloadErrors[model.filename] = e?.message || "Download failed";
         console.error(`Failed to download ${model.filename}:`, e);
       } finally {
         modelDownloading[model.filename] = false;
         modelDownloadProgress[model.filename] = 0;
       }
+      return success;
+    };
+
+    const recommendedModelAction = (model) => {
+      if (modelDownloading[model.filename]) {
+        const pct = modelDownloadProgress[model.filename] || 0;
+        return pct ? `Cancel ${pct}%` : "Cancel download";
+      }
+      if (modelAvailabilityMap[model.filename]) return "Load";
+      if (modelDownloadErrors[model.filename]) return "Retry download";
+      return "Download";
     };
 
     // Delete a model from the model list
@@ -749,67 +1108,59 @@ export default {
       modelPicker.show();
     };
 
-    // Unified action descriptors fed into <GenerativeActions> for
-    // chat messages. Replaces the previous bz-msg-tool inline
-    // buttons with the same shared component the image / video /
-    // audio tabs use — one action vocabulary across the whole app.
-    const actionsFor = (inference) => {
-      const minted = !!inference?.nft;
-      const copied = !!hasCopy[inference._originalIndex];
-      return [
-        { id: "copy",
-          icon: copied ? "check" : "content_copy",
-          label: copied ? "Copied" : "Copy",
-          variant: copied ? "success" : "default",
-          title: "Copy answer" },
-        { id: "mint",
-          icon: minted ? "check_circle" : "token",
-          label: minted ? "Minted" : "Mint",
-          variant: minted ? "success" : "default",
-          disabled: minted },
-        { id: "delete",
-          icon: "delete",
-          label: "Delete",
-          variant: "destructive",
-          title: "Remove this result" },
-      ];
-    };
-    const handleAction = (id, inference) => {
-      switch (id) {
-        case "copy":
-          copy(stripThinkBlocks(inference.answer.text));
-          hasCopy[inference._originalIndex] = true;
-          break;
-        case "mint":   openMint(inference); break;
-        case "delete": removeInference(inference._originalIndex); break;
-      }
-    };
-
     // Per-message inspector — wired through ChatMessage's @inspect
     // event. Pulls the chat-specific metadata onto the global rail
     // shape (kind/text, model, network origin, mint state if minted).
     const onInspectInference = (inference) => {
       if (!inference) return;
+      const visibleAnswer = stripThinkBlocks(inference.answer?.text || "");
+      const rawAnswer = inference.answer?.text || "";
+      const promptText = inference.question || "";
+      const wordCount = (text) => String(text || "").trim().split(/\s+/).filter(Boolean).length;
+      const currentParams = inference.requestOptions || getChatRequestOptions();
       generationInspector.show({
+        id: inference.id,
+        answerId: inference.answer?.id,
         kind: "text",
-        prompt: inference.question || "",
+        prompt: promptText,
+        outputText: visibleAnswer,
+        rawOutputText: rawAnswer,
         model: inference.model || (currentModel.value?.modelname || ""),
         modelId: currentModel.value?.filename,
         ts: inference.timestamp,
+        createdAt: inference.createdAt,
+        status: inference.error ? "Error" : inference.stopped ? "Stopped" : "Complete",
+        errorMessage: inference.errorMessage || "",
         networkMode: inference.networkMode || "local",
         peerId: inference.peerId,
+        maxTokens: currentParams.maxTokens,
+        temperature: currentParams.temperature,
+        seed: currentParams.seed,
+        reasoning: inference.reasoningEnabled == null
+          ? (isThinkingModel.value ? (reasoningEnabled.value ? "Enabled" : "Disabled") : "Not supported")
+          : (inference.reasoningEnabled ? "Enabled" : "Disabled"),
+        systemPrompt: String(inference.systemPrompt || chatParams.systemPrompt || "").trim(),
         mintState: inference.nft || null,
+        lineage: {
+          parentId: inference.branchParentId || null,
+          rootId: inference.branchRootId || null,
+          depth: Number(inference.branchDepth) || 0,
+          pinned: !!inference.pinned,
+        },
         extra: {
-          ...(inference.tokensPerSecond ? { tokensPerSecond: inference.tokensPerSecond } : {}),
-          ...(inference.answer?.text
-            ? { responseChars: String(inference.answer.text.length) }
-            : {}),
+          promptChars: String(promptText.length),
+          promptWords: String(wordCount(promptText)),
+          responseChars: String(visibleAnswer.length),
+          responseWords: String(wordCount(visibleAnswer)),
+          rawResponseChars: String(rawAnswer.length),
+          ...(inference.tokensPerSecond ? { tokensPerSecond: `${inference.tokensPerSecond} tok/s` } : {}),
         },
       });
     };
 
     const loadModel = async (model) => {
       console.log("Now loading (raw)...", model);
+      isLoading.value = true;
 
       const payload = {
         filename: model.filename,
@@ -827,16 +1178,45 @@ export default {
 
       console.log("Sending to electronAPI.loadModel:", payload);
 
-      await window.electronAPI.loadModel(payload);
+      try {
+        await window.electronAPI.loadModel(payload);
+        loadedModel.value = payload;
 
-      // Update mmproj availability for multimodal models
-      if (model.isMultimodal && model.mmproj) {
-        isMmprojAvailable.value = await window.electronAPI.checkMmproj(
-          model.mmproj,
-        );
-      } else {
-        isMmprojAvailable.value = false;
+        // Update mmproj availability for multimodal models
+        if (model.isMultimodal && model.mmproj) {
+          isMmprojAvailable.value = await window.electronAPI.checkMmproj(
+            model.mmproj,
+          );
+        } else {
+          isMmprojAvailable.value = false;
+        }
+      } finally {
+        isLoading.value = false;
       }
+    };
+
+    const handleRecommendedModel = async (model) => {
+      if (!model?.filename) return;
+      if (modelDownloading[model.filename]) {
+        await window.electronAPI?.cancelModelDownload?.(model.filename);
+        return;
+      }
+      if (isLoading.value) return;
+      currentModel.value = { ...model };
+      await checkMmprojAvailability(model);
+
+      let available = modelAvailabilityMap[model.filename];
+      if (available === undefined) {
+        available = await isModelAvailable(model.filename);
+        modelAvailabilityMap[model.filename] = available;
+      }
+
+      if (!available) {
+        const downloaded = await downloadModelInList(model);
+        if (!downloaded) return;
+      }
+
+      await loadModel(model);
     };
 
     // Image attachment handlers
@@ -913,14 +1293,6 @@ export default {
     const inferences = shallowRef([]);
     const hasCopy = shallowRef([]);
 
-    // ------------ lazy loading pagination ----------------
-    const ITEMS_PER_PAGE = 20;
-    const displayedCount = ref(ITEMS_PER_PAGE);
-    const loadMoreSentinel = ref(null);
-    const isLoadingMore = ref(false);
-    const showScrollTop = ref(false);
-    const scrollContainer = ref(null);
-
     // Get text content from any format
     const getTextContent = (item) => {
       // Component format: answer.text
@@ -976,123 +1348,384 @@ export default {
       return normalized.reverse();
     });
 
-    // Displayed inferences (lazy loaded subset)
-    const paginatedInferences = computed(() => {
-      return reversedInferences.value.slice(0, displayedCount.value);
+    const toDbGeneration = (inf) => ({
+      id: inf.id,
+      pipeline: "text",
+      mode: "chat",
+      prompt: inf.question || "",
+      outputText: inf.answer?.text || "",
+      modelKey: inf.model || null,
+      params: {
+        answerId: inf.answer?.id || inf.id,
+        tokensPerSecond: inf.tokensPerSecond || null,
+        networkMode: inf.networkMode || "local",
+        nft: inf.nft || null,
+        stopped: !!inf.stopped,
+        pinned: !!inf.pinned,
+        branchParentId: inf.branchParentId || null,
+        branchRootId: inf.branchRootId || null,
+        branchDepth: Number(inf.branchDepth) || 0,
+        requestOptions: inf.requestOptions || null,
+        reasoningEnabled: inf.reasoningEnabled ?? null,
+        systemPrompt: inf.systemPrompt || "",
+        durationMs: inf.durationMs || null,
+      },
+      triggeredBy: "user",
+      status: inf.error ? "error" : "done",
+      error: inf.errorMessage || null,
+      createdAt: inf.timestamp || Date.now(),
+      finishedAt: inf.timestamp || Date.now(),
     });
 
-    // Check if there are more items to load
-    const hasMore = computed(
-      () => displayedCount.value < inferences.value.length,
-    );
-
-    // Load more items
-    const loadMore = () => {
-      if (isLoadingMore.value || !hasMore.value) return;
-      isLoadingMore.value = true;
-      setTimeout(() => {
-        displayedCount.value = Math.min(
-          displayedCount.value + ITEMS_PER_PAGE,
-          inferences.value.length,
-        );
-        isLoadingMore.value = false;
-      }, 100);
-    };
-
-    // Reset to initial count when new inference is added
-    const resetToFirstPage = () => {
-      displayedCount.value = ITEMS_PER_PAGE;
-    };
-
-    // Intersection Observer for infinite scroll
-    let scrollObserver = null;
-    const setupScrollObserver = () => {
-      if (scrollObserver) scrollObserver.disconnect();
-      if (!loadMoreSentinel.value) return;
-
-      // Use the scroll container as root for proper intersection detection
-      const root =
-        scrollContainer.value ||
-        document.querySelector(".models__deployment-install");
-      scrollObserver = new IntersectionObserver(
-        (entries) => {
-          if (entries[0].isIntersecting && hasMore.value) {
-            loadMore();
-          }
+    const fromDbGeneration = (row) => {
+      const params = row?.params && typeof row.params === "object" ? row.params : {};
+      return {
+        id: row.id,
+        question: row.prompt || "",
+        answer: {
+          id: params.answerId || row.id,
+          text: row.outputText || "",
         },
-        { root, rootMargin: "100px" },
-      );
-      scrollObserver.observe(loadMoreSentinel.value);
+        type: "text",
+        timestamp: row.createdAt || Date.now(),
+        createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString(),
+        model: row.modelKey || row.modelFilename || "Unknown",
+        tokensPerSecond: params.tokensPerSecond || null,
+        networkMode: params.networkMode || "local",
+        nft: params.nft || null,
+        stopped: !!params.stopped,
+        pinned: !!params.pinned,
+        branchParentId: params.branchParentId || null,
+        branchRootId: params.branchRootId || null,
+        branchDepth: Number(params.branchDepth) || 0,
+        requestOptions: params.requestOptions || null,
+        reasoningEnabled: params.reasoningEnabled ?? null,
+        systemPrompt: params.systemPrompt || "",
+        durationMs: params.durationMs || null,
+        error: row.status === "error",
+        errorMessage: row.error || "",
+      };
     };
 
-    const cleanupScrollObserver = () => {
-      if (scrollObserver) {
-        scrollObserver.disconnect();
-        scrollObserver = null;
+    const saveInferenceToDb = async (inf) => {
+      const db = window.electronAPI?.db?.generations;
+      if (!db?.create || !db?.update || !inf?.id) return false;
+      try {
+        const row = toDbGeneration(inf);
+        const existing = await db.get?.(inf.id);
+        if (existing) {
+          await db.update(inf.id, row);
+        } else {
+          await db.create(row, []);
+        }
+        return true;
+      } catch (e) {
+        console.warn("[GenerativeText] Failed to save SQLite generation:", e);
+        return false;
       }
     };
 
-    // Scroll to top handler
-    const scrollToTop = () => {
-      const container =
-        scrollContainer.value ||
-        document.querySelector(".models__deployment-install");
-      if (container) {
-        container.scrollTo({ top: 0, behavior: "smooth" });
+    const deleteInferenceFromDb = async (id) => {
+      const db = window.electronAPI?.db?.generations;
+      if (!db?.delete || !id) return false;
+      try {
+        await db.delete(id);
+        return true;
+      } catch (e) {
+        console.warn("[GenerativeText] Failed to delete SQLite generation:", e);
+        return false;
       }
     };
 
-    // Handle scroll to show/hide scroll-to-top button (throttled)
-    let scrollRafId = null;
-    const handleScroll = (e) => {
-      if (scrollRafId) return;
-      scrollRafId = requestAnimationFrame(() => {
-        const scrollTop = e.target?.scrollTop || 0;
-        showScrollTop.value = scrollTop > 400;
-        scrollRafId = null;
-      });
-    };
-
-    const setupScrollListener = () => {
-      const container = document.querySelector(".models__deployment-install");
-      if (container) {
-        scrollContainer.value = container;
-        container.addEventListener("scroll", handleScroll, { passive: true });
+    const loadInferencesFromDb = async () => {
+      const db = window.electronAPI?.db?.generations;
+      if (!db?.list) return [];
+      try {
+        const rows = await db.list({
+          pipeline: "text",
+          triggeredBy: "user",
+          limit: 1000,
+        });
+        return Array.isArray(rows)
+          ? rows
+              .filter((row) => row.prompt || row.outputText)
+              .map(fromDbGeneration)
+              .reverse()
+          : [];
+      } catch (e) {
+        console.warn("[GenerativeText] Failed to load SQLite generations:", e);
+        return [];
       }
     };
 
-    const cleanupScrollListener = () => {
-      if (scrollContainer.value) {
-        scrollContainer.value.removeEventListener("scroll", handleScroll);
+    const clearTextInferencesFromDb = async () => {
+      const db = window.electronAPI?.db?.generations;
+      if (!db?.list || !db?.delete) return false;
+      try {
+        const rows = await db.list({
+          pipeline: "text",
+          triggeredBy: "user",
+          limit: 10000,
+        });
+        await Promise.all((rows || []).map((row) => db.delete(row.id)));
+        return true;
+      } catch (e) {
+        console.warn("[GenerativeText] Failed to clear SQLite text generations:", e);
+        return false;
       }
     };
 
     // Delete a single inference from history
     const removeInference = async (idx) => {
       if (idx < 0 || idx >= inferences.value.length) return;
+      const target = inferences.value[idx];
+      await deleteInferenceFromDb(target?.id);
       inferences.value = inferences.value.filter((_, i) => i !== idx);
       hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
-      persistInferences([...inferences.value]);
+      await persistInferences([...inferences.value]);
     };
 
-    // Debounced persistence
-    const persistInferences = debounce(async (data) => {
+    const clearDeleteToastTimer = () => {
+      if (!pendingDeleteTimer) return;
+      window.clearTimeout(pendingDeleteTimer);
+      pendingDeleteTimer = null;
+    };
+
+    const dismissDeleteToast = () => {
+      clearDeleteToastTimer();
+      pendingDelete.value = null;
+    };
+
+    const deleteInferenceAtIndex = async (idx) => {
+      if (idx < 0 || idx >= inferences.value.length) return;
+      const target = inferences.value[idx];
+      await deleteInferenceFromDb(target?.id);
+      inferences.value = inferences.value.filter((_, i) => i !== idx);
+      hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
+      if (activeRailId.value === target?.id) {
+        activeRailId.value = inferences.value[idx]?.id || inferences.value[idx - 1]?.id || null;
+      }
+      await persistInferences([...inferences.value]);
+    };
+
+    const deleteMessage = async (inf) => {
+      const idx = inferences.value.findIndex((i) => i.id === inf.id);
+      if (idx < 0) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = {
+        id: inf.id,
+        prompt: inf.question || "",
+      };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const confirmDeleteMessage = async () => {
+      const id = pendingDelete.value?.id;
+      if (!id) return;
+      dismissDeleteToast();
+      const idx = inferences.value.findIndex((i) => i.id === id);
+      await deleteInferenceAtIndex(idx);
+    };
+
+    const editMessage = async (inf) => {
+      const idx = inferences.value.findIndex((i) => i.id === inf.id);
+      if (idx < 0) return;
+      branchDraft.value = {
+        parentId: inf.id,
+        rootId: inf.branchRootId || inf.id,
+        depth: Math.min(Number(inf.branchDepth || 0) + 1, 4),
+      };
+      activeRailId.value = inf.id;
+      isNewChatDraft.value = false;
+      form.prompt = inf.question;
+      nextTick(() => chatInputRef.value?.focus?.());
+    };
+
+    const regenerateMessage = async (inf) => {
+      const idx = inferences.value.findIndex((i) => i.id === inf.id);
+      if (idx < 0) return;
+      const target = inferences.value[idx];
+      // Remove the old Q&A pair, then re-send the same prompt so a
+      // fresh assistant response is generated in its place.
+      await deleteInferenceFromDb(target.id);
+      inferences.value = inferences.value.filter((_, i) => i !== idx);
+      hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
+      await persistInferences([...inferences.value]);
+      await sendMessage(target.question);
+    };
+
+    const retryMessage = async (inf) => {
+      const idx = inferences.value.findIndex((i) => i.id === inf.id);
+      if (idx < 0) return;
+      const target = inferences.value[idx];
+      // Clear error state before retrying
+      target.error = false;
+      target.errorMessage = "";
+      inferences.value = [...inferences.value];
+      // Re-send the same prompt (keep the user message, replace answer)
+      await sendMessage(target.question);
+    };
+
+    const canSwitchInferenceToLocal = (inf) => {
+      return !!inf?.error && !!inf?.networkMode && inf.networkMode !== "local";
+    };
+
+    const switchInferenceToLocal = async (inf) => {
       try {
-        // Use JSON.parse/stringify to ensure proper serialization
-        await window.electronAPI?.store?.set?.(
-          "textInferences",
-          JSON.parse(JSON.stringify(data)),
-        );
+        await window.electronAPI?.store?.set?.("p2p.networkMode", "local");
+        await window.electronAPI?.store?.set?.("p2p.pipeline.enabled", false);
+        pipelineError.value = null;
+      } catch (e) {
+        console.warn("[GenerativeText] Failed to switch to local mode:", e);
+      }
+      await retryMessage(inf);
+    };
+
+    const togglePinnedInference = async (entry) => {
+      const idx = inferences.value.findIndex((inf) => inf.id === entry.id);
+      if (idx < 0) return;
+      const next = [...inferences.value];
+      next[idx] = {
+        ...next[idx],
+        pinned: !next[idx].pinned,
+      };
+      inferences.value = next;
+      await persistInferences(next);
+    };
+
+    const persistInferences = async (data) => {
+      try {
+        const serialized = JSON.parse(JSON.stringify(data));
+        await Promise.all([
+          window.electronAPI?.store?.set?.("textInferences", serialized),
+          window.electronAPI?.store?.set?.("unifiedTextInferences", serialized),
+          ...serialized.map((inf) => saveInferenceToDb(inf)),
+        ]);
       } catch (e) {
         console.error("[GenerativeText] Failed to persist inferences:", e);
       }
-    }, 500);
+    };
+
+    // ─── Streaming performance optimization ──────────────────
+    // Batches shallowRef array replacements via requestAnimationFrame
+    // so that rapid token-by-token streaming updates coalesce into
+    // one reactive render per frame instead of per token.
+    let _rafPending = false;
+    const scheduleStreamUpdate = () => {
+      if (_rafPending) return;
+      _rafPending = true;
+      requestAnimationFrame(() => {
+        inferences.value = [...inferences.value];
+        _rafPending = false;
+      });
+    };
 
     const initialState = {
       prompt: "",
     };
 
     const form = reactive({ ...initialState });
+    const chatParamsOpen = ref(false);
+    const chatParams = reactive({
+      temperature: 0.7,
+      maxTokens: 2048,
+      seed: "",
+      systemPrompt: "",
+    });
+    let appliedSystemPrompt = "";
+
+    const getChatRequestOptions = () => {
+      const maxTokens = Math.min(
+        8192,
+        Math.max(128, Number(chatParams.maxTokens) || 2048),
+      );
+      const temperature = Math.min(
+        2,
+        Math.max(0, Number(chatParams.temperature) || 0),
+      );
+      const seedText = String(chatParams.seed ?? "").trim();
+      const seed = seedText === "" ? null : Number(seedText);
+      return {
+        maxTokens,
+        temperature,
+        ...(Number.isInteger(seed) && seed >= 0 ? { seed } : {}),
+      };
+    };
+
+    const syncSystemPrompt = async () => {
+      const nextPrompt = String(chatParams.systemPrompt || "").trim();
+      if (nextPrompt === appliedSystemPrompt) return;
+      await window.electronAPI?.setSystemPrompt?.(nextPrompt);
+      appliedSystemPrompt = nextPrompt;
+    };
+
+    const suggestionChips = [
+      {
+        id: "deepen",
+        label: "Go deeper",
+        icon: "travel_explore",
+        title: "Ask for a richer follow-up with examples and tradeoffs",
+        prompt: ({ question, answer }) =>
+          `Go deeper on your previous answer. Use the original question and answer as context, then add the most useful missing details, examples, edge cases, and tradeoffs.\n\nOriginal question:\n${question}\n\nPrevious answer:\n${answer}`,
+      },
+      {
+        id: "clarify",
+        label: "Clarify",
+        icon: "help",
+        title: "Ask for a simpler explanation and assumptions",
+        prompt: ({ question, answer }) =>
+          `Clarify your previous answer. Start with the plain-English takeaway, define any ambiguous terms, list assumptions, and call out what I should verify next.\n\nOriginal question:\n${question}\n\nPrevious answer:\n${answer}`,
+      },
+      {
+        id: "code",
+        label: "Make code",
+        icon: "code",
+        title: "Turn the answer into a practical implementation",
+        prompt: ({ question, answer }) =>
+          `Turn your previous answer into practical code or implementation steps. Include file-level guidance, important edge cases, and a short verification checklist. If code is not appropriate, explain the closest concrete artifact instead.\n\nOriginal question:\n${question}\n\nPrevious answer:\n${answer}`,
+      },
+    ];
+
+    const buildSuggestionPrompt = (chip, inf) => {
+      const question = String(inf?.question || "").trim() || "(No original question captured)";
+      const answer = stripThinkBlocks(inf?.answer?.text || "").trim() || "(No previous answer captured)";
+      return chip.prompt({ question, answer });
+    };
+    const slashCommands = [
+      {
+        id: "new",
+        label: "New chat",
+        description: "Start a blank visible thread",
+        icon: "add",
+      },
+      {
+        id: "models",
+        label: "Browse models",
+        description: "Open the model picker",
+        icon: "folder_open",
+      },
+      {
+        id: "history",
+        label: "Toggle history",
+        description: "Show or hide the history rail",
+        icon: "history",
+      },
+      {
+        id: "params",
+        label: "Advanced params",
+        description: "Open generation controls",
+        icon: "tune",
+      },
+      {
+        id: "clear",
+        label: "Clear chat",
+        description: "Clear saved text history",
+        icon: "ink_eraser",
+      },
+    ];
 
     // Image attachment for multimodal models
     const attachedImage = ref(null); // { dataUrl, name }
@@ -1108,6 +1741,10 @@ export default {
     const isThinkingModel = computed(() => {
       return currentModel.value?.thinking === true;
     });
+    const composerHint = computed(() => {
+      if (branchDraft.value) return "Forking conversation";
+      return reasoningEnabled.value && isThinkingModel.value ? "Reasoning ON" : "";
+    });
 
     function resetForm() {
       Object.assign(form, initialState);
@@ -1115,11 +1752,22 @@ export default {
     }
 
     async function resetChat() {
+      if (
+        inferences.value.length > 0 &&
+        !confirm("Clear this conversation? This cannot be undone.")
+      ) {
+        return;
+      }
       inferences.value = [];
       activeRailId.value = null;
+      isNewChatDraft.value = false;
       // Clear persisted text inferences
       try {
-        await window.electronAPI?.store?.set?.("textInferences", []);
+        await Promise.all([
+          clearTextInferencesFromDb(),
+          window.electronAPI?.store?.set?.("textInferences", []),
+          window.electronAPI?.store?.set?.("unifiedTextInferences", []),
+        ]);
       } catch (e) {
         console.error("Failed to clear text inferences:", e);
       }
@@ -1150,7 +1798,14 @@ export default {
           const text = await file.text();
           const data = JSON.parse(text);
           if (Array.isArray(data)) {
-            inferences.value = [...data, ...inferences.value];
+            const existingIds = new Set(inferences.value.map((inf) => inf.id));
+            const newItems = data.filter((item) => !existingIds.has(item.id));
+            if (newItems.length < data.length) {
+              console.log(
+                `[GenerativeText] Skipped ${data.length - newItems.length} duplicate(s) on import`,
+              );
+            }
+            inferences.value = [...newItems, ...inferences.value];
             hasCopy.value = new Array(inferences.value.length).fill(false);
             await persistInferences([...inferences.value]);
           }
@@ -1166,11 +1821,24 @@ export default {
     // activeInference lookup never fail.
     const loadHistory = async () => {
       try {
-        const saved = await window.electronAPI?.store?.get?.(
-          "textInferences",
-          [],
-        );
-        if (Array.isArray(saved)) {
+        let saved = await loadInferencesFromDb();
+        if (!saved.length) {
+          const hasTextHistory = await window.electronAPI?.store?.has?.(
+            "textInferences",
+          );
+          if (hasTextHistory === false) {
+            saved = await window.electronAPI?.store?.get?.(
+              "unifiedTextInferences",
+              [],
+            );
+          } else {
+            saved = await window.electronAPI?.store?.get?.(
+              "textInferences",
+              [],
+            );
+          }
+        }
+        if (Array.isArray(saved) && saved.length > 0) {
           inferences.value = saved.map((inf) => ({
             ...inf,
             id: inf.id || uuid(),
@@ -1185,6 +1853,13 @@ export default {
     // Streaming state: the inference currently being streamed
     const streamingText = ref("");
     const streamingInferenceId = ref(null);
+    const isStopping = ref(false);
+
+    const stopGeneration = () => {
+      if (!isLoading.value) return;
+      isStopping.value = true;
+      try { window.electronAPI.abortChatStream(); } catch {}
+    };
 
     const sendMessage = async (prompt) => {
       if (!hasAccess.value) return;
@@ -1200,6 +1875,8 @@ export default {
       if (currentModel.value?.filename) {
         await loadModel(currentModel.value);
       }
+      await syncSystemPrompt();
+      const chatRequestOptions = getChatRequestOptions();
 
       isLoading.value = true;
       streamingText.value = "";
@@ -1207,8 +1884,23 @@ export default {
       // Create the inference entry immediately so streaming text appears
       const inferenceId = uuid();
       const answerId = uuid();
+      const activeBranch = branchDraft.value ? { ...branchDraft.value } : null;
       streamingInferenceId.value = answerId;
       const modelName = currentModel.value?.modelname || "Unknown";
+      let configuredNetworkMode = "local";
+      let pipelineEnabled = false;
+      try {
+        configuredNetworkMode = await window.electronAPI?.store?.get?.("p2p.networkMode", "local") || "local";
+        pipelineEnabled = await window.electronAPI?.store?.get?.("p2p.pipeline.enabled", false) || false;
+      } catch (e) {
+        console.warn("[GenerativeText] Failed to read network mode:", e);
+      }
+      const initialNetworkMode =
+        configuredNetworkMode === "consumer"
+          ? pipelineEnabled
+            ? "private"
+            : "remote"
+          : "local";
       const newInference = {
         id: inferenceId,
         question: prompt,
@@ -1216,10 +1908,23 @@ export default {
         image: attachedImage.value?.dataUrl || null,
         model: modelName,
         tokensPerSecond: null,
+        networkMode: initialNetworkMode,
+        error: false,
+        errorMessage: "",
+        branchParentId: activeBranch?.parentId || null,
+        branchRootId: activeBranch?.rootId || null,
+        branchDepth: activeBranch?.depth || 0,
+        requestOptions: { ...chatRequestOptions },
+        reasoningEnabled: isThinkingModel.value ? reasoningEnabled.value === true : null,
+        systemPrompt: String(chatParams.systemPrompt || "").trim(),
+        timestamp: Date.now(),
+        durationMs: null,
       };
       inferences.value = [...inferences.value, newInference];
       hasCopy.value = [...hasCopy.value, false];
       activeRailId.value = newInference.id; // show the new conversation
+      isNewChatDraft.value = false;
+      branchDraft.value = null;
 
       try {
         let assistantResult;
@@ -1247,7 +1952,7 @@ export default {
               const elapsed = (performance.now() - startTime) / 1000;
               if (elapsed > 0.1)
                 last.tokensPerSecond = (tokenCount / elapsed).toFixed(1);
-              inferences.value = [...arr];
+              scheduleStreamUpdate();
             }
           });
 
@@ -1256,7 +1961,7 @@ export default {
               messages: [{ role: 'user', content: prompt }],
               model: currentModel.value?.modelname,
               prompt, // for pipeline orchestrator
-              maxTokens: 2048,
+              ...chatRequestOptions,
             });
 
             if (result?.ok && result.result) {
@@ -1265,7 +1970,6 @@ export default {
                 assistantResult = result.result?.text || streamingText.value || '';
               } else if (result.remote) {
                 routingMode = 'remote';
-                // Remote provider: extract from OpenAI-compatible response
                 const text = result.result?.choices?.[0]?.message?.content || JSON.stringify(result.result);
                 assistantResult = text;
                 tokenCount = text.split(/\s+/).length;
@@ -1274,7 +1978,7 @@ export default {
                 const last = arr[arr.length - 1];
                 if (last && last.answer.id === answerId) {
                   last.answer.text = text;
-                  inferences.value = [...arr];
+                  scheduleStreamUpdate();
                 }
               }
             }
@@ -1282,7 +1986,7 @@ export default {
             // useLocal or no result: fall through to local streaming
             if (!assistantResult) {
               // Fallback: direct local streaming via llama-server
-              const chatOpts = {};
+              const chatOpts = { ...chatRequestOptions };
               if (!reasoningEnabled.value) chatOpts.thoughtTokens = 0;
               // Live toggle of hybrid reasoning. Forwarded to llama-server
               // as request-level `chat_template_kwargs.enable_thinking`,
@@ -1308,7 +2012,7 @@ export default {
                     const elapsed = (performance.now() - startTime) / 1000;
                     if (elapsed > 0.1)
                       last.tokensPerSecond = (tokenCount / elapsed).toFixed(1);
-                    inferences.value = [...arr];
+                    scheduleStreamUpdate();
                   }
                 });
 
@@ -1343,6 +2047,7 @@ export default {
           last.answer.text = assistantResult;
           last.tokensPerSecond = finalTokPerSec;
           last.networkMode = routingMode;
+          last.durationMs = Math.round(elapsedSec * 1000);
           inferences.value = [...arr];
         }
 
@@ -1352,88 +2057,74 @@ export default {
           tokPerSec: finalTokPerSec,
         });
 
-        // Debounced persistence
-        persistInferences([...inferences.value]);
+        // Mark as stopped if user clicked Stop during this turn
+        if (isStopping.value) {
+          const arr = inferences.value;
+          const last = arr[arr.length - 1];
+          if (last && last.answer.id === answerId) {
+            last.stopped = true;
+            // Prefer the accumulated streaming text if the returned result is empty
+            if (!assistantResult) last.answer.text = streamingText.value;
+            inferences.value = [...arr];
+          }
+          isStopping.value = false;
+        }
 
-        // Save to unified inference store with performance metadata
-        addTextInference(prompt, assistantResult, {
-          model: modelName,
-          tokensUsed: tokenCount,
-          tokensPerSecond: finalTokPerSec,
-          elapsed: elapsedSec,
-          source: 'bonzai',
-          networkMode: routingMode,
-        });
+        await persistInferences([...inferences.value]);
 
         resetForm();
         isLoading.value = false;
       } catch (e) {
         console.error("Chat error:", e);
-        // Remove the empty streaming entry on error
         const arr = inferences.value;
         const last = arr[arr.length - 1];
-        if (last && last.answer.id === answerId && !last.answer.text) {
-          inferences.value = arr.slice(0, -1);
-          hasCopy.value = hasCopy.value.slice(0, -1);
+        if (last && last.answer.id === answerId) {
+          last.answer.text = last.answer.text || streamingText.value || "";
+          last.error = true;
+          last.errorMessage = e.message || "Generation failed";
+          inferences.value = [...arr];
         }
+        await persistInferences([...inferences.value]);
         isLoading.value = false;
       } finally {
         streamingText.value = "";
         streamingInferenceId.value = null;
+        isStopping.value = false;
       }
     };
 
     const { toClipboard } = useClipboard();
-
-    const copy = async (answer) => {
-      try {
-        await toClipboard(answer);
-        console.log("Answered copied to clipboard.");
-      } catch (e) {
-        console.error(e);
-      }
+    const markdownOptions = {
+      html: false,
+      linkify: true,
+      breaks: false,
     };
+    const markdownPlugins = [bonzaiCodeBlockPlugin];
 
-    // Handle clicks inside answer divs — code block copy via event delegation
     const handleAnswerClick = async (event) => {
-      const btn = event.target.closest(".code-copy-btn");
+      const btn = event.target.closest(".bz-code__copy");
       if (!btn) return;
-      const pre = btn.closest("pre");
-      if (!pre) return;
-      const code = pre.querySelector("code");
-      const text = code ? code.textContent : pre.textContent;
+      const block = btn.closest(".bz-code");
+      const code = block?.querySelector("code");
+      const icon = btn.querySelector(".material-symbols-outlined");
+      const text = code?.textContent || "";
+      if (!text) return;
       try {
         await toClipboard(text);
-        btn.textContent = "Copied!";
+        btn.classList.add("bz-code__copy--ok");
+        btn.title = "Copied";
+        btn.setAttribute("aria-label", "Copied to clipboard");
+        if (icon) icon.textContent = "check";
         setTimeout(() => {
-          btn.textContent = "Copy";
+          btn.classList.remove("bz-code__copy--ok");
+          btn.title = "Copy code";
+          btn.setAttribute("aria-label", "Copy code");
+          if (icon) icon.textContent = "content_copy";
         }, 1500);
       } catch (e) {
         console.error("Failed to copy code:", e);
       }
     };
-
-    // Inject copy buttons into rendered <pre> code blocks
-    const injectCodeCopyButtons = () => {
-      const answerEls = document.querySelectorAll(".markdown-body pre");
-      answerEls.forEach((pre) => {
-        if (pre.querySelector(".code-copy-btn")) return; // already injected
-        const btn = document.createElement("button");
-        btn.className = "code-copy-btn";
-        btn.textContent = "Copy";
-        btn.type = "button";
-        pre.style.position = "relative";
-        pre.appendChild(btn);
-      });
-    };
-
-    // Re-inject copy buttons whenever inferences change
-    watch(
-      () => inferences.value.length,
-      () => nextTick(injectCodeCopyButtons),
-    );
-    // Also re-inject on streaming updates (answer text changes)
-    watch(streamingText, () => nextTick(injectCodeCopyButtons));
 
     // Always loaded toggle state (from shared store)
     const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
@@ -1470,10 +2161,49 @@ export default {
     const handleShowBrowseModels = () => {
       modelPicker.show();
     };
+    const handleChatShortcuts = (event) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      if (!modifier || event.altKey) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "n" && !event.shiftKey) {
+        event.preventDefault();
+        startNewChat();
+        return;
+      }
+
+      if (key === "o" && event.shiftKey) {
+        event.preventDefault();
+        openModelPicker();
+        return;
+      }
+
+      const recentIdx = Number(event.key);
+      if (recentIdx >= 1 && recentIdx <= 5) {
+        const entry = recentRailEntries.value[recentIdx - 1];
+        if (!entry) return;
+        event.preventDefault();
+        selectFromRail(entry);
+      }
+    };
     onMounted(() => {
       window.addEventListener("bonzai:show-browse-models", handleShowBrowseModels);
+      window.addEventListener("keydown", handleChatShortcuts);
       pipelineErrorUnsub = window.electronAPI?.onPipelineError?.((err) => {
         pipelineError.value = err;
+      });
+      modelChangedUnsub = window.electronAPI?.onModelChanged?.((model) => {
+        loadedModel.value = model || null;
+        if (model) {
+          syncCurrentModelFromLoaded(model);
+          isModel.value = true;
+        }
+      });
+      refreshLoadedModel().catch((e) => {
+        console.warn("[GenerativeText] getLoadedModel failed:", e?.message);
+      });
+      checkAllModelAvailability().catch((e) => {
+        console.warn("[GenerativeText] model availability scan failed:", e?.message);
       });
       // Fetch hardware profile so the picker can rank models by fit. The
       // detail (gpu name, exact vram) lands on a second call once the
@@ -1495,7 +2225,10 @@ export default {
     });
     onUnmounted(() => {
       window.removeEventListener("bonzai:show-browse-models", handleShowBrowseModels);
+      window.removeEventListener("keydown", handleChatShortcuts);
       if (pipelineErrorUnsub) { pipelineErrorUnsub(); pipelineErrorUnsub = null; }
+      if (modelChangedUnsub) { modelChangedUnsub(); modelChangedUnsub = null; }
+      clearDeleteToastTimer();
     });
 
     // ─── Chat-layout integration (rail + empty state) ──────────────
@@ -1503,17 +2236,70 @@ export default {
     // text; ts = inference timestamp. Most-recent first; ChatHistoryRail
     // re-sorts and groups by date itself.
     const railEntries = computed(() =>
-      (inferences.value || []).map((inf) => ({
-        id: inf.id,
-        prompt: inf.question || "(empty prompt)",
-        model: inf.model,
-        ts: inf.timestamp,
-      })),
+      (inferences.value || []).map((inf) => {
+        const tokenCount = estimateTokenCount(inf.answer?.text || "");
+        return {
+          id: inf.id,
+          prompt: inf.question || "(empty prompt)",
+          model: inf.model,
+          ts: inf.timestamp,
+          tokenCount,
+          durationMs: inferDurationMs(inf, tokenCount),
+          pinned: !!inf.pinned,
+          branchParentId: inf.branchParentId || null,
+          branchRootId: inf.branchRootId || null,
+          branchDepth: Number(inf.branchDepth) || 0,
+        };
+      }),
     );
     const activeRailId = ref(null);
+    const isHistoryCollapsed = ref(false);
+    const isNewChatDraft = ref(false);
+    const toggleHistoryRail = () => {
+      isHistoryCollapsed.value = !isHistoryCollapsed.value;
+    };
+    const startNewChat = () => {
+      activeRailId.value = null;
+      isNewChatDraft.value = true;
+      branchDraft.value = null;
+      form.prompt = "";
+      nextTick(() => chatInputRef.value?.focus?.());
+    };
+    const runSlashCommand = async (command) => {
+      const id = command?.id;
+      form.prompt = "";
+      if (id === "new") {
+        startNewChat();
+      } else if (id === "models") {
+        openModelPicker();
+      } else if (id === "history") {
+        toggleHistoryRail();
+      } else if (id === "params") {
+        chatParamsOpen.value = true;
+      } else if (id === "clear") {
+        await resetChat();
+      }
+      nextTick(() => chatInputRef.value?.focus?.());
+    };
 
     const selectFromRail = (entry) => {
       activeRailId.value = entry.id;
+      isNewChatDraft.value = false;
+      // Scroll the stream container to bring the selected message into view.
+      nextTick(() => {
+        const container = getStreamEl();
+        const el = messagesContainer.value?.querySelector(`[data-inference-id="${entry.id}"]`);
+        if (container && el) {
+          const containerRect = container.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          const top =
+            elRect.top -
+            containerRect.top +
+            container.scrollTop -
+            (container.clientHeight - elRect.height) / 2;
+          container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+        }
+      });
     };
 
     // The inference currently shown in the main stream. History is
@@ -1526,6 +2312,69 @@ export default {
         if (found) return found;
       }
       return null;
+    });
+
+    // Thread of inferences to render as a multi-turn conversation.
+    // The chat view shows the newest exchange first, leaving earlier
+    // messages last per the current chat UX direction.
+    const threadInferences = computed(() => {
+      const arr = inferences.value || [];
+      if (!arr.length) return [];
+      if (isNewChatDraft.value && !isLoading.value) return [];
+
+      let idx;
+      if (activeRailId.value) {
+        idx = arr.findIndex((inf) => inf.id === activeRailId.value);
+        if (idx === -1) idx = arr.length - 1;
+      } else {
+        idx = arr.length - 1;
+      }
+
+      const contextSize = 30;
+      const startIdx = Math.max(0, idx - contextSize + 1);
+
+      return arr.slice(startIdx, idx + 1).map((inf, i) => ({
+        ...inf,
+        _originalIndex: startIdx + i,
+      })).reverse();
+    });
+    const recentRailEntries = computed(() =>
+      [...railEntries.value]
+        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+        .slice(0, 5),
+    );
+
+    // Message thread container ref for auto-scrolling
+    const messagesContainer = ref(null);
+
+    // Helper to find the actual scrollable stream container (parent of messagesContainer)
+    const getStreamEl = () => {
+      const msg = messagesContainer.value;
+      if (!msg) return null;
+      // The stream section is the parent in ChatLayout's grid
+      return msg.parentElement;
+    };
+
+    // Auto-scroll to top when thread changes because newest messages render first.
+    watch(
+      () => threadInferences.value.length,
+      () => {
+        nextTick(() => {
+          const el = getStreamEl();
+          if (!el) return;
+          el.scrollTop = 0;
+        });
+      },
+    );
+
+    // Also scroll on streaming text updates (during active generation)
+    watch(streamingText, () => {
+      nextTick(() => {
+        const el = getStreamEl();
+        if (!el) return;
+        const atTop = el.scrollTop < 120;
+        if (atTop) el.scrollTop = 0;
+      });
     });
 
     const pickPrompt = (p) => {
@@ -1541,6 +2390,13 @@ export default {
       downloadProgress,
       isLoading,
       isModel,
+      loadedModel,
+      isCurrentModelLoaded,
+      isChatReady,
+      modelRequiredSubhead,
+      recommendedModels,
+      recommendedModelAction,
+      handleRecommendedModel,
       availableModels,
       sortedModels,
       currentModel,
@@ -1552,8 +2408,6 @@ export default {
       openModel,
       openModelPicker,
       onInspectInference,
-      actionsFor,
-      handleAction,
       // ChatInput integration
       hiddenImageInput,
       chatInputRef,
@@ -1571,30 +2425,43 @@ export default {
       migrationProgress,
       openChat,
       pipelineError,
+      pendingDelete,
+      branchDraft,
+      composerHint,
+      dismissDeleteToast,
+      confirmDeleteMessage,
       form,
+      chatParams,
+      chatParamsOpen,
       sendMessage,
+      stopGeneration,
+      isStopping,
       inferences,
       resetChat,
       exportHistory,
       importHistory,
-      copy,
       hasCopy,
       removeInference,
+      deleteMessage,
+      editMessage,
+      regenerateMessage,
+      retryMessage,
+      canSwitchInferenceToLocal,
+      switchInferenceToLocal,
+      togglePinnedInference,
       handleAnswerClick,
+      markdownOptions,
+      markdownPlugins,
+      suggestionChips,
+      buildSuggestionPrompt,
+      slashCommands,
+      runSlashCommand,
       streamingInferenceId,
-      // lazy loading pagination
-      paginatedInferences,
+      // conversation threading
+      threadInferences,
+      messagesContainer,
       activeInference,
-      loadMoreSentinel,
-      hasMore,
-      isLoadingMore,
-      setupScrollObserver,
-      cleanupScrollObserver,
-      // scroll to top
-      showScrollTop,
-      scrollToTop,
-      setupScrollListener,
-      cleanupScrollListener,
+      loadHistory,
       // access control
       accessRef,
       hasAccess,
@@ -1627,6 +2494,8 @@ export default {
       // ChatLayout integration
       railEntries,
       activeRailId,
+      isHistoryCollapsed,
+      toggleHistoryRail,
       selectFromRail,
       pickPrompt,
     };
@@ -1650,31 +2519,9 @@ export default {
       );
     }
 
-    // Load persisted chat history
-    try {
-      const saved = await window.electronAPI?.store?.get?.(
-        "textInferences",
-        [],
-      );
-      if (Array.isArray(saved) && saved.length > 0) {
-        // Replace array (shallowRef requires full replacement, not mutation)
-        this.inferences = [...saved];
-        this.hasCopy = new Array(saved.length).fill(false);
-      }
-    } catch (e) {
-      console.error("Failed to load text inferences:", e);
-    }
-
-    // Setup scroll observer after DOM is rendered
-    setTimeout(() => this.setupScrollObserver(), 100);
-    // Setup scroll listener for scroll-to-top button
-    this.setupScrollListener();
+    await this.loadHistory();
 
     await this.loadModelDir();
-  },
-  beforeUnmount() {
-    this.cleanupScrollObserver();
-    this.cleanupScrollListener();
   },
 };
 </script>
@@ -1812,12 +2659,70 @@ export default {
   padding: var(--bz-space-4) var(--bz-space-4) 0;
 }
 
+.bz-text-chat__gate .bz-pipeline-notice {
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin-inline: auto;
+  padding: 10px 12px;
+  align-items: flex-start;
+  gap: var(--bz-space-2);
+}
+
+.bz-pipeline-notice .bz-notice__icon {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.bz-pipeline-notice .bz-notice__icon .material-symbols-outlined {
+  font-size: 16px !important;
+}
+
+.bz-pipeline-notice .bz-notice__title {
+  margin: 0 0 2px !important;
+  font-family: "Fira Sans Condensed", sans-serif !important;
+  font-style: italic;
+  font-weight: 900;
+  font-size: 15px !important;
+  line-height: 1.1 !important;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.bz-pipeline-notice .bz-notice__text {
+  max-width: 100%;
+  margin: 0 !important;
+  font-family: "Fira Sans", sans-serif;
+  font-size: 13px !important;
+  font-weight: 400;
+  line-height: 1.35 !important;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bz-pipeline-notice .bz-notice__cta {
+  align-self: flex-start;
+}
+
+.bz-text-chat__empty {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+
 .bz-text-chat__messages {
   display: flex;
   flex-direction: column;
   gap: var(--bz-space-5);
   padding: var(--bz-space-4);
   min-height: 0;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
 }
 
 .bz-text-chat__setup {
@@ -1825,8 +2730,146 @@ export default {
 }
 .bz-text-chat__setup-cta {
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
   margin-top: var(--bz-space-5);
+}
+.bz-text-chat__recommendations {
+  max-width: 760px;
+  margin: var(--bz-space-5) auto 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+
+.bz-chat-params {
+  width: 100%;
+  margin: 0 0 var(--bz-space-3);
+  padding: var(--bz-space-3);
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 150px 120px;
+  gap: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+}
+.bz-chat-param {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--bz-space-2);
+}
+.bz-chat-param--system {
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+.bz-chat-param__label {
+  color: var(--bz-fg-low);
+  white-space: nowrap;
+}
+.bz-chat-param__value {
+  width: 36px;
+  text-align: right;
+  color: var(--bz-fg-mid);
+}
+.bz-chat-param input,
+.bz-chat-param textarea {
+  min-width: 0;
+  width: 100%;
+  color: var(--bz-fg);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  font: inherit;
+}
+.bz-chat-param input[type="range"] {
+  accent-color: var(--bz-purple-400);
+}
+.bz-chat-param input[type="number"] {
+  height: 32px;
+  padding: 0 var(--bz-space-2);
+}
+.bz-chat-param textarea {
+  resize: vertical;
+  min-height: 52px;
+  max-height: 140px;
+  padding: var(--bz-space-2);
+}
+.bz-chat-param input:focus,
+.bz-chat-param textarea:focus {
+  outline: 0;
+  border-color: var(--bz-border-brand);
+  box-shadow: 0 0 0 1px var(--bz-border-brand);
+}
+.bz-model-rec {
+  display: flex;
+  min-width: 0;
+  min-height: 118px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    background var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-model-rec:hover:not(:disabled),
+.bz-model-rec:focus-visible {
+  background: var(--bz-raised);
+  border-color: var(--bz-border-brand);
+  outline: none;
+}
+.bz-model-rec:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+.bz-model-rec--downloading {
+  border-color: var(--bz-border-brand);
+}
+.bz-model-rec__main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+  min-width: 0;
+}
+.bz-model-rec__name {
+  font-weight: 600;
+  line-height: 1.25;
+  min-width: 0;
+}
+.bz-model-rec__fit {
+  flex-shrink: 0;
+  color: var(--bz-purple-300);
+  font-size: var(--bz-size-micro);
+}
+.bz-model-rec__meta {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+}
+.bz-model-rec__action {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+}
+@media (max-width: 900px) {
+  .bz-text-chat__recommendations {
+    grid-template-columns: 1fr;
+  }
+  .bz-chat-params {
+    grid-template-columns: 1fr;
+  }
+  .bz-chat-param,
+  .bz-chat-param--system {
+    grid-template-columns: 1fr;
+  }
 }
 
 hr {
@@ -1852,14 +2895,6 @@ hr {
   border-radius: 100%;
 }
 
-.columns {
-  position: relative !important;
-}
-
-.container {
-  max-width: 100% important;
-}
-
 .background {
   position: absolute;
   z-index: -1;
@@ -1867,120 +2902,6 @@ hr {
   width: 100%;
   background: url("../assets/bonzai_chat.webp") no-repeat;
   background-size: cover;  overflow: hidden;
-}
-
-.shade {
-  position: absolute;
-  width: 100% !important;
-  height: 100% !important;
-  background: var(--bz-scrim-strong);
-  z-index: -1;
-}
-
-.tabs {
-  width: 100%;
-}
-
-.tabs ul {
-  -webkit-flex-direction: column;
-  flex-direction: column;
-}
-
-.tabs ul li {
-  transition: 400ms ease-in;
-  transform: translate3d(0, 0, 0);
-  box-shadow: 10px 0 25px #000;
-}
-
-.tabs li + li {
-  width: 100%;
-  margin-left: 0;
-}
-
-.tabs li.is-active {
-  width: 100%;
-  font-family: "Fira Sans", sans-serif;
-  font-weight: 100;
-  font-style: normal;
-}
-
-.tabs li.is-active a {
-  border-bottom-color: var(--bz-fg);
-  color: var(--bz-fg);
-}
-
-.tabs li:not(.is-active) {
-  filter: grayscale(100%);
-  cursor: not-allowed;
-  transition: 400ms ease-in;
-  transform: translate3d(0, 0, 0);
-}
-
-.tabs li:not(.is-active):hover {
-  filter: none;
-}
-
-.tabs li a {
-  justify-content: left;
-  border: none;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-.tabs li a h1 {
-  color: var(--bz-fg);
-  font-size: 48px;
-  font-weight: 100;
-  text-shadow: 1px 1px 1px #777;
-  border: none;
-}
-
-.tabs li.bonzai {
-  /* aspect-ratio: 16/9; */
-  height: 20vh;
-  width: 100%;
-  background: #61378e;
-  border-bottom: 10vh solid #61378e;
-  filter: none !important;
-}
-
-.tabs li.bonzai .logo {
-  height: 20vh;
-  width: 100%;
-  background: url("../assets/bonzai_logo-full.png") no-repeat;
-  background-size: contain;
-}
-
-.tabs li.chat {
-  /* aspect-ratio: 16/9; */
-  height: 20vh;
-  background: url("../assets/bonzai_chat.webp") no-repeat;
-  background-size: cover;
-}
-
-.tabs li.image {
-  height: 20vh;
-  background: url("../assets/bonzai_image.webp") no-repeat;
-  background-size: cover;
-}
-
-.tabs li.video {
-  height: 20vh;
-  background: url("../assets/bonzai_video.webp") no-repeat;
-  background-size: cover;
-}
-
-.tabs li.music {
-  height: 20vh;
-  background: url("../assets/bonzai_music.webp") no-repeat;
-  background-size: cover;
-}
-
-.models__deployment {
-  position: relative;
-  background: transparent;
-  padding: 0 !important;
-  margin: 0 !important;
 }
 
 .models__deployment-install {
@@ -1991,19 +2912,6 @@ hr {
   min-height: 0;
   width: 100%;
   background: var(--bz-scrim-strong);
-}
-
-.models__deployment-install--cta {
-  position: relative;
-  top: -30px;
-  right: 2.5em;
-}
-
-.models__activity--payouts {
-  padding: 4em;
-  border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px) !important;
-  border-radius: 4px !important;
 }
 
 h1 {
@@ -2038,27 +2946,6 @@ div.desc p {
   border-radius: 4px;
   min-height: 126px;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-}
-
-.answer__meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  font-size: 12px;
-  font-family: "Fira Sans", sans-serif;
-  color: var(--bz-fg-low);
-}
-
-.answer__model {
-  font-weight: 600;
-  color: var(--bz-fg-low);
-}
-
-.answer__tps {
-  color: #48c774;
-  font-weight: 700;
 }
 
 .network-mode-tag {
@@ -2073,6 +2960,13 @@ div.desc p {
   letter-spacing: 0.5px;
   margin-left: 8px;
   vertical-align: middle;
+}
+
+.network-mode-tag.nm-private {
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: 0;
 }
 
 .nm-remote {
@@ -2091,181 +2985,13 @@ div.desc p {
   margin: 5em;
 }
 
-.filesize {
-  min-width: 40%;
-  position: absolute;
-  top: -10px;
-  right: -10px;
-  padding: 5px;
-  font-size: 20px;
-  color: rgba(255, 255, 255, 1);
-  background: var(--bz-border-strong);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 4px;
-  backdrop-filter: blur(32px) !important;
-  text-align: right;
-}
-
-.models__deployment-use {
-  position: absolute;
-  z-index: 111;
-  left: 0;
-  top: 0;
-  height: 100%;
-  width: 100%;
-  padding: 6em;
-  background: var(--bz-scrim-deep);
-  backdrop-filter: blur(6px);
-  transform: translate3d(0, 0, 0);
-  overflow: auto;
-}
-
 form {
   position: relative;
-}
-
-/* Image attachment for multimodal models */
-.chat-input-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.chat-input-row .input {
-  flex: 1;
-}
-
-.attach-image-btn {
-  height: 52px;
-  width: 52px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bz-border);
-  border: 2px solid var(--bz-border-strong);
-  color: var(--bz-fg);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.attach-image-btn:hover {
-  background: var(--bz-border-strong);
-  border-color: var(--bz-fg-low);
-}
-
-.attach-image-btn.has-image {
-  background: rgba(72, 199, 116, 0.3);
-  border-color: #48c774;
-}
-
-/* Reasoning toggle button */
-.reasoning-toggle-btn {
-  height: 60px;
-  width: 60px;
-  min-width: 52px;
-  padding: 0;
-  position: relative;
-  top: -24px;
-  background: var(--bz-border);
-  border: 2px solid var(--bz-border-strong);
-  color: var(--bz-fg-low);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border-radius: 4px;
-}
-
-.reasoning-toggle-btn:hover {
-  background: var(--bz-border-strong);
-  border-color: var(--bz-fg-low);
-  color: var(--bz-fg);
-}
-
-.reasoning-toggle-btn.active {
-  background: rgba(32, 156, 238, 0.4);
-  border-color: #209cee;
-  color: var(--bz-fg);
-  box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
-}
-
-.reasoning-toggle-btn.active:hover {
-  background: rgba(32, 156, 238, 0.55);
-}
-
-.attached-image-preview {
-  position: relative;
-  margin-bottom: 12px;
-  padding: 8px;
-  background: var(--bz-scrim);
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.attached-image-preview img {
-  max-width: 120px;
-  max-height: 80px;
-  border-radius: 4px;
-  object-fit: cover;
-}
-
-.attached-image-preview .delete-btn {
-  position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: #ff3860;
-  border: none;
-  border-radius: 50%;
-  color: var(--bz-fg);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.attached-image-preview .delete-btn .material-symbols-outlined {
-  font-size: 16px;
-}
-
-.attached-image-preview .image-name {
-  font-size: 12px;
-  color: var(--bz-fg-mid);
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.input {
-  margin-bottom: 2em;
-  color: var(--bz-fg);
-  background: var(--bz-border);
-  box-shadow: 8px 8px 0 var(--bz-purple-glow);
-  transition: 200ms ease-in;
-  transform: translate3d(0, 0, 0);
 }
 
 ::placeholder {
   color: var(--bz-border) !important;
   opacity: 1 !important;
-}
-
-.button.chat.is-loading {
-  position: absolute;
-  width: 32px;
-  height: 32px;
-  right: 10px;
-  top: 14px;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-.is-loading {
-  text-shadow: none !important;
 }
 
 ul,
@@ -2295,42 +3021,6 @@ ol.chat li {
   to {
     transform: translateY(0);
   }
-}
-
-.load-more-sentinel {
-  min-height: 20px;
-}
-
-/* Scroll to top button */
-.scroll-to-top-btn {
-  position: absolute;
-  bottom: 2rem;
-  right: 2rem;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--bz-purple-500);
-  border: 2px solid var(--bz-fg-faint);
-  color: var(--bz-fg);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 12px var(--bz-scrim);
-  transition: all 0.2s ease;
-  z-index: 100;
-  animation: fadeInUp 0.3s ease-out;
-}
-
-.scroll-to-top-btn:hover {
-  background: var(--bz-purple-500);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px var(--bz-scrim);
-}
-
-.scroll-to-top-btn .material-symbols-outlined {
-  font-size: 24px;
-  border: none;
 }
 
 /* Background animation */
@@ -2396,7 +3086,6 @@ ol.chat li {
   color: var(--bz-fg);
   padding: 1em !important;
   margin-bottom: 4px;
-  backdrop-filter: blur(32px);
 }
 
 .model-card:hover .model-card__tip {
@@ -2424,7 +3113,7 @@ ol.chat li {
 .always-loaded-toggle.active {
   background: rgba(16, 185, 129, 0.15);
   border-color: rgba(16, 185, 129, 0.4);
-  color: #10b981;
+  color: var(--bz-emerald-500);
 }
 
 .always-loaded-toggle .toggle-switch {
@@ -2449,7 +3138,7 @@ ol.chat li {
 }
 
 .always-loaded-toggle.active .toggle-switch {
-  background: #10b981;
+  background: var(--bz-emerald-500);
 }
 
 .always-loaded-toggle.active .toggle-switch::after {
@@ -2472,6 +3161,12 @@ ol.chat li {
 
 .markdown-body :deep(p:last-child) {
   margin-bottom: 0;
+}
+
+.markdown-body :deep(strong),
+.markdown-body :deep(b) {
+  color: var(--bz-fg);
+  font-weight: 700;
 }
 
 /* Headings */
@@ -2520,28 +3215,6 @@ ol.chat li {
   color: var(--bz-fg-mid);
 }
 
-/* Code blocks */
-.markdown-body :deep(pre) {
-  position: relative;
-  background: var(--bz-scrim-strong);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 6px;
-  padding: 1em;
-  margin: 0.75em 0;
-  overflow-x: auto;
-  white-space: pre;
-}
-
-.markdown-body :deep(pre code) {
-  font-family: "Fira Code", "SF Mono", "Cascadia Code", "Consolas", monospace;
-  font-size: 15px;
-  line-height: 1.5;
-  color: #e6e6e6;
-  white-space: pre;
-  background: none;
-  padding: 0;
-}
-
 /* Inline code — purple highlight, matching text size */
 .markdown-body :deep(code) {
   font-family: "Fira Code", "SF Mono", "Cascadia Code", "Consolas", monospace;
@@ -2552,35 +3225,80 @@ ol.chat li {
   color: #c4a0ff;
 }
 
-/* Reset inline code overrides inside pre blocks */
-.markdown-body :deep(pre code) {
-  background: none;
-  padding: 0;
-  color: #e6e6e6;
-  font-size: 15px;
+/* Code blocks — custom markdown-it fence renderer. */
+.markdown-body :deep(.bz-code) {
+  margin: 0.85em 0 var(--bz-space-4);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  overflow: hidden;
 }
-
-/* Code copy button */
-.markdown-body :deep(.code-copy-btn) {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-family: "Fira Sans", sans-serif;
-  background: var(--bz-border-strong);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 4px;
-  color: var(--bz-fg-mid);
+.markdown-body :deep(.bz-code__head) {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+  padding: 4px var(--bz-space-2) 4px var(--bz-space-3);
+  background: var(--bz-card);
+  border-bottom: 1px solid var(--bz-border);
+}
+.markdown-body :deep(.bz-code__lang) {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  letter-spacing: var(--bz-track-eyebrow);
+  text-transform: uppercase;
+}
+.markdown-body :deep(.bz-code__copy) {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-low);
   cursor: pointer;
-  transition: all 0.15s ease;
-  z-index: 2;
 }
-
-.markdown-body :deep(.code-copy-btn:hover) {
-  background: var(--bz-fg-faint);
+.markdown-body :deep(.bz-code__copy:hover) {
+  background: var(--bz-raised);
   color: var(--bz-fg);
+  border-color: var(--bz-border);
 }
+.markdown-body :deep(.bz-code__copy--ok) {
+  color: var(--bz-emerald-500);
+}
+.markdown-body :deep(.bz-code__copy .material-symbols-outlined) {
+  font-size: 16px !important;
+  overflow: visible;
+}
+.markdown-body :deep(.bz-code__body) {
+  margin: 0;
+  padding: var(--bz-space-3) var(--bz-space-4);
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
+  overflow-x: auto;
+  white-space: pre;
+}
+.markdown-body :deep(.bz-code__body code) {
+  display: block;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-family: var(--bz-font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: inherit;
+  font-feature-settings: "tnum" 1, "calt" 0;
+}
+.markdown-body :deep(.bz-code-token--comment) { color: var(--bz-fg-low); font-style: italic; }
+.markdown-body :deep(.bz-code-token--keyword) { color: var(--bz-purple-300); font-weight: 700; }
+.markdown-body :deep(.bz-code-token--string) { color: var(--bz-emerald-500); }
+.markdown-body :deep(.bz-code-token--number) { color: var(--bz-warning); }
+.markdown-body :deep(.bz-code-token--tag) { color: var(--bz-purple-100); font-weight: 700; }
+.markdown-body :deep(.bz-code-token--punct) { color: var(--bz-fg-low); }
 
 .answer-divider {
   margin: 12px 0;
@@ -2590,7 +3308,7 @@ ol.chat li {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -2600,7 +3318,7 @@ ol.chat li {
   display: inline-block;
   width: 8px;
   height: 1.2em;
-  background: #48c774;
+  background: var(--bz-emerald-500);
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: blink 0.7s step-end infinite;
@@ -2619,9 +3337,8 @@ ol.chat li {
  * with the raw tags. The block collapses to a one-line summary by default
  * (HTML <details>) so long thoughts don't dominate the chat.
  *
- * Visual language matches `.reasoning-toggle-btn`: white-on-dark base, blue
- * `#209cee` accent. Pairing the bubble with the toggle makes it obvious
- * that one drives the other.
+ * Visual language matches the compact chat controls: white-on-dark base with
+ * `var(--bz-info)` accent, so reasoning reads as a local message affordance.
  */
 .thought-bubble {
   display: inline-block;
@@ -2637,8 +3354,8 @@ ol.chat li {
 
 .thought-bubble[open] {
   display: block;
-  background: rgba(32, 156, 238, 0.12);
-  border-color: #209cee;
+  background: var(--bz-info-soft);
+  border-color: var(--bz-info);
   color: var(--bz-fg);
   box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
 }
@@ -2701,7 +3418,7 @@ ol.chat li {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #209cee;
+  background: var(--bz-info);
   margin-left: 0.4rem;
   animation: thought-pulse 1s ease-in-out infinite;
   box-shadow: 0 0 6px rgba(32, 156, 238, 0.8);
@@ -2731,7 +3448,7 @@ ol.chat li {
   line-height: 1.4;
   border: 1px solid currentColor;
 }
-.fit-badge--tier0 { color: #1f8b4c; background: rgba(31, 139, 76, 0.10); }
+.fit-badge--tier0 { color: var(--bz-emerald-500); background: rgba(31, 139, 76, 0.10); }
 .fit-badge--tier1 { color: #c9a227; background: rgba(201, 162, 39, 0.10); }
 .fit-badge--tier2 { color: #cf6a1e; background: rgba(207, 106, 30, 0.10); }
 .fit-badge--tier3 { color: #b13a3a; background: rgba(177, 58, 58, 0.10); }
@@ -2796,7 +3513,10 @@ ol.chat li {
   opacity: 0.6;
   cursor: not-allowed;
 }
-.bz-msg-tool .material-symbols-outlined { font-size: 16px !important; }
+.bz-msg-tool .material-symbols-outlined {
+  font-size: 16px !important;
+  overflow: visible;
+}
 .bz-msg-tool--done {
   color: var(--bz-emerald-500);
   border-color: var(--bz-emerald-soft);
@@ -2845,7 +3565,10 @@ ol.chat li {
   opacity: 0.55;
   cursor: not-allowed;
 }
-.bz-chat-tool .material-symbols-outlined { font-size: 16px !important; }
+.bz-chat-tool .material-symbols-outlined {
+  font-size: 16px !important;
+  overflow: visible;
+}
 .bz-chat-tool--on {
   color: var(--bz-purple-300);
   border-color: var(--bz-border-brand);
@@ -2853,5 +3576,105 @@ ol.chat li {
 }
 .bz-chat-tool--on:hover:not(:disabled) {
   color: var(--bz-purple-100);
+}
+
+/* ── Suggestion chips (mid-conversation prompts) ── */
+.bz-suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-2) 0 var(--bz-space-4) var(--bz-space-7);
+}
+.bz-suggestion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 30px;
+  padding: 6px var(--bz-space-3);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast),
+    border-color var(--bz-dur-fast),
+    color var(--bz-dur-fast);
+}
+.bz-suggestion-chip .material-symbols-outlined {
+  font-size: 15px !important;
+  overflow: visible;
+}
+.bz-suggestion-chip:hover {
+  background: var(--bz-raised);
+  border-color: var(--bz-border-brand);
+  color: var(--bz-fg);
+}
+
+.bz-chat-delete-toast {
+  position: fixed;
+  right: max(var(--bz-space-5), env(safe-area-inset-right));
+  bottom: max(var(--bz-space-5), env(safe-area-inset-bottom));
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  max-width: min(420px, calc(100vw - 32px));
+  padding: var(--bz-space-3);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  box-shadow: var(--bz-shadow-lg);
+  color: var(--bz-fg);
+}
+.bz-chat-delete-toast .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-danger);
+}
+.bz-chat-delete-toast__body {
+  min-width: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+}
+.bz-chat-delete-toast__ghost,
+.bz-chat-delete-toast__danger {
+  height: 30px;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-3);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+}
+.bz-chat-delete-toast__ghost {
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+}
+.bz-chat-delete-toast__ghost:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+.bz-chat-delete-toast__danger {
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
+  color: var(--bz-danger);
+  font-weight: 700;
+}
+.bz-chat-delete-toast__danger:hover {
+  filter: brightness(1.08);
+}
+.bz-chat-toast-enter-active,
+.bz-chat-toast-leave-active {
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
+}
+.bz-chat-toast-enter-from,
+.bz-chat-toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 </style>

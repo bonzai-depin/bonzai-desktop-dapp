@@ -3,21 +3,21 @@
     <!-- DOWNLOAD REQUIRED (when not actively downloading and check is complete) -->
     <div
       v-if="modelAvailabilityChecked && hasRequirements && hasMissingModels && !downloads.active"
-      class="notification is-danger mb-6 mt-4 p-6 has-text-left"
+      class="skill-download-card skill-download-card--danger"
     >
-      <div class="mb-2">
-        <strong class="fira-sans-condensed-black-italic is-size-2">
+      <div class="skill-download-card__body">
+        <strong class="skill-download-card__title fira-sans-condensed-black-italic">
           Download Required
         </strong>
         <!-- Show all missing repos/files -->
-        <ul style="margin-top: 0.5rem; text-transform: lowercase">
+        <ul class="skill-download-list">
           <template v-for="model in missingModels" :key="model.key">
             <!-- Repos from readiness check -->
             <li
               v-for="repo in modelReadinessDetails[model.key]?.repos || []"
               :key="repo"
             >
-              <span class="material-symbols-outlined is-size-3 mr-1">
+              <span class="material-symbols-outlined" aria-hidden="true">
                 deployed_code
               </span>
               {{ repo }}
@@ -27,7 +27,7 @@
               v-for="file in modelReadinessDetails[model.key]?.files || []"
               :key="file"
             >
-              <span class="material-symbols-outlined is-size-3 mr-1">
+              <span class="material-symbols-outlined" aria-hidden="true">
                 deployed_code
               </span>
               {{ file }}
@@ -42,7 +42,7 @@
               <!-- Handle array repos (e.g., Qwen TTS) -->
               <template v-if="Array.isArray(model.repo)">
                 <li v-for="(r, rIdx) in model.repo" :key="model.key + '_repo_' + rIdx">
-                  <span class="material-symbols-outlined is-size-3 mr-1">
+                  <span class="material-symbols-outlined" aria-hidden="true">
                     deployed_code
                   </span>
                   {{ r }}
@@ -50,7 +50,7 @@
               </template>
               <!-- Handle single repo/filename -->
               <li v-else>
-                <span class="material-symbols-outlined is-size-3 mr-1">
+                <span class="material-symbols-outlined" aria-hidden="true">
                   deployed_code
                 </span>
                 {{ model.filename || model.repo || model.name }}
@@ -59,53 +59,40 @@
           </template>
         </ul>
       </div>
-      <hr />
-      <div class="buttons">
         <button
-          class="button is-warning mr-5 is-large"
+          class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
           @click="downloadAllMissingModels"
           :disabled="downloads.active"
         >
-          <span class="material-symbols-outlined mr-1">download</span>
+          <span class="material-symbols-outlined" aria-hidden="true">download</span>
           Download Now
         </button>
-      </div>
     </div>
 
     <!-- DOWNLOAD PROGRESS -->
     <div
       v-if="downloads.active"
-      class="notification is-info p-6 mb-6 mt-4"
+      class="skill-download-card"
     >
-      <p class="mb-2">
-        <span class="fira-sans-condensed-black-italic is-size-4">
+      <div class="skill-download-card__head">
+        <span class="skill-download-card__title fira-sans-condensed-black-italic">
+          <BonzaiPulse variant="dot" />
           Downloading
-          <button
-            disabled
-            class="button is-loading is-info is-small mr-2 p-4"
-          ></button>
         </span>
-        <span class="fira-sans-condensed-black-italic is-pulled-right is-size-1">
+        <span class="skill-download-card__pct fira-sans-condensed-black-italic">
           {{ Math.round(downloads.total_progress || 0) }}%
         </span>
-      </p>
-      <progress
-        class="progress is-success is-large"
-        :value="downloads.progress || 0"
-        max="100"
-      >
-        {{ Math.round(downloads.progress || 0) }}%
-      </progress>
-      <div v-if="downloadTaskList.length" style="max-height: 180px; overflow: auto">
-        <ul>
+      </div>
+      <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
+      <div v-if="downloadTaskList.length" class="skill-download-scroll">
+        <ul class="skill-download-list">
           <li
             v-for="t in downloadTaskList"
             :key="t.task_id"
-            class="is-size-7 columns"
-            style="text-transform: lowercase"
+            class="skill-download-task"
           >
-            <div class="column has-text-left">
-              <span class="material-symbols-outlined is-size-6">
+            <div class="skill-download-task__name">
+              <span class="material-symbols-outlined" aria-hidden="true">
                 deployed_code
               </span>
               {{ t.filename }} —
@@ -113,7 +100,7 @@
                 {{ t.status }}
               </span>
             </div>
-            <div class="column is-2 fira-sans-condensed-black-italic has-text-right">
+            <div class="skill-download-task__pct fira-sans-condensed-black-italic">
               {{ Math.round(t.progress || 0) }}%
             </div>
           </li>
@@ -128,6 +115,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 import { getSkillModelRequirements, MODEL_REQUIREMENTS } from '../../skills/flagship.js';
+import BonzaiPulse from '../BonzaiPulse.vue';
 
 const API_BASE =
   (typeof process !== 'undefined' && process.env?.VITE_API_BASE) ||
@@ -138,6 +126,9 @@ const WS_DL = `${API_BASE}/downloads`;
 
 export default {
   name: 'SkillDownloader',
+  components: {
+    BonzaiPulse,
+  },
   props: {
     skillId: {
       type: String,
@@ -479,5 +470,97 @@ export default {
 <style scoped>
 .skill-downloader {
   width: 100%;
+}
+
+.skill-download-card {
+  display: grid;
+  gap: var(--bz-space-3);
+  margin: var(--bz-space-4) 0 var(--bz-space-6);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+}
+
+.skill-download-card--danger {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  border-color: color-mix(in srgb, var(--bz-danger) 42%, var(--bz-border));
+  background: var(--bz-danger-soft);
+}
+
+.skill-download-card__body {
+  display: grid;
+  gap: var(--bz-space-2);
+  min-width: 0;
+}
+
+.skill-download-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+
+.skill-download-card__title,
+.skill-download-card__pct {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.skill-download-card__pct {
+  font-size: 1.45rem;
+}
+
+.skill-download-list {
+  display: grid;
+  gap: var(--bz-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-transform: lowercase;
+}
+
+.skill-download-list li,
+.skill-download-task {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.skill-download-scroll {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.skill-download-task {
+  justify-content: space-between;
+  padding: var(--bz-space-2) 0;
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.skill-download-task__name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  min-width: 0;
+}
+
+.skill-download-task__pct {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+}
+
+@media (max-width: 720px) {
+  .skill-download-card--danger {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

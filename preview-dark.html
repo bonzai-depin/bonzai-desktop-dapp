@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BonzAI Design System — Midnight Theme Catalog</title>
+<style>
+@font-face { font-family:'Fira Sans'; font-display:swap; font-weight:100; src:url('src/assets/fonts/FiraSans-Light.ttf') format('truetype'); }
+@font-face { font-family:'Fira Sans'; font-display:swap; font-weight:400; src:url('src/assets/fonts/FiraSans-Regular.ttf') format('truetype'); }
+@font-face { font-family:'Fira Sans Condensed'; font-display:swap; font-style:italic; font-weight:900; src:url('src/assets/fonts/FiraSansCondensed-BlackItalic.ttf') format('truetype'); }
+@font-face { font-family:'Material Symbols Outlined'; font-display:block; font-style:normal; font-weight:100 700; src:url('src/assets/fonts/MaterialSymbolsOutlined.woff2') format('woff2'); }
+.material-symbols-outlined { font-family:'Material Symbols Outlined',sans-serif; font-weight:normal; font-style:normal; font-size:24px; line-height:1; letter-spacing:normal; text-transform:none; display:inline-block; white-space:nowrap; word-wrap:normal; direction:ltr; font-feature-settings:'liga'; -webkit-font-feature-settings:'liga'; -webkit-font-smoothing:antialiased; }
+</style>
+<link rel="stylesheet" href="src/assets/tokens.css">
+<link rel="stylesheet" href="src/assets/buttons.css">
+<link rel="stylesheet" href="src/assets/notices.css">
+<style>
+/* Override to Midnight theme: deeper blacks, cooler purples */
+:root {
+  --bz-canvas:        #000000;
+  --bz-panel:         #0a0a10;
+  --bz-card:          #0e0e18;
+  --bz-raised:        #151520;
+  --bz-overlay:       rgba(0, 0, 0, 0.88);
+
+  --bz-purple-100:    #d4b8f8;
+  --bz-purple-300:    #9d7bf7;
+  --bz-purple-500:    #6b42a8;
+  --bz-purple-700:    #3d2666;
+  --bz-purple-900:    #1a0e2e;
+
+  --bz-purple-glow:   rgba(157, 123, 247, 0.28);
+  --bz-purple-soft:   rgba(107, 66, 168, 0.12);
+
+  --bz-gradient-brand:
+    linear-gradient(135deg, #6b42a8 0%, #9d7bf7 100%);
+
+  --bz-orb-core:    rgba(157, 123, 247, 0.18);
+  --bz-orb-mid:     rgba(107, 66, 168, 0.10);
+
+  --bz-fg:            #f5f5f8;
+  --bz-fg-mid:        #b8b8c8;
+  --bz-fg-low:        #6e6e82;
+  --bz-fg-faint:      #3a3a48;
+
+  --bz-border:        rgba(255, 255, 255, 0.06);
+  --bz-border-strong: rgba(255, 255, 255, 0.12);
+  --bz-border-brand:  rgba(157, 123, 247, 0.40);
+}
+body { margin:0; background:var(--bz-canvas); color:var(--bz-fg); font-family:var(--bz-font-body); }
+.pv-header {
+  position:sticky; top:0; z-index:100;
+  background:rgba(0,0,0,0.92); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--bz-border);
+  padding:24px 48px;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.pv-header h1 { margin:0; }
+.pv-header__meta { color:var(--bz-fg-low); font-size:12px; font-family:var(--bz-font-mono); }
+.pv-section {
+  padding:48px;
+  border-bottom:1px solid var(--bz-border);
+}
+.pv-section:last-child { border-bottom:none; }
+.pv-grid {
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap:16px;
+}
+.pv-swatch { border-radius:10px; overflow:hidden; border:1px solid var(--bz-border); }
+.pv-swatch__chip { height:80px; }
+.pv-swatch__meta { padding:12px 16px; background:var(--bz-panel); font-size:12px; }
+.pv-swatch__name { color:var(--bz-fg); font-family:var(--bz-font-mono); }
+.pv-swatch__hex { color:var(--bz-fg-low); }
+.pv-box {
+  background:var(--bz-card);
+  border:1px solid var(--bz-border);
+  border-radius:10px;
+  padding:24px;
+  margin-bottom:16px;
+}
+.pv-box__label {
+  font-size:11px; color:var(--bz-fg-low); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:12px;
+}
+.pv-row-gap { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+</style>
+</head>
+<body>
+
+<header class="pv-header">
+  <div>
+    <h1 class="bz-h1">BonzAI</h1>
+    <p class="pv-header__meta">Design System v2.0 &middot; Midnight Theme</p>
+  </div>
+  <span class="bz-eyebrow">OLED-Optimized</span>
+</header>
+
+<section class="pv-section">
+  <div class="bz-eyebrow" style="margin-bottom:8px;">00 &middot; Theme</div>
+  <h2 class="bz-h2">Midnight</h2>
+  <p class="bz-body" style="color:var(--bz-fg-mid); max-width:600px;">
+    Deeper canvas for OLED displays. Cooler purples with a frostier tint.
+    Same structural tokens, different emotional temperature.
+  </p>
+</section>
+
+<section class="pv-section">
+  <div class="bz-eyebrow" style="margin-bottom:8px;">01 &middot; Color Palette</div>
+  <h2 class="bz-h2">Surfaces</h2>
+  <div class="pv-grid">
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-canvas)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-canvas</div><div class="pv-swatch__hex">#000000</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-panel)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-panel</div><div class="pv-swatch__hex">#0a0a10</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-card)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-card</div><div class="pv-swatch__hex">#0e0e18</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-raised)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-raised</div><div class="pv-swatch__hex">#151520</div></div></div>
+  </div>
+
+  <h2 class="bz-h2" style="margin-top:32px;">Brand Purple</h2>
+  <div class="pv-grid">
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-100)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-100</div><div class="pv-swatch__hex">#d4b8f8</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-300)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-300</div><div class="pv-swatch__hex">#9d7bf7</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-500)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-500</div><div class="pv-swatch__hex">#6b42a8</div></div></div>
+  </div>
+</section>
+
+<section class="pv-section">
+  <div class="bz-eyebrow" style="margin-bottom:8px;">02 &middot; Buttons</div>
+  <h2 class="bz-h2">Variants on Midnight</h2>
+  <div class="pv-box">
+    <div class="pv-box__label">Primary · Brand gradient</div>
+    <div class="pv-row-gap">
+      <button class="bz-btn bz-btn--primary">Start Generation</button>
+      <button class="bz-btn bz-btn--primary" disabled>Disabled</button>
+      <button class="bz-btn bz-btn--primary bz-btn--sm">Small</button>
+      <button class="bz-btn bz-btn--primary bz-btn--running">Running</button>
+    </div>
+  </div>
+  <div class="pv-box">
+    <div class="pv-box__label">Status</div>
+    <div class="pv-row-gap">
+      <button class="bz-btn bz-btn--success">Claim</button>
+      <button class="bz-btn bz-btn--warning">Pending</button>
+      <button class="bz-btn bz-btn--destructive">Delete</button>
+    </div>
+  </div>
+</section>
+
+<section class="pv-section">
+  <div class="bz-eyebrow" style="margin-bottom:8px;">03 &middot; Notices</div>
+  <h2 class="bz-h2">Banners</h2>
+  <div class="bz-notice bz-notice--info" style="margin-bottom:16px;">
+    <div class="bz-notice__icon"><span class="material-symbols-outlined">info</span></div>
+    <div class="bz-notice__body">
+      <h4 class="bz-notice__title">Info</h4>
+      <p class="bz-notice__text">Midnight theme uses cooler purple tints.</p>
+    </div>
+  </div>
+  <div class="bz-notice bz-notice--success">
+    <div class="bz-notice__icon"><span class="material-symbols-outlined">check_circle</span></div>
+    <div class="bz-notice__body">
+      <h4 class="bz-notice__title">Success</h4>
+      <p class="bz-notice__text">OLED mode active. Pixels off where possible.</p>
+    </div>
+  </div>
+</section>
+
+<footer style="text-align:center; padding:48px; color:var(--bz-fg-low); font-size:12px; border-top:1px solid var(--bz-border);">
+  <span class="bz-mono">BonzAI Design System v2.0</span> &middot; <a href="preview.html" style="color:var(--bz-purple-100);">Default Theme</a> &middot; <a href="DESIGN.md" style="color:var(--bz-purple-100);">DESIGN.md</a>
+</footer>
+
+</body>
+</html>

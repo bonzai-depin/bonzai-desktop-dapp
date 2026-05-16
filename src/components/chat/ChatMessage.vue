@@ -4,7 +4,9 @@
     :class="[
       `bz-msg--${role}`,
       { 'bz-msg--streaming': streaming },
+      { 'bz-msg--error': error },
     ]"
+    :aria-busy="streaming ? 'true' : 'false'"
   >
     <!-- Marker — left-edge identifier. User: a dot. Assistant: a
          brand-purple gradient dot. Tool: an info dot. Keeps the column
@@ -18,43 +20,12 @@
 
     <!-- Header — role label + model badge + timestamp + ellipsis menu -->
     <header class="bz-msg__head">
-      <span class="bz-eyebrow bz-msg__role">{{ roleLabel }}</span>
-      <span v-if="model" class="bz-msg__model bz-mono">{{ model }}</span>
-      <span v-if="ts" class="bz-msg__ts bz-mono bz-meta">{{ tsLabel }}</span>
-
-      <div class="bz-msg__actions">
-        <button
-          type="button"
-          class="bz-msg__action"
-          :title="copied ? 'Copied' : 'Copy message'"
-          :aria-label="copied ? 'Copied' : 'Copy'"
-          @click="onCopy"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">
-            {{ copied ? 'check' : 'content_copy' }}
-          </span>
-        </button>
-        <button
-          v-if="role === 'assistant'"
-          type="button"
-          class="bz-msg__action"
-          title="Inspect"
-          aria-label="Open inspector"
-          @click="$emit('inspect')"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">info</span>
-        </button>
-        <button
-          v-if="role === 'assistant'"
-          type="button"
-          class="bz-msg__action"
-          title="Regenerate"
-          aria-label="Regenerate response"
-          @click="$emit('regenerate')"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
-        </button>
+      <div class="bz-msg__identity">
+        <span class="bz-eyebrow bz-msg__role">{{ roleLabel }}</span>
+        <span v-if="model" class="bz-msg__model bz-mono">{{ model }}</span>
       </div>
+
+      <span v-if="ts" class="bz-msg__ts bz-mono bz-meta">{{ tsLabel }}</span>
     </header>
 
     <!-- Thinking block — collapsible "show reasoning" section. Only
@@ -69,15 +40,116 @@
     <div class="bz-msg__body">
       <slot>
         <div v-if="content" class="bz-msg__plain">{{ content }}</div>
+        <div v-else-if="streaming" class="bz-msg__skeleton" aria-label="Loading">
+          <span class="bz-msg__dot"></span>
+          <span class="bz-msg__dot"></span>
+          <span class="bz-msg__dot"></span>
+        </div>
       </slot>
-      <span v-if="streaming" class="bz-msg__caret" aria-hidden="true">▎</span>
+      <span v-if="streaming && content" class="bz-msg__caret" aria-hidden="true">▎</span>
     </div>
 
-    <!-- Footer — attachments / tool call summary -->
+    <div class="bz-msg__actions">
+      <button
+        v-if="role === 'user'"
+        type="button"
+        class="bz-msg__action"
+        title="Edit"
+        aria-label="Edit message"
+        @click="$emit('edit')"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">edit</span>
+      </button>
+      <button
+        v-if="role === 'assistant' && !error && mintable"
+        type="button"
+        class="bz-msg__action"
+        :title="minted ? 'Already minted' : 'Mint answer as NFT'"
+        :aria-label="minted ? 'Already minted' : 'Mint answer'"
+        @click="$emit('mint')"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">
+          {{ minted ? 'check_circle' : 'token' }}
+        </span>
+      </button>
+      <button
+        v-if="role === 'assistant' && error"
+        type="button"
+        class="bz-msg__action"
+        title="Retry"
+        aria-label="Retry generation"
+        @click="$emit('retry')"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+      </button>
+      <button
+        v-if="role === 'assistant' && !error"
+        type="button"
+        class="bz-msg__action"
+        title="Regenerate"
+        aria-label="Regenerate response"
+        @click="$emit('regenerate')"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+      </button>
+      <button
+        type="button"
+        class="bz-msg__action"
+        :title="copied ? 'Copied' : 'Copy message'"
+        :aria-label="copied ? 'Copied' : 'Copy'"
+        @click="onCopy"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">
+          {{ copied ? 'check' : 'content_copy' }}
+        </span>
+      </button>
+      <button
+        v-if="role === 'assistant'"
+        type="button"
+        class="bz-msg__action"
+        title="Inspect"
+        aria-label="Open inspector"
+        @click="$emit('inspect')"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">info</span>
+      </button>
+      <button
+        type="button"
+        class="bz-msg__action"
+        title="Delete"
+        aria-label="Delete message"
+        @click="$emit('delete')"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+      </button>
+    </div>
+
+    <!-- Footer — attachments / tool call summary / error notice -->
     <footer
-      v-if="attachments?.length || toolCalls?.length"
+      v-if="attachments?.length || toolCalls?.length || error || stopped"
       class="bz-msg__foot"
     >
+      <div v-if="stopped" class="bz-msg__stopped">
+        <span class="material-symbols-outlined" aria-hidden="true">stop_circle</span>
+        <span>Stopped</span>
+      </div>
+      <div v-if="error" class="bz-msg__error">
+        <span class="material-symbols-outlined" aria-hidden="true">error</span>
+        <span class="bz-msg__error-body">{{ errorMessage || "Generation failed" }}</span>
+        <span v-if="role === 'assistant'" class="bz-msg__error-actions">
+          <button type="button" class="bz-msg__error-btn" @click="$emit('retry')">
+            Retry
+          </button>
+          <button
+            v-if="canSwitchLocal"
+            type="button"
+            class="bz-msg__error-btn bz-msg__error-btn--primary"
+            @click="$emit('switch-local')"
+          >
+            Switch to local mode
+          </button>
+        </span>
+      </div>
       <div v-if="attachments?.length" class="bz-msg__atts">
         <span
           v-for="(att, i) in attachments"
@@ -118,17 +190,31 @@ const props = defineProps({
   ts: { type: Number, default: 0 },
   /** True while the message is being streamed from the model. */
   streaming: { type: Boolean, default: false },
+  /** True if generation failed but partial text is preserved. */
+  error: { type: Boolean, default: false },
+  /** True when the user stopped generation and the partial text was preserved. */
+  stopped: { type: Boolean, default: false },
+  /** Short error message shown in the footer when error is true. */
+  errorMessage: { type: String, default: "" },
+  /** True when the failed request can be retried through local inference. */
+  canSwitchLocal: { type: Boolean, default: false },
+  /** True if this message can be minted (has content + not streaming). */
+  mintable: { type: Boolean, default: false },
+  /** True if this message has already been minted. */
+  minted: { type: Boolean, default: false },
   /** Optional attachments: [{ kind, name, label }, …] */
   attachments: { type: Array, default: () => [] },
   /** Optional tool calls: [{ name, detail }, …] */
   toolCalls: { type: Array, default: () => [] },
 });
 
-defineEmits(["inspect", "regenerate"]);
+defineEmits(["inspect", "regenerate", "edit", "delete", "retry", "switch-local", "mint"]);
+
+
 
 const ROLE_LABEL = {
-  user: "You",
-  assistant: "BonzAI",
+  user: "YOU",
+  assistant: "BONZAI",
   tool: "Tool",
   system: "System",
 };
@@ -190,7 +276,7 @@ async function onCopy() {
   height: 8px;
   border-radius: var(--bz-r-pill);
   background: var(--bz-fg-faint);
-  margin-top: 8px;
+  margin-top: 2px;
   grid-row: 1 / span 4;
   justify-self: center;
 }
@@ -205,35 +291,61 @@ async function onCopy() {
 /* Header — role / model / time / actions */
 .bz-msg__head {
   grid-column: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--bz-space-3);
+}
+.bz-msg__identity {
   display: flex;
-  align-items: baseline;
-  gap: var(--bz-space-3);
-  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--bz-space-2);
+  min-width: 0;
 }
 .bz-msg__role {
   color: var(--bz-fg);
-  font-weight: 400;
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+  flex-shrink: 0;
 }
 .bz-msg__model {
   color: var(--bz-fg-low);
   font-size: var(--bz-size-meta);
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.bz-msg__ts { margin-left: auto; }
+.bz-msg__ts {
+  justify-self: end;
+  flex-shrink: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
 
-/* Action cluster — visible on hover for the message. Inline icon
-   buttons; never use the brand color for these. */
+/* Action cluster — bottom-left on hover/focus for every message.
+   Inline icon buttons; never use the brand color for these. */
 .bz-msg__actions {
+  grid-column: 2;
   display: flex;
+  justify-content: flex-start;
   gap: 2px;
-  margin-left: var(--bz-space-2);
+  min-height: 26px;
   opacity: 0;
   transition: opacity var(--bz-dur-fast) var(--bz-ease-out);
 }
-.bz-msg:hover .bz-msg__actions { opacity: 1; }
-.bz-msg__actions:focus-within  { opacity: 1; }
+.bz-msg:hover .bz-msg__actions,
+.bz-msg__actions:focus-within {
+  opacity: 1;
+}
 .bz-msg__action {
   width: 26px;
   height: 26px;
+  min-width: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -248,7 +360,51 @@ async function onCopy() {
   background: var(--bz-raised);
   color: var(--bz-fg);
 }
-.bz-msg__action .material-symbols-outlined { font-size: 16px !important; }
+.bz-msg__action .material-symbols-outlined {
+  font-size: 16px !important;
+  overflow: visible;
+}
+
+/* Error state */
+.bz-msg--error { border-left: 3px solid var(--bz-error, #d32f2f); }
+
+.bz-msg__error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+  color: var(--bz-error, #d32f2f);
+  font-size: var(--bz-size-meta);
+}
+.bz-msg__error .material-symbols-outlined {
+  font-size: 16px !important;
+}
+.bz-msg__error-body {
+  min-width: 0;
+}
+.bz-msg__error-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+}
+.bz-msg__error-btn {
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--bz-error, #d32f2f) 45%, transparent);
+  border-radius: var(--bz-r-xs);
+  background: transparent;
+  color: var(--bz-error, #d32f2f);
+  font-size: var(--bz-size-meta);
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 var(--bz-space-2);
+  cursor: pointer;
+}
+.bz-msg__error-btn:hover {
+  background: color-mix(in srgb, var(--bz-error, #d32f2f) 10%, transparent);
+}
+.bz-msg__error-btn--primary {
+  background: color-mix(in srgb, var(--bz-error, #d32f2f) 12%, transparent);
+}
 
 /* Thinking — collapsed by default; calmer cadence than body. */
 .bz-msg__thinking {
@@ -287,6 +443,11 @@ async function onCopy() {
 
 .bz-msg__body :deep(p)  { margin: 0 0 var(--bz-space-3) 0; }
 .bz-msg__body :deep(p:last-child) { margin-bottom: 0; }
+.bz-msg__body :deep(strong),
+.bz-msg__body :deep(b) {
+  color: var(--bz-fg);
+  font-weight: 700;
+}
 .bz-msg__body :deep(h1),
 .bz-msg__body :deep(h2),
 .bz-msg__body :deep(h3) {
@@ -335,6 +496,53 @@ async function onCopy() {
   border-left: 2px solid var(--bz-border-strong);
   color: var(--bz-fg-mid);
 }
+.bz-msg__body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--bz-space-3) 0;
+  overflow: hidden;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+.bz-msg__body :deep(th),
+.bz-msg__body :deep(td) {
+  padding: var(--bz-space-2) var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+  text-align: left;
+  vertical-align: top;
+}
+.bz-msg__body :deep(th) {
+  background: var(--bz-card);
+  color: var(--bz-fg);
+  font-weight: 600;
+}
+.bz-msg__body :deep(tr:nth-child(even) td) {
+  background: var(--bz-canvas);
+}
+.bz-msg__body :deep(tr:last-child td) { border-bottom: 0; }
+
+/* Typing skeleton — 3-dot pulse shown while waiting for first token. */
+.bz-msg__skeleton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--bz-space-2) 0;
+}
+.bz-msg__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-purple-300);
+  animation: bz-skeleton-bounce 1.4s ease-in-out infinite;
+}
+.bz-msg__dot:nth-child(1) { animation-delay: 0s; }
+.bz-msg__dot:nth-child(2) { animation-delay: 0.2s; }
+.bz-msg__dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bz-skeleton-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
 
 /* Streaming caret — pulses while the assistant is mid-stream. */
 .bz-msg__caret {
@@ -352,11 +560,20 @@ async function onCopy() {
   gap: var(--bz-space-3);
   margin-top: var(--bz-space-2);
 }
+.bz-msg__stopped,
 .bz-msg__atts,
 .bz-msg__tools {
   display: flex;
   flex-wrap: wrap;
   gap: var(--bz-space-2);
+}
+.bz-msg__stopped {
+  align-items: center;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+}
+.bz-msg__stopped .material-symbols-outlined {
+  font-size: 16px !important;
 }
 .bz-msg__att {
   display: inline-flex;

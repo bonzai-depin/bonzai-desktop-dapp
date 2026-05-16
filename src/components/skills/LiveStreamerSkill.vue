@@ -1,24 +1,25 @@
 <template>
   <div class="live-streamer-skill">
-    <!-- Skill Header -->
-    <div class="models__activity--payouts mb-4 has-text-left">
-      <div class="columns is-vcentered">
-        <div class="column">
-          <h3 class="skill-name is-size-1 fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined mr-2" style="font-size: 48px; color: var(--bulma-primary)">
-              videocam
-            </span>
-            {{ skill?.name || 'Live Streaming Playground' }}
-          </h3>
-          <p class="skill-description is-size-5 mt-3">
-            {{ skill?.description || 'Connect your stream chat to BonzAI. Viewers generate AI content live on stream.' }}
-          </p>
+    <div class="broadcast-wall">
+      <div class="broadcast-monitor">
+        <div class="broadcast-monitor-bg" :style="previewBgStyle"></div>
+        <div class="broadcast-monitor-overlay"></div>
+        <div class="broadcast-monitor-body">
+          <span class="broadcast-state-dot" :class="{ 'is-live': isLive }"></span>
+          <strong>{{ isLive ? 'LIVE' : 'OFFLINE' }}</strong>
+          <span>{{ currentGeneration?.type || lastOutput?.type || 'standby' }}</span>
         </div>
+      </div>
+      <div class="broadcast-wall-metrics">
+        <div><span>Queue</span><strong>{{ queue.length }}</strong></div>
+        <div><span>Chat</span><strong>{{ chatConnected ? chatPlatform : 'Off' }}</strong></div>
+        <div><span>OBS</span><strong>{{ obsConnected ? 'Linked' : 'Off' }}</strong></div>
+        <div><span>Revenue</span><strong>{{ stats.revenue }}</strong></div>
       </div>
     </div>
 
     <!-- Tab Selector (radio pill style) -->
-    <div class="models__activity--payouts pt-5 pb-5" style="position: relative; bottom: -40px; z-index: 11">
+    <div class="broadcast-command-deck skill-panel">
       <div class="columns">
         <div class="column is-12">
           <span class="category-selector">
@@ -31,8 +32,8 @@
                 :checked="activeTab === tab.id"
                 @change="activeTab = tab.id"
               />
-              <label :for="'live_tab_' + tab.id" class="radio category pt-3 pb-3">
-                <span class="material-symbols-outlined mr-1" style="font-size: 18px">{{ tab.icon }}</span>
+              <label :for="'live_tab_' + tab.id" class="radio category">
+                <span class="material-symbols-outlined" style="font-size: 18px">{{ tab.icon }}</span>
                 {{ tab.label }}
               </label>
             </template>
@@ -41,7 +42,7 @@
       </div>
 
       <!-- Connection Status -->
-      <div class="notification config-card mt-5 has-text-left" :class="{ 'is-live': isLive }">
+      <div class="bz-card-shell config-card mt-5 has-text-left" :class="{ 'is-live': isLive }">
         <div class="columns is-mobile is-vcentered">
           <div class="column is-narrow">
             <span class="material-symbols-outlined" style="font-size: 24px">
@@ -53,16 +54,16 @@
               {{ isLive ? 'LIVE' : 'Offline' }}
             </h4>
             <div class="tags">
-              <span class="tag" :class="chatConnected ? 'is-success' : 'is-dark'">
-                <span class="material-symbols-outlined mr-1" style="font-size: 14px">forum</span>
+              <span class="skill-chip" :class="chatConnected ? 'skill-chip--success' : 'skill-chip--muted'">
+                <span class="material-symbols-outlined" style="font-size: 14px">forum</span>
                 {{ chatConnected ? chatPlatform : 'Chat' }}
               </span>
-              <span class="tag" :class="obsConnected ? 'is-success' : 'is-dark'">
-                <span class="material-symbols-outlined mr-1" style="font-size: 14px">cast</span>
+              <span class="skill-chip" :class="obsConnected ? 'skill-chip--success' : 'skill-chip--muted'">
+                <span class="material-symbols-outlined" style="font-size: 14px">cast</span>
                 OBS
               </span>
-              <span class="tag is-dark">
-                <span class="material-symbols-outlined mr-1" style="font-size: 14px">queue</span>
+              <span class="skill-chip">
+                <span class="material-symbols-outlined" style="font-size: 14px">queue</span>
                 {{ queue.length }} queued
               </span>
             </div>
@@ -71,38 +72,37 @@
       </div>
     </div>
 
-    <hr />
 
     <!-- Controls -->
-    <div class="models__activity--payouts mt-5">
+    <div class="broadcast-control-strip skill-panel mt-5">
       <div class="columns is-vcentered is-centered">
         <div class="column is-narrow">
           <div class="buttons is-centered">
             <button
               v-if="!isLive"
-              class="button is-success is-large"
+              class="bz-btn bz-btn--success bz-btn--lg"
               :disabled="chatConnecting"
-              :class="{ 'is-loading': chatConnecting }"
+              :class="{ 'bz-btn--running': chatConnecting }"
               @click="connectChat"
             >
-              <span class="material-symbols-outlined mr-2">play_arrow</span>
+              <span class="material-symbols-outlined">play_arrow</span>
               Go Live
             </button>
             <template v-else>
               <button
-                class="button is-large"
-                :class="isPaused ? 'is-success' : 'is-warning'"
+                class="bz-btn bz-btn--lg"
+                :class="isPaused ? 'bz-btn--success' : 'bz-btn--warning'"
                 @click="isPaused = !isPaused"
               >
-                <span class="material-symbols-outlined mr-2">{{ isPaused ? 'play_arrow' : 'pause' }}</span>
+                <span class="material-symbols-outlined">{{ isPaused ? 'play_arrow' : 'pause' }}</span>
                 {{ isPaused ? 'Resume' : 'Pause' }}
               </button>
-              <button class="button is-dark is-large" @click="skipCurrent" :disabled="!currentGeneration">
-                <span class="material-symbols-outlined mr-2">skip_next</span>
+              <button class="bz-btn bz-btn--ghost bz-btn--lg" @click="skipCurrent" :disabled="!currentGeneration">
+                <span class="material-symbols-outlined">skip_next</span>
                 Skip
               </button>
-              <button class="button is-danger is-large" @click="disconnectChat">
-                <span class="material-symbols-outlined mr-2">stop</span>
+              <button class="bz-btn bz-btn--destructive bz-btn--lg" @click="disconnectChat">
+                <span class="material-symbols-outlined">stop</span>
                 End Stream
               </button>
             </template>
@@ -112,7 +112,7 @@
     </div>
 
     <!-- ═══ SETUP TAB ═══ -->
-    <div v-if="activeTab === 'setup'" class="models__activity--payouts mt-4 has-text-left">
+    <div v-if="activeTab === 'setup'" class="broadcast-tab-panel broadcast-setup skill-panel mt-4 has-text-left">
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white mb-4">
         Chat Platform
       </h2>
@@ -126,27 +126,27 @@
             :checked="chatPlatform === p.id"
             @change="chatPlatform = p.id"
           />
-          <label :for="'platform_' + p.id" class="radio category pt-3 pb-3">
-            <span class="material-symbols-outlined mr-1" style="font-size: 18px">{{ p.icon }}</span>
+          <label :for="'platform_' + p.id" class="radio category">
+            <span class="material-symbols-outlined" style="font-size: 18px">{{ p.icon }}</span>
             {{ p.label }}
           </label>
         </template>
       </span>
 
       <!-- Twitch -->
-      <div v-if="chatPlatform === 'twitch'" class="notification config-card mt-5 has-text-left">
+      <div v-if="chatPlatform === 'twitch'" class="bz-card-shell config-card mt-5 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-4 mb-3">Twitch Configuration</h4>
         <div class="field">
           <label class="label has-text-white">Channel Name</label>
           <div class="control has-icons-left">
-            <input v-model="twitchChannel" type="text" class="input config-input" placeholder="your_channel" />
+            <input v-model="twitchChannel" type="text" class="skill-input" placeholder="your_channel" />
             <span class="icon is-left"><span class="material-symbols-outlined">tag</span></span>
           </div>
         </div>
         <div class="field">
           <label class="label has-text-white">OAuth Token</label>
           <div class="control has-icons-left">
-            <input v-model="twitchToken" type="password" class="input config-input" placeholder="oauth:xxxxxxxxx" />
+            <input v-model="twitchToken" type="password" class="skill-input" placeholder="oauth:xxxxxxxxx" />
             <span class="icon is-left"><span class="material-symbols-outlined">key</span></span>
           </div>
           <p class="help">Get your token from <a href="https://twitchapps.com/tmi/" target="_blank" class="has-text-info">twitchapps.com/tmi</a></p>
@@ -154,43 +154,43 @@
       </div>
 
       <!-- YouTube -->
-      <div v-if="chatPlatform === 'youtube'" class="notification config-card mt-5 has-text-left">
+      <div v-if="chatPlatform === 'youtube'" class="bz-card-shell config-card mt-5 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-4 mb-3">YouTube Configuration</h4>
         <div class="field">
           <label class="label has-text-white">Live Stream ID</label>
           <div class="control has-icons-left">
-            <input v-model="youtubeStreamId" type="text" class="input config-input" placeholder="Video ID" />
+            <input v-model="youtubeStreamId" type="text" class="skill-input" placeholder="Video ID" />
             <span class="icon is-left"><span class="material-symbols-outlined">live_tv</span></span>
           </div>
         </div>
       </div>
 
       <!-- Discord -->
-      <div v-if="chatPlatform === 'discord'" class="notification config-card mt-5 has-text-left">
+      <div v-if="chatPlatform === 'discord'" class="bz-card-shell config-card mt-5 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-4 mb-3">Discord Configuration</h4>
         <div class="field">
           <label class="label has-text-white">Bot Token</label>
           <div class="control has-icons-left">
-            <input v-model="discordToken" type="password" class="input config-input" placeholder="Bot token" />
+            <input v-model="discordToken" type="password" class="skill-input" placeholder="Bot token" />
             <span class="icon is-left"><span class="material-symbols-outlined">smart_toy</span></span>
           </div>
         </div>
         <div class="field">
           <label class="label has-text-white">Channel ID</label>
           <div class="control has-icons-left">
-            <input v-model="discordChannelId" type="text" class="input config-input" placeholder="Channel ID" />
+            <input v-model="discordChannelId" type="text" class="skill-input" placeholder="Channel ID" />
             <span class="icon is-left"><span class="material-symbols-outlined">tag</span></span>
           </div>
         </div>
       </div>
 
       <!-- TikTok -->
-      <div v-if="chatPlatform === 'tiktok'" class="notification config-card mt-5 has-text-left">
+      <div v-if="chatPlatform === 'tiktok'" class="bz-card-shell config-card mt-5 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-4 mb-3">TikTok Live Configuration</h4>
         <div class="field">
           <label class="label has-text-white">TikTok Username</label>
           <div class="control has-icons-left">
-            <input v-model="tiktokUsername" type="text" class="input config-input" placeholder="@your_username" />
+            <input v-model="tiktokUsername" type="text" class="skill-input" placeholder="@your_username" />
             <span class="icon is-left"><span class="material-symbols-outlined">person</span></span>
           </div>
           <p class="help">Your TikTok username (without @). You must be live for BonzAI to connect.</p>
@@ -198,12 +198,12 @@
       </div>
 
       <!-- Kick -->
-      <div v-if="chatPlatform === 'kick'" class="notification config-card mt-5 has-text-left">
+      <div v-if="chatPlatform === 'kick'" class="bz-card-shell config-card mt-5 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-4 mb-3">Kick Configuration</h4>
         <div class="field">
           <label class="label has-text-white">Channel Slug</label>
           <div class="control has-icons-left">
-            <input v-model="kickChannel" type="text" class="input config-input" placeholder="your_channel" />
+            <input v-model="kickChannel" type="text" class="skill-input" placeholder="your_channel" />
             <span class="icon is-left"><span class="material-symbols-outlined">tag</span></span>
           </div>
         </div>
@@ -215,48 +215,48 @@
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white mb-4">
         OBS Studio
       </h2>
-      <div class="notification config-card has-text-left">
+      <div class="bz-card-shell config-card has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-4 mb-3">WebSocket Connection</h4>
         <div class="field">
           <label class="label has-text-white">URL</label>
           <div class="control has-icons-left">
-            <input v-model="obsUrl" type="text" class="input config-input" placeholder="ws://127.0.0.1:4455" />
+            <input v-model="obsUrl" type="text" class="skill-input" placeholder="ws://127.0.0.1:4455" />
             <span class="icon is-left"><span class="material-symbols-outlined">dns</span></span>
           </div>
         </div>
         <div class="field">
           <label class="label has-text-white">Password</label>
           <div class="control has-icons-left">
-            <input v-model="obsPassword" type="password" class="input config-input" placeholder="Optional" />
+            <input v-model="obsPassword" type="password" class="skill-input" placeholder="Optional" />
             <span class="icon is-left"><span class="material-symbols-outlined">password</span></span>
           </div>
         </div>
         <button
-          class="button is-success mt-3"
+          class="bz-btn bz-btn--success mt-3"
           @click="connectOBS"
           :disabled="obsConnecting"
-          :class="{ 'is-loading': obsConnecting }"
+          :class="{ 'bz-btn--running': obsConnecting }"
         >
-          <span class="material-symbols-outlined mr-2">cast_connected</span>
+          <span class="material-symbols-outlined">cast_connected</span>
           {{ obsConnected ? 'Reconnect' : 'Connect OBS' }}
         </button>
       </div>
 
       <!-- Source Mapping -->
-      <div v-if="obsConnected" class="notification config-card mt-4 has-text-left">
+      <div v-if="obsConnected" class="bz-card-shell config-card mt-4 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-5 mb-3">Source Mapping</h4>
         <p class="help mb-3">Map generation types to OBS source names.</p>
         <div v-for="mapping in sourceMappings" :key="mapping.type" class="field is-horizontal mb-2">
           <div class="field-label is-normal" style="flex: 0 0 130px">
             <label class="label has-text-white" style="font-size: 13px">
-              <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle">{{ mapping.icon }}</span>
+              <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle">{{ mapping.icon }}</span>
               {{ mapping.label }}
             </label>
           </div>
           <div class="field-body">
             <div class="field">
               <div class="control">
-                <input v-model="mapping.sourceName" type="text" class="input config-input is-small" :placeholder="'OBS source for ' + mapping.label" />
+                <input v-model="mapping.sourceName" type="text" class="skill-input skill-input--sm" :placeholder="'OBS source for ' + mapping.label" />
               </div>
             </div>
           </div>
@@ -265,13 +265,13 @@
     </div>
 
     <!-- ═══ QUEUE TAB ═══ -->
-    <div v-if="activeTab === 'queue'" class="models__activity--payouts mt-4 has-text-left">
+    <div v-if="activeTab === 'queue'" class="broadcast-tab-panel broadcast-queue skill-panel mt-4 has-text-left">
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white mb-4">
         Generation Queue
-        <span class="tag is-dark ml-3" style="vertical-align: middle">{{ queue.length }}</span>
+        <span class="skill-chip ml-3" style="vertical-align: middle">{{ queue.length }}</span>
       </h2>
 
-      <div v-if="queue.length === 0" class="notification is-dark has-text-centered">
+      <div v-if="queue.length === 0" class="skill-card has-text-centered">
         <span class="material-symbols-outlined" style="font-size: 48px; opacity: 0.15">hourglass_empty</span>
         <p class="has-text-grey mt-2">Queue is empty</p>
       </div>
@@ -281,20 +281,20 @@
           <span class="queue-pos fira-sans-condensed-black-italic">#{{ index + 1 }}</span>
           <span class="platform-badge" :class="item.platform">{{ item.platform }}</span>
           <strong class="has-text-white">{{ item.user }}</strong>
-          <span class="tag is-dark ml-2">{{ item.type }}</span>
+          <span class="skill-chip ml-2">{{ item.type }}</span>
         </div>
         <div class="queue-card-prompt">{{ item.prompt }}</div>
         <BzCloseButton size="sm" aria-label="Remove" @click="removeFromQueue(index)" />
       </div>
 
-      <button v-if="queue.length > 0" class="button is-danger mt-4" @click="clearQueue">
-        <span class="material-symbols-outlined mr-2">delete_sweep</span>
+      <button v-if="queue.length > 0" class="bz-btn bz-btn--destructive mt-4" @click="clearQueue">
+        <span class="material-symbols-outlined">delete_sweep</span>
         Clear Queue
       </button>
     </div>
 
     <!-- ═══ MODERATION TAB ═══ -->
-    <div v-if="activeTab === 'moderation'" class="models__activity--payouts mt-4 has-text-left">
+    <div v-if="activeTab === 'moderation'" class="broadcast-tab-panel broadcast-moderation skill-panel mt-4 has-text-left">
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white mb-4">
         Content Moderation
       </h2>
@@ -303,13 +303,13 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">NSFW Filter</h3>
       <span class="category-selector" style="grid-template-columns: repeat(2, 1fr); max-width: 300px">
         <input type="radio" name="nsfw" id="nsfw_on" :checked="nsfwFilter" @change="nsfwFilter = true" />
-        <label for="nsfw_on" class="radio category pt-3 pb-3">
-          <span class="material-symbols-outlined mr-1" style="font-size: 18px">shield</span>
+        <label for="nsfw_on" class="radio category">
+          <span class="material-symbols-outlined" style="font-size: 18px">shield</span>
           Enabled
         </label>
         <input type="radio" name="nsfw" id="nsfw_off" :checked="!nsfwFilter" @change="nsfwFilter = false" />
-        <label for="nsfw_off" class="radio category pt-3 pb-3">
-          <span class="material-symbols-outlined mr-1" style="font-size: 18px">shield_lock</span>
+        <label for="nsfw_off" class="radio category">
+          <span class="material-symbols-outlined" style="font-size: 18px">shield_lock</span>
           Disabled
         </label>
       </span>
@@ -320,10 +320,10 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Per-User Cooldown</h3>
       <div class="field has-addons">
         <div class="control">
-          <input v-model.number="cooldownSeconds" type="number" class="input config-input" min="0" max="600" style="width: 100px" />
+          <input v-model.number="cooldownSeconds" type="number" class="skill-input" min="0" max="600" style="width: 100px" />
         </div>
         <div class="control">
-          <a class="button is-static">seconds</a>
+          <a class="skill-unit">seconds</a>
         </div>
       </div>
 
@@ -339,23 +339,23 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Banned Users</h3>
       <div v-if="bannedUsers.length === 0" class="help">No banned users</div>
       <div class="tags">
-        <span v-for="(user, i) in bannedUsers" :key="user" class="tag is-danger is-medium">
+        <span v-for="(user, i) in bannedUsers" :key="user" class="skill-chip skill-chip--danger">
           {{ user }}
-          <button class="delete is-small" @click="bannedUsers.splice(i, 1)"></button>
+          <button class="delete bz-btn--sm" @click="bannedUsers.splice(i, 1)"></button>
         </span>
       </div>
       <div class="field has-addons mt-3">
         <div class="control">
-          <input v-model="banInput" type="text" class="input config-input" placeholder="@username" @keyup.enter="banUser" />
+          <input v-model="banInput" type="text" class="skill-input" placeholder="@username" @keyup.enter="banUser" />
         </div>
         <div class="control">
-          <button class="button is-danger" @click="banUser">Ban</button>
+          <button class="bz-btn bz-btn--destructive" @click="banUser">Ban</button>
         </div>
       </div>
     </div>
 
     <!-- ═══ SETTINGS TAB ═══ -->
-    <div v-if="activeTab === 'settings'" class="models__activity--payouts mt-4 has-text-left">
+    <div v-if="activeTab === 'settings'" class="broadcast-tab-panel broadcast-settings skill-panel mt-4 has-text-left">
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white mb-4">
         Stream Settings
       </h2>
@@ -364,9 +364,9 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Stream Companion</h3>
       <p class="has-text-white mb-3" style="font-size: 13px; opacity: 0.7">Select a companion to attend chat as your stream bot. The companion's persona will be used for moderation and @mentions.</p>
 
-      <div v-if="companions.length === 0" class="notification config-card has-text-left">
-        <p style="font-size: 13px; color: rgba(255,255,255,0.5)">
-          <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle">info</span>
+      <div v-if="companions.length === 0" class="bz-card-shell config-card has-text-left">
+        <p style="font-size: 13px; color: var(--bz-fg-low)">
+          <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle">info</span>
           No companions found. Create one in the Roleplay tab first.
         </p>
       </div>
@@ -380,8 +380,8 @@
           :checked="!selectedCompanionId"
           @change="selectedCompanionId = null"
         />
-        <label for="companion_none" class="radio category pt-3 pb-3">
-          <span class="material-symbols-outlined mr-1" style="font-size: 18px">block</span>
+        <label for="companion_none" class="radio category">
+          <span class="material-symbols-outlined" style="font-size: 18px">block</span>
           None
         </label>
         <!-- Companion options -->
@@ -393,14 +393,14 @@
             :checked="selectedCompanionId === comp.id"
             @change="selectedCompanionId = comp.id"
           />
-          <label :for="'companion_' + comp.id" class="radio category pt-3 pb-3">
+          <label :for="'companion_' + comp.id" class="radio category">
             <img
               v-if="comp.image"
               :src="getImageSrc(comp.image)"
               class="companion-avatar-mini"
               :alt="comp.name"
             />
-            <span class="material-symbols-outlined mr-1" v-else style="font-size: 18px">
+            <span class="material-symbols-outlined" v-else style="font-size: 18px">
               {{ comp.gender === 'female' ? 'female' : comp.gender === 'male' ? 'male' : 'smart_toy' }}
             </span>
             {{ comp.name }}
@@ -409,7 +409,7 @@
       </span>
 
       <!-- Selected companion info -->
-      <div v-if="selectedCompanion" class="notification config-card mt-4 has-text-left">
+      <div v-if="selectedCompanion" class="bz-card-shell config-card mt-4 has-text-left">
         <div style="display: flex; align-items: center; gap: 12px">
           <img
             v-if="selectedCompanion.image"
@@ -419,12 +419,12 @@
           />
           <div>
             <h4 class="fira-sans-condensed-black-italic is-size-5 mb-1">{{ selectedCompanion.name }}</h4>
-            <p style="font-size: 12px; color: rgba(255,255,255,0.5)">
+            <p style="font-size: 12px; color: var(--bz-fg-low)">
               {{ selectedCompanion.personality?.slice(0, 120) || selectedCompanion.description?.slice(0, 120) || 'No description' }}
             </p>
             <div class="tags mt-2">
-              <span v-if="selectedCompanion.isNFT" class="tag is-success is-light">NFT</span>
-              <span v-if="selectedCompanion.agentWallet" class="tag is-info is-light">Agent Wallet</span>
+              <span v-if="selectedCompanion.isNFT" class="skill-chip skill-chip--success">NFT</span>
+              <span v-if="selectedCompanion.agentWallet" class="skill-chip skill-chip--info">Agent Wallet</span>
             </div>
           </div>
         </div>
@@ -436,10 +436,10 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Poll Duration</h3>
       <div class="field has-addons">
         <div class="control">
-          <input v-model.number="pollDuration" type="number" class="input config-input" min="10" max="300" style="width: 100px" />
+          <input v-model.number="pollDuration" type="number" class="skill-input" min="10" max="300" style="width: 100px" />
         </div>
         <div class="control">
-          <a class="button is-static">seconds</a>
+          <a class="skill-unit">seconds</a>
         </div>
       </div>
 
@@ -449,10 +449,10 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Max Queue Size</h3>
       <div class="field has-addons">
         <div class="control">
-          <input v-model.number="maxQueueSize" type="number" class="input config-input" min="1" max="100" style="width: 100px" />
+          <input v-model.number="maxQueueSize" type="number" class="skill-input" min="1" max="100" style="width: 100px" />
         </div>
         <div class="control">
-          <a class="button is-static">prompts</a>
+          <a class="skill-unit">prompts</a>
         </div>
       </div>
 
@@ -462,27 +462,27 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Fan Payments</h3>
       <span class="category-selector" style="grid-template-columns: repeat(2, 1fr); max-width: 300px">
         <input type="radio" name="monetization" id="monetization_free" :checked="!monetizationEnabled" @change="monetizationEnabled = false" />
-        <label for="monetization_free" class="radio category pt-3 pb-3">Free</label>
+        <label for="monetization_free" class="radio category">Free</label>
         <input type="radio" name="monetization" id="monetization_paid" :checked="monetizationEnabled" @change="monetizationEnabled = true" />
-        <label for="monetization_paid" class="radio category pt-3 pb-3">Paid (USDC)</label>
+        <label for="monetization_paid" class="radio category">Paid (USDC)</label>
       </span>
 
-      <div v-if="monetizationEnabled" class="notification config-card mt-4 has-text-left">
+      <div v-if="monetizationEnabled" class="bz-card-shell config-card mt-4 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-5 mb-3">Price Per Generation (USDC)</h4>
         <div v-for="ct in contentTypes" :key="ct.id" class="field is-horizontal mb-2">
           <div class="field-label is-normal" style="flex: 0 0 100px">
             <label class="label has-text-white" style="font-size: 13px">
-              <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle">{{ ct.icon }}</span>
+              <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle">{{ ct.icon }}</span>
               {{ ct.label }}
             </label>
           </div>
           <div class="field-body">
             <div class="field has-addons">
               <div class="control">
-                <input v-model.number="generationPrices[ct.id]" type="number" class="input config-input is-small" step="0.01" min="0" style="width: 90px" />
+                <input v-model.number="generationPrices[ct.id]" type="number" class="skill-input skill-input--sm" step="0.01" min="0" style="width: 90px" />
               </div>
               <div class="control">
-                <a class="button is-static is-small">USDC</a>
+                <a class="skill-unit bz-btn--sm">USDC</a>
               </div>
             </div>
           </div>
@@ -492,7 +492,7 @@
         <h4 class="fira-sans-condensed-black-italic is-size-5 mb-3">Your Payout Wallet</h4>
         <div class="field">
           <div class="control">
-            <input v-model="streamerWallet" type="text" class="input config-input" placeholder="0x... (Base address for receiving 80% of fan payments)" @change="saveStreamerWallet" />
+            <input v-model="streamerWallet" type="text" class="skill-input" placeholder="0x... (Base address for receiving 80% of fan payments)" @change="saveStreamerWallet" />
           </div>
           <p class="help mt-2">Your wallet on Base to receive streamer share. Leave empty to use your connected wallet.</p>
         </div>
@@ -510,8 +510,8 @@
             :checked="enabledTypes.includes(ct.id)"
             @change="toggleContentType(ct.id)"
           />
-          <label :for="'ct_' + ct.id" class="radio category pt-3 pb-3">
-            <span class="material-symbols-outlined mr-1" style="font-size: 18px">{{ ct.icon }}</span>
+          <label :for="'ct_' + ct.id" class="radio category">
+            <span class="material-symbols-outlined" style="font-size: 18px">{{ ct.icon }}</span>
             {{ ct.label }}
           </label>
         </template>
@@ -519,14 +519,14 @@
     </div>
 
     <!-- ═══ STATS TAB ═══ -->
-    <div v-if="activeTab === 'stats'" class="models__activity--payouts mt-4 has-text-left">
+    <div v-if="activeTab === 'stats'" class="broadcast-tab-panel broadcast-stats skill-panel mt-4 has-text-left">
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white mb-4">
         Stream Statistics
       </h2>
 
       <div class="columns is-multiline">
         <div class="column is-3-desktop is-6-mobile" v-for="stat in statCards" :key="stat.label">
-          <div class="notification is-dark has-text-centered">
+          <div class="skill-card has-text-centered">
             <p class="fira-sans-condensed-black-italic is-size-2" :class="stat.color">{{ stat.value }}</p>
             <p class="is-size-7 has-text-grey" style="text-transform: uppercase; letter-spacing: 1px">{{ stat.label }}</p>
           </div>
@@ -537,11 +537,11 @@
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mt-5 mb-3">
         Generation Breakdown
       </h3>
-      <table class="table is-fullwidth" style="background: transparent">
+      <table class="skill-table skill-fullwidth">
         <tbody>
           <tr v-for="ct in contentTypes" :key="ct.id" style="border-color: rgba(255,255,255,0.06)">
             <td style="color: rgba(255,255,255,0.6)">
-              <span class="material-symbols-outlined mr-1" style="font-size: 16px; vertical-align: middle">{{ ct.icon }}</span>
+              <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle">{{ ct.icon }}</span>
               {{ ct.label }}
             </td>
             <td class="has-text-right fira-sans-condensed-black-italic has-text-white">{{ stats.byType[ct.id] || 0 }}</td>
@@ -584,7 +584,7 @@
           <img v-else-if="lastOutput?.type === 'image'" :src="lastOutput.data" alt="" class="pip-image" />
           <!-- Media -->
           <div v-else class="pip-idle">
-            <span class="material-symbols-outlined" style="font-size: 28px; color: rgba(255,255,255,0.5)">
+            <span class="material-symbols-outlined" style="font-size: 28px; color: var(--bz-fg-low)">
               {{ lastOutput?.type === 'audio' ? 'headphones' : lastOutput?.type === 'music' ? 'music_note' : 'movie' }}
             </span>
           </div>
@@ -603,7 +603,7 @@
       <!-- Poll (below PiP) -->
       <div v-if="activePoll" class="pip-poll">
         <div class="poll-header fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined mr-1" style="font-size: 14px">ballot</span>
+          <span class="material-symbols-outlined" style="font-size: 14px">ballot</span>
           {{ activePoll.remaining }}s
         </div>
         <div class="poll-option">
@@ -622,7 +622,7 @@
     <!-- Status Toast -->
     <Transition name="fade">
       <div v-if="statusMessage" class="stream-toast" :class="statusType">
-        <span class="material-symbols-outlined mr-1" style="font-size: 16px">
+        <span class="material-symbols-outlined" style="font-size: 16px">
           {{ statusType === 'success' ? 'check_circle' : statusType === 'error' ? 'error' : 'info' }}
         </span>
         {{ statusMessage }}
@@ -1207,6 +1207,104 @@ export default {
 </script>
 
 <style scoped>
+/* Design-system compatibility layer for migrated skill workflow surfaces. */
+.skill-panel {
+  padding: var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r) !important;
+  color: var(--bz-fg);
+}
+.skill-panel + .skill-panel,
+.analysis-history .skill-panel + .skill-panel {
+  margin-top: var(--bz-space-5);
+}
+.skill-card {
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+}
+.skill-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-4);
+}
+.skill-title-icon,
+.skill-name .material-symbols-outlined {
+  color: var(--bz-purple-300) !important;
+  font-size: 42px !important;
+  line-height: 1;
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 24px;
+  padding: 2px var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  line-height: 1.2;
+}
+.skill-chip--brand { background: var(--bz-purple-soft); border-color: var(--bz-border-brand); color: var(--bz-fg); }
+.skill-chip--success { background: var(--bz-emerald-soft); border-color: var(--bz-emerald-500); color: var(--bz-emerald-300); }
+.skill-chip--warning { background: var(--bz-warning-soft); border-color: var(--bz-warning); color: var(--bz-warning); }
+.skill-chip--info { background: var(--bz-info-soft); border-color: var(--bz-info); color: var(--bz-info); }
+.skill-chip--danger { background: var(--bz-danger-soft); border-color: var(--bz-danger); color: var(--bz-danger); }
+.skill-input,
+.config-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-input--sm { height: 32px; }
+.skill-input:focus,
+.config-input:focus {
+  outline: none;
+  border-color: var(--bz-border-brand);
+}
+.skill-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-unit {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+  color: var(--bz-fg-low);
+  pointer-events: none;
+}
+.skill-fullwidth { width: 100%; }
+.skill-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+}
+.skill-progress::-webkit-progress-value { background: var(--bz-gradient-brand); }
+.bz-btn--running { opacity: 0.72; }
+
 /* ═══ Category Selector (matches Meditation Forge) ═══ */
 .category-selector {
   display: grid;
@@ -1222,7 +1320,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -1252,7 +1350,6 @@ hr {
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
-  backdrop-filter: blur(32px);
 }
 
 .category-selector input[type='radio'] + label.radio.category:hover,
@@ -1264,17 +1361,15 @@ hr {
 
 .category-selector input[type='radio']:checked + label.radio.category,
 .category-selector input[type='checkbox']:checked + label.radio.category {
-  color: rgba(255, 255, 255, 1);
-  border: 1px solid rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border: 1px solid var(--bz-fg);
   background: rgba(241, 70, 104, 0.25);
-  backdrop-filter: blur(64px);
 }
 
 /* ═══ Common Styles (matches Meditation Forge) ═══ */
-.models__activity--payouts {
+.skill-panel {
   padding: 2em;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 
@@ -1362,7 +1457,7 @@ hr {
 .pip-text {
   padding: 12px;
   font-size: 10px;
-  color: rgba(255,255,255,0.7);
+  color: var(--bz-fg-mid);
   line-height: 1.5;
   overflow: hidden;
 }
@@ -1380,7 +1475,7 @@ hr {
   background: rgba(241, 70, 104, 0.9);
   font-size: 10px;
   font-weight: 800;
-  color: white;
+  color: var(--bz-fg);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -1418,7 +1513,6 @@ hr {
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 8px;
   padding: 10px 12px;
-  backdrop-filter: blur(16px);
 }
 
 /* ═══ Platform Badges ═══ */
@@ -1433,11 +1527,11 @@ hr {
 }
 
 .platform-badge.twitch { background: rgba(145, 70, 255, 0.25); color: #bf94ff; }
-.platform-badge.youtube { background: rgba(255, 0, 0, 0.2); color: #ff6b6b; }
+.platform-badge.youtube { background: rgba(255, 0, 0, 0.2); color: var(--bz-danger); }
 .platform-badge.tiktok { background: rgba(255, 0, 80, 0.2); color: #ff4081; }
 .platform-badge.kick { background: rgba(83, 252, 24, 0.2); color: #53fc18; }
 .platform-badge.discord { background: rgba(88, 101, 242, 0.25); color: #7289da; }
-.platform-badge.obs { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5); }
+.platform-badge.obs { background: rgba(255,255,255,0.1); color: var(--bz-fg-low); }
 .platform-badge.system { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.35); }
 
 /* ═══ Companion Selector ═══ */
@@ -1498,7 +1592,7 @@ hr {
   position: relative;
   z-index: 1;
   font-size: 12px;
-  color: rgba(255,255,255,0.8);
+  color: var(--bz-fg-mid);
 }
 
 .poll-count { color: rgba(255,255,255,0.4); }
@@ -1522,7 +1616,7 @@ hr {
   flex-shrink: 0;
 }
 
-.queue-pos { font-size: 13px; color: rgba(255,255,255,0.3); }
+.queue-pos { font-size: 13px; color: var(--bz-fg-faint); }
 
 .queue-card-prompt {
   flex: 1;
@@ -1537,7 +1631,6 @@ hr {
 .config-card {
   background: var(--bz-canvas) !important;
   border: 1px solid var(--bz-border) !important;
-  backdrop-filter: blur(32px);
   color: var(--bz-fg-mid) !important;
 }
 
@@ -1614,9 +1707,201 @@ hr {
 .stream-toast.info { background: rgba(62, 142, 208, 0.15); border: 1px solid rgba(62, 142, 208, 0.3); color: var(--bz-info); }
 
 /* ═══ Animations ═══ */
-.rotating { animation: rotate 1s linear infinite; }
+.rotating { animation: bz-spin 1s linear infinite; }
 @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.25s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* Agentic redesign: Broadcast Console */
+.broadcast-command-deck {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-4);
+  background: color-mix(in srgb, var(--bz-panel) 86%, transparent);
+  backdrop-filter: blur(18px);
+}
+.broadcast-command-deck .columns,
+.broadcast-command-deck .column {
+  margin: 0;
+  padding: 0;
+}
+.broadcast-command-deck .category-selector {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+.broadcast-command-deck .config-card {
+  margin-top: var(--bz-space-4) !important;
+  border-color: var(--bz-border-strong);
+  background: var(--bz-canvas);
+}
+.broadcast-command-deck .config-card.is-live {
+  border-color: var(--bz-danger);
+  box-shadow: 0 0 0 1px rgba(241, 70, 104, 0.18);
+}
+.broadcast-control-strip {
+  margin-top: var(--bz-space-4) !important;
+  background: var(--bz-panel);
+}
+.broadcast-control-strip .columns,
+.broadcast-control-strip .column,
+.broadcast-control-strip .buttons {
+  margin: 0;
+  padding: 0;
+}
+.broadcast-control-strip .buttons {
+  justify-content: flex-end;
+}
+.broadcast-tab-panel {
+  background: var(--bz-panel);
+}
+.broadcast-setup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+  gap: var(--bz-space-4);
+}
+.broadcast-setup > h2,
+.broadcast-setup > .category-selector,
+.broadcast-setup > .config-card,
+.broadcast-setup > hr {
+  grid-column: 1;
+}
+.broadcast-setup > h2:nth-of-type(2),
+.broadcast-setup > h2:nth-of-type(2) ~ .config-card {
+  grid-column: 2;
+}
+.broadcast-setup > hr {
+  display: none;
+}
+.broadcast-queue .queue-card,
+.broadcast-stats .activity-row {
+  border: 1px solid var(--bz-border);
+  background: var(--bz-canvas);
+}
+.broadcast-moderation,
+.broadcast-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: var(--bz-space-4);
+}
+.broadcast-moderation > h2,
+.broadcast-settings > h2,
+.broadcast-settings > p,
+.broadcast-settings > .category-selector.companion-selector,
+.broadcast-settings > .config-card,
+.broadcast-settings > hr {
+  grid-column: 1 / -1;
+}
+.broadcast-moderation > hr,
+.broadcast-settings > hr {
+  display: none;
+}
+.broadcast-moderation > h3,
+.broadcast-settings > h3 {
+  margin: 0 !important;
+  padding-top: var(--bz-space-3);
+  border-top: 1px solid var(--bz-border);
+}
+.broadcast-stats .columns {
+  margin: 0;
+}
+.broadcast-stats .column {
+  padding: var(--bz-space-2);
+}
+@media (max-width: 1040px) {
+  .broadcast-setup,
+  .broadcast-moderation,
+  .broadcast-settings {
+    grid-template-columns: 1fr;
+  }
+  .broadcast-setup > h2:nth-of-type(2),
+  .broadcast-setup > h2:nth-of-type(2) ~ .config-card {
+    grid-column: 1;
+  }
+}
+
+
+/* Signature upgrade: broadcast wall */
+.broadcast-wall {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.1fr);
+  gap: var(--bz-space-4);
+}
+.broadcast-monitor {
+  position: relative;
+  min-height: clamp(220px, 32vh, 360px);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  overflow: hidden;
+  background: #050507;
+}
+.broadcast-monitor-bg,
+.broadcast-monitor-overlay {
+  position: absolute;
+  inset: 0;
+}
+.broadcast-monitor-bg {
+  background-size: cover;
+  background-position: center;
+  opacity: 0.65;
+}
+.broadcast-monitor-overlay {
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.1), rgba(0,0,0,0.72)),
+    radial-gradient(circle at 20% 20%, rgba(241,70,104,0.2), transparent 36%);
+}
+.broadcast-monitor-body {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  min-height: inherit;
+  padding: var(--bz-space-5);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  color: var(--bz-fg);
+}
+.broadcast-monitor-body strong { font-size: clamp(32px, 5vw, 64px); line-height: 0.95; }
+.broadcast-monitor-body > span:last-child { color: var(--bz-fg-mid); text-transform: uppercase; letter-spacing: 0.08em; }
+.broadcast-state-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--bz-fg-faint);
+  margin-bottom: var(--bz-space-3);
+}
+.broadcast-state-dot.is-live { background: var(--bz-danger); box-shadow: 0 0 0 8px rgba(241,70,104,0.16); }
+.broadcast-wall-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+.broadcast-wall-metrics > div {
+  min-height: 112px;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.broadcast-wall-metrics span {
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.broadcast-wall-metrics strong {
+  color: var(--bz-fg);
+  font-size: clamp(22px, 3vw, 36px);
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 980px) {
+  .broadcast-wall { grid-template-columns: 1fr; }
+}
+
 </style>

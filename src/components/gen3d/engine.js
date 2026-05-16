@@ -2786,7 +2786,7 @@ export function makeLibs({ THREE, addUpdateCallback }) {
     async init(opts = {}) {
       if (!_rapier) {
         const mod = await import('@dimforge/rapier3d-compat');
-        await mod.init({});
+        await mod.init();
         _rapier = mod;
       }
       const g = opts.gravity != null

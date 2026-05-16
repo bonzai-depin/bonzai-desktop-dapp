@@ -1,498 +1,260 @@
 <template>
   <div class="background"></div>
   <div class="bz-tab-shell">
-    <div class="models__deployment-install">
-      <div class="columns">
-        <div class="column is-12">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
-                  <span
-                    class="material-symbols-outlined mr-2"
-                    style="font-size: 92px !important"
-                  >
-                    image
-                  </span>
-                  Generative Image
-                </h1>
-              </div>
+    <GenerativeWorkspace
+      v-model="mode"
+      eyebrow="Create"
+      title="Generative Image"
+      icon="image"
+      :modes="imageModeItems"
+      :progress="workspaceProgress"
+      history-label="Generation History"
+      :disabled="isLoading"
+    >
+      <template #modebar-extra>
+        <div class="bz-image-quality">
+          <span class="bz-eyebrow">Resolution</span>
+          <ModeChipBar
+            v-model="quality"
+            :items="qualityModeItems"
+            :disabled="isLoading"
+            compact
+          />
+        </div>
+      </template>
+
+      <template #panel>
+        <div class="bz-image-panel">
+          <div
+            v-if="showUpdateCTA && readiness.currentMode == mode"
+            class="bz-img-notice bz-img-notice--danger"
+            role="status"
+          >
+            <div class="bz-img-notice__icon">
+              <span class="material-symbols-outlined">deployed_code</span>
+            </div>
+            <div class="bz-img-notice__body">
+              <p class="bz-img-notice__title fira-sans-condensed-black-italic">
+                Download Required
+              </p>
+              <p class="bz-img-notice__text">
+                This image mode needs local model files before it can run.
+              </p>
+              <ul v-if="readiness.repoDetails.length || readiness.missingGguf" class="bz-img-notice__list">
+                <li v-for="d in readiness.repoDetails" :key="d.repo">
+                  <span class="material-symbols-outlined" aria-hidden="true">folder</span>
+                  <span>{{ d.repo }}</span>
+                </li>
+                <li v-for="gguf in readiness.ggufNames" :key="gguf">
+                  <span class="material-symbols-outlined" aria-hidden="true">draft</span>
+                  <span>{{ gguf }}</span>
+                </li>
+              </ul>
+              <ul v-if="readiness.notes.length" class="bz-img-notice__notes">
+                <li v-for="(n, i) in readiness.notes" :key="i">{{ n }}</li>
+              </ul>
+            </div>
+            <div class="bz-img-notice__actions">
+              <button
+                type="button"
+                class="bz-btn bz-btn--primary"
+                :disabled="downloads.active || readiness.authRequired"
+                title="Download required files for this mode"
+                @click="prefetchForMode"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">download</span>
+                Download
+              </button>
             </div>
           </div>
 
-          <!-- GENERATION PROGRESS — Milestone 4 motion language.
-               Replaces the Bulma `is-loading` spinner + green progress
-               bar with the BonzAI pulse: brand-purple sweep over the
-               determinate fill, mono percent, .bz-shout caption. -->
-          <div v-if="generation.active" class="bz-genprogress">
-            <div class="bz-genprogress__row">
-              <span class="bz-shout bz-genprogress__label">Crafting…</span>
-              <span class="bz-mono bz-genprogress__pct">
-                {{ generationPctRounded }}%
+          <div v-else-if="generation.error" class="bz-img-notice bz-img-notice--danger" role="alert">
+            <div class="bz-img-notice__icon">
+              <span class="material-symbols-outlined">warning</span>
+            </div>
+            <div class="bz-img-notice__body">
+              <p class="bz-img-notice__title fira-sans-condensed-black-italic">
+                Generation Failed
+              </p>
+              <p class="bz-img-notice__text">{{ generation.error }}</p>
+            </div>
+          </div>
+
+          <div v-if="downloads && downloads.active" class="bz-img-download" role="status">
+            <div class="bz-img-download__head">
+              <span class="bz-img-download__title fira-sans-condensed-black-italic">
+                Downloading
+              </span>
+              <span class="bz-img-download__percent fira-sans-condensed-black-italic">
+                {{ Math.round(downloads.total_progress || 0) }}%
               </span>
             </div>
-            <BonzaiPulse variant="bar" :percent="generationPctClamped" />
+            <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
+            <ul v-if="downloadTaskList.length" class="bz-img-download__tasks">
+              <li v-for="t in downloadTaskList" :key="t.task_id || t.filename">
+                <span class="material-symbols-outlined" aria-hidden="true">deployed_code</span>
+                <span class="bz-img-download__file">{{ t.filename }}</span>
+                <span class="bz-img-download__status fira-sans-condensed-black-italic">
+                  {{ t.status }}
+                </span>
+                <span class="bz-mono">{{ Math.round(t.progress || 0) }}%</span>
+              </li>
+            </ul>
           </div>
 
-          <div class="models__activity--payouts">
-            <div class="columns">
-              <div class="column is-12">
-                <!-- MODE TOGGLES -->
-                <div class="control mb-5 has-text-left">
-                  <input
-                    v-model="mode"
-                    :value="'turbo'"
-                    id="mode_turbo"
-                    type="radio"
-                    name="mode"
-                    checked
-                  />
-                  <label for="mode_turbo" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      bolt
-                    </span>
-                    Turbo
-                  </label>
+          <AccessRequirements
+            ref="accessRef"
+            level="LVL3"
+            @access-changed="onAccessChanged"
+          />
 
-                  <input
-                    v-model="mode"
-                    :value="'standard'"
-                    id="mode_standard"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_standard" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      photo_camera
-                    </span>
-                    Standard
-                  </label>
-
-                  <input
-                    v-model="mode"
-                    :value="'quality'"
-                    id="mode_quality"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_quality" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      high_quality
-                    </span>
-                    Quality
-                  </label>
-
-                  <input
-                    v-model="mode"
-                    :value="'turbo_edit'"
-                    id="mode_turbo_edit"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_turbo_edit" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      brush
-                    </span>
-                    Edit
-                  </label>
-
-                  <span class="control">
-                    <input
-                      v-model="quality"
-                      :value="'sd'"
-                      id="mode_quality_sd"
-                      type="radio"
-                      name="mode_quality"
-                      checked
-                    />
-                    <label for="mode_quality_sd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        sd
-                      </span>
-                    </label>
-
-                    <input
-                      v-model="quality"
-                      :value="'hd'"
-                      id="mode_quality_hd"
-                      type="radio"
-                      name="mode_quality"
-                    />
-                    <label for="mode_quality_hd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        hd
-                      </span>
-                    </label>
-
-                    <input
-                      v-model="quality"
-                      :value="'fhd'"
-                      id="mode_quality_fhd"
-                      type="radio"
-                      name="mode_quality"
-                    />
-                    <label for="mode_quality_fhd" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        full_hd
-                      </span>
-                    </label>
-
-                    <input
-                      v-model="quality"
-                      :value="'2k'"
-                      id="mode_quality_2k_bar"
-                      type="radio"
-                      name="mode_quality"
-                    />
-                    <label for="mode_quality_2k_bar" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        2k
-                      </span>
-                    </label>
-
-                    <input
-                      v-model="quality"
-                      :value="'4k'"
-                      id="mode_quality_4k_bar"
-                      type="radio"
-                      name="mode_quality"
-                    />
-                    <label for="mode_quality_4k_bar" class="radio quality">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        4k
-                      </span>
-                    </label>
-                  </span>
-                </div>
-
-                <!-- READINESS CTA (only for current mode) -->
-                <div
-                  v-if="showUpdateCTA && readiness.currentMode == mode"
-                  class="notification is-danger mb-6 mt-6 p-6"
-                  style="margin-bottom: 1rem"
-                >
-                  <p class="mb-2">
-                    <strong class="fira-sans-condensed-black-italic is-size-2">
-                      Download Required
-                    </strong>
-                    <span v-if="readiness.missingRepos.length">
-                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
-                        <li v-for="d in readiness.repoDetails" :key="d.repo">
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-1"
-                          >
-                            deployed_code
-                          </span>
-                          {{ d.repo }}
-                        </li>
-                      </ul>
-                    </span>
-
-                    <span v-if="readiness.missingGguf">
-                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
-                        <li v-for="gguf in readiness.ggufNames">
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-1"
-                          >
-                            deployed_code
-                          </span>
-                          {{ gguf }}
-                        </li>
-                      </ul>
-                    </span>
-
-                    <span v-if="readiness.notes.length">
-                      <br />
-                      Notes:
-                      <ul style="margin-top: 0.5rem">
-                        <li v-for="(n, i) in readiness.notes" :key="i">
-                          • {{ n }}
-                        </li>
-                      </ul>
-                    </span>
-                  </p>
-                  <hr />
-                  <div class="buttons">
-                    <button
-                      class="button is-warning mr-5 is-large"
-                      @click="prefetchForMode"
-                      :disabled="downloads.active || readiness.authRequired"
-                      title="(Re)download required files for this mode"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        download
-                      </span>
-                      Download Now
-                    </button>
-                  </div>
-                </div>
-
-                <!-- GENERATION ERROR -->
-                <div
-                  v-else-if="generation.error"
-                  class="notification is-danger"
-                  style="margin-bottom: 1rem"
-                >
-                  <strong>Generation failed.</strong>
-                  {{ generation.error }}
-                </div>
-
-                <!-- DOWNLOAD PROGRESS -->
-                <div
-                  v-if="downloads && downloads.active"
-                  class="notification is-info p-6"
-                  style="margin-bottom: 1.25rem"
-                >
-                  <p class="mb-2">
-                    <span class="fira-sans-condensed-black-italic is-size-4">
-                      Downloading
-                      <button
-                        disabled
-                        class="button is-loading is-info is-small mr-2 p-4"
-                      ></button>
-                    </span>
-                    <span
-                      class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
-                    >
-                      {{ Math.round(downloads.total_progress || 0) }}%
-                    </span>
-                  </p>
-                  <progress
-                    class="progress is-success is-large"
-                    :value="downloads.progress || 0"
-                    max="100"
-                  >
-                    {{ Math.round(downloads.progress || 0) }}%
-                  </progress>
-                  <div
-                    v-if="downloadTaskList.length"
-                    style="max-height: 180px; overflow: auto"
-                  >
-                    <ul>
-                      <li
-                        v-for="t in downloadTaskList"
-                        :key="t.task_id"
-                        class="is-size-7 columns"
-                        style="text-transform: lowercase"
-                      >
-                        <div class="column has-text-left">
-                          <span class="material-symbols-outlined is-size-6">
-                            deployed_code
-                          </span>
-                          {{ t.filename }} —
-                          <span class="fira-sans-condensed-black-italic">
-                            {{ t.status }}
-                          </span>
-                        </div>
-                        <div
-                          class="column is-2 fira-sans-condensed-black-italic has-text-right"
-                        >
-                          {{ Math.round(t.progress || 0) }}%
-                        </div>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-
-                <!-- ACCESS REQUIREMENTS -->
-                <AccessRequirements
-                  ref="accessRef"
-                  level="LVL3"
-                  @access-changed="onAccessChanged"
-                />
-
-                <!-- IMAGE PICKER (Edit modes only) -->
-                <div class="notification p-4 preview mb-5" v-if="isEditMode">
-                  <div class="file is-fullwidth is-medium">
-                    <label class="file-label">
-                      <input
-                        class="file-input"
-                        type="file"
-                        accept="image/*"
-                        @change="onImagePicked"
-                      />
-                      <span class="file-cta">
-                        <span class="file-icon">
-                          <span class="material-symbols-outlined">image</span>
-                        </span>
-                        <span class="file-label">Browse image to edit...</span>
-                      </span>
-                    </label>
-                  </div>
-                  <div class="mt-4" v-if="imagePreviewUrl">
-                    <img
-                      :src="imagePreviewUrl"
-                      class="preview-image"
-                      alt="preview"
-                    />
-                  </div>
-                </div>
-
-                <!-- PROMPT — Milestone 6 unified input. Replaces the
-                     bulma is-large + is-loading scaffold with the
-                     shared <GenerativeInput> shape used across the
-                     image / video / audio tabs. -->
-                <GenerativeInput
-                  v-model="form.prompt"
-                  :placeholder="
-                    isEditMode
-                      ? 'Describe how to edit the image…'
-                      : 'Describe your image…'
-                  "
-                  submit-label="Generate"
-                  running-label="Crafting"
-                  :running="isLoading"
-                  :disabled="
-                    !canGenerateWithAccess ||
-                    (isEditMode && !hasInputImage)
-                  "
-                  shortcut-hint="⌘⏎"
-                  @submit="sendMessage(form.prompt)"
-                />
-
-                <hr class="mt-5" />
-
-                <!-- GENERATION HISTORY HEADER -->
-                <div class="level pt-5 mt-5">
-                  <div class="level-left">
-                    <div class="level-item">
-                      <h2
-                        class="fira-sans-condensed-black-italic is-size-1 has-text-white"
-                      >
-                        <span class="material-symbols-outlined is-size-1 mr-2">
-                          history
-                        </span>
-                        Generation History
-                      </h2>
-                    </div>
-                  </div>
-                  <div class="level-right">
-                    <div class="level-item buttons">
-                      <button
-                        class="button is-warning is-small"
-                        @click="importHistory()"
-                      >
-                        <span class="material-symbols-outlined mr-2">
-                          upload
-                        </span>
-                        Import
-                      </button>
-                      <button
-                        class="button is-warning is-small ml-4"
-                        @click="exportHistory()"
-                        :disabled="inferences.length === 0"
-                      >
-                        <span class="material-symbols-outlined mr-2">
-                          download
-                        </span>
-                        Export
-                      </button>
-                      <button
-                        class="button is-danger is-small ml-4"
-                        @click="clearHistory()"
-                      >
-                        <span class="material-symbols-outlined mr-2">
-                          ink_eraser
-                        </span>
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- RESULTS -->
-                <ol class="chat" v-if="inferences.length">
-                  <li
-                    v-for="(inference, displayIndex) in paginatedInferences"
-                    :key="inference.id || inference._originalIndex"
-                    class="history-item"
-                    :style="{
-                      animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
-                    }"
-                  >
-                    <div class="question">
-                      <div
-                        class="logo watermark"
-                        style="
-                          position: absolute;
-                          width: 128px;
-                          bottom: 7em;
-                          right: 2em;
-                        "
-                      >
-                        <img src="src/assets/bonzai_logo-full.png" />
-                      </div>
-                      <img
-                        class="generated__image"
-                        :src="
-                          'data:image/png;base64,' + inference.answer.data.image
-                        "
-                        @click="openInspector(inference)"
-                        style="cursor: zoom-in"
-                        title="Open inspector"
-                      />
-                      <!-- Origin pill — Milestone 6 unified vocabulary -->
-                      <div class="bz-img-meta" v-if="inference.networkMode && inference.networkMode !== 'local'">
-                        <span class="bz-origin-pill" :class="`bz-origin-pill--${inference.networkMode}`">
-                          <span class="bz-origin-pill__dot"></span>
-                          {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
-                        </span>
-                      </div>
-
-                      <!-- Unified action cluster — replaces 6 inline
-                           Bulma buttons with the canonical
-                           <GenerativeActions> component. -->
-                      <GenerativeActions
-                        :actions="actionsFor(inference)"
-                        @action="(id) => handleAction(id, inference)"
-                      />
-                    </div>
-                  </li>
-                </ol>
-
-                <!-- LAZY LOAD SENTINEL -->
-                <div
-                  ref="loadMoreSentinel"
-                  v-if="hasMore"
-                  class="load-more-sentinel has-text-centered p-4"
-                >
-                  <span v-if="isLoadingMore" class="has-text-grey">
-                    Loading more...
-                  </span>
-                </div>
-              </div>
+          <div v-if="isEditMode" class="bz-image-reference">
+            <label class="bz-image-reference__picker">
+              <input
+                type="file"
+                accept="image/*"
+                @change="onImagePicked"
+              />
+              <span class="material-symbols-outlined" aria-hidden="true">add_photo_alternate</span>
+              <span class="bz-image-reference__copy">
+                <span class="bz-image-reference__title">Reference image</span>
+                <span class="bz-image-reference__meta">
+                  {{ pickedImageName || "Choose an image to edit" }}
+                </span>
+              </span>
+            </label>
+            <div v-if="imagePreviewUrl" class="bz-image-reference__preview">
+              <img :src="imagePreviewUrl" alt="Selected image preview" />
             </div>
           </div>
+
+          <GenerativeInput
+            ref="promptInput"
+            v-model="form.prompt"
+            :placeholder="
+              isEditMode
+                ? 'Describe how to edit the image...'
+                : 'Describe your image...'
+            "
+            submit-label="Generate"
+            running-label="Crafting"
+            :running="isLoading"
+            :disabled="
+              !canGenerateWithAccess ||
+              (isEditMode && !hasInputImage)
+            "
+            shortcut-hint="⌘⏎"
+            @submit="sendMessage(form.prompt)"
+          />
         </div>
+      </template>
+
+      <template #historyActions>
+        <div class="bz-image-history-actions">
+          <button type="button" class="bz-iconbtn" title="Import history" aria-label="Import history" @click="importHistory()">
+            <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+          </button>
+          <button
+            type="button"
+            class="bz-iconbtn"
+            title="Export history"
+            aria-label="Export history"
+            :disabled="inferences.length === 0"
+            @click="exportHistory()"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">download</span>
+          </button>
+          <button type="button" class="bz-iconbtn bz-iconbtn--danger" title="Clear history" aria-label="Clear history" @click="clearHistory()">
+            <span class="material-symbols-outlined" aria-hidden="true">ink_eraser</span>
+          </button>
+        </div>
+      </template>
+
+      <template #history>
+        <div
+          v-if="inferences.length"
+          ref="masonryGridRef"
+          class="bz-image-masonry"
+          :style="{ '--bz-image-masonry-columns': masonryColumns.length }"
+        >
+          <ol
+            v-for="(column, columnIndex) in masonryColumns"
+            :key="columnIndex"
+            class="bz-image-masonry__column"
+          >
+            <li
+              v-for="entry in column"
+              :key="entry.inference.id || entry.inference._originalIndex"
+              class="history-item"
+              :style="{ transitionDelay: `${Math.min(entry.displayIndex * 12, 96)}ms` }"
+            >
+              <div class="question">
+                <img
+                  class="generated__image"
+                  :src="imageDataUrl(entry.inference)"
+                  alt="Generated image"
+                  title="Open inspector"
+                  :loading="entry.displayIndex < 6 ? 'eager' : 'lazy'"
+                  decoding="async"
+                  :fetchpriority="entry.displayIndex < 3 ? 'high' : 'auto'"
+                  :style="imageAspectStyle(entry.inference)"
+                  @click="openInspector(entry.inference)"
+                />
+                <div
+                  v-if="entry.inference.networkMode && entry.inference.networkMode !== 'local'"
+                  class="bz-image-card__caption"
+                >
+                  <span class="bz-origin-pill" :class="`bz-origin-pill--${entry.inference.networkMode}`">
+                    <span class="bz-origin-pill__dot"></span>
+                    {{ entry.inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                  </span>
+                </div>
+                <GenerativeActions
+                  :actions="actionsFor(entry.inference)"
+                  @action="(id) => handleAction(id, entry.inference)"
+                />
+              </div>
+            </li>
+          </ol>
+        </div>
+        <BonzaiEmptyState
+          v-else
+          size="small"
+          icon="image"
+          title="No images yet"
+          subtitle="Generated images will appear here with reuse, edit, animate, mint, and download actions."
+          :show-orb="false"
+        />
+
+        <div
+          ref="loadMoreSentinel"
+          v-if="hasMore"
+          class="load-more-sentinel"
+        >
+          <span v-if="isLoadingMore" class="bz-meta">Loading more...</span>
+        </div>
+      </template>
+    </GenerativeWorkspace>
+
+    <Transition name="bz-image-toast">
+      <div
+        v-if="pendingDelete"
+        class="bz-image-delete-toast"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+        <span class="bz-image-delete-toast__body">
+          Delete this image?
+        </span>
+        <button type="button" class="bz-image-delete-toast__ghost" @click="dismissDeleteToast">
+          Cancel
+        </button>
+        <button type="button" class="bz-image-delete-toast__danger" @click="confirmDeleteImage">
+          Delete
+        </button>
       </div>
-    </div>
+    </Transition>
   </div>
 
   <!-- Mint Modal -->
@@ -512,6 +274,7 @@ import {
   shallowRef,
   computed,
   inject,
+  nextTick,
   onMounted,
   onBeforeUnmount,
   watch,
@@ -560,8 +323,11 @@ import {
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import BonzaiPulse from "./BonzaiPulse.vue";
+import BonzaiEmptyState from "./BonzaiEmptyState.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
+import GenerativeWorkspace from "./generative/GenerativeWorkspace.vue";
+import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addImageInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
@@ -576,7 +342,16 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeImage",
-  components: { AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput },
+  components: {
+    AccessRequirements,
+    MintModal,
+    BonzaiPulse,
+    BonzaiEmptyState,
+    GenerativeActions,
+    GenerativeInput,
+    GenerativeWorkspace,
+    ModeChipBar,
+  },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
 
@@ -626,17 +401,39 @@ export default {
     const quality = ref("sd");
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
+    const pendingDelete = ref(null);
+    let pendingDeleteTimer = null;
+    const imageModeItems = [
+      { value: "turbo", label: "Turbo", icon: "bolt", title: "Fast Flux generation" },
+      { value: "standard", label: "Standard", icon: "photo_camera", title: "SDXL generation" },
+      { value: "quality", label: "Quality", icon: "high_quality", title: "Higher fidelity generation" },
+      { value: "turbo_edit", label: "Edit", icon: "brush", title: "Edit an existing image" },
+    ];
+    const qualityModeItems = [
+      { value: "sd", label: "SD", icon: "sd", title: "512 x 768" },
+      { value: "hd", label: "HD", icon: "hd", title: "720 x 1280" },
+      { value: "fhd", label: "FHD", icon: "full_hd", title: "1024 x 1920" },
+      { value: "2k", label: "2K", icon: "2k", title: "1440 x 2560" },
+      { value: "4k", label: "4K", icon: "4k", title: "2160 x 4096" },
+    ];
     // Use shallowRef for inferences - base64 images are large and don't need deep reactivity
     const inferences = shallowRef([]);
     const hasCopy = shallowRef([]);
 
     // ------------ lazy loading pagination ----------------
     const ITEMS_PER_PAGE = 10;
+    const initialMasonryColumnCount = () => {
+      if (typeof window === "undefined") return 1;
+      return window.innerWidth >= 1180 ? 3 : window.innerWidth >= 760 ? 2 : 1;
+    };
     const displayedCount = ref(ITEMS_PER_PAGE);
     const loadMoreSentinel = ref(null);
+    const masonryGridRef = ref(null);
+    const masonryColumnCount = ref(initialMasonryColumnCount());
     const isLoadingMore = ref(false);
     const showScrollTop = ref(false);
     const scrollContainer = ref(null);
+    let masonryGridResizeObserver = null;
 
     // Normalize inference to handle both component format and unified store format
     // Component format: { question, answer: { data: { image } } }
@@ -700,25 +497,108 @@ export default {
 
     // Check if there are more items to load
     const hasMore = computed(
-      () => displayedCount.value < inferences.value.length,
+      () => displayedCount.value < reversedInferences.value.length,
     );
+
+    const estimateImageRatio = (inference) => {
+      const data = inference?.answer?.data || {};
+      const width = Number(data.width || inference?.width || 0);
+      const height = Number(data.height || inference?.height || 0);
+      if (width > 0 && height > 0) return height / width;
+      return 0.66;
+    };
+
+    const imageAspectStyle = (inference) => {
+      const data = inference?.answer?.data || {};
+      const width = Number(data.width || inference?.width || 0);
+      const height = Number(data.height || inference?.height || 0);
+      if (width > 0 && height > 0) return { aspectRatio: `${width} / ${height}` };
+      return null;
+    };
+
+    const sniffImageMime = (imageData) => {
+      if (!imageData) return "image/webp";
+      const dataUrlMatch = String(imageData).match(/^data:([^;]+);base64,/i);
+      if (dataUrlMatch) return dataUrlMatch[1];
+      try {
+        const head = atob(String(imageData).slice(0, 32));
+        if (head.startsWith("\x89PNG")) return "image/png";
+        if (head.startsWith("\xff\xd8\xff")) return "image/jpeg";
+        if (head.startsWith("RIFF") && head.slice(8, 12) === "WEBP") return "image/webp";
+      } catch {}
+      return "image/webp";
+    };
+
+    const imageDataUrl = (inference) => {
+      const data = inference?.answer?.data || {};
+      const image = data.image || inference?.imageData || inference?.image || "";
+      if (!image) return "";
+      if (/^data:image\//i.test(image)) return image;
+      const mime = data.mime_type || data.mimeType || inference?.mime_type || inference?.mimeType || sniffImageMime(image);
+      return `data:${mime};base64,${image}`;
+    };
+
+    const masonryColumns = computed(() => {
+      const count = Math.max(
+        1,
+        Math.min(masonryColumnCount.value, paginatedInferences.value.length || 1),
+      );
+      const columns = Array.from({ length: count }, () => []);
+      const heights = Array.from({ length: count }, () => 0);
+
+      paginatedInferences.value.forEach((inference, displayIndex) => {
+        const firstOpenColumn = columns.findIndex((column) => column.length === 0);
+        const columnIndex = firstOpenColumn >= 0
+          ? firstOpenColumn
+          : heights.indexOf(Math.min(...heights));
+
+        columns[columnIndex].push({ inference, displayIndex });
+        heights[columnIndex] += estimateImageRatio(inference) + 0.12;
+      });
+
+      return columns;
+    });
+
+    const updateMasonryColumnCount = () => {
+      const width =
+        masonryGridRef.value?.clientWidth ||
+        document.querySelector(".bz-workspace__history")?.clientWidth ||
+        window.innerWidth;
+      const nextCount = width >= 1180 ? 3 : width >= 760 ? 2 : 1;
+      if (masonryColumnCount.value !== nextCount) {
+        masonryColumnCount.value = nextCount;
+      }
+    };
+
+    const setupMasonryGridObserver = () => {
+      masonryGridResizeObserver?.disconnect();
+      masonryGridResizeObserver = null;
+      nextTick(() => {
+        updateMasonryColumnCount();
+        if (!masonryGridRef.value) return;
+        masonryGridResizeObserver = new ResizeObserver(updateMasonryColumnCount);
+        masonryGridResizeObserver.observe(masonryGridRef.value);
+      });
+    };
 
     // Load more items
     const loadMore = () => {
       if (isLoadingMore.value || !hasMore.value) return;
       isLoadingMore.value = true;
-      setTimeout(() => {
-        displayedCount.value = Math.min(
-          displayedCount.value + ITEMS_PER_PAGE,
-          inferences.value.length,
-        );
+      displayedCount.value = Math.min(
+        displayedCount.value + ITEMS_PER_PAGE,
+        reversedInferences.value.length,
+      );
+      nextTick(() => {
+        updateMasonryColumnCount();
         isLoadingMore.value = false;
-      }, 100);
+      });
     };
 
     // Reset to initial count when new inference is added
     const resetToFirstPage = () => {
       displayedCount.value = ITEMS_PER_PAGE;
+      nextTick(updateMasonryColumnCount);
     };
 
     // Intersection Observer for infinite scroll
@@ -730,14 +610,14 @@ export default {
       // Use the scroll container as root for proper intersection detection
       const root =
         scrollContainer.value ||
-        document.querySelector(".models__deployment-install");
+        document.querySelector(".bz-workspace");
       scrollObserver = new IntersectionObserver(
         (entries) => {
           if (entries[0].isIntersecting && hasMore.value) {
             loadMore();
           }
         },
-        { root, rootMargin: "100px" },
+        { root, rootMargin: "900px 0px 900px 0px", threshold: 0 },
       );
       scrollObserver.observe(loadMoreSentinel.value);
     };
@@ -746,7 +626,7 @@ export default {
     const scrollToTop = () => {
       const container =
         scrollContainer.value ||
-        document.querySelector(".models__deployment-install");
+        document.querySelector(".bz-workspace");
       if (container) {
         container.scrollTo({ top: 0, behavior: "smooth" });
       }
@@ -838,6 +718,15 @@ export default {
     );
     const generationPctClamped = computed(() =>
       Math.max(0, Math.min(100, generation.value.pct)),
+    );
+    const workspaceProgress = computed(() =>
+      generation.value.active
+        ? {
+            active: true,
+            pct: generationPctClamped.value,
+            label: "Crafting...",
+          }
+        : null,
     );
 
     // ------------ pipeline/endpoint maps --
@@ -1444,7 +1333,17 @@ export default {
             id: uuid(),
             model: modelName,
             pipeline: pipelineName,
+            mode: mode.value,
+            quality: quality.value,
+            width: response.data.width || payload.width,
+            height: response.data.height || payload.height,
+            mimeType: response.data.mime_type || response.data.mimeType || sniffImageMime(response.data.image),
+            steps: payload.steps,
+            guidanceScale: payload.guidance_scale,
+            lora: payload.lora,
+            hasReferenceImage: isEditMode.value,
             elapsedMs,
+            timestamp: Date.now(),
             networkMode: _lastRoutingMode,
           };
           // Update shallowRef by replacing array (triggers reactivity)
@@ -1456,9 +1355,9 @@ export default {
           // Save to unified inference store with performance metadata
           addImageInference(prompt, response.data.image, {
             pipeline: pipelineName,
-            width: form.width,
-            height: form.height,
-            steps: form.steps,
+            width: response.data.width || payload.width,
+            height: response.data.height || payload.height,
+            steps: payload.steps,
             elapsed: elapsedMs / 1000,
             source: 'bonzai',
             networkMode: _lastRoutingMode,
@@ -1487,11 +1386,22 @@ export default {
       try {
         isLoading.value = true;
 
-        // Route through unified inference handler (handles local/consumer/provider)
-        if (payload.pipeline) {
+        // Route through the unified handler only when consumer networking is
+        // active. In local/provider modes this component already posts to
+        // Flask directly; routing first would run the same pipeline twice.
+        const networkMode = await window.electronAPI?.store?.get?.(
+          "p2p.networkMode",
+          "local",
+        );
+        const canRouteThroughIpc = payload.pipeline && networkMode === "consumer" && !isEditMode.value;
+        if (canRouteThroughIpc) {
           const routed = await inferenceRequest(payload.pipeline, payload);
-          if (routed?.ok && routed.remote && routed.result) {
-            _lastRoutingMode = routed.pipeline ? 'private' : 'remote';
+          if (routed?.ok && routed.result) {
+            _lastRoutingMode = routed.private
+              ? 'private'
+              : routed.remote
+                ? 'remote'
+                : 'local';
             setBlocked("image", false);
             stopGeneration("image");
             await onSuccess({ status: 200, data: routed.result });
@@ -1620,7 +1530,40 @@ export default {
       persistInferences([...inferences.value]);
     };
 
+    const clearDeleteToastTimer = () => {
+      if (!pendingDeleteTimer) return;
+      window.clearTimeout(pendingDeleteTimer);
+      pendingDeleteTimer = null;
+    };
+
+    const dismissDeleteToast = () => {
+      clearDeleteToastTimer();
+      pendingDelete.value = null;
+    };
+
+    const requestDeleteImage = (inference) => {
+      if (!inference) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = {
+        id: inference.id,
+        index: inference._originalIndex,
+      };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const confirmDeleteImage = async () => {
+      const pending = pendingDelete.value;
+      if (!pending) return;
+      dismissDeleteToast();
+      const idx = inferences.value.findIndex((item) => item.id === pending.id);
+      await removeInference(idx >= 0 ? idx : pending.index);
+    };
+
     const clearHistory = async () => {
+      dismissDeleteToast();
       inferences.value = [];
       hasCopy.value = [];
       try {
@@ -1704,9 +1647,12 @@ export default {
       } catch {}
       await probeCurrentMode();
       // Setup scroll observer after DOM is rendered
-      setTimeout(setupScrollObserver, 100);
+      nextTick(() => {
+        setupMasonryGridObserver();
+        setupScrollObserver();
+      });
       // Attach scroll listener for scroll-to-top button
-      const container = document.querySelector(".models__deployment-install");
+      const container = document.querySelector(".bz-workspace");
       if (container) {
         scrollContainer.value = container;
         container.addEventListener("scroll", handleScroll, { passive: true });
@@ -1727,10 +1673,15 @@ export default {
         scrollObserver.disconnect();
         scrollObserver = null;
       }
+      if (masonryGridResizeObserver) {
+        masonryGridResizeObserver.disconnect();
+        masonryGridResizeObserver = null;
+      }
       // Cleanup scroll listener
       if (scrollContainer.value) {
         scrollContainer.value.removeEventListener("scroll", handleScroll);
       }
+      clearDeleteToastTimer();
       // Note: generation socket is shared and managed by generationStore
     });
     watch(
@@ -1741,6 +1692,14 @@ export default {
       { immediate: true },
     );
 
+    watch(
+      () => paginatedInferences.value.length,
+      () => {
+        setupMasonryGridObserver();
+        nextTick(setupScrollObserver);
+      },
+    );
+
     // Open the global generation inspector for a clicked output.
     // Maps the local inference shape onto the inspector's forgiving
     // schema; only the fields we have populate. Image is base64 today
@@ -1748,24 +1707,53 @@ export default {
     const openInspector = (inference) => {
       if (!inference) return;
       const data = inference.answer?.data || {};
-      const mediaUrl = data.image
-        ? "data:image/png;base64," + data.image
-        : null;
+      const promptText = inference.question || data.prompt || "";
+      const wordCount = (text) =>
+        String(text || "").trim().split(/\s+/).filter(Boolean).length;
+      const mediaUrl = imageDataUrl(inference) || null;
+      const width = data.width || inference.width || null;
+      const height = data.height || inference.height || null;
+      const modeLabel = imageModeItems.find((item) => item.value === inference.mode)?.label
+        || imageModeItems.find((item) => item.value === mode.value)?.label
+        || inference.mode
+        || mode.value;
+      const qualityLabel = qualityModeItems.find((item) => item.value === inference.quality)?.label
+        || qualityModeItems.find((item) => item.value === quality.value)?.label
+        || inference.quality
+        || quality.value;
       inspector.show({
+        id: inference.id,
         kind: "image",
         mediaUrl,
-        prompt: inference.question || data.prompt,
+        imageData: data.image || inference.imageData || inference.image || "",
+        mimeType: data.mime_type || data.mimeType || inference.mime_type || inference.mimeType || null,
+        prompt: promptText,
         negativePrompt: data.negative_prompt,
         model: inference.model || (mode.value ? `Z-Image (${mode.value})` : null),
-        modelId: inference.modelId || (mode.value ? `image_${mode.value}` : null),
-        seed: data.seed,
-        steps: data.steps,
-        guidanceScale: data.guidance_scale,
-        width: data.width || form.width,
-        height: data.height || form.height,
+        modelId: inference.modelId || inference.pipeline || (mode.value ? `image_${mode.value}` : null),
+        status: inference.error ? "Error" : "Complete",
+        errorMessage: inference.errorMessage || "",
+        seed: data.seed || inference.seed,
+        steps: data.steps || inference.steps,
+        guidanceScale: data.guidance_scale || inference.guidanceScale,
+        ...(width && height ? { width, height } : {}),
         networkMode: inference.networkMode || "local",
         peerId: inference.peerId,
+        mintState: inference.nft || null,
         ts: inference.timestamp || inference.ts,
+        createdAt: inference.createdAt,
+        extra: {
+          mode: modeLabel,
+          resolutionPreset: qualityLabel,
+          pipeline: inference.pipeline || currentPipeline.value,
+          endpoint: endpointForMode(),
+          elapsedMs: inference.elapsedMs != null ? `${Math.round(inference.elapsedMs)} ms` : "",
+          promptChars: String(promptText.length),
+          promptWords: String(wordCount(promptText)),
+          imageBytes: data.image ? String(Math.round((data.image.length * 3) / 4)) : "",
+          referenceImage: inference.hasReferenceImage ? "Yes" : "No",
+          ...(inference.lora ? { lora: inference.lora } : {}),
+        },
       });
     };
 
@@ -1816,7 +1804,7 @@ export default {
           animate(inference);
           break;
         case "delete":
-          removeInference(inference._originalIndex);
+          requestDeleteImage(inference);
           break;
       }
     };
@@ -1824,10 +1812,13 @@ export default {
     return {
       // state
       mode,
+      imageModeItems,
       isEditMode,
       quality,
+      qualityModeItems,
       form,
       isLoading,
+      pendingDelete,
       inferences,
       hasCopy,
       // inspector
@@ -1837,9 +1828,13 @@ export default {
       handleAction,
       // lazy loading pagination
       paginatedInferences,
+      masonryGridRef,
+      masonryColumns,
       loadMoreSentinel,
       hasMore,
       isLoadingMore,
+      imageAspectStyle,
+      imageDataUrl,
       // scroll to top
       showScrollTop,
       scrollToTop,
@@ -1860,6 +1855,7 @@ export default {
       generation,
       generationPctRounded,
       generationPctClamped,
+      workspaceProgress,
       // downloads
       downloads,
       downloadTaskList,
@@ -1875,6 +1871,8 @@ export default {
       setCopied,
       downloadImage,
       removeInference,
+      dismissDeleteToast,
+      confirmDeleteImage,
       clearHistory,
       exportHistory,
       importHistory,
@@ -1894,16 +1892,6 @@ export default {
 };
 </script>
 <style scoped>
-/* Fonts imported from App.vue for offline mode */
-
-.generation {
-  position: fixed;
-  width: 33%;
-  top: 1em;
-  right: 1em;
-  z-index: 1;
-  opacity: 0.9;
-}
 .material-symbols-outlined {
   font-variation-settings:
     "FILL" 0,
@@ -1912,9 +1900,7 @@ export default {
     "opsz" 48;
   border-radius: 100%;
 }
-.columns {
-  position: relative !important;
-}
+
 .background {
   position: absolute;
   z-index: -1;
@@ -1924,384 +1910,394 @@ export default {
   background-size: cover;  overflow: hidden;
 }
 
-.models__deployment {
-  position: relative;
-  background: transparent;
-  padding: 0 !important;
-  margin: 0 !important;
+.bz-tab-shell {
+  --bz-image-grid-gap: 12px;
 }
 
-.models__deployment-install {
-  position: relative;
-  overflow-y: auto;
-  padding: var(--bz-space-5) var(--bz-space-6);
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  background: var(--bz-scrim-strong);
+.bz-tab-shell :deep(.bz-workspace__history) {
+  gap: var(--bz-image-grid-gap);
 }
 
-.models__activity--payouts {
-  padding: 4em;
-  border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-  border-radius: 4px !important;
+.bz-image-quality {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  padding-left: var(--bz-space-3);
+  border-left: 1px solid var(--bz-border);
 }
 
-.models__activity--payouts h2 {
-  font-size: 48px;
-  color: var(--bz-fg);
-  text-align: right;
+.bz-image-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-4);
 }
 
-.generated__image {
-  width: 100%;
-  height: auto;
-  max-height: var(--bz-content-max-h);
-  object-fit: contain;
-  border-radius: var(--bz-content-radius);
-  display: block;
-}
-h1 {
-  margin-top: 0 !important;
-  font-size: 64px;
-  color: var(--bz-fg);
-  text-align: right;
-}
-p {
-  margin-bottom: 1em;
-  font-size: 24px;
-  color: var(--bz-fg);
-  text-align: justify;
-  font-family: "Fira Sans", sans-serif;
-  font-weight: 100;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  transform: translate3d(0, 0, 0);
-}
-div.question {
-  position: relative;
+.bz-img-notice,
+.bz-img-download {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--bz-space-3);
+  align-items: start;
   padding: var(--bz-space-4);
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r);
 }
 
-div.question .generated__image {
-  /* box-shadow: 8px 8px 0 var(--bz-purple-glow); */
-}
-form {
-  position: relative;
-}
-hr {
-  margin: 12px 0;
-  width: 100%;
-  border: none;
-  height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    rgba(255, 255, 255, 1),
-    transparent
-  );
-}
-.input {
-  color: var(--bz-fg);
-  background: var(--bz-border);
-  box-shadow: 8px 8px 0 var(--bz-purple-glow);
-  transition: 200ms ease-in;
-  transform: translate3d(0, 0, 0);
-}
-::placeholder {
-  color: var(--bz-border) !important;
-  opacity: 1 !important;
-}
-.button.chat.is-loading {
-  position: absolute;
-  width: 32px;
-  height: 32px;
-  right: 10px;
-  bottom: 14px;
-  border: none !important;
-  box-shadow: none !important;
-}
-.is-loading {
-  text-shadow: none !important;
-}
-input[type="radio"] {
-  display: none;
-}
-input[type="radio"] + label {
-  padding: 3px 12px 9px;
-  color: var(--bz-fg-faint) !important;
-  border: 1px solid var(--bz-fg-faint);
-  border-radius: 4px;
-}
-input[type="radio"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
-}
-label.radio.quality {
-  margin: 0 3px;
-  padding: 3px 6px 0;
-}
-ul,
-ol {
-  padding: 0;
-  list-style-type: none;
-}
-ol.chat {
-  display: flex;
-  flex-direction: column;
-}
-ol.chat li {
-  position: relative;
-}
-.retry {
-  position: absolute;
-  top: -5em;
-  right: 2.75em;
-  opacity: 0.5;
-}
-.retry:hover,
-.cancel:hover {
-  box-shadow: none;
-  opacity: 1;
-}
-.cancel {
-  position: absolute;
-  top: -5em;
-  right: -2em;
-  opacity: 0.5;
-}
-.notification.preview {
-  box-shadow: 8px 8px 0 var(--bz-purple-glow);
-}
-.preview-image {
-  width: 100%;
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 4px;
+.bz-img-notice--danger {
+  background: var(--bz-danger-soft);
+  border-color: var(--bz-danger);
 }
 
-/* ── Cinematic content-first treatment — Phase 3 (Runway-style) ──
-   Hero image is full-bleed edge-to-edge with metadata overlay.
-   History items are a dense 2-column grid with minimal chrome.
-   The content IS the design; the interface retreats. */
-
-.history-item {
-  animation: bz-fade-rise 600ms var(--bz-ease-out) forwards;
-  opacity: 0;
-}
-
-ol.chat {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--bz-space-5);
-  list-style: none;
-  padding: 0;
-  margin: var(--bz-space-5) 0;
-}
-
-/* ── HERO — first item is cinematic full-bleed ───────────────── */
-ol.chat .history-item:first-child {
-  grid-column: 1 / -1;
-}
-ol.chat .history-item:first-child .question {
-  background: transparent;
-  border: none;
-  padding: 0;
-  border-radius: 0;
-}
-ol.chat .history-item:first-child .generated__image {
-  max-height: 85vh;
-  width: 100%;
-  max-width: 100%;
-  border-radius: var(--bz-r-sm);
-}
-/* Hide watermark on hero — the image speaks for itself */
-ol.chat .history-item:first-child .watermark {
-  display: none;
-}
-/* Subtle bottom scrim so overlay controls read on any image */
-ol.chat .history-item:first-child .question::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 120px;
-  background: var(--bz-content-scrim);
-  pointer-events: none;
-  border-radius: 0 0 var(--bz-r-sm) var(--bz-r-sm);
-}
-/* Overlay metadata at the bottom of the hero image */
-ol.chat .history-item:first-child .bz-img-meta {
-  position: absolute;
-  bottom: var(--bz-space-4);
-  left: var(--bz-space-4);
-  z-index: 1;
-  margin: 0;
-}
-ol.chat .history-item:first-child .bz-gen-actions {
-  position: absolute;
-  bottom: var(--bz-space-4);
-  right: var(--bz-space-4);
-  z-index: 1;
-}
-/* Dark-backed pills + action buttons for readability over images */
-ol.chat .history-item:first-child .bz-origin-pill {
-  background: rgba(0, 0, 0, 0.65);
-  border-color: transparent;
-  color: var(--bz-fg);
-  backdrop-filter: blur(4px);
-}
-ol.chat .history-item:first-child .bz-gen-actions {
-  background: rgba(0, 0, 0, 0.55);
-  padding: var(--bz-space-2);
-  border-radius: var(--bz-r-sm);
-  backdrop-filter: blur(4px);
-  gap: var(--bz-space-2);
-}
-ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action {
-  border-color: rgba(255, 255, 255, 0.18);
-  color: var(--bz-fg);
-}
-ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.35);
-}
-
-/* ── HISTORY GRID ───────────────────────────────────────────── */
-@media (min-width: 880px) {
-  ol.chat {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  ol.chat .history-item:first-child {
-    grid-column: 1 / -1;
-  }
-}
-
-ol.chat .history-item:not(:first-child) {
-  width: 100%;
-}
-ol.chat .history-item:not(:first-child) .question {
-  padding: var(--bz-space-3);
-}
-ol.chat .history-item:not(:first-child) .generated__image {
-  width: 100%;
-  max-width: 100%;
-  display: block;
-  border-radius: var(--bz-r-sm);
-}
-ol.chat .history-item:not(:first-child) hr {
-  border: 0;
-  border-top: 1px solid var(--bz-border);
-  margin: var(--bz-space-4) 0;
-}
-
-.load-more-sentinel {
-  min-height: 20px;
-}
-
-/* Scroll to top button */
-.scroll-to-top-btn {
-  position: absolute;
-  bottom: 2rem;
-  right: 2rem;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--bz-purple-500);
-  border: 2px solid var(--bz-fg-faint);
-  color: var(--bz-fg);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 12px var(--bz-scrim);
-  transition: all 0.2s ease;
-  z-index: 100;
-  animation: fadeInUp 0.3s ease-out;
-}
-
-.scroll-to-top-btn:hover {
-  background: var(--bz-purple-500);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px var(--bz-scrim);
-}
-
-.scroll-to-top-btn .material-symbols-outlined {
-  font-size: 24px;
-  border: none;
-}
-
-/* Background animation */
-@keyframes move {
-  0% {
-    transform: scale(1.1);
-    transform-origin: bottom left;
-  }
-  50% {
-    transform: scale(1.2);
-  }
-  100% {
-    transform: scale(1.1);
-    transform-origin: bottom left;
-  }
-}
-
-.network-mode-tag {
+.bz-img-notice__icon {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 1px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 700;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--bz-danger);
+}
+
+.bz-img-notice__title {
+  margin: 0;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-h3);
+  letter-spacing: 0;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
-.nm-remote {
-  background: rgba(62, 142, 208, 0.15);
-  color: var(--bz-info);
-  border: 1px solid rgba(62, 142, 208, 0.3);
+.bz-img-notice__text {
+  margin: var(--bz-space-1) 0 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-body);
+  line-height: var(--bz-line-body);
 }
 
-.nm-private {
-  background: rgba(72, 199, 142, 0.12);
-  color: var(--bz-emerald-500);
-  border: 1px solid var(--bz-emerald-soft);
+.bz-img-notice__list,
+.bz-img-notice__notes,
+.bz-img-download__tasks {
+  padding: 0;
+  margin: var(--bz-space-3) 0 0;
+  list-style: none;
 }
 
-/* Generation progress block — Milestone 4 motion. The legacy
-   notification + Bulma spinner combo is replaced by:
-   shout label · mono percent · BonzaiPulse bar with sweep. */
-.bz-genprogress {
-  display: flex;
-  flex-direction: column;
-  gap: var(--bz-space-3);
-  margin-bottom: var(--bz-space-4);
-  padding: var(--bz-space-4) var(--bz-space-5);
-  background: var(--bz-card);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r);
+.bz-img-notice__list li,
+.bz-img-download__tasks li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
+  gap: var(--bz-space-2);
+  align-items: center;
+  min-height: 28px;
+  color: var(--bz-fg-mid);
 }
-.bz-genprogress__row {
+
+.bz-img-notice__list li {
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+
+.bz-img-notice__list .material-symbols-outlined,
+.bz-img-download__tasks .material-symbols-outlined {
+  font-size: 16px !important;
+  color: var(--bz-fg-low);
+}
+
+.bz-img-notice__notes li {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
+}
+
+.bz-img-download {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.bz-img-download__head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--bz-space-3);
 }
-.bz-genprogress__label {
+
+.bz-img-download__title,
+.bz-img-download__percent {
+  color: var(--bz-fg);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.bz-img-download__title {
+  font-size: var(--bz-size-h3);
+}
+
+.bz-img-download__percent {
   font-size: var(--bz-size-h2);
+  line-height: 1;
+}
+
+.bz-img-download__file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bz-img-download__status {
+  color: var(--bz-fg);
+  text-transform: uppercase;
+}
+
+.bz-image-reference {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1fr);
+  gap: var(--bz-space-4);
+  align-items: stretch;
+  padding: var(--bz-space-4);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+
+.bz-image-reference__picker {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  min-height: 116px;
+  padding: var(--bz-space-4);
+  border: 1px dashed var(--bz-border-strong);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg);
+  cursor: pointer;
+}
+
+.bz-image-reference__picker:hover {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+}
+
+.bz-image-reference__picker input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bz-image-reference__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--bz-space-1);
+}
+
+.bz-image-reference__title {
+  color: var(--bz-fg);
+  font-weight: 700;
+}
+
+.bz-image-reference__meta {
+  color: var(--bz-fg-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bz-image-reference__preview {
+  min-height: 116px;
+  border-radius: var(--bz-r-sm);
+  overflow: hidden;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+}
+
+.bz-image-reference__preview img {
+  width: 100%;
+  height: 100%;
+  max-height: 240px;
+  display: block;
+  object-fit: contain;
+}
+
+.bz-image-history-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+}
+
+/* ── Image history grid ─────────────────────────────────────────
+   No hero item: every output is a peer tile. JS balances explicit
+   columns so the gaps stay even without browser row-span artifacts. */
+
+.bz-image-masonry {
+  display: grid;
+  grid-template-columns: repeat(var(--bz-image-masonry-columns), minmax(0, 1fr));
+  gap: var(--bz-image-grid-gap);
+  padding: 0;
+  margin: 0 0 var(--bz-space-5);
+}
+
+.bz-image-masonry__column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-image-grid-gap);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.history-item {
+  min-width: 0;
+  opacity: 1;
+  margin: 0;
+  transition:
+    transform var(--bz-dur-fast) var(--bz-ease-out);
+}
+
+div.question {
+  position: relative;
+  padding: 0;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  overflow: hidden;
+}
+
+div.question::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(46%, 148px);
+  background:
+    linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(0, 0, 0, 0.22) 36%,
+      rgba(0, 0, 0, 0.76) 100%
+    );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.generated__image {
+  width: 100%;
+  height: auto;
+  min-height: 180px;
+  background: var(--bz-canvas);
+  object-fit: contain;
+  border-radius: 0;
+  display: block;
+  cursor: zoom-in;
+}
+
+.bz-image-card__caption {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--bz-space-3);
+  margin: 0;
+  position: absolute;
+  left: var(--bz-space-3);
+  bottom: var(--bz-space-3);
+  z-index: 2;
+}
+
+div.question > .bz-gen-actions {
+  position: absolute;
+  right: var(--bz-space-3);
+  bottom: var(--bz-space-3);
+  z-index: 2;
+  max-width: calc(100% - var(--bz-space-6));
+  padding: 6px;
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: var(--bz-r-sm);
+  backdrop-filter: blur(10px);
+}
+
+.bz-image-card__caption + .bz-gen-actions {
+  max-width: calc(100% - 132px);
+}
+
+.load-more-sentinel {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bz-image-delete-toast {
+  position: fixed;
+  right: max(var(--bz-space-5), env(safe-area-inset-right));
+  bottom: max(var(--bz-space-5), env(safe-area-inset-bottom));
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  max-width: min(420px, calc(100vw - 32px));
+  padding: var(--bz-space-3);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  box-shadow: var(--bz-shadow-lg);
   color: var(--bz-fg);
 }
-.bz-genprogress__pct {
-  font-size: var(--bz-size-h3);
+
+.bz-image-delete-toast .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-danger);
+}
+
+.bz-image-delete-toast__body {
+  min-width: 0;
   color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+}
+
+.bz-image-delete-toast__ghost,
+.bz-image-delete-toast__danger {
+  height: 30px;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-3);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+}
+
+.bz-image-delete-toast__ghost {
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+}
+
+.bz-image-delete-toast__ghost:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.bz-image-delete-toast__danger {
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
+  color: var(--bz-danger);
+  font-weight: 700;
+}
+
+.bz-image-delete-toast__danger:hover {
+  filter: brightness(1.08);
+}
+
+.bz-image-toast-enter-active,
+.bz-image-toast-leave-active {
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
+}
+
+.bz-image-toast-enter-from,
+.bz-image-toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 /* Inline image meta — origin pill row above the action cluster. */

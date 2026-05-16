@@ -553,6 +553,8 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
   }
 
   _inFlight++;
+  let buffer = "";
+  let full = "";
   try {
     const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
       method: "POST",
@@ -568,10 +570,13 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
 
     const decoder = new TextDecoder();
     const reader = res.body.getReader();
-    let buffer = "";
-    let full = "";
 
     while (true) {
+      if (signal?.aborted) {
+        console.log("[llama-server] chatStream aborted by signal");
+        try { reader.cancel(); } catch {}
+        break;
+      }
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -599,7 +604,14 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
         }
       }
     }
+    // Signal-aborted streams still carry the partial text accumulated so far.
     return full;
+  } catch (err) {
+    if (err.name === "AbortError" || signal?.aborted) {
+      console.log("[llama-server] chatStream aborted, returning partial text");
+      return full;
+    }
+    throw err;
   } finally {
     _inFlight = Math.max(0, _inFlight - 1);
   }

@@ -89,6 +89,12 @@ export async function clear(companyId) {
   _notify();
 }
 
+export async function remove(companyId, entryId) {
+  const out = await _safe((api) => api.remove(companyId, entryId), { ok: false });
+  _notify();
+  return out?.ok ?? false;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Pub/sub — bridges the main-process broadcast event into the legacy
 // onChange listener API. Existing companyStore.init() subscribes via

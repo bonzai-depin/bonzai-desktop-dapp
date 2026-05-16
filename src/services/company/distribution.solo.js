@@ -52,3 +52,8 @@ export async function getRecord(companyId, contentId) {
 export async function clear(companyId) {
   await _safe((api) => api.clear(companyId), null);
 }
+
+export async function remove(companyId, contentId) {
+  const out = await _safe((api) => api.remove(companyId, contentId), { ok: false });
+  return out?.ok ?? false;
+}

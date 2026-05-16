@@ -1,5 +1,5 @@
 <template>
-  <div class="live panel models__activity--payouts">
+  <div class="live panel models__activity--payouts" :class="{ 'is-compact': compact, 'is-horizontal': horizontal }">
     <div class="live__head">
       <h2 class="panel-title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined live__pulse">graphic_eq</span>
@@ -16,28 +16,28 @@
           </span>
         </div>
         <button
-          class="button is-small is-light fira-sans-condensed-black-italic ml-5"
+          class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
           :disabled="!entries.length"
           @click="clearFeed"
           :title="charter.demoMode
             ? 'Wipe the audit log so the next demo tick starts fresh'
             : 'Clear the visible audit history (does not affect goals, issues, or treasury)'"
         >
-          <span class="material-symbols-outlined mr-1">delete_sweep</span>
+          <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>
           Clear
         </button>
       </div>
     </div>
 
-    <p class="muted">
+    <p v-if="!compact" class="muted">
       Every CEO tick, role action, skill call, and audit entry as it happens. Watch your
       company think, plan, and ship in real time.
     </p>
 
-    <hr />
+    <hr v-if="!compact" />
 
     <!-- Filter chips -->
-    <div class="live__filters">
+    <div v-if="!compact" class="live__filters">
       <button
         v-for="f in filters"
         :key="f.id"
@@ -77,7 +77,7 @@
               <span class="live-entry__duration">
                 {{ Math.round((nowTs - s.startedAt) / 1000) }}<small>s</small>
               </span>
-              <span class="live-entry__status tag is-info">streaming…</span>
+              <span class="live-entry__status status-pill status-pill--queued">streaming…</span>
             </div>
             <pre class="live-entry__response live-entry__response--streaming">{{ s.response || '…' }}<span class="live-entry__cursor">▍</span></pre>
           </div>
@@ -86,7 +86,7 @@
 
       <transition-group name="live-entry" tag="div" class="live__entries">
         <div
-          v-for="entry in filtered.slice(0, 100)"
+          v-for="entry in filtered.slice(0, entryLimit)"
           :key="entry._id"
           class="live-entry"
           :class="[
@@ -111,7 +111,7 @@
               >
                 {{ entry.llm.durationMs }}<small>ms</small>
               </span>
-              <span class="live-entry__status tag" :class="statusClass(entry.status)">
+              <span class="live-entry__status status-pill" :class="statusClass(entry.status)">
                 {{ statusLabel(entry) }}
               </span>
             </div>
@@ -135,6 +135,14 @@
               <span class="material-symbols-outlined">link</span>
               <code>{{ entry.txOrLink }}</code>
             </div>
+            <button
+              class="live-entry__delete bz-iconbtn bz-iconbtn--sm"
+              @click.stop="removeEntry(entry)"
+              title="Delete this feed item"
+              aria-label="Delete feed item"
+            >
+              <span class="material-symbols-outlined">delete</span>
+            </button>
           </div>
         </div>
       </transition-group>
@@ -162,6 +170,8 @@ export default {
   props: {
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
+    compact: { type: Boolean, default: false },
+    horizontal: { type: Boolean, default: false },
   },
   setup(props) {
     const store = companyStore;
@@ -224,6 +234,7 @@ export default {
       if (activeFilter.value === "all") return entries.value;
       return entries.value.filter((e) => e.kind === activeFilter.value);
     });
+    const entryLimit = computed(() => props.horizontal ? 3 : (props.compact ? 24 : 100));
 
     // Events in the last 60 seconds, used for the live "rate" indicator
     const recentRate = computed(() => {
@@ -267,13 +278,13 @@ export default {
 
     function statusClass(s) {
       return ({
-        executed: "is-success",
-        vetoed: "is-warning",
-        error: "is-danger",
-        parse_error: "is-danger",
-        queued: "is-info",
-        pending: "is-info",
-      })[s] || "is-light";
+        executed: "status-pill--executed",
+        vetoed: "status-pill--vetoed",
+        error: "status-pill--error",
+        parse_error: "status-pill--error",
+        queued: "status-pill--queued",
+        pending: "status-pill--queued",
+      })[s] || "status-pill--neutral";
     }
 
     function statusLabel(entry) {
@@ -349,12 +360,16 @@ export default {
       try { await store.clearAudit(); }
       catch (err) { alert("Could not clear feed: " + (err.message || err)); }
     }
+    async function removeEntry(entry) {
+      if (!entry?.id) return;
+      await store.removeAuditEntry(entry.id);
+    }
 
     return {
-      activeFilter, filters, filtered, entries, counts, recentRate,
+      activeFilter, filters, filtered, entries, counts, recentRate, entryLimit,
       liveStreams, nowTs,
       iconFor, statusClass, statusLabel, fmtRelative, formatAction, formatLLMAction, roleDisplayName,
-      clearFeed,
+      clearFeed, removeEntry,
     };
   },
 };
@@ -370,9 +385,9 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 1), transparent);
+  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
 }
-.muted { color: rgba(255, 255, 255, 0.65); font-size: 0.92em; }
+.muted { color: var(--bz-fg-mid); font-size: var(--bz-size-body); }
 
 .panel-title {
   font-size: 1.6rem;
@@ -380,8 +395,7 @@ hr {
   align-items: center;
   gap: 0.5em;
   margin-bottom: 0.4em;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-fg) !important;
 }
 
 .live__head {
@@ -394,13 +408,10 @@ hr {
 
 .live__pulse {
   font-size: 28px !important;
-  -webkit-text-fill-color: rgb(255, 153, 51) !important;
+  color: var(--bz-purple-300) !important;
+  -webkit-text-fill-color: currentColor !important;
   background: none !important;
-  animation: pulse 2s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50%      { opacity: 1;   transform: scale(1.08); }
+  animation: none;
 }
 
 .live__demo-badge {
@@ -411,16 +422,17 @@ hr {
   padding: 3px 9px;
   margin-left: 0.5em;
   border-radius: 999px;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51));
-  color: #000 !important;
-  -webkit-text-fill-color: #000 !important;
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-300) !important;
+  border: 1px solid var(--bz-border-brand);
+  -webkit-text-fill-color: currentColor !important;
   background-clip: border-box !important;
 }
 
 .live__head-right {
   display: flex;
   align-items: center;
-  gap: 0.5em;
+  gap: var(--bz-space-3);
   flex-wrap: wrap;
 }
 .live__stats {
@@ -428,24 +440,23 @@ hr {
   align-items: baseline;
   gap: 0.5em;
   font-family: "Fira Sans", sans-serif;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
 }
 .live__count {
   font-size: 1.4rem;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-fg);
 }
 .live__count-label {
   font-size: 0.72em;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--bz-fg-low);
 }
-.live__separator { color: rgba(255, 255, 255, 0.3); }
+.live__separator { color: var(--bz-fg-faint); }
 .live__rate {
   font-family: "Fira Sans", sans-serif;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--bz-fg-mid);
   font-size: 0.82em;
 }
 .live__rate.is-active { color: var(--bz-emerald-500); }
@@ -460,17 +471,16 @@ hr {
 }
 .live__chip {
   padding: 6px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   cursor: pointer;
   font-family: "Fira Sans", sans-serif !important;
   font-weight: 600 !important;
   font-size: 11px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  backdrop-filter: blur(32px);
   transition: all 0.18s ease;
   display: inline-flex;
   align-items: center;
@@ -478,20 +488,20 @@ hr {
 }
 .live__chip:hover {
   background: var(--bz-purple-soft);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: #fff;
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg);
 }
 .live__chip.is-active {
-  color: #fff !important;
-  border-color: #fff !important;
+  color: var(--bz-fg) !important;
+  border-color: var(--bz-border-brand) !important;
   background: var(--bz-purple-soft) !important;
 }
 .live__chip-count {
   font-size: 0.85em;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
+  background: var(--bz-card);
+  color: var(--bz-fg);
 }
 
 /* ───────── Stream ───────── */
@@ -499,25 +509,37 @@ hr {
   max-height: calc(100vh - 360px);
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: var(--bz-border-strong) transparent;
 }
 .live__stream::-webkit-scrollbar { width: 6px; }
-.live__stream::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 999px; }
+.live__stream::-webkit-scrollbar-thumb { background: var(--bz-border-strong); border-radius: 999px; }
 .live__entries { display: flex; flex-direction: column; gap: 0.5em; }
 
 .live-entry {
+  position: relative;
   display: grid;
   grid-template-columns: 80px 36px 1fr;
   gap: 0.85em;
   align-items: flex-start;
   padding: 0.85em 1em;
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(32px);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
   border-radius: 4px;
   transition: border-color 0.15s ease;
 }
-.live-entry:hover { border-color: rgba(255, 255, 255, 0.22); }
+.live-entry:hover { border-color: var(--bz-border-strong); }
+.live-entry__delete {
+  position: absolute;
+  right: var(--bz-space-2);
+  top: var(--bz-space-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--bz-dur-fast);
+}
+.live-entry:hover .live-entry__delete {
+  opacity: 1;
+  pointer-events: auto;
+}
 
 .live-entry.is-vetoed       { border-left: 3px solid var(--bz-warning); }
 .live-entry.is-error        { border-left: 3px solid var(--bz-danger); }
@@ -525,12 +547,13 @@ hr {
 .live-entry.is-queued       { border-left: 3px solid var(--bz-info); }
 .live-entry.is-executed     { border-left: 3px solid var(--bz-emerald-500); }
 .live-entry--llm.is-executed {
-  border-left-color: rgb(155, 109, 200);
-  background: rgba(155, 109, 200, 0.07);
+  border-left-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
 }
 .live-entry--llm .live-entry__icon .material-symbols-outlined {
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
 }
 
 .live-entry__time {
@@ -539,7 +562,7 @@ hr {
   font-size: 0.74em;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   padding-top: 0.3em;
   white-space: nowrap;
 }
@@ -549,8 +572,9 @@ hr {
 }
 .live-entry__icon .material-symbols-outlined {
   font-size: 24px;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
 }
 
 .live-entry__head {
@@ -562,22 +586,59 @@ hr {
 }
 .live-entry__role {
   font-size: 0.95rem;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-fg);
 }
 .live-entry__action {
   font-family: "Fira Sans", sans-serif;
   font-weight: 600;
   font-size: 0.86em;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--bz-fg-mid);
   letter-spacing: 0.02em;
 }
 .live-entry__status {
-  font-size: 0.7em !important;
+  font-size: var(--bz-size-meta) !important;
   text-transform: capitalize;
 }
+.status-pill {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-ui);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  line-height: 1;
+}
+.status-pill--executed {
+  border-color: var(--bz-emerald-500);
+  background: var(--bz-success-soft);
+  color: var(--bz-emerald-500);
+}
+.status-pill--vetoed {
+  border-color: var(--bz-warning);
+  background: var(--bz-warning-soft);
+  color: var(--bz-warning);
+}
+.status-pill--error {
+  border-color: var(--bz-danger);
+  background: var(--bz-danger-soft);
+  color: var(--bz-danger);
+}
+.status-pill--queued {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-300);
+}
+.status-pill--neutral {
+  border-color: var(--bz-border);
+  color: var(--bz-fg-mid);
+}
 .live-entry__note {
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--bz-fg-mid);
   font-size: 0.88em;
   line-height: 1.45;
 }
@@ -585,20 +646,19 @@ hr {
   font-family: "Fira Sans", sans-serif;
   font-weight: 600;
   font-size: 0.78em;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--bz-fg-low);
   letter-spacing: 0.04em;
   margin-left: auto;
   margin-right: 0.3em;
 }
-.live-entry__duration small { font-weight: 400; opacity: 0.7; }
+.live-entry__duration small { font-weight: 400; color: var(--bz-fg-low); }
 
 /* ───────── LLM "thought" collapsible ───────── */
 .live-entry__thought {
   margin-top: 0.55em;
   border: 1px solid rgba(155, 109, 200, 0.3);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(32px);
+  background: var(--bz-card);
   overflow: hidden;
 }
 .live-entry__thought summary {
@@ -613,18 +673,19 @@ hr {
   font-size: 0.76em;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--bz-fg-mid);
   transition: background 0.15s ease;
 }
 .live-entry__thought summary::-webkit-details-marker { display: none; }
-.live-entry__thought summary:hover { background: rgba(155, 109, 200, 0.15); }
+.live-entry__thought summary:hover { background: var(--bz-purple-soft); }
 .live-entry__thought summary .material-symbols-outlined {
   font-size: 16px !important;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
 }
 .live-entry__thought[open] summary {
-  background: rgba(155, 109, 200, 0.15);
+  background: var(--bz-purple-soft);
   border-bottom: 1px solid rgba(155, 109, 200, 0.3);
 }
 .live-entry__truncated {
@@ -632,7 +693,7 @@ hr {
   font-size: 0.85em;
   font-weight: 400;
   text-transform: lowercase;
-  color: rgba(255, 224, 138, 0.85);
+  color: var(--bz-warning);
 }
 
 .live-entry__response {
@@ -641,12 +702,12 @@ hr {
   font-family: "Fira Code", "JetBrains Mono", "SF Mono", monospace;
   font-size: 0.78em !important;
   line-height: 1.55;
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--bz-fg);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 320px;
   overflow-y: auto;
-  background: var(--bz-scrim);
+  background: var(--bz-canvas);
 }
 .live-entry__response::-webkit-scrollbar { width: 4px; }
 .live-entry__response::-webkit-scrollbar-thumb {
@@ -656,18 +717,12 @@ hr {
 /* ───────── In-flight streaming cards ───────── */
 .live__entries--streaming { margin-bottom: 0.5em; }
 .live-entry--streaming {
-  border-left: 3px solid rgb(255, 153, 51) !important;
-  background: rgba(155, 109, 200, 0.12) !important;
-  box-shadow: 0 0 24px rgba(255, 153, 51, 0.18);
-  animation: stream-glow 2.4s ease-in-out infinite;
-}
-@keyframes stream-glow {
-  0%, 100% { box-shadow: 0 0 18px rgba(255, 153, 51, 0.12); }
-  50%      { box-shadow: 0 0 28px rgba(255, 153, 51, 0.28); }
+  border-left: 3px solid var(--bz-purple-300) !important;
+  background: var(--bz-purple-soft) !important;
 }
 .live-entry__response--streaming {
   /* No collapsing details — show the streaming text inline */
-  background: var(--bz-scrim);
+  background: var(--bz-canvas);
   margin-top: 0.4em;
   border: 1px solid rgba(155, 109, 200, 0.35);
   border-radius: 4px;
@@ -675,7 +730,7 @@ hr {
 .live-entry__cursor {
   display: inline-block;
   margin-left: 0.1em;
-  color: rgb(255, 153, 51);
+  color: var(--bz-purple-300);
   animation: blink 0.9s steps(2, start) infinite;
 }
 @keyframes blink {
@@ -704,11 +759,11 @@ hr {
   display: flex; align-items: center; gap: 0.3em;
   font-size: 0.78em;
   margin-top: 0.3em;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--bz-fg-low);
 }
-.live-entry__link .material-symbols-outlined { font-size: 14px; color: rgba(255,255,255,0.55) !important; -webkit-text-fill-color: rgba(255,255,255,0.55) !important; background: none !important; }
+.live-entry__link .material-symbols-outlined { font-size: 14px; color: var(--bz-fg-low) !important; -webkit-text-fill-color: var(--bz-fg-low) !important; background: none !important; }
 .live-entry__link code {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bz-raised);
   padding: 1px 6px;
   border-radius: 3px;
   font-family: "Fira Code", "JetBrains Mono", monospace;
@@ -717,18 +772,109 @@ hr {
 
 /* ───────── Animation: new entries fade + slide in ───────── */
 .live-entry-enter-active {
-  transition: all 0.45s cubic-bezier(.22, 1, .36, 1);
+  transition:
+    opacity 0.55s cubic-bezier(.16, 1, .3, 1),
+    transform 0.55s cubic-bezier(.16, 1, .3, 1);
 }
 .live-entry-enter-from {
   opacity: 0;
-  transform: translateY(-12px) scale(0.98);
+  transform: translateX(34px) scale(0.985);
 }
 .live-entry-leave-active {
-  transition: all 0.25s ease;
+  transition:
+    opacity 0.42s cubic-bezier(.55, 0, .1, 1),
+    transform 0.42s cubic-bezier(.55, 0, .1, 1);
   position: absolute;
 }
-.live-entry-leave-to { opacity: 0; transform: translateY(-6px); }
-.live-entry-move { transition: transform 0.4s ease; }
+.live-entry-leave-to {
+  opacity: 0;
+  transform: translateX(-42px) scale(0.985);
+}
+.live-entry-move {
+  transition: transform 0.72s cubic-bezier(.16, 1, .3, 1);
+}
+
+.live.is-horizontal {
+  box-sizing: border-box;
+  height: 100%;
+  padding: var(--bz-space-2) var(--bz-space-3) !important;
+  min-height: 0;
+  overflow: hidden;
+}
+.live.is-horizontal .live__head {
+  flex-wrap: nowrap;
+  margin-bottom: var(--bz-space-1);
+}
+.live.is-horizontal .panel-title {
+  margin-bottom: 0;
+  white-space: nowrap;
+  font-size: 1rem;
+}
+.live.is-horizontal .live__stats {
+  white-space: nowrap;
+}
+.live.is-horizontal .live__stream {
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: hidden;
+}
+.live.is-horizontal .live__entries,
+.live.is-horizontal .live__entries--streaming {
+  flex-direction: row;
+  gap: var(--bz-space-2);
+  position: relative;
+  min-height: 80px;
+  width: 100%;
+}
+.live.is-horizontal .live-entry {
+  flex: 1 1 calc((100% - (2 * var(--bz-space-2))) / 3);
+  max-width: calc((100% - (2 * var(--bz-space-2))) / 3);
+  grid-template-columns: 1fr;
+  gap: var(--bz-space-1);
+  min-height: 72px;
+  max-height: 80px;
+  overflow: hidden;
+  padding: var(--bz-space-2) var(--bz-space-3);
+}
+.live.is-horizontal .live-entry__time {
+  order: 2;
+  padding-top: 0;
+  font-size: 0.64em;
+}
+.live.is-horizontal .live-entry__icon {
+  display: none;
+}
+.live.is-horizontal .live-entry__head {
+  flex-wrap: nowrap;
+  min-width: 0;
+  padding-right: 30px;
+  gap: var(--bz-space-2);
+  margin-bottom: 0;
+}
+.live.is-horizontal .live-entry__role,
+.live.is-horizontal .live-entry__status {
+  flex: 0 0 auto;
+}
+.live.is-horizontal .live-entry__action {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live.is-horizontal .live-entry__note {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8em;
+}
+.live.is-horizontal .live-entry__duration {
+  display: none;
+}
+.live.is-horizontal .live-entry__thought,
+.live.is-horizontal .live-entry__link {
+  display: none;
+}
 
 .live__empty {
   display: flex;
@@ -736,7 +882,7 @@ hr {
   align-items: center;
   gap: 0.6em;
   padding: 3em 1em;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   font-style: italic;
   text-align: center;
 }
@@ -745,8 +891,4 @@ hr {
   opacity: 0.5;
 }
 
-:deep(.tag.is-light) {
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: rgba(255, 255, 255, 0.78) !important;
-}
 </style>

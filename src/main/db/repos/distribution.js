@@ -79,6 +79,14 @@ export function clear(companyId) {
   orm.delete(publishedContent).where(eq(publishedContent.companyId, companyId)).run();
 }
 
+export function remove(companyId, contentId) {
+  const { orm } = get();
+  orm.delete(publishedContent)
+    .where(and(eq(publishedContent.companyId, companyId), eq(publishedContent.id, contentId)))
+    .run();
+  return true;
+}
+
 function _extOf(pipeline) {
   return ({
     image: "png",

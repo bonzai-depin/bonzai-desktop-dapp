@@ -15,7 +15,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   checkModel: (modelname) => ipcRenderer.invoke("model-check", modelname),
   downloadModel: (url, filename) =>
     ipcRenderer.invoke("model-download", url, filename),
-  onDownloadProgress: (cb) => ipcRenderer.on("download-progress", cb),
+  cancelModelDownload: (filename) =>
+    ipcRenderer.invoke("model-download-cancel", filename),
+  onDownloadProgress: (cb) => {
+    const handler = (event, data) => cb(event, data);
+    ipcRenderer.on("download-progress", handler);
+    return () => ipcRenderer.removeListener("download-progress", handler);
+  },
   getActiveDownloads: () => ipcRenderer.invoke("get-active-downloads"),
   deleteModel: (modelname) => ipcRenderer.invoke("model-delete", modelname),
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
@@ -34,7 +40,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   chat: (userMessage, options = {}) => ipcRenderer.invoke("model-chat", { message: userMessage, ...options }),
   resetChat: () => ipcRenderer.invoke("model-reset-chat"),
+  setSystemPrompt: (prompt) => ipcRenderer.invoke("model-set-system-prompt", prompt),
   chatStream: (userMessage, options = {}) => ipcRenderer.invoke("model-chat-stream", { message: userMessage, ...options }),
+  abortChatStream: () => ipcRenderer.invoke("model-abort-chat-stream"),
 
   // ─── Multi-instance llama-server pool (Company "parallel LLM" mode) ───
   poolConfigure: (opts) => ipcRenderer.invoke("pool-configure", opts),
@@ -72,6 +80,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       filter: (companyId, opts) => ipcRenderer.invoke("db:audit:filter", companyId, opts),
       summarize: (companyId, windowMs) => ipcRenderer.invoke("db:audit:summarize", companyId, windowMs),
       clear: (companyId) => ipcRenderer.invoke("db:audit:clear", companyId),
+      remove: (companyId, entryId) => ipcRenderer.invoke("db:audit:remove", companyId, entryId),
       bulkInsert: (rows) => ipcRenderer.invoke("db:audit:bulkInsert", rows),
       /** Subscribe to "table changed" broadcasts. cb receives { companyId }. */
       onChanged: (cb) => {
@@ -198,6 +207,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       listCatalog: (companyId) => ipcRenderer.invoke("db:distribution:listCatalog", companyId),
       getRecord: (companyId, id) => ipcRenderer.invoke("db:distribution:getRecord", companyId, id),
       clear: (companyId) => ipcRenderer.invoke("db:distribution:clear", companyId),
+      remove: (companyId, id) => ipcRenderer.invoke("db:distribution:remove", companyId, id),
       bulkInsert: (rows) => ipcRenderer.invoke("db:distribution:bulkInsert", rows),
       onChanged: (cb) => {
         const h = (_e, p) => cb(p);
@@ -352,6 +362,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   store: {
     get: (key, defaultValue = null) =>
       ipcRenderer.invoke("store-get", key, defaultValue),
+    has: (key) => ipcRenderer.invoke("store-has", key),
     set: (key, value) => ipcRenderer.invoke("store-set", key, value),
     delete: (key) => ipcRenderer.invoke("store-delete", key),
   },

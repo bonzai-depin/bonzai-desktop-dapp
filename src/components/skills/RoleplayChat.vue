@@ -36,7 +36,7 @@
           <div class="import-export-buttons">
             <!-- Create button always visible - generation is gated -->
             <button
-              class="button is-success is-small mr-5"
+              class="bz-btn bz-btn--success is-small mr-5"
               @click="openCustomCompanion"
             >
               <span
@@ -48,7 +48,7 @@
               Create
             </button>
             <button
-              class="button is-info is-small mr-5"
+              class="bz-btn bz-btn--primary is-small mr-5"
               @click="triggerCompanionImport"
             >
               <span
@@ -60,7 +60,7 @@
               Import
             </button>
             <button
-              class="button is-warning is-small"
+              class="bz-btn bz-btn--warning is-small"
               @click="exportCompanions"
             >
               <span
@@ -319,7 +319,7 @@
               </div>
               <!-- NFT badge -->
               <div v-if="companion.isNFT" class="nft-badge">
-                <span class="tag is-link is-light">
+                <span class="skill-chip skill-chip--brand">
                   <span
                     class="material-symbols-outlined"
                     style="font-size: 12px"
@@ -377,7 +377,7 @@
                 <!-- Already minted - show network badge -->
                 <button
                   v-if="companion.tokenId"
-                  class="button is-medium is-outlined is-fullwidth mb-3"
+                  class="bz-btn bz-btn--ghost skill-fullwidth mb-3"
                   :class="getMintedBadgeClass(companion)"
                   :title="getMintedBadgeTitle(companion)"
                   @click.stop="openExternal(getMintedExplorerUrl(companion))"
@@ -390,7 +390,7 @@
                     }}
                   </span>
                   <span
-                    class="tag mr-2"
+                    class="skill-chip mr-2"
                     :class="getMintedBadgeClass(companion)"
                   >
                     {{ getMintedBadgeText(companion) }}
@@ -399,7 +399,7 @@
                   <!-- Show agent wallet indicator for ERC-8004 -->
                   <span
                     v-if="companion.agentWallet"
-                    class="tag is-success ml-2"
+                    class="skill-chip skill-chip--success ml-2"
                     title="Agent wallet enabled for x402 payments"
                   >
                     <span
@@ -414,7 +414,7 @@
                 <!-- Universal Profile (post-mint LUKSO deployment) -->
                 <div v-if="companion.universalProfile" class="up-tag mt-1">
                   <a
-                    class="tag is-link is-light is-small"
+                    class="skill-chip skill-chip--brand is-small"
                     style="cursor: pointer"
                     @click.stop="
                       openExternal(
@@ -430,7 +430,7 @@
                 </div>
                 <button
                   v-else-if="companion.tokenId"
-                  class="button is-small is-link is-outlined mt-1"
+                  class="bz-btn bz-btn--sm is-link bz-btn--ghost mt-1"
                   @click.stop="deployUPForCompanion(companion)"
                   :disabled="deployingUPForCompanionId === companion.id"
                 >
@@ -449,7 +449,7 @@
                   <!-- Token already launched - show token info -->
                   <div
                     v-if="companion.tokenAddress"
-                    class="notification is-success is-light p-3"
+                    class="bz-notice bz-notice--success p-3"
                   >
                     <div
                       class="is-flex is-align-items-center is-justify-content-space-between"
@@ -465,7 +465,7 @@
                       </div>
                       <div class="buttons are-small mb-0">
                         <button
-                          class="button is-small is-info"
+                          class="bz-btn bz-btn--sm is-info"
                           @click.stop="
                             openExternal(
                               getUniswapTradeUrl(companion.tokenAddress),
@@ -481,7 +481,7 @@
                           </span>
                         </button>
                         <button
-                          class="button is-small is-dark"
+                          class="bz-btn bz-btn--sm is-dark"
                           @click.stop="
                             openExternal(getBaseScanUrl(companion.tokenAddress))
                           "
@@ -514,9 +514,9 @@
                     </div>
                     <div class="control is-expanded">
                       <button
-                        class="button is-warning is-small is-fullwidth"
+                        class="bz-btn bz-btn--warning is-small skill-fullwidth"
                         :class="{
-                          'is-loading':
+                          'bz-btn--running':
                             isLaunchingToken &&
                             launchingTokenCompanionId === companion.id,
                         }"
@@ -555,7 +555,7 @@
                   <!-- Connect Wallet first if not connected -->
                   <button
                     v-if="!isConnected"
-                    class="button is-success is-medium is-fullwidth"
+                    class="bz-btn bz-btn--success is-medium skill-fullwidth"
                     @click.stop="connectWallet"
                     title="Connect wallet to mint"
                   >
@@ -565,9 +565,9 @@
                   <!-- Mint Button (always Base) -->
                   <button
                     v-else
-                    class="button is-warning is-medium is-fullwidth"
+                    class="bz-btn bz-btn--warning is-medium skill-fullwidth"
                     :class="{
-                      'is-loading':
+                      'bz-btn--running':
                         isMintingNFT && mintingCompanionId === companion.id,
                     }"
                     @click.stop="mintCompanionNFT(companion)"
@@ -623,7 +623,7 @@
             <!-- Generate button - gated by access level -->
             <template v-if="hasAccess">
               <button
-                class="button is-success is-medium mt-2 mr-5"
+                class="bz-btn bz-btn--success is-medium mt-2 mr-5"
                 @click="generateCustomCompanion"
                 :disabled="!customCompanionPrompt || isGenerating"
               >
@@ -641,7 +641,7 @@
             </template>
             <button
               v-else
-              class="button is-warning is-medium mt-2 mr-5 fira-sans-condensed-black-italic"
+              class="bz-btn bz-btn--warning is-medium mt-2 mr-5 fira-sans-condensed-black-italic"
               @click="openUnlockModal"
             >
               <span
@@ -661,14 +661,14 @@
               </span>
             </button>
             <button
-              class="button is-danger is-medium mt-2 is-pulled-right"
+              class="bz-btn bz-btn--destructive is-medium mt-2 skill-float-right"
               @click="cancelCustomCompanion"
             >
               Cancel
             </button>
           </div>
           <!-- Generation Error -->
-          <div v-if="generationError" class="notification is-danger mt-4 mb-0">
+          <div v-if="generationError" class="bz-notice bz-notice--danger mt-4 mb-0">
             <BzCloseButton size="sm" aria-label="Close" @click="generationError = null" />
             <p class="is-size-7">
               <span
@@ -774,14 +774,14 @@
                         .split(',')
                         .slice(0, 5)"
                       :key="idx"
-                      class="tag is-warning is-small mr-1"
+                      class="skill-chip skill-chip--warning is-small mr-1"
                       style="text-transform: capitalize"
                     >
                       {{ trait.trim() }}
                     </span>
                     <span
                       v-if="customCompanion.personality.split(',').length > 5"
-                      class="tag is-dark is-small"
+                      class="skill-chip is-small"
                     >
                       +{{ customCompanion.personality.split(",").length - 5 }}
                       more
@@ -841,14 +841,14 @@
                   class="buttons mt-3"
                 >
                   <button
-                    class="button is-success is-medium mr-3"
+                    class="bz-btn bz-btn--success is-medium mr-3"
                     @click="useCustomCompanion"
                   >
                     <span class="material-symbols-outlined mr-2">check</span>
                     Pick
                   </button>
                   <button
-                    class="button is-info is-medium mr-3"
+                    class="bz-btn bz-btn--primary is-medium mr-3"
                     @click="saveCustomCompanionToStore"
                     :disabled="isCompanionAlreadySaved(customCompanion)"
                   >
@@ -861,7 +861,7 @@
                   </button>
                   <button
                     v-if="!customCompanion.image"
-                    class="button is-warning is-medium"
+                    class="bz-btn bz-btn--warning is-medium"
                     @click="regenerateCompanionImage(customCompanion)"
                     :disabled="isRegeneratingImage"
                   >
@@ -903,7 +903,7 @@
           </h3>
           <div class="sessions-actions">
             <button
-              class="button is-info is-small mr-5"
+              class="bz-btn bz-btn--primary is-small mr-5"
               @click="triggerImportSession"
             >
               <span
@@ -915,7 +915,7 @@
               Import
             </button>
             <button
-              class="button is-warning is-small"
+              class="bz-btn bz-btn--warning is-small"
               @click="exportAllSessions"
               :disabled="Object.keys(savedSessions).length === 0"
             >
@@ -953,7 +953,7 @@
                 >
                   {{ session.scenario?.name || "Unknown Scenario" }}
                 </span>
-                <span class="tag is-small is-info ml-2">
+                <span class="skill-chip skill-chip--info ml-2">
                   {{ session.messageCount }} msgs
                 </span>
               </div>
@@ -972,21 +972,21 @@
             </div>
             <div class="session-actions">
               <button
-                class="button is-info is-medium mr-5"
+                class="bz-btn bz-btn--primary is-medium mr-5"
                 @click="resumeSession(session.key)"
               >
                 <span class="material-symbols-outlined mr-1">play_arrow</span>
                 Resume
               </button>
               <button
-                class="button is-warning is-medium mr-5"
+                class="bz-btn bz-btn--warning is-medium mr-5"
                 @click="exportSession(session.key)"
                 title="Export session"
               >
                 <span class="material-symbols-outlined">download</span>
               </button>
               <button
-                class="button is-danger is-medium"
+                class="bz-btn bz-btn--destructive is-medium"
                 @click="deleteSession(session.key)"
               >
                 <span class="material-symbols-outlined">delete</span>
@@ -994,7 +994,7 @@
             </div>
           </div>
         </div>
-        <p v-else class="notification is-info has-text-white mt-3">
+        <p v-else class="bz-notice bz-notice--info has-text-white mt-3">
           No saved session with {{ selectedCompanion.name }} yet. Start a
           roleplay or import one.
         </p>
@@ -1014,7 +1014,7 @@
           <div class="import-export-buttons">
             <!-- Create button always visible - generation is gated -->
             <button
-              class="button is-success is-small mr-5"
+              class="bz-btn bz-btn--success is-small mr-5"
               @click="openCustomScenario"
             >
               <span
@@ -1026,7 +1026,7 @@
               Create
             </button>
             <button
-              class="button is-info is-small mr-5"
+              class="bz-btn bz-btn--primary is-small mr-5"
               @click="triggerScenarioImport"
             >
               <span
@@ -1037,7 +1037,7 @@
               </span>
               Import
             </button>
-            <button class="button is-warning is-small" @click="exportScenarios">
+            <button class="bz-btn bz-btn--warning is-small" @click="exportScenarios">
               <span
                 class="material-symbols-outlined mr-2"
                 style="font-size: 14px"
@@ -1221,7 +1221,7 @@
             <!-- Generate scenario button - gated by access level -->
             <template v-if="hasAccess">
               <button
-                class="button is-info is-medium mr-5"
+                class="bz-btn bz-btn--primary is-medium mr-5"
                 @click="generateCustomScenario"
                 :disabled="!customScenarioPrompt || isGenerating"
               >
@@ -1239,7 +1239,7 @@
             </template>
             <button
               v-else
-              class="button is-warning is-medium fira-sans-condensed-black-italic mr-5"
+              class="bz-btn bz-btn--warning is-medium fira-sans-condensed-black-italic mr-5"
               @click="openUnlockModal"
             >
               <span
@@ -1259,14 +1259,14 @@
               </span>
             </button>
             <button
-              class="button is-danger is-medium"
+              class="bz-btn bz-btn--destructive is-medium"
               @click="cancelCustomScenario"
             >
               Cancel
             </button>
           </div>
           <!-- Generation Error -->
-          <div v-if="generationError" class="notification is-danger mt-4 mb-0">
+          <div v-if="generationError" class="bz-notice bz-notice--danger mt-4 mb-0">
             <BzCloseButton size="sm" aria-label="Close" @click="generationError = null" />
             <p class="is-size-7">
               <span
@@ -1386,14 +1386,14 @@
                 class="buttons mt-4"
               >
                 <button
-                  class="button is-success is-medium"
+                  class="bz-btn bz-btn--success is-medium"
                   @click="useCustomScenario"
                 >
                   <span class="material-symbols-outlined mr-1">check</span>
                   Pick
                 </button>
                 <button
-                  class="button is-info is-medium mr-3"
+                  class="bz-btn bz-btn--primary is-medium mr-3"
                   @click="saveCustomScenarioToStore"
                   :disabled="isScenarioAlreadySaved(customScenario)"
                 >
@@ -1404,7 +1404,7 @@
                 </button>
                 <button
                   v-if="!customScenario.image"
-                  class="button is-info is-medium"
+                  class="bz-btn bz-btn--primary is-medium"
                   @click="regenerateScenarioImage(customScenario)"
                   :disabled="isRegeneratingImage"
                 >
@@ -1497,13 +1497,13 @@
                       !isModelAvailable('image_turbo') &&
                       downloadingPipelineKey !== 'image_turbo'
                     "
-                    class="tag is-small is-warning"
+                    class="skill-chip skill-chip--warning"
                   >
                     Download
                   </span>
                   <span
                     v-if="downloadingPipelineKey === 'image_turbo'"
-                    class="tag is-small is-info"
+                    class="skill-chip skill-chip--info"
                   >
                     {{ downloadProgress }}%
                   </span>
@@ -1528,13 +1528,13 @@
                       !isModelAvailable('audio_quality') &&
                       downloadingPipelineKey !== 'audio_quality'
                     "
-                    class="tag is-small is-warning"
+                    class="skill-chip skill-chip--warning"
                   >
                     Download
                   </span>
                   <span
                     v-if="downloadingPipelineKey === 'audio_quality'"
-                    class="tag is-small is-info"
+                    class="skill-chip skill-chip--info"
                   >
                     {{ downloadProgress }}%
                   </span>
@@ -1559,13 +1559,13 @@
                       !isModelAvailable('video_fast') &&
                       downloadingPipelineKey !== 'video_fast'
                     "
-                    class="tag is-small is-warning"
+                    class="skill-chip skill-chip--warning"
                   >
                     Download
                   </span>
                   <span
                     v-if="downloadingPipelineKey === 'video_fast'"
-                    class="tag is-small is-info"
+                    class="skill-chip skill-chip--info"
                   >
                     {{ downloadProgress }}%
                   </span>
@@ -1590,13 +1590,13 @@
                       !isModelAvailable('vision') &&
                       downloadingPipelineKey !== 'vision'
                     "
-                    class="tag is-small is-warning"
+                    class="skill-chip skill-chip--warning"
                   >
                     Download
                   </span>
                   <span
                     v-if="downloadingPipelineKey === 'vision'"
-                    class="tag is-small is-info"
+                    class="skill-chip skill-chip--info"
                   >
                     {{ downloadProgress }}%
                   </span>
@@ -1647,7 +1647,7 @@
           <!-- Left column: Wallet & Balance -->
           <div class="column is-6">
             <!-- Wallet Card -->
-            <div class="wallet-card notification is-dark">
+            <div class="wallet-card skill-card">
               <div class="wallet-header">
                 <span class="material-symbols-outlined">wallet</span>
                 <span>Agent Wallet (Base)</span>
@@ -1659,7 +1659,7 @@
                   {{ truncateAddress(agentWalletAddress) }}
                 </p>
                 <button
-                  class="button is-small is-ghost"
+                  class="bz-btn bz-btn--sm is-ghost"
                   @click="copyWalletAddress"
                   title="Copy address"
                 >
@@ -1678,7 +1678,7 @@
                   {{ agentWalletBalance || "0.000" }} ETH
                 </p>
                 <button
-                  class="button is-small is-info is-outlined"
+                  class="bz-btn bz-btn--sm is-info bz-btn--ghost"
                   @click="refreshAgentWalletBalance"
                   :disabled="isRefreshingBalance"
                 >
@@ -1707,7 +1707,7 @@
             </div>
 
             <!-- Daily Spending Stats -->
-            <div class="spending-stats notification is-dark mt-3">
+            <div class="spending-stats skill-card mt-3">
               <div class="spending-stats-header">
                 <span class="material-symbols-outlined">trending_up</span>
                 <span>Today's Spending</span>
@@ -1719,8 +1719,8 @@
                     class="progress-bar-fill"
                     :style="{ width: dailySpendingPercentage + '%' }"
                     :class="{
-                      'is-warning': dailySpendingPercentage > 75,
-                      'is-danger': dailySpendingPercentage >= 100,
+                      'bz-btn--warning': dailySpendingPercentage > 75,
+                      'bz-btn--destructive': dailySpendingPercentage >= 100,
                     }"
                   ></div>
                 </div>
@@ -1746,7 +1746,7 @@
           <!-- Right column: Spending Limits & Preferences -->
           <div class="column is-6">
             <!-- Spending Limits -->
-            <div class="spending-limits notification is-dark">
+            <div class="spending-limits skill-card">
               <div class="spending-limits-header">
                 <span class="material-symbols-outlined">tune</span>
                 <span>Spending Controls</span>
@@ -1772,7 +1772,7 @@
                   Max per transaction
                 </label>
                 <div class="control">
-                  <div class="select is-small is-fullwidth">
+                  <div class="select is-small skill-fullwidth">
                     <select v-model="settings.autonomous.maxPurchaseAmount">
                       <option value="0.0005">0.0005 ETH (~$1)</option>
                       <option value="0.001">0.001 ETH (~$2)</option>
@@ -1793,7 +1793,7 @@
                   Daily spending limit
                 </label>
                 <div class="control">
-                  <div class="select is-small is-fullwidth">
+                  <div class="select is-small skill-fullwidth">
                     <select v-model="settings.autonomous.dailySpendingLimit">
                       <option value="0.001">0.001 ETH (~$2)</option>
                       <option value="0.005">0.005 ETH (~$10)</option>
@@ -1807,12 +1807,12 @@
             </div>
 
             <!-- Transaction History Preview -->
-            <div class="tx-history-preview notification is-dark mt-3">
+            <div class="tx-history-preview skill-card mt-3">
               <div class="tx-history-header">
                 <span class="material-symbols-outlined">receipt_long</span>
                 <span>Recent Transactions</span>
                 <button
-                  class="button is-small is-ghost"
+                  class="bz-btn bz-btn--sm is-ghost"
                   @click="showTransactionHistory = true"
                 >
                   View All
@@ -1885,7 +1885,7 @@
                   You will be marked as away after :
                 </label>
                 <div class="control">
-                  <div class="select is-medium is-fullwidth">
+                  <div class="select is-medium skill-fullwidth">
                     <select v-model.number="settings.autonomous.idleTimeout">
                       <option :value="1">1 minute</option>
                       <option :value="3">3 minutes</option>
@@ -1904,7 +1904,7 @@
                   Your companion will post every :
                 </label>
                 <div class="control">
-                  <div class="select is-medium is-fullwidth">
+                  <div class="select is-medium skill-fullwidth">
                     <select
                       v-model.number="settings.autonomous.messageInterval"
                     >
@@ -1924,7 +1924,7 @@
                   Max Messages (before auto mode stops)
                 </label>
                 <div class="control">
-                  <div class="select is-medium is-fullwidth">
+                  <div class="select is-medium skill-fullwidth">
                     <select v-model.number="settings.autonomous.maxMessages">
                       <option :value="6">6 messages</option>
                       <option :value="12">12 messages (default)</option>
@@ -1970,7 +1970,7 @@
                   Max per Transaction (ETH)
                 </label>
                 <div class="control mt-3">
-                  <div class="select is-medium is-fullwidth">
+                  <div class="select is-medium skill-fullwidth">
                     <select v-model="settings.autonomous.maxPurchaseAmount">
                       <option value="0.0005">0.0005 ETH (~$1)</option>
                       <option value="0.001">0.001 ETH (~$2, default)</option>
@@ -1992,7 +1992,7 @@
                   Daily Spending Limit (ETH)
                 </label>
                 <div class="control mt-3">
-                  <div class="select is-medium is-fullwidth">
+                  <div class="select is-medium skill-fullwidth">
                     <select v-model="settings.autonomous.dailySpendingLimit">
                       <option value="0.001">0.001 ETH (~$2)</option>
                       <option value="0.005">0.005 ETH (~$10, default)</option>
@@ -2014,7 +2014,7 @@
                   Purchase Mode
                 </label>
                 <div class="control mt-3">
-                  <div class="select is-medium is-fullwidth">
+                  <div class="select is-medium skill-fullwidth">
                     <select v-model="settings.autonomous.purchaseMode">
                       <option value="default">
                         Default (all sellers equally)
@@ -2030,7 +2030,7 @@
               <!-- Seller Registry Panel -->
               <div
                 v-if="settings.autonomous.enablePurchases"
-                class="notification is-dark p-3 mb-4"
+                class="skill-card p-3 mb-4"
               >
                 <p
                   class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
@@ -2055,7 +2055,7 @@
                       "
                     />
                     <span class="ml-2">{{ seller.name }}</span>
-                    <span class="tag is-dark is-size-7 ml-1">
+                    <span class="skill-chip is-size-7 ml-1">
                       {{ seller.category }}
                     </span>
                   </label>
@@ -2117,7 +2117,7 @@
                       </div>
 
                       <button
-                        class="button is-small is-success is-pulled-right"
+                        class="bz-btn bz-btn--sm is-success skill-float-right"
                         style="position: relative; right: -18px;"
                         @click="addCustomSellerEntry"
                         :disabled="
@@ -2136,7 +2136,7 @@
                 class="field"
                 v-if="settings.autonomous.enablePurchases && selectedCompanion"
               >
-                <div class="agent-wallet-status notification is-dark p-3">
+                <div class="agent-wallet-status skill-card p-3">
                   <div
                     class="is-flex is-justify-content-space-between is-align-items-center"
                   >
@@ -2174,7 +2174,7 @@
                   </div>
                   <button
                     v-if="agentWalletAddress"
-                    class="button is-small is-info is-outlined mt-2"
+                    class="bz-btn bz-btn--sm is-info bz-btn--ghost mt-2"
                     @click="refreshAgentWalletBalance"
                     :disabled="isRefreshingBalance"
                   >
@@ -2237,9 +2237,9 @@
                   <div>
                     <button
                       v-if="!socialConnected[platform.id]"
-                      class="button is-small is-success"
+                      class="bz-btn bz-btn--sm is-success"
                       :class="{
-                        'is-loading': isConnectingSocial === platform.id,
+                        'bz-btn--running': isConnectingSocial === platform.id,
                       }"
                       @click="connectSocialPlatform(platform.id)"
                       :disabled="isConnectingSocial !== null"
@@ -2248,7 +2248,7 @@
                     </button>
                     <template v-else>
                       <button
-                        class="button is-small is-danger p-4"
+                        class="bz-btn bz-btn--sm is-danger p-4"
                         @click="disconnectSocialPlatform(platform.id)"
                       >
                         Disconnect
@@ -2261,7 +2261,7 @@
               <!-- Moltbook API Key input (shown when connecting moltbook) -->
               <div
                 v-if="showMoltbookKeyInput"
-                class="notification is-dark p-3 mb-3"
+                class="skill-card p-3 mb-3"
               >
                 <div class="field mb-2">
                   <div class="control">
@@ -2275,15 +2275,15 @@
                 </div>
                 <div class="buttons are-small">
                   <button
-                    class="button is-success is-small"
+                    class="bz-btn bz-btn--success is-small"
                     @click="saveMoltbookCredentials"
                     :disabled="!moltbookApiKey"
-                    :class="{ 'is-loading': isSavingMoltbook }"
+                    :class="{ 'bz-btn--running': isSavingMoltbook }"
                   >
                     Save
                   </button>
                   <button
-                    class="button is-small"
+                    class="bz-btn bz-btn--sm"
                     @click="showMoltbookKeyInput = false"
                   >
                     Cancel
@@ -2313,7 +2313,7 @@
               <!-- Shared posting configuration (shown when any platform is connected) -->
               <div
                 v-if="anyPlatformConnected"
-                class="social-posting-config mt-3 has-text-white notification is-dark p-3"
+                class="social-posting-config mt-3 has-text-white skill-card p-3"
               >
                 <div class="columns is-multiline">
                   <div class="column is-6">
@@ -2349,7 +2349,7 @@
                       >
                         Post Interval
                       </label>
-                      <div class="select is-medium is-fullwidth mt-3">
+                      <div class="select is-medium skill-fullwidth mt-3">
                         <select
                           v-model.number="settings.socialPosting.postInterval"
                         >
@@ -2390,7 +2390,7 @@
         <!-- Show unlock button if user doesn't have access -->
         <button
           v-if="!hasAccess"
-          class="button is-warning is-large fira-sans-condensed-black-italic"
+          class="bz-btn bz-btn--warning is-large fira-sans-condensed-black-italic"
           @click="openUnlockModal"
         >
           <span class="material-symbols-outlined mr-2" style="font-size: 24px">
@@ -2413,7 +2413,7 @@
           <template
             v-if="missingMandatory.length > 0 && modelAvailabilityChecked"
           >
-            <button class="button is-success is-large" disabled>
+            <button class="bz-btn bz-btn--success is-large" disabled>
               <span class="material-symbols-outlined mr-2">play_arrow</span>
               {{ matchingSession ? "Start New / Resume" : "Start Roleplay" }}
             </button>
@@ -2432,7 +2432,7 @@
             v-else-if="missingOptional.length > 0 && modelAvailabilityChecked"
           >
             <button
-              class="button is-warning is-large"
+              class="bz-btn bz-btn--warning is-large"
               @click="downloadMissingOptional"
             >
               <span class="material-symbols-outlined mr-2">download</span>
@@ -2445,7 +2445,7 @@
               needed for selected media
             </p>
             <button
-              class="button is-success is-medium mt-2"
+              class="bz-btn bz-btn--success is-medium mt-2"
               :disabled="!canStart"
               @click="startNewChat"
             >
@@ -2456,7 +2456,7 @@
           <!-- Case 3: All ready → normal start -->
           <template v-else>
             <button
-              class="button is-success is-large"
+              class="bz-btn bz-btn--success is-large"
               :disabled="!canStart"
               @click="startNewChat"
             >
@@ -2501,14 +2501,14 @@
             </p>
             <div class="buttons is-centered">
               <button
-                class="button is-info is-medium"
+                class="bz-btn bz-btn--primary is-medium"
                 @click="resumeMatchingSession"
               >
                 <span class="material-symbols-outlined mr-2">replay</span>
                 Resume Session
               </button>
               <button
-                class="button is-warning is-medium"
+                class="bz-btn bz-btn--warning is-medium"
                 @click="forceStartNewChat"
               >
                 <span class="material-symbols-outlined mr-2">add</span>
@@ -2577,7 +2577,7 @@
               </span>
             </label>
             <button
-              class="button is-info is-small mr-5"
+              class="bz-btn bz-btn--primary is-small mr-5"
               @click="toggleFullscreen"
               :title="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
             >
@@ -2585,7 +2585,7 @@
                 {{ isFullscreen ? "fullscreen_exit" : "fullscreen" }}
               </span>
             </button>
-            <button class="button is-danger is-small" @click="endChat">
+            <button class="bz-btn bz-btn--destructive is-small" @click="endChat">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 14px"
@@ -2601,7 +2601,7 @@
       <!-- Missed Messages Notification -->
       <div
         v-if="missedMessages > 0"
-        class="missed-messages-banner notification is-info is-light mb-3"
+        class="missed-messages-banner bz-notice bz-notice--info mb-3"
       >
         <div class="level is-mobile p-3">
           <div class="level-left">
@@ -2619,7 +2619,7 @@
               cancel
             </span>
             <button
-              class="button is-small is-info"
+              class="bz-btn bz-btn--sm is-info"
               @click="clearMissedMessages"
             >
               Dismiss
@@ -2699,7 +2699,7 @@
                 </span>
                 <span
                   v-if="msg.emotion"
-                  class="message-emotion tag is-small is-info"
+                  class="message-emotion skill-chip skill-chip--info"
                 >
                   {{ msg.emotion }}
                 </span>
@@ -2894,7 +2894,7 @@
                 </div>
                 <div class="purchase-intent-actions">
                   <button
-                    class="button is-small is-success"
+                    class="bz-btn bz-btn--sm is-success"
                     @click="approvePurchase(idx)"
                     :disabled="!agentWalletAddress"
                   >
@@ -2907,7 +2907,7 @@
                     Approve
                   </button>
                   <button
-                    class="button is-small is-danger is-outlined"
+                    class="bz-btn bz-btn--sm is-danger bz-btn--ghost"
                     @click="rejectPurchase(idx)"
                   >
                     <span
@@ -3026,7 +3026,7 @@
         <button
           v-for="(suggestion, idx) in suggestedResponses"
           :key="idx"
-          class="button is-info is-outlined is-fullwidth mb-5 mt-5 is-size-7 p-5"
+          class="bz-btn bz-btn--primary bz-btn--ghost skill-fullwidth mb-5 mt-5 is-size-7 p-5"
           @click="sendMessage(suggestion)"
           style="box-shadow: none"
         >
@@ -3074,10 +3074,10 @@
           <!-- Image Upload Button -->
           <div class="control">
             <button
-              class="button is-large is-success"
+              class="bz-btn bz-btn--lg is-success"
               @click="triggerImageUpload"
               :disabled="isAnalyzingImage"
-              :class="{ 'is-info': uploadedImage }"
+              :class="{ 'bz-btn--primary': uploadedImage }"
               title="Upload an image for vision analysis"
               style="box-shadow: none"
             >
@@ -3114,12 +3114,12 @@
           </div>
           <div class="control">
             <button
-              class="button is-success is-large"
+              class="bz-btn bz-btn--success is-large"
               @click="sendMessage()"
               :disabled="
                 isInitializingSession || (!userMessage.trim() && !uploadedImage)
               "
-              :class="{ 'is-loading': isProcessingMessage && pendingMessage }"
+              :class="{ 'bz-btn--running': isProcessingMessage && pendingMessage }"
               style="box-shadow: none"
               :title="
                 isProcessingMessage ? 'Message will be queued' : 'Send message'
@@ -3140,7 +3140,7 @@
           style="gap: 8px"
         >
           <div class="tags has-addons mb-0" style="text-transform: uppercase">
-            <span class="tag is-info is-small">
+            <span class="skill-chip skill-chip--info is-small">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 16px"
@@ -3151,7 +3151,7 @@
               </span>
               {{ settings.contentLevel }}
             </span>
-            <span class="tag is-dark is-small">
+            <span class="skill-chip is-small">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 16px"
@@ -3160,7 +3160,7 @@
               </span>
               text
             </span>
-            <span class="tag is-dark is-small" v-if="settings.enableAudio">
+            <span class="skill-chip is-small" v-if="settings.enableAudio">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 16px"
@@ -3169,7 +3169,7 @@
               </span>
               audio
             </span>
-            <span class="tag is-dark is-small" v-if="settings.enableImage">
+            <span class="skill-chip is-small" v-if="settings.enableImage">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 16px"
@@ -3178,7 +3178,7 @@
               </span>
               image
             </span>
-            <span class="tag is-dark is-small" v-if="settings.enableVideo">
+            <span class="skill-chip is-small" v-if="settings.enableVideo">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 16px"
@@ -3187,7 +3187,7 @@
               </span>
               video
             </span>
-            <span class="tag is-dark is-small" v-if="settings.enableVision">
+            <span class="skill-chip is-small" v-if="settings.enableVision">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 16px"
@@ -3215,12 +3215,12 @@
     <!-- Transaction History Modal -->
     <div class="modal" :class="{ 'is-active': showTransactionHistory }">
       <div
-        class="modal-background"
+        class="bz-modal-backdrop"
         @click="showTransactionHistory = false"
       ></div>
-      <div class="modal-card" style="max-width: 600px">
-        <header class="modal-card-head" style="background: #1a1a2e">
-          <p class="modal-card-title has-text-white">
+      <div class="bz-modal-panel" style="max-width: 600px">
+        <header class="bz-modal-head" style="background: var(--bz-card)">
+          <p class="bz-modal-title has-text-white">
             <span
               class="material-symbols-outlined mr-2"
               style="vertical-align: middle"
@@ -3236,7 +3236,7 @@
           />
         </header>
         <section
-          class="modal-card-body"
+          class="bz-modal-body"
           style="background: #16213e; max-height: 400px; overflow-y: auto"
         >
           <!-- Summary Stats -->
@@ -3346,20 +3346,20 @@
           </div>
         </section>
         <footer
-          class="modal-card-foot is-justify-content-flex-end"
+          class="bz-modal-foot is-justify-content-flex-end"
           style="
-            background: #1a1a2e;
+            background: var(--bz-card);
             border-top: 1px solid rgba(255, 255, 255, 0.1);
           "
         >
           <button
-            class="button is-dark"
+            class="bz-btn bz-btn--ghost"
             @click="showTransactionHistory = false"
           >
             Close
           </button>
           <button
-            class="button is-info is-outlined"
+            class="bz-btn bz-btn--primary bz-btn--ghost"
             @click="refreshAgentWalletBalance"
             :disabled="isRefreshingBalance"
           >
@@ -4263,13 +4263,13 @@ export default {
         case "ethereum":
           return "is-primary";
         case "arbitrum":
-          return "is-warning";
+          return "bz-btn--warning";
         case "base":
           return "is-link"; // Blue for Base/Coinbase
         case "lukso":
-          return "is-info";
+          return "bz-btn--primary";
         default:
-          return "is-warning";
+          return "bz-btn--warning";
       }
     };
 
@@ -9469,6 +9469,63 @@ export default {
   width: 100%;
 }
 
+.roleplay-chat :deep(.has-text-white),
+.roleplay-chat :deep(strong.has-text-white),
+.roleplay-chat :deep(.bz-modal-title.has-text-white) {
+  color: var(--bz-fg) !important;
+}
+
+.roleplay-chat :deep(.has-text-grey-light),
+.roleplay-chat :deep(.has-text-white-ter) {
+  color: var(--bz-muted) !important;
+}
+
+.roleplay-chat :deep(.notification.is-danger),
+.roleplay-chat :deep(.notification.is-info),
+.roleplay-chat :deep(.notification.is-warning),
+.roleplay-chat :deep(.notification.is-dark) {
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel) !important;
+  color: var(--bz-fg) !important;
+}
+
+.roleplay-chat :deep(.notification.is-danger) {
+  border-color: color-mix(in srgb, var(--bz-danger) 42%, var(--bz-border));
+}
+
+.roleplay-chat :deep(.button.is-info),
+.roleplay-chat :deep(.button.is-warning),
+.roleplay-chat :deep(.button.is-success),
+.roleplay-chat :deep(.button.is-danger) {
+  min-height: 32px;
+  border: 1px solid var(--bz-border-strong) !important;
+  border-radius: 8px !important;
+  background: var(--bz-canvas) !important;
+  color: var(--bz-fg) !important;
+  font-family: var(--bz-font-body);
+  transition: background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out);
+}
+
+.roleplay-chat :deep(.button.is-info:hover),
+.roleplay-chat :deep(.button.is-warning:hover),
+.roleplay-chat :deep(.button.is-success:hover),
+.roleplay-chat :deep(.button.is-danger:hover) {
+  border-color: var(--bz-purple-300) !important;
+  background: var(--bz-raised) !important;
+}
+
+.roleplay-chat :deep(.button.is-warning),
+.roleplay-chat :deep(.button.is-success) {
+  background: var(--bz-purple-soft) !important;
+  border-color: var(--bz-border-brand) !important;
+}
+
+.roleplay-chat :deep(.button.is-danger) {
+  border-color: color-mix(in srgb, var(--bz-danger) 50%, var(--bz-border)) !important;
+}
+
 /* Fullscreen mode */
 .roleplay-chat.is-fullscreen {
   position: fixed;
@@ -9479,7 +9536,7 @@ export default {
   width: 100vw;
   height: 100vh;
   z-index: 9999;
-  background: #1a1a2e;
+  background: var(--bz-card);
   overflow: hidden;
   padding: 1rem;
 }
@@ -9605,7 +9662,7 @@ export default {
 
 /* Spin animation for refresh button */
 .spin {
-  animation: spin 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 @keyframes spin {
@@ -9706,9 +9763,8 @@ export default {
 
 .companion-card.is-selected,
 .scenario-card.is-selected {
-  border-color: rgba(255, 255, 255, 1);
+  border-color: var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 
 .companion-card.is-custom,
@@ -9839,7 +9895,6 @@ export default {
 }
 
 .nft-badge .tag {
-  backdrop-filter: blur(8px);
   font-size: 10px;
   gap: 3px;
   padding: 2px 8px;
@@ -10267,7 +10322,7 @@ export default {
 
 /* Rotating animation for refresh buttons */
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 @keyframes rotate {
@@ -10388,7 +10443,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -10427,7 +10482,7 @@ hr {
 }
 
 .session-manager-modal {
-  background: #1a1a2e;
+  background: var(--bz-card);
   border: 1px solid var(--bz-border);
   border-radius: 12px;
   padding: 0;
@@ -10523,7 +10578,7 @@ hr {
   background: linear-gradient(
     90deg,
     var(--bz-purple-soft) 25%,
-    rgba(97, 55, 142, 0.5) 50%,
+    var(--bz-purple-soft) 50%,
     var(--bz-purple-soft) 75%
   );
   background-size: 200% 100%;
@@ -10591,7 +10646,7 @@ hr {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: white;
+  color: var(--bz-fg);
 }
 
 .companion-card:hover .regenerate-image-btn,
@@ -10760,9 +10815,8 @@ hr {
 }
 
 .content-level-option.is-selected {
-  border-color: rgba(255, 255, 255, 1);
+  border-color: var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 
 .content-level-icon {
@@ -10851,7 +10905,6 @@ hr {
   padding: 2rem;
   background: var(--bz-scrim-strong);
   border-radius: 16px;
-  backdrop-filter: blur(4px);
 }
 
 .empty-chat-content .pulsing-icon {
@@ -10991,8 +11044,7 @@ hr {
 }
 
 .chat-message.user .message-text {
-  background: rgba(97, 55, 142, 0.5);
-  backdrop-filter: blur(32px);
+  background: var(--bz-purple-soft);
 }
 
 .message-avatar {
@@ -11047,7 +11099,6 @@ hr {
   padding: 0.75rem 1rem;
   border-radius: 12px;
   color: var(--bz-fg);
-  backdrop-filter: blur(32px);
 }
 
 .action-text {
@@ -11437,7 +11488,7 @@ hr {
 
 /* Spinning animation for loading icons */
 .spinning {
-  animation: spin 1.5s linear infinite;
+  animation: bz-spin 1.5s linear infinite;
 }
 
 @keyframes spin {
@@ -11538,7 +11589,7 @@ hr {
 
 /* Missed messages banner */
 .missed-messages-banner {
-  animation: slideDown 0.3s ease-out;
+  animation: bz-rise 0.3s ease-out;
 }
 
 .missed-messages-banner .level {
@@ -11653,7 +11704,7 @@ hr {
 }
 
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 @keyframes rotate {
@@ -11697,7 +11748,7 @@ hr {
 }
 
 .is-spinning {
-  animation: spin 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
   will-change: transform;
 }
 
@@ -11759,9 +11810,8 @@ hr {
 }
 
 .media-option.is-selected {
-  border-color: rgba(255, 255, 255, 1);
+  border-color: var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 
 .media-option-content {
@@ -11868,7 +11918,6 @@ hr {
 .models__activity--payouts {
   padding: 2em;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 

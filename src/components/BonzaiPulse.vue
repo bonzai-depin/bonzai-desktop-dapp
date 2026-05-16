@@ -18,7 +18,7 @@
 
     <!-- Dot variant — a single 6 px brand-purple pulse, useful inline
          in a row of meta text ("Generating · 12s"). Replaces the
-         `<button is-loading>` Bulma spinner pattern. -->
+         `bz-btn--running` loading pattern. -->
     <div v-else-if="variant === 'dot'" class="bz-pulse-dot"></div>
 
     <!-- Optional caption next to / under the pulse. The caption uses

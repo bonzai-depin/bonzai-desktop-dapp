@@ -18,7 +18,7 @@ import psTree from "ps-tree";
 import * as llamaServer from "./services/llamaServer.manager.js";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-import { download } from "electron-dl";
+import { download, CancelError } from "electron-dl";
 import { unlink } from "node:fs";
 import child_process from "child_process";
 import http from "http";
@@ -1242,6 +1242,7 @@ ipcMain.handle("ows:import-private-key", async (_event, { name, hexKey, passphra
 });
 
 ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
+ipcMain.handle("store-has", (_event, key) => store.has(key));
 ipcMain.handle("store-set", (_event, key, value) => {
   store.set(key, value);
   return true;
@@ -3865,6 +3866,16 @@ ipcMain.handle("model-unload", unloadModel);
 ipcMain.handle("model-chat", chat);
 ipcMain.handle("model-chat-stream", chatStream);
 ipcMain.handle("zhc-chat-stream", chatStreamStateless);
+ipcMain.handle("model-abort-chat-stream", (event) => {
+  const aborted = _abortChat(event.sender.id);
+  if (!aborted) {
+    // Fallback: if no tracked controller, try to stop the llama-server
+    // subprocess directly (covers edge cases where stream tracking
+    // desynchronised).
+    try { llamaServer.stopModel({ force: false }); } catch { /* best-effort abort fallback */ }
+  }
+  return aborted;
+});
 ipcMain.handle("model-chat-vision", chatWithVision);
 ipcMain.handle("model-reset-chat", () => {
   chatHistory = [];
@@ -4051,7 +4062,46 @@ const createWindow = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // App lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
+function isTrustedRendererUrl(url = "") {
+  if (!url) return false;
+  if (url.startsWith("file://")) return true;
+  if (VITE_DEV_SERVER_URL && url.startsWith(VITE_DEV_SERVER_URL)) return true;
+  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/.test(url);
+}
+
+function configureRendererPermissions() {
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details = {}) => {
+    const requestingUrl = details.requestingUrl || webContents.getURL();
+    const mediaTypes = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    const isMediaPermission =
+      permission === "media" ||
+      permission === "microphone" ||
+      permission === "audioCapture";
+    const isAppMediaRequest =
+      mediaTypes.length === 0 ||
+      mediaTypes.includes("audio") ||
+      mediaTypes.includes("video");
+    callback(isTrustedRendererUrl(requestingUrl) && isMediaPermission && isAppMediaRequest);
+  });
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details = {}) => {
+    const requestingUrl = requestingOrigin || details.requestingUrl || webContents.getURL();
+    const mediaTypes = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    const isMediaPermission =
+      permission === "media" ||
+      permission === "microphone" ||
+      permission === "audioCapture";
+    const isAppMediaRequest =
+      mediaTypes.length === 0 ||
+      mediaTypes.includes("audio") ||
+      mediaTypes.includes("video");
+    return isTrustedRendererUrl(requestingUrl) && isMediaPermission && isAppMediaRequest;
+  });
+}
+
 app.on("ready", async () => {
+  configureRendererPermissions();
+
   const flaskURL = `http://127.0.0.1:${PY_SERVER_PORT}`;
 
   // Hydrate the last-loaded LLM spec so RoleplayChat / Generative Text
@@ -4751,6 +4801,7 @@ function generatePartUrl(baseUrl, partNum, totalParts) {
 
 // Track active LLM downloads for UI resume
 const activeDownloads = new Map(); // filename -> { url, percent, status }
+const activeDownloadItems = new Map(); // filename -> Electron DownloadItem
 
 function getActiveDownloads() {
   return Array.from(activeDownloads.entries()).map(([filename, data]) => ({
@@ -4760,6 +4811,24 @@ function getActiveDownloads() {
 }
 
 ipcMain.handle("get-active-downloads", () => getActiveDownloads());
+
+ipcMain.handle("model-download-cancel", (_event, filename) => {
+  const normalizedFilename = normalizeModelFilename(filename);
+  const item = activeDownloadItems.get(normalizedFilename);
+  if (!item) return false;
+  activeDownloads.set(normalizedFilename, {
+    ...(activeDownloads.get(normalizedFilename) || {}),
+    status: "canceling",
+  });
+  try {
+    item.cancel();
+    return true;
+  } catch (error) {
+    console.warn("[Model Download] Cancel failed:", normalizedFilename, error.message);
+    activeDownloadItems.delete(normalizedFilename);
+    return false;
+  }
+});
 
 async function downloadModel(_event, url, filename) {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -4779,12 +4848,16 @@ async function downloadModel(_event, url, filename) {
 
   // Track active download
   activeDownloads.set(normalizedFilename, { url, percent: 0, status: "downloading" });
+  activeDownloadItems.delete(normalizedFilename);
 
   try {
     const dl = await download(win, url, {
       filename: normalizedFilename,
       directory: MODEL_DIR,
       showBadge: false,
+      onStarted: (item) => {
+        activeDownloadItems.set(normalizedFilename, item);
+      },
       onProgress: (p) => {
         const pct = p.percent;
         win.setProgressBar(pct);
@@ -4792,16 +4865,28 @@ async function downloadModel(_event, url, filename) {
         // Update tracking
         activeDownloads.set(normalizedFilename, { url, percent: pct, status: "downloading" });
       },
+      onCancel: () => {
+        win.webContents.send("download-progress", {
+          filename: normalizedFilename,
+          percent: 0,
+          status: "canceled",
+        });
+      },
     });
     win.setProgressBar(-1);
     // Remove from tracking on completion
     activeDownloads.delete(normalizedFilename);
+    activeDownloadItems.delete(normalizedFilename);
     return { savedPath: dl.getSavePath() };
   } catch (error) {
     console.error("Download failed:", error);
     win?.setProgressBar(-1);
     // Remove from tracking on failure
     activeDownloads.delete(normalizedFilename);
+    activeDownloadItems.delete(normalizedFilename);
+    if (error instanceof CancelError) {
+      return { canceled: true };
+    }
     return { error: error.message || "Download failed" };
   }
 }
@@ -4878,6 +4963,8 @@ async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
   }
 
   console.log(`[Multi-Part Download] Starting download of ${totalParts} parts for ${baseName}`);
+  activeDownloads.set(mergedFilename, { url: baseUrl, percent: 0, status: "downloading" });
+  activeDownloadItems.delete(mergedFilename);
 
   try {
     // Phase 1: Download all parts (80% of progress)
@@ -4908,6 +4995,9 @@ async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
         filename: partFilename,
         directory: MODEL_DIR,
         showBadge: false,
+        onStarted: (item) => {
+          activeDownloadItems.set(mergedFilename, item);
+        },
         onProgress: (p) => {
           // Download phase is 0-80% of total progress
           const overallPct = ((i + p.percent) / totalParts) * 0.8;
@@ -4919,6 +5009,23 @@ async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
             totalParts,
             partPercent: p.percent,
             phase: "downloading",
+          });
+          activeDownloads.set(mergedFilename, {
+            url: baseUrl,
+            percent: overallPct,
+            status: "downloading",
+            part: partNum,
+            totalParts,
+          });
+        },
+        onCancel: () => {
+          win.webContents.send("download-progress", {
+            filename: mergedFilename,
+            percent: 0,
+            part: partNum,
+            totalParts,
+            phase: "downloading",
+            status: "canceled",
           });
         },
       });
@@ -4960,6 +5067,8 @@ async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
     }
 
     win.setProgressBar(-1);
+    activeDownloads.delete(mergedFilename);
+    activeDownloadItems.delete(mergedFilename);
     console.log(`[Multi-Part Download] Complete: ${mergedFilename}`);
 
     return {
@@ -4971,6 +5080,11 @@ async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
   } catch (error) {
     console.error("[Multi-Part Download] Failed:", error);
     win?.setProgressBar(-1);
+    activeDownloads.delete(mergedFilename);
+    activeDownloadItems.delete(mergedFilename);
+    if (error instanceof CancelError) {
+      return { canceled: true, isMultiPart: true };
+    }
     return { error: error.message || "Multi-part download failed" };
   }
 }
@@ -5652,6 +5766,9 @@ async function chat(_event, input) {
   const userMessage = typeof input === "string" ? input : input.message;
   const maxTokens = (typeof input === "object" && input.maxTokens) || 2048;
   const temperature = typeof input === "object" ? input.temperature : undefined;
+  const seed = typeof input === "object" && Number.isInteger(input.seed)
+    ? input.seed
+    : Math.floor(Math.random() * 2147483647);
   const returnMetadata = typeof input === "object" && input.returnMetadata;
 
   const startTime = Date.now();
@@ -5659,7 +5776,7 @@ async function chat(_event, input) {
     messages: _buildMessages(userMessage, { maxTokens }),
     temperature,
     maxTokens,
-    seed: Math.floor(Math.random() * 2147483647),
+    seed,
   });
 
   const assistantMessage = result.choices?.[0]?.message?.content ?? "";
@@ -5690,6 +5807,30 @@ async function chat(_event, input) {
  *     interleave each other or with Generative Text.
  *   - Returns the full assistant message string on completion.
  */
+// ─── Active stream abort tracking (keyed by streamId for stateless, sender.id for regular) ───
+const _chatAbortControllers = new Map();
+
+function _setChatAbort(key, ctrl) {
+  if (ctrl) {
+    const old = _chatAbortControllers.get(key);
+    if (old && !old.signal.aborted) {
+      try { old.abort(); } catch { /* stale controller already settled */ }
+    }
+    _chatAbortControllers.set(key, ctrl);
+  } else {
+    _chatAbortControllers.delete(key);
+  }
+}
+
+function _abortChat(key) {
+  const ctrl = _chatAbortControllers.get(key);
+  if (ctrl && !ctrl.signal.aborted) {
+    ctrl.abort();
+    return true;
+  }
+  return false;
+}
+
 async function chatStreamStateless(event, input) {
   if (!llamaServer.isRunning()) {
     const ready = await ensureLocalLLMReady();
@@ -5709,20 +5850,33 @@ async function chatStreamStateless(event, input) {
   if (currentSystemPrompt) messages.push({ role: "system", content: currentSystemPrompt });
   messages.push({ role: "user", content: userMessage });
 
-  return await llamaServer.chatStream(
-    {
-      messages,
-      temperature,
-      maxTokens,
-      seed: Math.floor(Math.random() * 2147483647),
-      enableThinking,
-    },
-    (chunk) => {
-      if (win && !win.isDestroyed()) {
-        event.sender.send("zhc-chat-token", { streamId, chunk });
-      }
-    },
-  );
+  const ctrl = new AbortController();
+  _setChatAbort(streamId, ctrl);
+  try {
+    const res = await llamaServer.chatStream(
+      {
+        messages,
+        temperature,
+        maxTokens,
+        seed: Math.floor(Math.random() * 2147483647),
+        enableThinking,
+      },
+      (chunk) => {
+        if (win && !win.isDestroyed()) {
+          event.sender.send("zhc-chat-token", { streamId, chunk });
+        }
+      },
+      { signal: ctrl.signal },
+    );
+    return res;
+  } catch (err) {
+    if (err.name === "AbortError" || ctrl.signal.aborted) {
+      return ""; // ZHC caller handles empty text as cancelled
+    }
+    throw err;
+  } finally {
+    _setChatAbort(streamId, null);
+  }
 }
 
 async function chatStream(event, input) {
@@ -5731,14 +5885,18 @@ async function chatStream(event, input) {
     if (!ready) throw new Error("Model not loaded");
   }
 
-  let userMessage, maxTokens, temperature, enableThinking;
+  let userMessage, maxTokens, temperature, seed, enableThinking;
   if (typeof input === "string") {
     userMessage = input;
     maxTokens = 2048;
+    seed = Math.floor(Math.random() * 2147483647);
   } else {
     userMessage = input.message;
     maxTokens = input.maxTokens || 2048;
     temperature = input.temperature;
+    seed = Number.isInteger(input.seed)
+      ? input.seed
+      : Math.floor(Math.random() * 2147483647);
     // Per-request override of the chat template's `enable_thinking` var.
     // Live toggling — no model reload needed.
     if (typeof input.enableThinking === "boolean") {
@@ -5747,24 +5905,42 @@ async function chatStream(event, input) {
   }
 
   const win = BrowserWindow.fromWebContents(event.sender);
-  const assistantMessage = await llamaServer.chatStream(
-    {
-      messages: _buildMessages(userMessage, { maxTokens }),
-      temperature,
-      maxTokens,
-      seed: Math.floor(Math.random() * 2147483647),
-      enableThinking,
-    },
-    (chunk) => {
-      if (win && !win.isDestroyed()) {
-        event.sender.send("chat-token", chunk);
-      }
-    },
-  );
+  const key = event.sender.id;
+  const ctrl = new AbortController();
+  _setChatAbort(key, ctrl);
 
-  chatHistory.push({ role: "user", content: userMessage });
-  chatHistory.push({ role: "assistant", content: assistantMessage });
-  return assistantMessage;
+  try {
+    const assistantMessage = await llamaServer.chatStream(
+      {
+        messages: _buildMessages(userMessage, { maxTokens }),
+        temperature,
+        maxTokens,
+        seed,
+        enableThinking,
+      },
+      (chunk) => {
+        if (win && !win.isDestroyed()) {
+          event.sender.send("chat-token", chunk);
+        }
+      },
+      { signal: ctrl.signal },
+    );
+
+    chatHistory.push({ role: "user", content: userMessage });
+    chatHistory.push({ role: "assistant", content: assistantMessage });
+    return assistantMessage;
+  } catch (err) {
+    if (err.name === "AbortError" || ctrl.signal.aborted) {
+      console.log("[LLM] chatStream aborted for sender", key);
+      // Manager already returns partial text; if we land here the
+      // stream ended before any text arrived. Return empty so the
+      // renderer can use its own accumulated streamingText.
+      return "";
+    }
+    throw err;
+  } finally {
+    _setChatAbort(key, null);
+  }
 }
 
 async function unloadModel(_event, { force } = {}) {

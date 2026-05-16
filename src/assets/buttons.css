@@ -64,7 +64,7 @@
 .bz-btn--primary {
   background: var(--bz-gradient-brand);
   border-color: transparent;
-  color: #fff;
+  color: var(--bz-fg);
 }
 .bz-btn--primary:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -87,7 +87,7 @@
 .bz-btn--success {
   background: var(--bz-emerald-500);
   border-color: var(--bz-emerald-500);
-  color: #fff;
+  color: var(--bz-fg);
 }
 .bz-btn--success:hover:not(:disabled) {
   filter: brightness(1.06);

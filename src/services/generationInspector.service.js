@@ -13,10 +13,18 @@
  *     id?, kind?: "image"|"video"|"audio"|"music"|"text",
  *     mediaUrl?: string,           // primary preview source
  *     prompt?: string,
+ *     outputText?: string,
+ *     rawOutputText?: string,
  *     negativePrompt?: string,
  *     model?: string,              // human-readable model name
  *     modelId?: string,            // canonical id
+ *     status?: string,
+ *     errorMessage?: string,
  *     seed?: number|string,
+ *     maxTokens?: number,
+ *     temperature?: number,
+ *     reasoning?: string,
+ *     systemPrompt?: string,
  *     steps?: number,
  *     guidanceScale?: number,
  *     width?: number,
@@ -24,6 +32,7 @@
  *     networkMode?: "local"|"consumer"|"private",
  *     peerId?: string,
  *     mintState?: { network, txHash, contract, tokenId },
+ *     lineage?: { parentId, rootId, depth, pinned },
  *     ts?: number,
  *     extra?: Record<string, string|number>,  // anything domain-specific
  *   }

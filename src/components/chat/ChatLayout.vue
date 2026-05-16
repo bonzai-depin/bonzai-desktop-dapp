@@ -3,8 +3,26 @@
     <!-- Optional left rail — slot for future ChatHistoryRail.
          Intentionally not built into this shell so the chat tab can
          opt in (or use its own rail later). -->
-    <aside v-if="$slots.rail" class="bz-chat__rail">
-      <slot name="rail" />
+    <aside
+      v-if="$slots.rail"
+      class="bz-chat__rail"
+      :class="{ 'is-collapsed': railCollapsed }"
+    >
+      <slot v-if="!railCollapsed" name="rail" />
+      <slot v-else name="rail-collapsed">
+        <button
+          type="button"
+          class="bz-chat__rail-peek"
+          :aria-label="`Expand ${railLabel}`"
+          :title="`Expand ${railLabel}`"
+          @click="$emit('toggle-rail')"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">history</span>
+          <span v-if="railCount > 0" class="bz-chat__rail-count bz-mono">
+            {{ railCount }}
+          </span>
+        </button>
+      </slot>
     </aside>
 
     <!-- Main column: header → stream OR empty → input -->
@@ -18,7 +36,9 @@
       <section
         ref="streamEl"
         class="bz-chat__stream"
-        :class="{ 'bz-chat__stream--empty': !hasMessages }"
+        :class="{ 'bz-chat__stream--empty': shouldCenterStream }"
+        aria-live="polite"
+        :aria-busy="busy ? 'true' : 'false'"
       >
         <slot name="stream">
           <div v-if="hasMessages" class="bz-chat__messages">
@@ -70,7 +90,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, useSlots, watch } from "vue";
 import ChatMessage from "./ChatMessage.vue";
 import EmptyChat from "./EmptyChat.vue";
 
@@ -83,12 +103,20 @@ const props = defineProps({
   messages: { type: Array, default: () => [] },
   /** Empty-state hooks. */
   emptyHeadline: { type: String, default: "What are we making today?" },
-  emptySubhead:  { type: String, default: "Pick a starter or type your own. Streaming, vision, code, roleplay — same input." },
+  emptySubhead:  { type: String, default: "Pick a starter or type your own." },
   emptyPrompts:  { type: Array,  default: () => [] },
   /** Currently loaded model name — shown in EmptyChat hint. */
   modelName: { type: String, default: "" },
   /** Auto-scroll to bottom on new messages. */
   autoscroll: { type: Boolean, default: true },
+  /** Whether the stream is currently receiving a response. */
+  busy: { type: Boolean, default: false },
+  /** Collapse the optional left rail while leaving a compact reopen affordance. */
+  railCollapsed: { type: Boolean, default: false },
+  /** Accessible label for the optional rail. */
+  railLabel: { type: String, default: "history" },
+  /** Optional count shown in the compact rail. */
+  railCount: { type: Number, default: 0 },
 });
 
 const emit = defineEmits([
@@ -96,12 +124,15 @@ const emit = defineEmits([
   "regenerate",
   "browse-models",
   "pick-prompt",
+  "toggle-rail",
 ]);
 
+const slots = useSlots();
 const streamEl = ref(null);
 const hasMessages = computed(
   () => Array.isArray(props.messages) && props.messages.length > 0,
 );
+const shouldCenterStream = computed(() => !hasMessages.value && !slots.stream);
 
 function onPickPrompt(p) {
   emit("pick-prompt", p);
@@ -142,17 +173,61 @@ watch(
 }
 
 .bz-chat__rail {
-  width: 240px;
+  width: 480px;
   border-right: 1px solid var(--bz-border);
   background: var(--bz-panel);
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
+  transition:
+    width var(--bz-dur-base) var(--bz-ease-out),
+    background var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-chat__rail.is-collapsed {
+  width: 56px;
+  background: var(--bz-canvas);
+}
+.bz-chat__rail-peek {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-4) 0;
+  background: transparent;
+  border: 0;
+  color: var(--bz-fg-low);
+  cursor: pointer;
+}
+.bz-chat__rail-peek:hover {
+  color: var(--bz-fg);
+  background: var(--bz-panel);
+}
+.bz-chat__rail-peek .material-symbols-outlined {
+  font-size: 20px !important;
+}
+.bz-chat__rail-count {
+  min-width: 24px;
+  max-width: 42px;
+  padding: 2px 4px;
+  border-radius: var(--bz-r-pill);
+  border: 1px solid var(--bz-border);
+  background: var(--bz-card);
+  color: var(--bz-fg-mid);
+  font-size: 10px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bz-chat__main {
   min-width: 0;
+  min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
+  overflow: hidden;
 }
 
 .bz-chat__header {
@@ -162,34 +237,46 @@ watch(
   z-index: 1;
 }
 
-/* Message stream — scrolls; max-width applied to the message column
-    so wide screens don't render uncomfortable line-lengths. */
-.bz-chat__stream {
-  overflow-y: auto;
-  padding: 0;
-  min-height: 0;
-}
-.bz-chat__messages {
-  max-width: 760px;
-  margin: 0;
-  padding: var(--bz-space-4);
-}
-
 .bz-chat__stream--empty {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+}
+
+/* Message stream — scrolls natively. Content below is centered via
+   margin: auto, not flexbox (which breaks overflow scroll). */
+.bz-chat__stream {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  display: block;
+  padding: 0;
+}
+
+/* Child wrapper inside the stream — centered reading column.
+   This div must NOT have overflow-y; it grows with content and
+   the parent .bz-chat__stream handles the scrollbar. */
+.bz-chat__messages {
+  max-width: 760px;
+  width: 100%;
+  padding: var(--bz-space-4);
+  margin: 0 auto;
+  min-height: 0;
 }
 
 /* Composer dock — sticks to the bottom of the main column.
    Never scrolls away. */
 .bz-chat__input {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   padding: var(--bz-space-3) var(--bz-space-4);
   border-top: 1px solid var(--bz-border);
   background: var(--bz-canvas);
 }
 .bz-chat__input > :deep(*) {
-  max-width: 760px;
+  width: 100%;
+  max-width: none;
   margin: 0;
 }
 
@@ -197,6 +284,7 @@ watch(
   width: 320px;
   border-left: 1px solid var(--bz-border);
   background: var(--bz-panel);
+  min-height: 0;
   overflow-y: auto;
 }
 

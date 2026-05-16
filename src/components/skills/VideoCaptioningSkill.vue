@@ -1,38 +1,17 @@
 <template>
   <div class="captioning-skill">
-    <!-- Header -->
-    <div
-      v-if="!isFullscreen"
-      class="models__activity--payouts mb-4 has-text-left"
-    >
-      <h2 class="skill-name is-size-1 fira-sans-condensed-black-italic mb-2">
-        <span class="material-symbols-outlined" style="font-size: 48px">
-          closed_caption
-        </span>
-        Realtime Video Captioning
-      </h2>
-      <p class="skill-description is-size-5">
-        {{
-          skill?.description ||
-          "Generate real-time captions and transcripts from any video using AI vision analysis."
-        }}
-      </p>
-    </div>
-
     <!-- Model Loading Status -->
-    <div v-if="!isFullscreen && modelLoading" class="model-status-bar mb-4">
-      <span
-        class="material-symbols-outlined rotating mr-2"
-        style="font-size: 20px"
-      >
-        progress_activity
-      </span>
-      <span>Loading vision model...</span>
+    <div v-if="!isFullscreen && modelLoading" class="bz-notice bz-notice--info">
+      <span class="bz-notice__icon"><span class="material-symbols-outlined">progress_activity</span></span>
+      <div class="bz-notice__body">
+        <div class="bz-notice__title">Loading vision model</div>
+        <BonzaiPulse variant="strip" />
+      </div>
     </div>
 
     <!-- Video Source Selector + Reset -->
-    <div v-if="!isFullscreen && !videoLoaded" class="mb-4">
-      <span class="category-selector mb-4">
+    <section v-if="!isFullscreen && !videoLoaded" class="caption-source-lab skill-panel source-panel">
+      <span class="category-selector">
         <template v-for="mode in captionModes" :key="mode.id">
           <input
             type="radio"
@@ -42,9 +21,9 @@
             :checked="selectedMode === mode.id"
             @change="selectedMode = mode.id"
           />
-          <label :for="'caption_' + mode.id" class="radio category pt-3 pb-3">
+          <label :for="'caption_' + mode.id" class="radio category">
             <span
-              class="material-symbols-outlined mr-1"
+              class="material-symbols-outlined"
               style="font-size: 18px"
             >
               {{ mode.icon }}
@@ -55,56 +34,64 @@
       </span>
 
       <!-- File Select -->
-      <div v-if="selectedMode === 'file'" class="has-text-left mt-5 mb-5">
+      <div v-if="selectedMode === 'file'" class="skill-action-row">
         <button
-          class="button is-success is-large mt-1 mb-1"
+          class="bz-btn bz-btn--success bz-btn--lg"
           @click="selectVideoFile"
         >
-          <span class="material-symbols-outlined mr-2">folder_open</span>
+          <span class="material-symbols-outlined">folder_open</span>
           Select Video File
         </button>
       </div>
 
       <!-- URL Input -->
-      <div v-else class="columns is-vcentered mt-4 mb-3">
-        <div class="column is-8">
-          <div class="field">
-            <div class="control has-icons-left">
-              <input
-                class="input is-large"
-                type="text"
-                v-model="videoUrl"
-                placeholder="Paste direct video URL (.mp4, .webm)..."
-                @keyup.enter="loadVideoFromUrl"
-                style="
-                  background: rgba(255, 255, 255, 0.05);
-                  border-color: rgba(255, 255, 255, 0.1);
-                  color: white;
-                "
-              />
-              <span class="icon is-left">
-                <span class="material-symbols-outlined">link</span>
-              </span>
-            </div>
-          </div>
+      <div v-else class="source-url-row">
+        <div class="skill-field skill-field--grow">
+          <label class="skill-label">Direct video URL</label>
+          <input
+            class="skill-input"
+            type="text"
+            v-model="videoUrl"
+            placeholder="Paste direct video URL (.mp4, .webm)..."
+            @keyup.enter="loadVideoFromUrl"
+          />
         </div>
-        <div class="column is-4">
+        <div class="skill-field skill-field--action">
           <button
-            class="button is-success is-large is-fullwidth"
+            class="bz-btn bz-btn--success bz-btn--lg"
             @click="loadVideoFromUrl"
             :disabled="!videoUrl"
           >
-            <span class="material-symbols-outlined mr-2">download</span>
+            <span class="material-symbols-outlined">download</span>
             Load Video
           </button>
         </div>
+      </div>
+    </section>
+
+    <div v-if="!isFullscreen" class="caption-telemetry">
+      <div class="caption-telemetry-cell">
+        <span>Source</span>
+        <strong>{{ selectedMode === 'file' ? 'File' : 'URL' }}</strong>
+      </div>
+      <div class="caption-telemetry-cell">
+        <span>Capture</span>
+        <strong>{{ captureInterval }}s</strong>
+      </div>
+      <div class="caption-telemetry-cell">
+        <span>Cues</span>
+        <strong>{{ transcript.length }}</strong>
+      </div>
+      <div class="caption-telemetry-cell">
+        <span>Status</span>
+        <strong>{{ videoLoaded ? (isPlaying ? 'Live' : 'Ready') : 'Idle' }}</strong>
       </div>
     </div>
 
     <!-- Video Display Area -->
     <div
       ref="captionDisplay"
-      class="caption-display-wrapper"
+      class="caption-display-wrapper caption-stage"
       :class="{ 'is-fullscreen': isFullscreen }"
     >
       <div class="caption-display" :class="{ 'is-active': videoLoaded }">
@@ -151,13 +138,8 @@
           >
             progress_activity
           </span>
-          <p class="is-size-5 mt-3 has-text-white">{{ generationStatus }}</p>
-          <progress
-            class="progress is-small mt-3"
-            :value="generationProgress"
-            max="100"
-            style="max-width: 300px; margin: 0 auto"
-          ></progress>
+          <p class="caption-status bz-h3">{{ generationStatus }}</p>
+          <BonzaiPulse variant="bar" :percent="generationProgress" width="300px" />
         </div>
 
         <!-- Idle State -->
@@ -168,7 +150,7 @@
           >
             videocam
           </span>
-          <p class="is-size-5 mt-3 has-text-grey-light">
+          <p class="caption-status bz-body">
             Load a video to begin captioning
           </p>
         </div>
@@ -177,7 +159,7 @@
         <button
           v-if="videoLoaded"
           class="fullscreen-toggle"
-          :class="{ 'm-5': isFullscreen }"
+          :class="{ 'fullscreen-offset': isFullscreen }"
           @click="toggleFullscreen"
           :title="isFullscreen ? 'Exit Fullscreen (ESC)' : 'Enter Fullscreen'"
         >
@@ -190,7 +172,7 @@
       <!-- Caption Bar — below the video, always visible -->
       <div class="caption-bar" v-if="videoLoaded">
         <div class="caption-bar-inner" v-if="currentCaption">
-          <span class="caption-bar-text has-text-brand">
+          <span class="caption-bar-text caption-bar-text--active">
             {{ currentCaption }}
           </span>
         </div>
@@ -201,7 +183,7 @@
           >
             closed_caption
           </span>
-          <span class="caption-bar-text has-text-grey-light">
+          <span class="caption-bar-text caption-bar-text--muted">
             {{
               captioningActive
                 ? "Waiting for next frame..."
@@ -214,8 +196,8 @@
 
     <!-- Analyzing Notification (top-right toast — matches SmartAgent notification style) -->
     <Transition name="notification-slide">
-      <div v-if="isAnalyzing" class="status-notification is-info fira-sans-condensed-black-italic">
-        <span class="material-symbols-outlined rotating mr-2">
+      <div v-if="isAnalyzing" class="status-notification status-notification--info bz-shout">
+        <span class="material-symbols-outlined rotating">
           progress_activity
         </span>
         Analyzing frame...
@@ -223,30 +205,24 @@
     </Transition>
 
     <!-- Controls (visible only when video is loaded) -->
-    <div class="controls-section mt-4" v-if="!isFullscreen && videoLoaded">
-      <!-- Reset button row -->
-      <div class="is-flex is-justify-content-flex-end mb-3"></div>
-
+    <div class="controls-section caption-console" v-if="!isFullscreen && videoLoaded">
       <!-- Capture Interval + Progress -->
-      <div class="models__activity--payouts">
-                  <button
-            class="button is-danger is-medium is-pulled-right"
+      <section class="skill-panel">
+        <div class="skill-panel-head">
+          <h3 class="bz-h2 skill-section-title">Capture</h3>
+          <button
+            class="bz-btn bz-btn--destructive"
             @click="resetAll"
             title="Reset"
           >
-            <span class="material-symbols-outlined mr-2 is-size-3">
-              restart_alt
-            </span>
+            <span class="material-symbols-outlined">restart_alt</span>
             Start Over
           </button>
-        <div class="volume-control mb-3 has-text-left">
-          <span
-            class="has-text-brand fira-sans-condensed-black-italic is-size-3"
-          >
-            Frame capture interval ({{ captureInterval }}s)
-          </span>
+        </div>
+        <div class="volume-control skill-field">
+          <span class="skill-label">Frame capture interval <span class="bz-mono">{{ captureInterval }}s</span></span>
           <input
-          class="mt-5 mb-5"
+            class="skill-range"
             type="range"
             min="1"
             max="10"
@@ -256,7 +232,7 @@
         </div>
 
         <!-- Progress Bar -->
-        <div class="field mb-5" v-if="totalDuration > 0">
+        <div class="skill-field" v-if="totalDuration > 0">
           <div
             style="
               display: flex;
@@ -264,38 +240,29 @@
               margin-bottom: 4px;
             "
           >
-            <span class="is-size-7 has-text-grey-light">
+            <span class="bz-meta bz-mono">
               {{ formatTime(currentTime) }}
             </span>
-            <span class="is-size-7 has-text-grey-light">
+            <span class="bz-meta bz-mono">
               {{ formatTime(totalDuration) }}
             </span>
           </div>
-          <progress
-            class="progress is-medium"
-            :value="currentTime"
-            :max="totalDuration"
-          ></progress>
+          <BonzaiPulse variant="bar" :percent="playbackProgress" />
         </div>
-      </div>
+      </section>
     </div>
 
-    <hr v-if="transcript.length > 0" />
+    
 
     <!-- Transcript Panel -->
     <div
-      class="transcript-panel mt-4 has-text-left"
+      class="transcript-panel caption-timeline skill-panel"
       v-if="transcript.length > 0 && !isFullscreen"
     >
-      <h3 class="fira-sans-condensed-black-italic is-size-3 mb-5">
-        <span class="has-text-brand">
-          <span class="material-symbols-outlined mr-2 is-size-3">
-            description
-          </span>
-          Transcript ({{ transcript.length }} entries)
-        </span>
+      <h3 class="bz-h2 skill-section-title">
+        <span class="material-symbols-outlined">description</span>
+        Transcript <span class="bz-meta bz-mono">{{ transcript.length }} entries</span>
       </h3>
-      <hr />
       <div class="transcript-entries" ref="transcriptContainer">
         <div
           v-for="(entry, index) in transcript"
@@ -322,24 +289,22 @@
 
       <!-- Export SRT (below transcript) -->
       <button
-        class="button is-info is-large mt-5 mb-5"
+        class="bz-btn bz-btn--primary transcript-export"
         @click="exportTranscript"
       >
-        <span class="material-symbols-outlined mr-2">download</span>
+        <span class="material-symbols-outlined">download</span>
         Export SRT
       </button>
     </div>
 
     <!-- Session History -->
     <div
-      class="session-history mt-5"
+      class="session-history caption-session-strip skill-panel"
       v-if="sessionHistory.length > 0 && !isFullscreen"
     >
-      <h4 class="is-size-6 fira-sans-condensed-black-italic mb-3 has-text-left">
-        <span class="has-text-brand fira-sans-condensed-black-italic is-size-3">
-          <span class="material-symbols-outlined mr-1 is-size-3">history</span>
-          Recent Sessions
-        </span>
+      <h4 class="bz-h2 skill-section-title">
+        <span class="material-symbols-outlined">history</span>
+        Recent Sessions
       </h4>
       <div class="session-list">
         <div
@@ -362,7 +327,7 @@
             </p>
           </div>
           <button
-            class="button is-small is-danger"
+            class="bz-iconbtn bz-iconbtn--sm danger-icon"
             @click.stop="deleteSession(index)"
             title="Delete session"
           >
@@ -378,6 +343,7 @@
 
 <script>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import BonzaiPulse from "../BonzaiPulse.vue";
 import { getAuthHeaders } from "../../services/auth.service.js";
 import { hasPurchasedSkill, isDevMode } from "../../services/agent.service.js";
 
@@ -419,6 +385,7 @@ function textSimilarity(a, b) {
 
 export default {
   name: "VideoCaptioningSkill",
+  components: { BonzaiPulse },
 
   props: {
     skill: { type: Object, default: null },
@@ -509,6 +476,10 @@ export default {
 
     // ─── Computed ────────────────────────────────────────────────────
     const backgroundStyle = computed(() => ({}));
+    const playbackProgress = computed(() => {
+      if (!totalDuration.value) return 0;
+      return (currentTime.value / totalDuration.value) * 100;
+    });
 
     // ─── Model Auto-Loading ──────────────────────────────────────────
     const ensureModelLoaded = async () => {
@@ -1106,9 +1077,101 @@ export default {
 
 <style scoped>
 .captioning-skill {
-  width: 100%;
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+  color: var(--bz-fg);
 }
+.skill-panel {
+  padding: var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+.skill-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-4);
+}
+.skill-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 42px !important;
+  line-height: 1;
+}
+.skill-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-4);
+  color: var(--bz-fg);
+}
+.skill-panel-head,
+.source-url-row,
+.skill-action-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  flex-wrap: wrap;
+}
+.source-panel,
+.controls-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-4);
+}
+.skill-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+  min-width: 0;
+}
+.skill-field--grow { flex: 1 1 320px; }
+.skill-field--action { flex: 0 0 auto; }
+.skill-label {
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+.skill-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-input:focus {
+  outline: none;
+  border-color: var(--bz-border-brand);
+}
+.skill-range {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-border-strong);
+  outline: none;
+}
+.skill-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-purple-300);
+  border: 2px solid var(--bz-fg);
+  cursor: pointer;
+}
+.caption-status {
+  margin-top: var(--bz-space-3);
+  color: var(--bz-fg-mid);
+}
+.caption-bar-text--active { color: var(--bz-fg); }
+.caption-bar-text--muted { color: var(--bz-fg-low); }
+.transcript-export { margin-top: var(--bz-space-4); }
+.danger-icon { color: var(--bz-danger); }
+
 
 /* ─── Category Selector (MeditationForge pattern) ────────────────── */
 .category-selector {
@@ -1142,7 +1205,6 @@ export default {
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
-  backdrop-filter: blur(32px);
 }
 
 .category-selector input[type="radio"] + label.radio.category:hover {
@@ -1152,10 +1214,9 @@ export default {
 }
 
 .category-selector input[type="radio"]:checked + label.radio.category {
-  color: rgba(255, 255, 255, 1);
-  border: 1px solid rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border: 1px solid var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 
 /* ─── Model Status Bar ────────────────────────────────────────────── */
@@ -1194,7 +1255,7 @@ export default {
   position: relative;
   width: 100%;
   overflow: hidden;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  background: linear-gradient(135deg, var(--bz-card) 0%, #16213e 50%, #0f3460 100%);
   transition: all 0.3s ease;
 }
 
@@ -1252,7 +1313,7 @@ export default {
 
 .overlay-icon {
   font-size: 72px;
-  color: white;
+  color: var(--bz-fg);
   background: var(--bz-scrim);
   border-radius: 50%;
   width: 96px;
@@ -1260,7 +1321,6 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(8px);
   pointer-events: none;
 }
 
@@ -1283,7 +1343,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -1328,12 +1388,11 @@ hr {
   display: flex;
   align-items: center;
   color: var(--bz-fg);
-  backdrop-filter: blur(10px);
   box-shadow: 0 4px 20px var(--bz-scrim);
 }
-.status-notification.is-info { background: rgba(62, 142, 208, 0.95); }
-.status-notification.is-success { background: rgba(57, 213, 130, 0.95); }
-.status-notification.is-danger { background: rgba(255, 56, 96, 0.95); }
+.status-notification--info { background: rgba(62, 142, 208, 0.95); }
+.status-notification--success { background: rgba(57, 213, 130, 0.95); }
+.status-notification--danger { background: rgba(255, 56, 96, 0.95); }
 
 .notification-slide-enter-active { animation: notification-fade-slide-in 0.4s ease-out; }
 .notification-slide-leave-active { animation: notification-fade-slide-out 0.4s ease-in; }
@@ -1359,7 +1418,7 @@ hr {
   padding: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
-  color: white;
+  color: var(--bz-fg);
 }
 
 .fullscreen-toggle:hover {
@@ -1367,7 +1426,7 @@ hr {
   border-color: var(--bz-fg-mid);
 }
 
-.fullscreen-toggle.m-5 {
+.fullscreen-toggle.fullscreen-offset {
   bottom: 1.25rem;
   right: 1.25rem;
 }
@@ -1529,7 +1588,6 @@ hr {
   padding: 2em;
   border: 1px solid var(--bz-border);
   border-radius: 12px;
-  backdrop-filter: blur(32px);
 }
 
 .skill-name {
@@ -1550,7 +1608,7 @@ hr {
 }
 
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 @keyframes rotate {
@@ -1566,4 +1624,112 @@ hr {
   background: linear-gradient(90deg, rgb(155, 109, 200), rgb(255, 153, 51));
   transition: width 0.3s ease;
 }
+
+/* Agentic redesign: Caption Lab */
+.caption-source-lab {
+  display: grid;
+  gap: var(--bz-space-4);
+  background:
+    linear-gradient(135deg, rgba(24, 144, 255, 0.12), transparent 44%),
+    var(--bz-panel);
+}
+.caption-source-lab .category-selector {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.caption-stage {
+  border: 1px solid var(--bz-border-strong);
+  background: #050507;
+}
+.caption-stage .caption-display {
+  min-height: clamp(380px, 52vh, 700px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.caption-stage .caption-video {
+  max-height: 70vh;
+  object-fit: contain;
+}
+.caption-console .skill-panel {
+  background: var(--bz-panel);
+}
+.caption-console .skill-panel-head {
+  margin-bottom: var(--bz-space-3);
+}
+.caption-timeline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--bz-space-4);
+  align-items: start;
+}
+.caption-timeline .skill-section-title,
+.caption-timeline .transcript-entries {
+  grid-column: 1;
+}
+.caption-timeline .transcript-export {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: end;
+}
+.caption-timeline .transcript-entry {
+  min-height: 42px;
+  border-left: 2px solid transparent;
+}
+.caption-timeline .transcript-entry.is-current {
+  border-left-color: var(--bz-info);
+}
+.caption-session-strip .session-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+@media (max-width: 780px) {
+  .caption-timeline {
+    grid-template-columns: 1fr;
+  }
+  .caption-timeline .transcript-export {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+
+/* Signature upgrade: caption lab telemetry */
+.caption-telemetry {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: var(--bz-space-3);
+}
+.caption-telemetry-cell {
+  min-height: 82px;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.caption-telemetry-cell span {
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.caption-telemetry-cell strong {
+  color: var(--bz-fg);
+  font-size: 20px;
+  line-height: 1.1;
+}
+.caption-source-lab {
+  grid-template-columns: minmax(0, 0.8fr) minmax(280px, 1fr);
+  align-items: end;
+}
+.caption-source-lab > .category-selector { align-self: stretch; }
+.caption-source-lab > .skill-action-row,
+.caption-source-lab > .source-url-row { min-width: 0; }
+@media (max-width: 900px) {
+  .caption-telemetry,
+  .caption-source-lab { grid-template-columns: 1fr; }
+}
+
 </style>

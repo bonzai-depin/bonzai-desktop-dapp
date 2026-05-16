@@ -5,82 +5,66 @@
     <div class="models__deployment-install">
       <div class="columns">
         <div class="column is-12">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
+          <header class="bz-screen-header">
+            <div class="bz-screen-titleblock">
+              <p class="bz-eyebrow">Create</p>
+                <h1 class="bz-h1 fira-sans-condensed-black-italic">
                   <span
-                    class="material-symbols-outlined is-size-1 mr-2"
-                    style="font-size: 92px !important"
+                    class="material-symbols-outlined bz-title-icon"
+                    aria-hidden="true"
                   >
                     3d_rotation
                   </span>
                   Generative 3D
                 </h1>
-              </div>
             </div>
-            <div class="level-right">
-              <div class="level-item">
+            <div class="bz-screen-actions">
                 <button
-                  class="button is-medium is-info mr-5"
+                  class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
                   @click="showExamples = !showExamples"
                   title="View examples"
                 >
-                  <span class="material-symbols-outlined mr-1 is-size-3">
+                  <span class="material-symbols-outlined" aria-hidden="true">
                     {{ showExamples ? "visibility_off" : "lightbulb" }}
                   </span>
                   {{ showExamples ? "Hide" : "Examples" }}
                 </button>
                 <button
-                  class="button is-medium is-warning mr-5"
+                  class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
                   :disabled="isLoading"
                   @click="clearScene"
                   title="Clear scene"
                 >
-                  <span class="material-symbols-outlined mr-1 is-size-3">
+                  <span class="material-symbols-outlined" aria-hidden="true">
                     delete_sweep
                   </span>
                   Clear
                 </button>
-              </div>
             </div>
-          </div>
+          </header>
 
-          <!-- GENERATION PROGRESS — game-style loading screen -->
-          <div v-if="isLoading" class="game-loader" :class="{ 'game-loader--idle': !stream.active }">
-            <!-- Animated scanline/glow background -->
-            <div class="game-loader__bg" aria-hidden="true">
-              <div class="game-loader__bg-scan"></div>
-              <div class="game-loader__bg-glow"></div>
-            </div>
-
-            <div class="game-loader__inner">
-              <!-- Phase title -->
-              <div class="game-loader__phase">
-                <span class="game-loader__phase-tag">PHASE</span>
-                <span class="game-loader__phase-name">{{ stream.phase || 'Initializing' }}</span>
-              </div>
-              <p v-if="stream.subtitle" class="game-loader__subtitle">
-                {{ stream.subtitle }}
-              </p>
-
-              <!-- Progress bar -->
-              <div class="game-loader__bar">
-                <div
-                  class="game-loader__bar-fill"
-                  :style="{ width: streamProgress + '%' }"
-                ></div>
-                <div class="game-loader__bar-shimmer"></div>
-              </div>
-              <div class="game-loader__hud">
-                <span class="game-loader__hud-pct">{{ streamProgress }}%</span>
-                <span class="game-loader__hud-sep">·</span>
-                <span class="game-loader__hud-tokens">
-                  {{ stream.tokenCount }} / {{ stream.maxTokens }} tokens
+          <!-- GENERATION PROGRESS -->
+          <div v-if="isLoading" class="three-progress-card">
+            <div class="three-progress-card__head">
+              <div>
+                <span class="three-progress-card__title fira-sans-condensed-black-italic">
+                  <BonzaiPulse variant="dot" />
+                  {{ stream.phase || 'Initializing' }}
                 </span>
-                <span class="game-loader__hud-sep">·</span>
-                <span
-                  class="game-loader__hud-tps"
+                <p v-if="stream.subtitle" class="three-progress-card__subtitle">
+                  {{ stream.subtitle }}
+                </p>
+              </div>
+              <span class="three-progress-card__pct fira-sans-condensed-black-italic">
+                {{ streamProgress }}%
+              </span>
+            </div>
+            <BonzaiPulse variant="bar" :percent="streamProgress" />
+            <div class="three-progress-card__meta">
+              <span>
+                  {{ stream.tokenCount }} / {{ stream.maxTokens }} tokens
+              </span>
+              <span
                   :title="stream.tokenCount === 0
                     ? 'Computing attention over the system prompt before generation starts'
                     : 'True generation rate (excludes prefill)'"
@@ -91,43 +75,34 @@
                   <template v-else>
                     {{ stream.tokensPerSec || '–' }} tok/s
                   </template>
-                </span>
-                <span class="game-loader__hud-sep">·</span>
-                <span class="game-loader__hud-time">
+              </span>
+              <span>
                   {{ Math.round(stream.elapsedMs / 1000) }}s
-                </span>
-                <span
+              </span>
+              <span
                   v-if="stream.prefillMs > 200"
-                  class="game-loader__hud-sep"
-                >·</span>
-                <span
-                  v-if="stream.prefillMs > 200"
-                  class="game-loader__hud-prefill"
                   title="Time the model spent computing attention over the prompt before the first token streamed back"
                 >
                   prefill {{ (stream.prefillMs / 1000).toFixed(1) }}s
-                </span>
-              </div>
+              </span>
+            </div>
 
-              <!-- Rotating game-loader tip -->
-              <div class="game-loader__tip" :title="stream.tip">
-                <span class="game-loader__tip-dot"></span>
-                <span class="game-loader__tip-text">
-                  {{ stream.tip || 'Warming up the rendering crew…' }}
-                </span>
-              </div>
+            <div class="three-progress-card__tip" :title="stream.tip">
+              <BonzaiPulse variant="dot" />
+              <span>
+                {{ stream.tip || 'Preparing the 3D scene...' }}
+              </span>
+            </div>
 
-              <!-- Live preview window -->
-              <div v-if="stream.preview" class="game-loader__preview">
-                <div class="game-loader__preview-header">
-                  <span class="material-symbols-outlined">terminal</span>
-                  <span>LIVE BLUEPRINT FEED</span>
-                </div>
-                <pre
-                  ref="streamPreviewEl"
-                  class="game-loader__preview-body"
-                >{{ stream.preview }}<span class="game-loader__cursor">▌</span></pre>
+            <div v-if="stream.preview" class="three-progress-card__preview">
+              <div class="three-progress-card__preview-header">
+                <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
+                <span>Live blueprint feed</span>
               </div>
+              <pre
+                ref="streamPreviewEl"
+                class="three-progress-card__preview-body"
+              >{{ stream.preview }}<span class="three-progress-card__cursor">▌</span></pre>
             </div>
           </div>
 
@@ -143,7 +118,7 @@
                 class="example-card"
                 @click="useExample(example)"
               >
-                <div class="example-icon">{{ example.icon }}</div>
+                <span class="material-symbols-outlined example-icon" aria-hidden="true">{{ example.icon }}</span>
                 <div class="example-title">{{ example.title }}</div>
                 <div class="example-desc">{{ example.description }}</div>
               </div>
@@ -155,31 +130,31 @@
                 <!-- DOWNLOAD REQUIRED PANEL -->
                 <div
                   v-if="needsDownload && !downloads.active"
-                  class="notification is-danger mb-4 p-5"
+                  class="three-notice three-notice--danger"
                 >
-                  <p class="mb-3">
-                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                  <div class="three-notice__body">
+                    <strong class="three-notice__title fira-sans-condensed-black-italic">
                       Download Required
                     </strong>
-                  </p>
-                  <ul class="download-list has-text-left">
-                    <li v-if="!isModel">
-                      <span class="material-symbols-outlined mr-2">
-                        deployed_code
-                      </span>
-                      <span class="download-item-name">
-                        {{ currentModel.filename }}
-                      </span>
-                      <span class="download-item-size">
-                        {{ currentModel.filesize }}
-                      </span>
-                    </li>
-                  </ul>
+                    <ul class="download-list">
+                      <li v-if="!isModel">
+                        <span class="material-symbols-outlined" aria-hidden="true">
+                          deployed_code
+                        </span>
+                        <span class="download-item-name">
+                          {{ currentModel.filename }}
+                        </span>
+                        <span class="download-item-size">
+                          {{ currentModel.filesize }}
+                        </span>
+                      </li>
+                    </ul>
+                  </div>
                   <button
-                    class="button is-warning mt-3 is-large"
+                    class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
                     @click="downloadAllModels"
                   >
-                    <span class="material-symbols-outlined mr-2">download</span>
+                    <span class="material-symbols-outlined" aria-hidden="true">download</span>
                     Download All
                   </button>
                 </div>
@@ -187,29 +162,18 @@
                 <!-- DOWNLOAD PROGRESS -->
                 <div
                   v-if="downloads && downloads.active"
-                  class="notification is-info mb-4 p-5"
+                  class="three-progress-card"
                 >
-                  <p class="mb-2">
-                    <span class="fira-sans-condensed-black-italic is-size-4">
+                  <div class="three-progress-card__head">
+                    <span class="three-progress-card__title fira-sans-condensed-black-italic">
+                      <BonzaiPulse variant="dot" />
                       Downloading
-                      <button
-                        disabled
-                        class="button is-loading is-info is-small mr-2 p-4"
-                      ></button>
                     </span>
-                    <span
-                      class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
-                    >
+                    <span class="three-progress-card__pct fira-sans-condensed-black-italic">
                       {{ Math.round(downloads.total_progress || 0) }}%
                     </span>
-                  </p>
-                  <progress
-                    class="progress is-success is-large"
-                    :value="downloads.progress || 0"
-                    max="100"
-                  >
-                    {{ Math.round(downloads.progress || 0) }}%
-                  </progress>
+                  </div>
+                  <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
                   <div
                     v-if="downloadTaskList.length"
                     style="max-height: 180px; overflow: auto"
@@ -247,23 +211,16 @@
                   @access-changed="onAccessChanged"
                 />
 
-                <form ref="promptForm" @submit.prevent="onSubmit">
-                  <textarea
-                    id="prompt"
-                    class="input is-large is-fullwidth"
-                    placeholder="Describe a 3D object... (e.g., A mystical crystal orb with inner glow)"
-                    v-model="form.prompt"
-                    :disabled="isLoading || !hasAccess || !isModel"
-                    @keydown.enter.exact.prevent="
-                      canSubmitWithAccess && hasAccess && onSubmit()
-                    "
-                    style="min-height: 5em"
-                  ></textarea>
-                  <button
-                    class="button chat is-loading is-outlined is-info is-large is-fullwidth"
-                    v-if="isLoading"
-                  ></button>
-                </form>
+                <GenerativeInput
+                  v-model="form.prompt"
+                  placeholder="Describe a 3D object..."
+                  submit-label="Generate"
+                  running-label="Building"
+                  :running="isLoading"
+                  :disabled="!canSubmitWithAccess || !hasAccess || !isModel"
+                  shortcut-hint="⌘⏎"
+                  @submit="onSubmit"
+                />
 
                 <!-- REFINE MODE -->
                 <div
@@ -273,7 +230,7 @@
                   <div class="field has-addons">
                     <div class="control is-expanded">
                       <input
-                        class="input is-medium"
+                        class="bz-field-input"
                         v-model="refinePrompt"
                         placeholder="Refine: make it taller, add fire particles, change material to ice..."
                         :disabled="isLoading"
@@ -282,7 +239,7 @@
                     </div>
                     <div class="control">
                       <button
-                        class="button is-medium is-success"
+                        class="bz-btn bz-btn--success fira-sans-condensed-black-italic"
                         @click="onRefine"
                         :disabled="isLoading || !refinePrompt.trim()"
                       >
@@ -385,9 +342,9 @@
             <div class="level-left">
               <div class="level-item">
                 <h2
-                  class="fira-sans-condensed-black-italic has-text-white is-size-2"
+                  class="bz-h2 fira-sans-condensed-black-italic"
                 >
-                  <span class="material-symbols-outlined is-size-1 mr-2">
+                  <span class="material-symbols-outlined bz-section-icon">
                     history
                   </span>
                   Generation History
@@ -397,14 +354,14 @@
             <div class="level-right">
               <div class="level-item buttons">
                 <button
-                  class="button is-warning is-small"
+                  class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                   @click="importHistory()"
                 >
                   <span class="material-symbols-outlined mr-2">upload</span>
                   Import
                 </button>
                 <button
-                  class="button is-warning is-small ml-4"
+                  class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                   @click="exportHistory()"
                   :disabled="objectInferences.length === 0"
                 >
@@ -412,7 +369,7 @@
                   Export
                 </button>
                 <button
-                  class="button is-danger is-small ml-4"
+                  class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
                   @click="clearHistory()"
                 >
                   <span class="material-symbols-outlined mr-2">ink_eraser</span>
@@ -434,6 +391,16 @@
                 }"
               >
                 <div class="question">
+                  <div class="three-history-preview">
+                    <img
+                      v-if="historyThumbnail(item)"
+                      :src="historyThumbnail(item)"
+                      :alt="item.screenshots?.[0]?.label || item.prompt || '3D object preview'"
+                    />
+                    <div v-else class="three-history-preview__empty">
+                      <span class="material-symbols-outlined" aria-hidden="true">3d_rotation</span>
+                    </div>
+                  </div>
                   <div class="history-header">
                     <span class="answer__model">
                       <span class="material-symbols-outlined mr-2">neurology</span>
@@ -446,8 +413,6 @@
                       {{ item.id }}
                     </span>
                   </div>
-                  <hr />
-                  <p class="history-prompt">{{ item.blueprint || item.prompt }}</p>
 
                   <!-- Multi-angle Screenshots Preview -->
                   <div
@@ -478,61 +443,10 @@
                     {{ item.notes }}
                   </div>
                   <hr />
-                  <button
-                    class="button is-medium is-success copy is-pulled-left p-0 pl-1 pr-1 mr-3"
-                    @click="copyPrompt(item.prompt, item._originalIndex)"
-                  >
-                    <span
-                      class="material-symbols-outlined is-size-2"
-                      v-if="!hasCopy[item._originalIndex]"
-                    >
-                      content_copy
-                    </span>
-                    <span class="material-symbols-outlined is-size-2" v-else>
-                      check
-                    </span>
-                  </button>
-                  <button
-                    class="button is-medium is-warning ml-2 is-pulled-left mr-3"
-                    @click="openMint(item)"
-                    :disabled="!!item.nft"
-                  >
-                    <span class="material-symbols-outlined mr-1">
-                      {{ item.nft ? "check_circle" : "token" }}
-                    </span>
-                    {{ item.nft ? "Minted" : "Mint" }}
-                  </button>
-                  <button
-                    v-if="item.success"
-                    class="button is-medium is-warning ml-2 is-pulled-left mr-3"
-                    @click="applyInference(item)"
-                    title="Load this scene"
-                  >
-                    <span class="material-symbols-outlined mr-1">
-                      visibility
-                    </span>
-                    Load
-                  </button>
-                  <button
-                    class="button is-medium is-warning ml-2 is-pulled-left mr-3"
-                    @click="regenerateFromInference(item)"
-                    :disabled="isLoading"
-                    title="Regenerate with same prompt"
-                  >
-                    <span class="material-symbols-outlined mr-1">
-                      autorenew
-                    </span>
-                    Retry
-                  </button>
-                  <button
-                    class="button is-medium is-danger is-pulled-right p-0 pl-1 pr-1"
-                    @click="removeInference(item._originalIndex)"
-                    title="Delete"
-                  >
-                    <span class="material-symbols-outlined is-size-2">
-                      delete
-                    </span>
-                  </button>
+                  <GenerativeActions
+                    :actions="actionsFor(item)"
+                    @action="(id) => handleAction(id, item)"
+                  />
                 </div>
               </li>
             </ol>
@@ -597,13 +511,13 @@
       </div>
       <div class="screenshot-modal-footer">
         <button
-          class="button is-info"
+          class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
           @click="downloadScreenshot(screenshotModal.currentShot)"
         >
           <span class="material-symbols-outlined mr-1">download</span>
           Download
         </button>
-        <button class="button is-success ml-2" @click="downloadAllScreenshots">
+        <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" @click="downloadAllScreenshots">
           <span class="material-symbols-outlined mr-1">folder_zip</span>
           Download All
         </button>
@@ -619,6 +533,26 @@
     @close="mintTarget = null"
     @minted="onMinted"
   />
+
+  <Transition name="bz-image-toast">
+    <div
+      v-if="pendingDelete"
+      class="bz-image-delete-toast"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+      <span class="bz-image-delete-toast__body">
+        {{ pendingDelete.all ? 'Clear 3D history?' : 'Delete this object?' }}
+      </span>
+      <button type="button" class="bz-image-delete-toast__ghost" @click="dismissDeleteToast">
+        Cancel
+      </button>
+      <button type="button" class="bz-image-delete-toast__danger" @click="confirmDeleteObject">
+        {{ pendingDelete.all ? 'Clear' : 'Delete' }}
+      </button>
+    </div>
+  </Transition>
 </template>
 
 <script>
@@ -634,7 +568,10 @@ import {
 import ThreeViewer from "./ThreeViewer.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import BonzaiPulse from "./BonzaiPulse.vue";
 import BzCloseButton from "./BzCloseButton.vue";
+import GenerativeInput from "./generative/GenerativeInput.vue";
+import GenerativeActions from "./generative/GenerativeActions.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { fetchNFT3DCode } from "../services/contentNFT.service.js";
 import { resolveLLM } from "../skills/flagship.js";
@@ -1172,7 +1109,7 @@ ${indent(out, 2)}
 
 export default {
   name: "Generative3D",
-  components: { ThreeViewer, AccessRequirements, MintModal, BzCloseButton },
+  components: { ThreeViewer, AccessRequirements, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
   setup() {
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
@@ -1211,6 +1148,8 @@ export default {
     const threeViewer = ref(null);
     const lastStatus = ref("");
     const showExamples = ref(false);
+    const pendingDelete = ref(null);
+    let pendingDeleteTimer = null;
 
     // ───── Game-style loading screen state ────────────────────────────────
     // Driven by the streaming LLM call. Each phase resets these and the
@@ -1893,73 +1832,73 @@ export default {
 
     const examplePrompts = ref([
       {
-        icon: "\u2699\ufe0f",
+        icon: "settings",
         title: "Clockwork Heart",
         description: "Beating mechanism with blood-glass chambers",
         prompt: "An anatomical clockwork heart resting on a brass plinth — the outer shell is a semi-transparent glass dome with subtle iridescent sheen, through which four pulsing chambers of deep red translucent liquid can be seen slowly beating to an unseen rhythm. Around the equator of the heart runs a crown of ornate brass gear teeth, rotating just perceptibly. Delicate gold arterial tubes arc out of the top and loop back down into the heart's sides. The plinth is a polished marble slab with rune-like gold filigree. The whole piece is haloed in a faint crimson glow, crimson mist trailing from the base, fine gold flecks drifting around it.",
       },
       {
-        icon: "\ud83c\udfdb\ufe0f",
+        icon: "foundation",
         title: "Gem Pedestal",
         description: "Faceted gems resting on a marble pedestal",
         prompt: "A circular white-marble pedestal with a mirror-polished gold rim, atop which rest a small pile of faceted gemstones — ruby, sapphire, emerald, topaz, amethyst — each cut into distinct sharp facets that catch highlights and cast deep shadows where they meet the stone. The marble surface shows subtle grey veining running through it, polished to catch a faint reflection of the gems sitting on it. Gold dust motes drift in the air; a low mist curls at the base; each gem glows faintly from within, bright enough that the highlights bloom softly. Museum jewel-display lighting — single warm key light plus cool ambient fill from above.",
       },
       {
-        icon: "\u26f2",
+        icon: "water_drop",
         title: "Cascading Fountain",
         description: "Tiered basins with reflective falling water",
         prompt: "An ornate three-tier stone fountain with water cascading from the smallest top basin down through the middle and into the wide bottom pool. Each basin is a shallow carved bowl with a gold inlay rim — the stone is deeply pitted and weathered, with moss darkening every crevice. Water inside each tier is a true reflective surface mirroring the scene above and showing real caustic patterns rippling across the pool floor below. Slender water columns pour between tiers, breaking into droplets and a fine mist where they impact. A central stone pillar connects the tiers with small gold spouts at each rim — the gold polished smooth so it catches and reflects the environment sharply, in contrast to the matte weathered stone.",
       },
       {
-        icon: "\ud83d\udd2e",
+        icon: "blur_circular",
         title: "Seer's Orb",
         description: "Crystal ball with cosmic nebula interior",
         prompt: "A large crystal-ball seer's orb cradled on an ornate bronze stand with three curved claw feet, each foot detailed with relief carvings that catch deep shadow between the toes. Inside the clear glass sphere, a deep purple cosmic nebula swirls hypnotically — stars, gas clouds and violet light drifting in real time, bright enough that the interior glow bleeds through the glass and blooms softly around the surface. A violet halo surrounds the outer sphere. Three amethyst gemstones are inset into the stand's base with faceted cuts that glint sharply. The bronze is polished along the claws and weathered-dark in the recesses, so the environment reflection plays across the smooth parts while the crevices sit in cool shadow. Purple mist curls at the foot; cyan sparks slowly orbit the orb.",
       },
       {
-        icon: "\ud83d\udee1\ufe0f",
+        icon: "shield",
         title: "Holographic Shield",
         description: "Kite shield with live hologram interface",
         prompt: "A floating kite-shaped shield with a live holographic emerald-green interface projected across its front face — animated scanlines, flickering tactical data, a traveling signal wave bright enough to bloom off the plate. The shield body is deeply-etched brushed steel with relief circuit channels running vertically, the recesses dark with AO, the raised lands catching sharp highlights. Gold stud rivets at each corner and dark leather straps on the back. A translucent green force-field dome surrounds the entire shield, pulsing gently. A slow-rotating chrome ring orbits around it and shows a real reflection of the hologram on its inner face. Tiny green sparks orbit at varying radii.",
       },
       {
-        icon: "\ud83e\uddea",
+        icon: "science",
         title: "Alchemist's Flask",
         description: "Bubbling flask on gimbal with pouring potion",
         prompt: "An Erlenmeyer flask of clear glass mounted on a three-axis polished-brass gimbal, tilted at an angle and pouring a glowing emerald-green potion into a waiting glass goblet below. The glass has true refractive transmission so the potion colour bends through the walls; the potion itself glows bright enough that the pour-stream halo blooms softly. The potion surface ripples gently and fine bubbles rise through the liquid. Each brass ring carries etched rune-bands in its recessed channel, dark with shadow against the polished outer edge, and the rings rotate on their own axes at slightly different speeds. The pouring stream is a continuous column of flowing liquid with droplet accents, splashing outward where it strikes the goblet. The whole assembly sits on a dark oak plinth with subtle green mist hanging in the air.",
       },
       {
-        icon: "\ud83d\udd2e",
+        icon: "blur_circular",
         title: "Levitating Crystal",
         description: "Sharp amethyst spire orbiting a base platform",
         prompt: "A large sharply-faceted amethyst crystal levitating upright above a low obsidian platform deeply inscribed with gold rune glyphs — the glyphs recessed enough that the channels carry cool AO shadow while the gold catches highlights. The crystal slowly rotates and bobs gently on an unseen current; each facet catches the environment reflection differently, with a violet inner glow bright enough to bloom around the sharp edges. Eight smaller floating gems — sapphires, emeralds, rubies — orbit the platform on a horizontal ring, each catching the central crystal's violet glow. A purple fresnel halo surrounds the main crystal and a faint translucent hemisphere dome of energy covers the platform. Violet mist drifts at the base; tiny violet sparks rise steadily.",
       },
       {
-        icon: "\ud83d\udd25",
+        icon: "local_fire_department",
         title: "Lava Obelisk",
         description: "Tall obsidian pillar with flowing lava veins",
         prompt: "An imposing black obsidian obelisk standing on a rough rocky platform — the obelisk's four faces deeply pitted and weathered, every crack and crater catching contact shadow. Glowing orange-red lava veins run down each face in jagged lightning-bolt patterns, visibly flowing and pulsing with heat, hot enough that the bright cores bloom into the air around them. A gold band wraps the top third and catches sharp environment reflections across its polished surface. The rocky platform below is shattered in layered slabs that cast soft shadows into each other. Ember particles rise continuously from the base, warm red mist pools at its feet and orange caustic light dances on the ground around it. Dust motes catch the lava's glow.",
       },
       {
-        icon: "\ud83c\udf0c",
+        icon: "auto_awesome",
         title: "Starforge Anvil",
         description: "Glowing anvil with stellar metal being hammered",
         prompt: "A blacksmith's anvil forged from dark meteorite iron with a pitted, star-textured surface, mounted on a worn stone pillar whose erosion has left deep channels and crevices down its sides. A stellar ingot of molten star-metal lies glowing on the anvil's top — intense amber-orange, surface churning with heat, bright enough that the whole ingot blooms and casts warm rim-light onto the anvil. A heavy leather-gripped steel hammer hovers above, rising and falling in a slow rhythm and striking the ingot on each beat. On every impact a burst of golden splash particles erupts. The anvil and stone pillar sit in a pool of deep contact shadow where they meet the ground. Hundreds of golden sparks drift continuously in the surrounding air.",
       },
       {
-        icon: "\ud83d\udc09",
+        icon: "egg_alt",
         title: "Iridescent Dragon Egg",
         description: "Cracking egg on a nest of embers",
         prompt: "A large dragon egg — ovoid, taller than wide — with a tightly-overlapping iridescent scaled shell that shifts colors from bronze to violet to teal as the viewing angle changes. Each scale is raised enough to cast soft shadow on the one beneath, so the full surface reads as real relief rather than a flat texture. Three jagged thermal cracks run across the shell, lava-orange glow bleeding through from within — bright enough that the molten glow blooms around the cracks. The egg rests in a woven nest of twisted branches interspersed with glowing embers; the weave tangles deeply, with each branch-crossover dark in shadow. Caustic orange light patterns the ground beneath the nest, warm mist rises and hundreds of ember sparks drift upward continuously. A subtle orange halo surrounds the egg.",
       },
       {
-        icon: "\u2696\ufe0f",
+        icon: "balance",
         title: "Balance of Fates",
         description: "Golden scales tipping with gemstone weights",
         prompt: "An ornate golden balance scale standing on a white-marble plinth with grey veining that the polish catches as faint reflection. The central column is intricately carved with fluted relief and leaf motifs — the recesses dark with contact shadow, the raised surfaces catching sharp highlights. Two shallow gold dishes hang from gold chain links at either end of a horizontal crossbeam; each chain link sits in soft shadow against the next. The left dish holds three ruby octahedron gemstones that glow bright enough to bloom around their sharp edges, the right dish is empty. The crossbeam tilts slowly back and forth as if weighing invisible fates. Amber mist pools below the plinth; fine gold dust drifts around the piece with sparks orbiting the gems.",
       },
       {
-        icon: "\u2694\ufe0f",
+        icon: "hardware",
         title: "Rune Sword Altar",
         description: "Sword embedded in stone with magical aura",
         prompt: "A broadsword driven vertically halfway into a rough-hewn stone altar. The altar's surface is scarred with chisel marks and shallow weathering, each groove catching deep shadow. The blade is polished brushed steel engraved with cyan runic script running down its length — the runes cut deeply into the steel so they hold shadow, and the glyphs themselves glow bright cyan, hot enough to bloom softly across the blade. The crossguard and fittings are mirror-polished gold catching sharp environment reflections; the grip is dark wrapped leather with thread-line detail; a faceted sapphire pommel glints at the end. A cyan dissolve-pulse ripples across the blade every few seconds. A translucent cyan energy hemisphere covers the altar. A circular rune inscription glows on the ground around the altar base. Cyan mist curls upward, cyan sparks rise continuously, and faint caustic light patterns the surrounding ground.",
@@ -2324,7 +2263,7 @@ demonstrates all of them — treat it as the quality bar.
         controlled rolling. Add rb.setAngvel({x,y,z}, true) for tumble on spawn.
 
   [7] BONZAI PALETTE (use when the prompt doesn't dictate a scheme)
-      Purple #8b5cf6 / #a855f7, Green #10b981 / #48c78e,
+      Purple #8b5cf6 / var(--bz-purple-300), Green var(--bz-emerald-500) / var(--bz-emerald-500),
       Pink #fe2d6e / #fe7eb0, Dark #0a0a0f
 
 RULE: If the prompt is for "a gem", "a sword", "a potion", a single sculpture,
@@ -3036,11 +2975,69 @@ OUTPUT:`;
       }
     };
 
+    const historyThumbnail = (item) => item?.thumbnail || item?.screenshots?.[0]?.dataUrl || "";
+
     const handleSuccess = (data) => console.log("Generation success:", data);
     const handleError = (data) => console.error("Generation error:", data);
 
+    const captureViewerSnapshot = async (label = "Preview") => {
+      await nextTick();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return threeViewer.value?.captureSnapshot?.(label) || null;
+    };
+
     const removeInference = async (originalIndex) => {
       await removeObjectInference(originalIndex);
+    };
+
+    const clearDeleteToastTimer = () => {
+      if (!pendingDeleteTimer) return;
+      window.clearTimeout(pendingDeleteTimer);
+      pendingDeleteTimer = null;
+    };
+
+    const dismissDeleteToast = () => {
+      clearDeleteToastTimer();
+      pendingDelete.value = null;
+    };
+
+    const requestDeleteObject = (item) => {
+      if (!item) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = {
+        id: item.id,
+        index: item._originalIndex,
+        all: false,
+      };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const requestClearHistory = () => {
+      if (!objectInferences.value.length) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = { all: true };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const confirmDeleteObject = async () => {
+      const pending = pendingDelete.value;
+      if (!pending) return;
+      dismissDeleteToast();
+
+      if (pending.all) {
+        await clearObjectInferences();
+        hasCopy.length = 0;
+        return;
+      }
+
+      const idx = objectInferences.value.findIndex((item) => item.id === pending.id);
+      await removeInference(idx >= 0 ? idx : pending.index);
     };
 
     const applyInference = async (item) => {
@@ -3065,12 +3062,32 @@ OUTPUT:`;
       await onSubmit();
     };
 
+    const actionsFor = (item) => {
+      const minted = !!item?.nft;
+      return [
+        { id: "copy", icon: hasCopy[item._originalIndex] ? "check" : "content_copy", label: hasCopy[item._originalIndex] ? "Copied" : "Reuse", variant: "default", title: "Copy prompt into composer" },
+        { id: "mint", icon: minted ? "check_circle" : "token", label: minted ? "Minted" : "Mint", variant: minted ? "success" : "default", disabled: minted },
+        { id: "load", icon: "visibility", label: "Load", variant: "primary", disabled: !item?.success, title: "Load this scene" },
+        { id: "retry", icon: "autorenew", label: "Retry", variant: "default", disabled: isLoading.value, title: "Regenerate with the same prompt" },
+        { id: "delete", icon: "delete", label: "Delete", variant: "destructive", title: "Remove this result" },
+      ];
+    };
+
+    const handleAction = (id, item) => {
+      switch (id) {
+        case "copy": copyPrompt(item.prompt, item._originalIndex); break;
+        case "mint": openMint(item); break;
+        case "load": applyInference(item); break;
+        case "retry": regenerateFromInference(item); break;
+        case "delete": requestDeleteObject(item); break;
+      }
+    };
+
     // ═══════════════════════════════════════════════════════════════════════
     // HISTORY MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════
     const clearHistory = async () => {
-      await clearObjectInferences();
-      hasCopy.length = 0;
+      requestClearHistory();
     };
 
     const exportHistory = () => {
@@ -3103,6 +3120,7 @@ OUTPUT:`;
               await addObjectInference(item.prompt, item.code, {
                 mode: item.mode,
                 screenshots: item.screenshots,
+                thumbnail: item.thumbnail || item.screenshots?.[0]?.dataUrl || "",
                 success: item.success,
                 title: item.title,
                 notes: item.notes,
@@ -3878,7 +3896,15 @@ OUTPUT CODE:`;
         const tokensPerSecond = totalMs > 0 ? ((totalTokens / totalMs) * 1000).toFixed(1) : null;
 
         lastStatus.value = `Crafted! (${tokensPerSecond || '?'} tok/s)`;
-        const savedRecord = await addObjectInference(form.prompt, code, { success: true, blueprint, tokensPerSecond, model: currentModel.value.modelname });
+        const snapshot = await captureViewerSnapshot("Preview");
+        const savedRecord = await addObjectInference(form.prompt, code, {
+          success: true,
+          blueprint,
+          tokensPerSecond,
+          model: currentModel.value.modelname,
+          screenshots: snapshot ? [snapshot] : [],
+          thumbnail: snapshot?.dataUrl || "",
+        });
         console.log("[3D] Inference saved to history:", savedRecord?.id);
         form.prompt = "";
       } catch (e) {
@@ -3946,7 +3972,14 @@ OUTPUT CODE:`;
         stream.maxTokens = 1;
         await viewer.applyModuleCode(code, "replace");
         lastStatus.value = `Refined! (${tokensPerSecond || '?'} tok/s)`;
-        await addObjectInference(`[Refine] ${refinePrompt.value}`, code, { success: true, tokensPerSecond, model: currentModel.value.modelname });
+        const snapshot = await captureViewerSnapshot("Preview");
+        await addObjectInference(`[Refine] ${refinePrompt.value}`, code, {
+          success: true,
+          tokensPerSecond,
+          model: currentModel.value.modelname,
+          screenshots: snapshot ? [snapshot] : [],
+          thumbnail: snapshot?.dataUrl || "",
+        });
         refinePrompt.value = '';
       } catch (e) {
         console.error("Refine error:", e);
@@ -3992,6 +4025,7 @@ OUTPUT CODE:`;
       if (scrollContainer.value) {
         scrollContainer.value.removeEventListener("scroll", handleScroll);
       }
+      clearDeleteToastTimer();
       // Cleanup downloads socket
       if (downloadsSocket.value) {
         try {
@@ -4056,11 +4090,17 @@ OUTPUT CODE:`;
       setPerformance,
       setLightIntensity,
       copyPrompt,
+      historyThumbnail,
       clearScene,
       handleSuccess,
       handleError,
       useExample,
       removeInference,
+      pendingDelete,
+      dismissDeleteToast,
+      confirmDeleteObject,
+      actionsFor,
+      handleAction,
       clearHistory,
       exportHistory,
       importHistory,
@@ -4100,6 +4140,28 @@ OUTPUT CODE:`;
 </script>
 
 <style scoped>
+.three-prompt-input {
+  min-height: 7rem;
+}
+
+.level-item.buttons {
+  gap: var(--bz-space-2);
+}
+
+h1.bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
+h2.bz-h2 {
+  font-size: var(--bz-size-h2) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
 /* Fonts imported from App.vue for offline mode */
 .material-symbols-outlined {
   font-variation-settings:
@@ -4167,18 +4229,62 @@ OUTPUT CODE:`;
   flex: 1;
   min-height: 0;
   width: 100%;
-  background: var(--bz-scrim-strong);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+}
+.models__deployment-install > .columns {
+  display: block;
+  margin: 0;
+}
+.models__deployment-install > .columns > .column {
+  width: 100%;
+  padding: 0 !important;
 }
 .models__activity--payouts {
-  padding: 4em;
+  padding: var(--bz-space-4);
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-  border-radius: 4px !important;
+  border-radius: var(--bz-r) !important;
+  background: var(--bz-card);
+  width: 100%;
+}
+.models__activity--payouts > .columns {
+  margin: 0;
+}
+.models__activity--payouts > .columns > .column {
+  padding: 0;
 }
 h1 {
   margin-top: 0 !important;
   font-size: 64px;
   color: var(--bz-fg);
+}
+.bz-screen-header .bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+}
+.bz-screen-header .bz-eyebrow {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  line-height: 1.2;
+  text-align: left;
+  font-weight: 400;
+}
+.bz-screen-header .bz-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 28px !important;
+}
+.bz-screen-header .bz-screen-subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
+  text-align: left;
+  font-weight: 400;
 }
 p {
   margin-bottom: 1em;
@@ -4195,7 +4301,6 @@ p {
   right: 1em;
   z-index: 1001;
   opacity: 0.95;
-  backdrop-filter: blur(32px);
 }
 .notification {
   opacity: 0.8;
@@ -4239,16 +4344,15 @@ p {
 }
 .time-btn:hover,
 .weather-btn:hover {
-  color: rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
   background: var(--bz-purple-soft);
-  border-color: rgba(255, 255, 255, 1);
+  border-color: var(--bz-fg);
 }
 .time-btn.active,
 .weather-btn.active {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 .time-icon,
 .weather-icon {
@@ -4283,15 +4387,14 @@ p {
   transform: translate3d(0, 0, 0);
 }
 .mode-btn:hover {
-  color: rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
   background: var(--bz-purple-soft);
-  border-color: rgba(255, 255, 255, 1);
+  border-color: var(--bz-fg);
 }
 .mode-btn.active {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
-  background: rgba(97, 55, 142, 0.5) !important;
-  backdrop-filter: blur(64px) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
+  background: var(--bz-purple-soft) !important;
 }
 .mode-icon {
   font-size: 1.6em;
@@ -4342,12 +4445,12 @@ p {
 }
 .iteration-pill:hover {
   border-color: var(--bz-fg-mid);
-  color: white;
+  color: var(--bz-fg);
 }
 .iteration-pill.active {
-  background: linear-gradient(135deg, #61378e 0%, #8b5fbf 100%);
+  background: linear-gradient(135deg, var(--bz-purple-500) 0%, #8b5fbf 100%);
   border-color: transparent;
-  color: white;
+  color: var(--bz-fg);
 }
 
 /* Strategy Info Notification */
@@ -4362,7 +4465,7 @@ p {
 
 .strategy-info .info-icon {
   font-size: 16px;
-  color: #209cee;
+  color: var(--bz-info);
   flex-shrink: 0;
 }
 
@@ -4401,7 +4504,7 @@ p {
 }
 
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 @keyframes rotate {
   from {
@@ -4413,61 +4516,88 @@ p {
 }
 
 .examples-panel {
-  margin-bottom: 2em;
-  padding: 1.5em;
+  margin-bottom: var(--bz-space-5);
+  padding: var(--bz-space-4);
 }
 .example-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.5em;
-  margin-top: 1em;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--bz-space-3);
 }
 .example-card {
-  padding: 1.5em;
-  background: var(--bz-scrim-strong);
-  border: 2px solid var(--bz-border);
-  border-radius: 12px;
+  min-height: 136px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-areas:
+    "icon title"
+    "icon desc";
+  align-content: start;
+  gap: var(--bz-space-2) var(--bz-space-3);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-card);
+  color: var(--bz-fg);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    transform var(--bz-dur-fast) var(--bz-ease-out),
+    box-shadow var(--bz-dur-fast) var(--bz-ease-out);
 }
 .example-card:hover {
-  background: var(--bz-purple-soft);
-  border-color: var(--bz-fg-faint);
-  transform: translateY(-4px);
-  box-shadow: 0 12px 24px var(--bz-purple-soft);
+  background: var(--bz-raised);
+  border-color: var(--bz-border-brand);
+  transform: translateY(-2px);
+  box-shadow: var(--bz-elev-brand);
 }
 .example-icon {
-  font-size: 3em;
-  margin-bottom: 0.5em;
-  text-align: center;
+  grid-area: icon;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--bz-border-brand);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-300);
+  font-size: 22px !important;
+  line-height: 1;
 }
 .example-title {
+  grid-area: title;
+  margin: 0;
   color: var(--bz-fg);
-  font-weight: bold;
-  font-size: 18px;
-  margin-bottom: 0.5em;
-  font-family: "Fira Sans", sans-serif;
+  font-family: var(--bz-font-display);
+  font-size: var(--bz-size-h3);
+  font-weight: 400;
+  line-height: var(--bz-line-tight);
 }
 .example-desc {
+  grid-area: desc;
+  margin: 0;
   color: var(--bz-fg-mid);
-  font-size: 14px;
-  margin-bottom: 0.5em;
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
 }
 div.question {
-  border: 8px solid rgba(255, 255, 255, 1);
-  padding: 2em 3em 6em;
-  margin-top: 2em !important;
-  margin-bottom: 1em !important;
-  box-shadow: 8px 8px 0 var(--bz-purple-glow);
-  border-radius: 4px;
-  backdrop-filter: blur(32px);
-  background: rgba(0, 0, 0, 0.66);
+  border: 1px solid var(--bz-border);
+  padding: var(--bz-space-3);
+  margin: 0 !important;
+  box-shadow: none;
+  border-radius: var(--bz-r);
+  background: var(--bz-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  overflow: hidden;
 }
 .history-header {
   display: flex;
   align-items: center;
   gap: 0.75em;
-  font-size: 18px;
+  font-size: var(--bz-size-meta);
   color: var(--bz-fg);
   flex-wrap: wrap;
 }
@@ -4486,7 +4616,10 @@ div.question {
 .history-meta {
   margin-left: auto;
   color: var(--bz-fg-low);
-  font-size: 14px;
+  font-size: var(--bz-size-micro);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .answer__model {
   font-weight: 600;
@@ -4495,16 +4628,124 @@ div.question {
   align-items: center;
 }
 .answer__tps {
-  color: #48c774;
+  color: var(--bz-emerald-500);
   font-weight: 700;
   margin-left: 4px;
 }
 .history-prompt {
+  display: none;
+}
+
+.three-history-preview {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+
+.three-history-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.three-history-preview__empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bz-fg-low);
+}
+
+.three-history-preview__empty .material-symbols-outlined {
+  font-size: 48px !important;
+}
+
+.bz-image-delete-toast {
+  position: fixed;
+  right: max(var(--bz-space-5), env(safe-area-inset-right));
+  bottom: max(var(--bz-space-5), env(safe-area-inset-bottom));
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  max-width: min(420px, calc(100vw - 32px));
+  padding: var(--bz-space-3);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  box-shadow: var(--bz-shadow-lg);
   color: var(--bz-fg);
-  font-size: 16px;
-  font-weight: 400;
-  margin: 0.75em 0;
-  line-height: 1.6;
+}
+
+.bz-image-delete-toast .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-danger);
+}
+
+.bz-image-delete-toast__body {
+  min-width: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+}
+
+.bz-image-delete-toast__ghost,
+.bz-image-delete-toast__danger {
+  height: 30px;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-3);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+}
+
+.bz-image-delete-toast__ghost {
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+}
+
+.bz-image-delete-toast__ghost:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.bz-image-delete-toast__danger {
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
+  color: var(--bz-danger);
+  font-weight: 700;
+}
+
+.bz-image-delete-toast__danger:hover {
+  filter: brightness(1.08);
+}
+
+.bz-image-toast-enter-active,
+.bz-image-toast-leave-active {
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
+}
+
+.bz-image-toast-enter-from,
+.bz-image-toast-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.bz-image-toast-enter-to,
+.bz-image-toast-leave-from {
+  opacity: 1;
+  transform: translateY(0);
 }
 .history-blueprint {
   color: rgba(150, 200, 255, 0.8);
@@ -4518,7 +4759,7 @@ div.question {
   border-left: 2px solid rgba(100, 150, 255, 0.3);
 }
 .error-note {
-  color: #ff6b6b;
+  color: var(--bz-danger);
   font-size: 14px;
   display: flex;
   align-items: center;
@@ -4572,7 +4813,7 @@ hr {
 
 .reasoning-toggle-btn.active {
   background: rgba(32, 156, 238, 0.4);
-  border-color: #209cee;
+  border-color: var(--bz-info);
   color: var(--bz-fg);
   box-shadow: 0 0 12px rgba(32, 156, 238, 0.4);
 }
@@ -4601,33 +4842,22 @@ ol {
    GenerativeImage / Video / Audio use. */
 ol.chat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--bz-space-5);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--bz-space-4);
   list-style: none;
   padding: 0;
   margin: var(--bz-space-5) 0;
 }
-ol.chat .history-item:first-child {
-  grid-column: 1 / -1;
-}
-ol.chat .history-item:first-child .screenshots-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
 @media (min-width: 880px) {
   ol.chat {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  ol.chat .history-item:first-child {
-    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 ol.chat .history-item:not(:first-child) {
   width: 100%;
 }
 ol.chat .history-item:not(:first-child) hr {
-  border: 0;
-  border-top: 1px solid var(--bz-border);
-  margin: var(--bz-space-4) 0;
+  display: none;
 }
 .button.copy {
   transition: all 0.15s ease;
@@ -4646,7 +4876,7 @@ ol.chat .history-item:not(:first-child) hr {
 
 /* Fade-in animation for history items */
 .history-item {
-  animation: fadeInUp 0.4s ease-out forwards;
+  animation: bz-rise 0.4s ease-out forwards;
   opacity: 0;
 }
 
@@ -4683,7 +4913,7 @@ ol.chat .history-item:not(:first-child) hr {
   box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
-  animation: fadeInUp 0.3s ease-out;
+  animation: bz-rise 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
@@ -4701,10 +4931,7 @@ ol.chat .history-item:not(:first-child) hr {
    SCREENSHOTS PREVIEW (in history)
    ═══════════════════════════════════════════════════════════════════════ */
 .screenshots-preview {
-  margin: 1rem 0;
-  padding: 0.75rem;
-  background: var(--bz-scrim-soft);
-  border-radius: 8px;
+  display: none;
 }
 
 .screenshots-grid {
@@ -4724,7 +4951,7 @@ ol.chat .history-item:not(:first-child) hr {
 }
 
 .screenshot-thumb:hover {
-  border-color: #61378e;
+  border-color: var(--bz-purple-500);
   transform: scale(1.05);
 }
 
@@ -4741,7 +4968,7 @@ ol.chat .history-item:not(:first-child) hr {
   right: 0;
   padding: 2px 4px;
   background: var(--bz-scrim-deep);
-  color: white;
+  color: var(--bz-fg);
   font-size: 0.65rem;
   text-align: center;
   text-transform: uppercase;
@@ -4761,7 +4988,7 @@ ol.chat .history-item:not(:first-child) hr {
   align-items: center;
   justify-content: center;
   z-index: 9999;
-  animation: fadeIn 0.2s ease;
+  animation: bz-fade-in 0.2s ease;
 }
 
 @keyframes fadeIn {
@@ -4774,7 +5001,7 @@ ol.chat .history-item:not(:first-child) hr {
 }
 
 .screenshot-modal {
-  background: #1a1a2e;
+  background: var(--bz-card);
   border-radius: 12px;
   max-width: 90vw;
   max-height: 90vh;
@@ -4790,7 +5017,7 @@ ol.chat .history-item:not(:first-child) hr {
   right: 0;
   background: none;
   border: none;
-  color: white;
+  color: var(--bz-fg);
   cursor: pointer;
   padding: 8px;
   opacity: 0.7;
@@ -4811,7 +5038,7 @@ ol.chat .history-item:not(:first-child) hr {
 
 .screenshot-modal-header h3 {
   margin: 0;
-  color: white;
+  color: var(--bz-fg);
   font-size: 1.1rem;
 }
 
@@ -4824,7 +5051,7 @@ ol.chat .history-item:not(:first-child) hr {
 .nav-btn {
   background: var(--bz-border);
   border: none;
-  color: white;
+  color: var(--bz-fg);
   padding: 6px;
   border-radius: 4px;
   cursor: pointer;
@@ -4835,7 +5062,7 @@ ol.chat .history-item:not(:first-child) hr {
 }
 
 .nav-btn:hover:not(:disabled) {
-  background: rgba(97, 55, 142, 0.5);
+  background: var(--bz-purple-soft);
 }
 
 .nav-btn:disabled {
@@ -4885,292 +5112,155 @@ ol.chat .history-item:not(:first-child) hr {
 .refine-section .input {
   background: var(--bz-scrim);
   border-color: var(--bz-emerald-soft);
-  color: white;
+  color: var(--bz-fg);
 }
 
 .refine-section .input::placeholder {
   color: var(--bz-fg-low);
 }
 
-/* ───────── Game-style loading screen ──────────────────────────────────────
- * Themed after console-game loaders: dark base with cyan/blue accent (matches
- * the reasoning toggle), animated scanline + shimmer over a thick progress
- * bar, HUD-style readouts in monospace, and a live "blueprint feed" terminal
- * that prints the streaming model output as it arrives.
- */
-.game-loader {
+.three-progress-card,
+.three-notice {
   position: relative;
   margin-bottom: 1rem;
-  padding: 1.25rem 1.5rem 1.4rem;
-  background: rgba(32, 156, 238, 0.25);
-  border: 2px solid rgba(32, 156, 238, 0.45);
-  border-radius: 6px;
-  box-shadow:
-    0 0 0 1px rgba(32, 156, 238, 0.2),
-    0 0 24px rgba(32, 156, 238, 0.25),
-    inset 0 0 60px rgba(32, 156, 238, 0.08);
-  overflow: hidden;
-  color: #e6efff;
-  font-family: "Fira Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.game-loader__bg {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.55;
-}
-
-.game-loader__bg-scan {
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0) 0,
-    rgba(255, 255, 255, 0) 2px,
-    rgba(32, 156, 238, 0.06) 3px
-  );
-  animation: gl-scan 8s linear infinite;
-}
-
-.game-loader__bg-glow {
-  position: absolute;
-  inset: -40%;
-  background: radial-gradient(circle at 30% 0%, rgba(32, 156, 238, 0.25), transparent 60%),
-              radial-gradient(circle at 80% 100%, rgba(155, 81, 224, 0.18), transparent 55%);
-  animation: gl-glow-pulse 6s ease-in-out infinite;
-}
-
-.game-loader__inner {
-  position: relative;
-  z-index: 1;
-}
-
-.game-loader__phase {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 0.25rem;
-}
-
-.game-loader__phase-tag {
-  font-size: 0.7rem;
-  letter-spacing: 0.25em;
-  font-weight: 700;
-  color: rgba(32, 156, 238, 0.8);
-  border: 1px solid rgba(32, 156, 238, 0.6);
-  padding: 0.15rem 0.5rem;
-  border-radius: 2px;
-  text-transform: uppercase;
-}
-
-.game-loader__phase-name {
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-style: italic;
-  font-weight: 900;
-  font-size: 1.85rem;
+  padding: 14px 16px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
   color: var(--bz-fg);
-  text-shadow: 0 0 12px rgba(32, 156, 238, 0.7);
-  letter-spacing: 0.02em;
 }
 
-.game-loader__subtitle {
-  margin: 0 0 1rem;
-  font-family: "Fira Sans", sans-serif;
-  color: rgba(230, 239, 255, 0.7);
-  font-size: 0.95rem;
-  font-style: italic;
+.three-progress-card__head,
+.three-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-/* Bar */
-.game-loader__bar {
-  position: relative;
-  height: 14px;
-  background: var(--bz-scrim-strong);
-  border: 1px solid rgba(32, 156, 238, 0.55);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-bottom: 0.55rem;
+.three-progress-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
-.game-loader__bar-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: linear-gradient(90deg, #209cee 0%, #4ec1ff 50%, #209cee 100%);
-  background-size: 200% 100%;
-  animation: gl-bar-flow 2s linear infinite;
-  box-shadow: 0 0 12px rgba(32, 156, 238, 0.9), inset 0 0 8px var(--bz-fg-low);
-  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+.three-progress-card__subtitle {
+  margin: 6px 0 0;
+  color: var(--bz-muted);
+  font-size: 0.9rem;
 }
 
-.game-loader__bar-shimmer {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--bz-border-strong) 45%,
-    var(--bz-fg-low) 50%,
-    var(--bz-border-strong) 55%,
-    transparent 100%
-  );
-  background-size: 200% 100%;
-  animation: gl-shimmer 2.4s linear infinite;
-  pointer-events: none;
-  mix-blend-mode: screen;
+.three-progress-card__pct {
+  color: var(--bz-fg);
+  font-size: 1.45rem;
+  line-height: 1;
 }
 
-/* HUD readout */
-.game-loader__hud {
+.three-progress-card :deep(.bz-pulse-wrap--bar) {
+  margin-top: 12px;
+}
+
+.three-progress-card__meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  align-items: center;
-  font-size: 0.85rem;
-  color: rgba(230, 239, 255, 0.85);
-  margin-bottom: 0.85rem;
+  gap: 8px 14px;
+  margin-top: 10px;
+  color: var(--bz-muted);
+  font-family: var(--bz-font-mono);
+  font-size: 0.78rem;
 }
 
-.game-loader__hud-pct {
-  color: #4ec1ff;
-  font-weight: 700;
-  font-size: 0.95rem;
-  text-shadow: 0 0 8px rgba(78, 193, 255, 0.6);
-}
-
-.game-loader__hud-sep {
-  color: rgba(32, 156, 238, 0.6);
-}
-
-.game-loader__hud-prefill {
-  color: rgba(230, 239, 255, 0.55);
-  font-style: italic;
-}
-
-/* Rotating tip */
-.game-loader__tip {
+.three-progress-card__tip {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  padding: 0.5rem 0.7rem;
-  background: var(--bz-scrim);
-  border-left: 3px solid #209cee;
-  border-radius: 2px;
-  font-size: 0.92rem;
-  color: rgba(230, 239, 255, 0.9);
-  margin-bottom: 0.85rem;
-  animation: gl-tip-fade 0.4s ease;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-card);
+  color: var(--bz-muted);
 }
 
-.game-loader__tip-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #4ec1ff;
-  box-shadow: 0 0 6px #4ec1ff;
-  animation: gl-pulse 1.2s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-.game-loader__tip-text {
-  font-family: "Fira Sans", sans-serif;
-  font-style: italic;
-}
-
-/* Live preview window */
-.game-loader__preview {
-  margin-top: 0.5rem;
-  background: var(--bz-scrim-strong);
-  border: 1px solid rgba(32, 156, 238, 0.4);
-  border-radius: 3px;
+.three-progress-card__preview {
+  margin-top: 12px;
   overflow: hidden;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-canvas);
 }
 
-.game-loader__preview-header {
+.three-progress-card__preview-header {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.7rem;
-  background: rgba(32, 156, 238, 0.18);
-  border-bottom: 1px solid rgba(32, 156, 238, 0.35);
-  font-size: 0.7rem;
-  letter-spacing: 0.2em;
-  color: rgba(78, 193, 255, 0.95);
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bz-border);
+  color: var(--bz-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  font-weight: 700;
 }
 
-.game-loader__preview-header .material-symbols-outlined {
-  font-size: 0.95rem;
-}
-
-.game-loader__preview-body {
+.three-progress-card__preview-body {
   margin: 0;
-  padding: 0.7rem 0.85rem;
+  padding: 12px;
   height: 120px;
   max-height: 120px;
   text-align: left;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: "Fira Mono", ui-monospace, monospace;
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-mono);
   font-size: 0.78rem;
   line-height: 1.45;
-  /* color: rgba(230, 239, 255, 0.78); */
-  scrollbar-width: thin;
-  scrollbar-color: rgba(32, 156, 238, 0.5) transparent;
 }
 
-.game-loader__preview-body::-webkit-scrollbar {
-  width: 6px;
-}
-.game-loader__preview-body::-webkit-scrollbar-thumb {
-  background: rgba(32, 156, 238, 0.5);
-  border-radius: 3px;
-}
-
-.game-loader__cursor {
+.three-progress-card__cursor {
   display: inline-block;
-  color: #4ec1ff;
-  animation: gl-cursor 1s steps(1) infinite;
+  color: var(--bz-purple-300);
+  animation: bz-caret 1s steps(1) infinite;
 }
 
-/* Idle state — shown briefly between phases or while warming up */
-.game-loader--idle .game-loader__bar-fill {
-  animation: gl-indeterminate 1.6s ease-in-out infinite;
-  width: 30%;
+.three-notice--danger {
+  border-color: color-mix(in srgb, var(--bz-danger) 42%, var(--bz-border));
+  background: var(--bz-danger-soft);
 }
 
-/* ───────── Animations ─────────────────────────────────────────────────── */
-@keyframes gl-scan {
-  from { transform: translateY(0); }
-  to   { transform: translateY(40px); }
+.three-notice__body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
-@keyframes gl-glow-pulse {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 0.85; }
+
+.three-notice__title {
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
 }
-@keyframes gl-bar-flow {
-  from { background-position: 200% 0; }
-  to   { background-position: 0 0; }
+
+.three-notice .download-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-@keyframes gl-shimmer {
-  from { background-position: 200% 0; }
-  to   { background-position: -200% 0; }
+
+.three-notice .download-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--bz-muted);
 }
-@keyframes gl-pulse {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50%      { opacity: 1;   transform: scale(1.25); }
+
+.three-progress-card .download-list {
+  margin-top: 12px;
 }
-@keyframes gl-tip-fade {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes gl-cursor {
+
+@keyframes bz-caret {
   50% { opacity: 0; }
-}
-@keyframes gl-indeterminate {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(360%); }
 }
 </style>

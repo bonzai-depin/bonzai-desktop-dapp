@@ -22,12 +22,41 @@
       </span>
     </div>
 
+    <div
+      v-if="commandMenuOpen"
+      class="bz-input__commands"
+      role="listbox"
+      aria-label="Slash commands"
+    >
+      <button
+        v-for="(cmd, i) in filteredSlashCommands"
+        :key="cmd.id"
+        type="button"
+        class="bz-input__command"
+        :class="{ 'is-active': i === activeCommandIndex }"
+        role="option"
+        :aria-selected="i === activeCommandIndex ? 'true' : 'false'"
+        @mousedown.prevent
+        @click="runSlashCommand(cmd)"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">
+          {{ cmd.icon || 'terminal' }}
+        </span>
+        <span class="bz-input__command-main">
+          <span class="bz-input__command-label">{{ cmd.label }}</span>
+          <span class="bz-input__command-desc bz-meta">{{ cmd.description }}</span>
+        </span>
+        <span class="bz-input__command-token bz-mono">/{{ cmd.id }}</span>
+      </button>
+    </div>
+
     <!-- Textarea — auto-grows to a cap, then scrolls -->
     <textarea
       ref="taEl"
       v-model="text"
       :placeholder="placeholder"
       :disabled="disabled"
+      :aria-label="ariaLabel"
       class="bz-input__field"
       :style="{ height: height + 'px' }"
       rows="1"
@@ -50,6 +79,29 @@
         >
           <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
         </button>
+        <button
+          v-if="enableDictation"
+          type="button"
+          class="bz-input__tool"
+          :class="{ 'is-active': isDictating }"
+          :title="dictationTitle"
+          :aria-label="dictationTitle"
+          :aria-pressed="isDictating ? 'true' : 'false'"
+          :disabled="disabled || streaming"
+          @click="toggleDictation"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">
+            {{ isDictating ? 'mic_off' : dictationSupported ? 'mic' : 'mic_none' }}
+          </span>
+        </button>
+        <span
+          v-if="dictationNotice"
+          class="bz-input__dictation bz-meta"
+          :class="`bz-input__dictation--${dictationTone}`"
+          aria-live="polite"
+        >
+          {{ dictationNotice }}
+        </span>
         <slot name="tools"></slot>
         <span v-if="hint" class="bz-input__hint bz-meta">{{ hint }}</span>
       </div>
@@ -59,17 +111,22 @@
           {{ sendHint }}
         </span>
         <button
+          v-if="streaming"
+          type="button"
+          class="bz-btn bz-btn--danger bz-input__submit"
+          @click="stop"
+        >
+          Stop
+        </button>
+        <button
+          v-else
           type="button"
           class="bz-btn bz-btn--primary bz-input__submit"
           :disabled="!canSubmit"
           @click="submit"
         >
-          <span v-if="streaming">
-            <BonzaiPulse variant="dot" />
-            Streaming…
-          </span>
-          <span v-else-if="loading">Sending…</span>
-          <span v-else>Send</span>
+          <span v-if="loading">Sending…</span>
+          <span v-else>{{ submitLabel }}</span>
         </button>
       </div>
     </div>
@@ -77,9 +134,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from "vue";
-import BonzaiPulse from "../BonzaiPulse.vue";
-
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 const props = defineProps({
   modelValue: { type: String, default: "" },
   placeholder: { type: String, default: "Message BonzAI…" },
@@ -90,18 +145,42 @@ const props = defineProps({
   attachments: { type: Array, default: () => [] },
   /** Whether to show the paperclip / attach button. */
   enableAttachments: { type: Boolean, default: true },
+  /** Whether to show Chromium/Web Speech dictation when available. */
+  enableDictation: { type: Boolean, default: true },
+  /** Slash commands shown when the composer starts with "/". */
+  slashCommands: { type: Array, default: () => [] },
   /** Optional caption next to the tools (e.g. "Roleplay · Adult"). */
   hint: { type: String, default: "" },
+  /** Accessible label for the message composer. */
+  ariaLabel: { type: String, default: "Message composer" },
+  /** Visible label for the submit button. */
+  submitLabel: { type: String, default: "Send" },
   /** Min auto-grow rows. Cap is 320 px (~14 lines @ 1.55 line-height). */
   minHeight: { type: Number, default: 56 },
   maxHeight: { type: Number, default: 320 },
 });
 
-const emit = defineEmits(["update:modelValue", "submit", "attach", "remove-attachment"]);
+const emit = defineEmits([
+  "update:modelValue",
+  "submit",
+  "attach",
+  "remove-attachment",
+  "stop",
+  "run-command",
+]);
 
 const taEl = ref(null);
 const isFocused = ref(false);
 const height = ref(props.minHeight);
+const recognition = ref(null);
+const isDictating = ref(false);
+const dictationSupported = ref(false);
+const dictationNotice = ref("");
+const dictationTone = ref("muted");
+const dictationBase = ref("");
+let dictationFinal = "";
+let dictationNoticeTimer = null;
+let dictationHadResult = false;
 
 const text = computed({
   get: () => props.modelValue,
@@ -111,11 +190,33 @@ const text = computed({
 const canSubmit = computed(
   () => !props.disabled && !props.loading && text.value.trim().length > 0,
 );
+const slashQuery = computed(() => {
+  const value = text.value || "";
+  const match = value.match(/^\/([^\s]*)$/);
+  return match ? match[1].toLowerCase() : null;
+});
+const filteredSlashCommands = computed(() => {
+  if (slashQuery.value === null) return [];
+  const q = slashQuery.value;
+  return props.slashCommands.filter((cmd) => {
+    const haystack = `${cmd.id || ""} ${cmd.label || ""} ${cmd.description || ""}`.toLowerCase();
+    return haystack.includes(q);
+  });
+});
+const commandMenuOpen = computed(
+  () => isFocused.value && !props.disabled && filteredSlashCommands.value.length > 0,
+);
+const activeCommandIndex = ref(0);
 
 // macOS uses ⌘ Enter; everything else uses Ctrl Enter. Detection is
 // good-enough via navigator.platform.
 const isMac = computed(() => /mac|iphone|ipad/i.test(navigator.platform));
 const sendHint = computed(() => (isMac.value ? "⌘⏎" : "Ctrl ⏎"));
+const dictationTitle = computed(() => {
+  if (isDictating.value) return "Stop dictation";
+  if (!dictationSupported.value) return "Voice dictation unavailable";
+  return "Start dictation";
+});
 
 function autosize() {
   const el = taEl.value;
@@ -131,6 +232,32 @@ function onInput() {
 }
 
 function onKeydown(e) {
+  if (commandMenuOpen.value) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeCommandIndex.value =
+        (activeCommandIndex.value + 1) % filteredSlashCommands.value.length;
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeCommandIndex.value =
+        (activeCommandIndex.value - 1 + filteredSlashCommands.value.length) %
+        filteredSlashCommands.value.length;
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      runSlashCommand(filteredSlashCommands.value[activeCommandIndex.value]);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      text.value = "";
+      return;
+    }
+  }
+
   // Cmd/Ctrl+Enter sends. Plain Enter inserts a newline (the default).
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
     e.preventDefault();
@@ -140,7 +267,179 @@ function onKeydown(e) {
 
 function submit() {
   if (!canSubmit.value) return;
+  stopDictation();
   emit("submit", text.value);
+}
+function stop() {
+  stopDictation();
+  emit("stop");
+}
+
+function runSlashCommand(cmd) {
+  if (!cmd) return;
+  stopDictation();
+  emit("run-command", cmd);
+}
+
+function speechCtor() {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function clearDictationNoticeTimer() {
+  if (!dictationNoticeTimer) return;
+  window.clearTimeout(dictationNoticeTimer);
+  dictationNoticeTimer = null;
+}
+
+function setDictationNotice(message, tone = "muted", timeout = 0) {
+  clearDictationNoticeTimer();
+  dictationNotice.value = message;
+  dictationTone.value = tone;
+  if (timeout > 0) {
+    dictationNoticeTimer = window.setTimeout(() => {
+      dictationNotice.value = "";
+      dictationNoticeTimer = null;
+    }, timeout);
+  }
+}
+
+function dictationErrorMessage(error) {
+  switch (error) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "Microphone access was blocked";
+    case "no-speech":
+      return "No speech detected";
+    case "audio-capture":
+      return "No microphone found";
+    case "network":
+      return "Speech service unavailable";
+    case "aborted":
+      return "Dictation stopped";
+    default:
+      return "Dictation could not start";
+  }
+}
+
+async function requestMicAccess() {
+  if (!navigator.mediaDevices?.getUserMedia) return true;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  stream.getTracks().forEach((track) => track.stop());
+  return true;
+}
+
+function mergeDictationText(liveText) {
+  const base = dictationBase.value;
+  const heard = liveText.trim();
+  if (!heard) return base;
+  if (!base) return heard;
+  return `${base}${/\s$/.test(base) ? "" : " "}${heard}`;
+}
+
+async function startDictation() {
+  const SpeechRecognition = speechCtor();
+  dictationSupported.value = !!SpeechRecognition;
+  if (props.disabled || props.streaming) return;
+  if (!SpeechRecognition) {
+    setDictationNotice("Voice dictation is unavailable here", "warning", 4000);
+    return;
+  }
+
+  stopDictation();
+  dictationBase.value = text.value.trimEnd();
+  dictationFinal = "";
+  dictationHadResult = false;
+  setDictationNotice("Requesting microphone...", "muted");
+
+  try {
+    await requestMicAccess();
+  } catch (e) {
+    const permissionName =
+      e?.name === "NotAllowedError" || e?.name === "SecurityError"
+        ? "not-allowed"
+        : "audio-capture";
+    setDictationNotice(dictationErrorMessage(permissionName), "warning", 5000);
+    return;
+  }
+
+  const rec = new SpeechRecognition();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = navigator.language || "en-US";
+  rec.onstart = () => {
+    setDictationNotice("Listening...", "active");
+  };
+  rec.onaudiostart = () => {
+    setDictationNotice("Listening...", "active");
+  };
+  rec.onspeechstart = () => {
+    setDictationNotice("Hearing you...", "active");
+  };
+  rec.onresult = (event) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const transcript = event.results[i][0]?.transcript || "";
+      if (event.results[i].isFinal) {
+        dictationFinal += transcript;
+      } else {
+        interim += transcript;
+      }
+    }
+    dictationHadResult = true;
+    setDictationNotice("Listening...", "active");
+    text.value = mergeDictationText(`${dictationFinal} ${interim}`);
+    nextTick(autosize);
+  };
+  rec.onnomatch = () => {
+    setDictationNotice("No speech detected", "warning", 3500);
+  };
+  rec.onerror = (event) => {
+    recognition.value = null;
+    isDictating.value = false;
+    setDictationNotice(dictationErrorMessage(event?.error), "warning", 5000);
+  };
+  rec.onend = () => {
+    recognition.value = null;
+    isDictating.value = false;
+    if (dictationNotice.value === "Listening..." || dictationNotice.value === "Hearing you...") {
+      setDictationNotice(dictationHadResult ? "Dictation stopped" : "No speech detected", "muted", 2500);
+    }
+    nextTick(() => taEl.value?.focus());
+  };
+
+  recognition.value = rec;
+  isDictating.value = true;
+  try {
+    rec.start();
+  } catch (e) {
+    recognition.value = null;
+    isDictating.value = false;
+    setDictationNotice(
+      e?.name === "InvalidStateError" ? "Dictation is already running" : "Dictation could not start",
+      "warning",
+      4000,
+    );
+  }
+}
+
+function stopDictation() {
+  if (!recognition.value) {
+    isDictating.value = false;
+    return;
+  }
+  const rec = recognition.value;
+  recognition.value = null;
+  isDictating.value = false;
+  try { rec.stop(); } catch { /* recognition may already be stopped */ }
+}
+
+function toggleDictation() {
+  if (isDictating.value) {
+    stopDictation();
+  } else {
+    startDictation();
+  }
 }
 
 const ATTACHMENT_ICON = {
@@ -152,7 +451,21 @@ const ATTACHMENT_ICON = {
 function attIcon(att) { return ATTACHMENT_ICON[att?.kind] || "attach_file"; }
 
 watch(() => props.modelValue, () => nextTick(autosize));
-onMounted(() => nextTick(autosize));
+watch(filteredSlashCommands, () => {
+  activeCommandIndex.value = 0;
+});
+watch(
+  () => [props.disabled, props.streaming],
+  ([disabled, streaming]) => {
+    if ((disabled || streaming) && isDictating.value) stopDictation();
+  },
+);
+onMounted(() => {
+  dictationSupported.value = !!speechCtor();
+  nextTick(autosize);
+});
+onBeforeUnmount(stopDictation);
+onBeforeUnmount(clearDictationNoticeTimer);
 
 defineExpose({
   focus() { taEl.value?.focus(); },
@@ -188,6 +501,63 @@ defineExpose({
 .bz-input--disabled {
   opacity: 0.6;
   pointer-events: none;
+}
+
+.bz-input__commands {
+  display: grid;
+  gap: 2px;
+  padding: var(--bz-space-2);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+.bz-input__command {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--bz-r-sm);
+  background: transparent;
+  color: var(--bz-fg-mid);
+  text-align: left;
+  cursor: pointer;
+}
+.bz-input__command:hover,
+.bz-input__command.is-active {
+  background: var(--bz-raised);
+  border-color: var(--bz-border);
+  color: var(--bz-fg);
+}
+.bz-input__command .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-purple-300);
+}
+.bz-input__command-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.bz-input__command-label,
+.bz-input__command-desc,
+.bz-input__command-token {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bz-input__command-label {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-body);
+}
+.bz-input__command-desc {
+  color: var(--bz-fg-low);
+}
+.bz-input__command-token {
+  max-width: 96px;
+  color: var(--bz-fg-low);
 }
 
 /* Attachment chips */
@@ -279,6 +649,7 @@ defineExpose({
 .bz-input__tool {
   width: 32px;
   height: 32px;
+  min-width: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -296,7 +667,31 @@ defineExpose({
   color: var(--bz-fg);
   border-color: var(--bz-border);
 }
-.bz-input__tool .material-symbols-outlined { font-size: 18px !important; }
+.bz-input__tool:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bz-input__tool.is-active {
+  color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-border-brand);
+}
+.bz-input__tool .material-symbols-outlined {
+  font-size: 18px !important;
+  overflow: visible;
+}
+.bz-input__dictation {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bz-input__dictation--active {
+  color: var(--bz-purple-300);
+}
+.bz-input__dictation--warning {
+  color: var(--bz-error, #d32f2f);
+}
 .bz-input__hint {
   margin-left: var(--bz-space-2);
   white-space: nowrap;
@@ -320,7 +715,7 @@ defineExpose({
   padding: 0 var(--bz-space-4);
   background: var(--bz-gradient-brand);
   border: 0;
-  color: #fff;
+  color: var(--bz-fg);
   border-radius: var(--bz-r);
   font-family: var(--bz-font-body);
   font-size: var(--bz-size-body);
@@ -334,5 +729,13 @@ defineExpose({
 .bz-input__submit:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* Danger variant for the Stop button during streaming. */
+.bz-btn--danger {
+  background: var(--bz-error, #d32f2f);
+}
+.bz-btn--danger:hover {
+  filter: brightness(1.1);
 }
 </style>

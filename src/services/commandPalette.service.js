@@ -29,21 +29,33 @@ const _state = reactive({
  *   action    function executed on activation
  */
 const _commands = reactive([
-  // ─── Tab navigation ──────────────────────────────────────────────
-  { id: "tab.chat",      label: "Open Chat",         group: "Navigate", keywords: "llm text generate",         action: () => _setMode("chat") },
-  { id: "tab.image",     label: "Open Image",        group: "Navigate", keywords: "flux sdxl z-image picture", action: () => _setMode("image") },
-  { id: "tab.video",     label: "Open Video",        group: "Navigate", keywords: "ltx wan generation",        action: () => _setMode("video") },
-  { id: "tab.audio",     label: "Open Audio",        group: "Navigate", keywords: "music tts kokoro qwen acestep", action: () => _setMode("music") },
-  { id: "tab.3d",        label: "Open 3D",           group: "Navigate", keywords: "three dimensional",         action: () => _setMode("3D") },
-  { id: "tab.agent",     label: "Open Agents",       group: "Navigate", keywords: "skill smart",               action: () => _setMode("agent") },
-  { id: "tab.robot",     label: "Open Training",     group: "Navigate", keywords: "lerobot training",          action: () => _setMode("robot") },
-  { id: "tab.company",   label: "Open Companies",    group: "Navigate", keywords: "zero human dao company",    action: () => _setMode("company") },
+  // ─── Create ──────────────────────────────────────────────────────
+  { id: "tab.chat",      label: "Create: Chat",        group: "Create",  keywords: "llm text generate",         action: () => _setMode("chat") },
+  { id: "tab.image",     label: "Create: Image",       group: "Create",  keywords: "flux sdxl z-image picture", action: () => _setMode("image") },
+  { id: "tab.audio",     label: "Create: Audio",       group: "Create",  keywords: "music tts kokoro qwen acestep", action: () => _setMode("music") },
+  { id: "tab.video",     label: "Create: Video",       group: "Create",  keywords: "ltx wan generation",        action: () => _setMode("video") },
+  { id: "tab.game",      label: "Create: Game",        group: "Create",  keywords: "three dimensional 3d game",  action: () => _setMode("game") },
 
-  // ─── Modals ──────────────────────────────────────────────────────
+  // ─── Earn ────────────────────────────────────────────────────────
+  { id: "modal.rewards",      label: "Earn: Rewards",       group: "Earn",   keywords: "mintpool epoch claim bonzai", action: () => _dispatch("bonzai:open-rewards") },
+
+  // ─── Automate ────────────────────────────────────────────────────
+  { id: "tab.agent",     label: "Automate: Agents",    group: "Automate", keywords: "skill smart companion",     action: () => _setMode("agent") },
+  { id: "tab.company",   label: "Automate: Company",   group: "Automate", keywords: "zero human dao company",    action: () => _setMode("company") },
+
+  // ─── Train ───────────────────────────────────────────────────────
+  { id: "tab.train-chat",  label: "Train: Chat",   group: "Train",   keywords: "llm training text",       action: () => _setMode("robot-train-chat") },
+  { id: "tab.train-image", label: "Train: Image",  group: "Train",   keywords: "sdxl training image",     action: () => _setMode("robot-train-image") },
+  { id: "tab.train-audio", label: "Train: Audio",  group: "Train",   keywords: "audio training tts",     action: () => _setMode("robot-train-audio") },
+
+  // ─── Help ────────────────────────────────────────────────────────
+  { id: "tab.faq",          label: "Help: FAQ",          group: "Help",   keywords: "faq questions help",        action: () => _setMode("faq") },
+  { id: "help.harness",     label: "Help: Harness",      group: "Help",   keywords: "openclaw hermes orchestration", action: () => _dispatch("bonzai:open-network") },
+
+  // ─── Tools ───────────────────────────────────────────────────────
   { id: "modal.models",  label: "Choose a model…",   group: "Tools",    keywords: "llm picker engine swap",    shortcut: "⌥⏎",       action: () => modelPicker.show() },
-  { id: "modal.network", label: "Network settings",  group: "Tools",    keywords: "p2p providers mode privacy peers", action: () => _dispatch("bonzai:open-network") },
   { id: "modal.specs",   label: "Hardware & stats",  group: "Tools",    keywords: "vram ram gpu performance",  action: () => _dispatch("bonzai:open-specs") },
-  { id: "modal.rewards", label: "Rewards",           group: "Tools",    keywords: "mintpool epoch claim bonzai", action: () => _dispatch("bonzai:open-rewards") },
+  { id: "modal.network", label: "Network settings",  group: "Tools",    keywords: "p2p providers mode privacy peers", action: () => _dispatch("bonzai:open-network") },
 ]);
 
 function _setMode(mode) {

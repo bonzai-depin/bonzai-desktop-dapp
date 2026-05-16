@@ -63,7 +63,7 @@
             <div class="tpl-card__title fira-sans-condensed-black-italic">{{ t.name }}</div>
             <div class="tpl-card__summary">{{ t.summary }}</div>
             <div class="tpl-card__packs">
-              <span v-for="p in t.skillPacks" :key="p" class="tag is-light is-small">{{ p }}</span>
+              <span v-for="p in t.skillPacks" :key="p" class="skill-chip is-small">{{ p }}</span>
             </div>
           </div>
           <div class="tpl-card tpl-card--coming">
@@ -100,7 +100,7 @@
               type="number"
               class="input is-medium"
             />
-            <div v-else-if="q.type === 'select'" class="select is-medium is-fullwidth">
+            <div v-else-if="q.type === 'select'" class="select is-medium skill-fullwidth">
               <select v-model="answers[q.id]">
                 <option v-for="opt in q.options" :key="opt" :value="opt">{{ opt }}</option>
               </select>
@@ -140,12 +140,12 @@
               <input type="checkbox" v-model="h.isPhysical" />
               <span>Physical role</span>
             </label>
-            <button class="button is-light icon-only-btn" @click="removeRoster(idx)" aria-label="Remove">
+            <button class="bz-btn bz-btn--ghost icon-only-btn" @click="removeRoster(idx)" aria-label="Remove">
               <span class="material-symbols-outlined">remove</span>
             </button>
           </div>
         </div>
-        <button class="button is-light fira-sans-condensed-black-italic" @click="addRoster">
+        <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="addRoster">
           <span class="material-symbols-outlined mr-1">add</span> Add person
         </button>
         <div v-if="hybridRoleHint" class="wiz-hint">
@@ -203,7 +203,7 @@
         <div class="wiz-grid-2">
           <div class="wiz-field">
             <label class="wiz-field__label">Currency</label>
-            <div class="select is-medium is-fullwidth">
+            <div class="select is-medium skill-fullwidth">
               <select v-model="treasury.currency">
                 <option v-for="c in currencies" :key="c" :value="c">{{ c }}</option>
               </select>
@@ -237,11 +237,11 @@
         <div class="initial-goals">
           <div v-for="(g, idx) in initialGoals" :key="idx" class="initial-goal">
             <input v-model="initialGoals[idx]" class="input" />
-            <button class="button is-light icon-only-btn" @click="initialGoals.splice(idx, 1)" aria-label="Remove">
+            <button class="bz-btn bz-btn--ghost icon-only-btn" @click="initialGoals.splice(idx, 1)" aria-label="Remove">
               <span class="material-symbols-outlined">remove</span>
             </button>
           </div>
-          <button class="button is-light is-small fira-sans-condensed-black-italic" @click="initialGoals.push('')">
+          <button class="bz-btn bz-btn--ghost is-small fira-sans-condensed-black-italic" @click="initialGoals.push('')">
             <span class="material-symbols-outlined mr-1">add</span> Add goal
           </button>
         </div>
@@ -261,8 +261,8 @@
               Form in Demo Mode
             </div>
             <p class="demo-row__hint">
-              Skip every LLM call and run scripted ticks. The CEO emits goals every 20 seconds,
-              roles fire actions every 8 seconds, and the Live feed shows your company at work
+              Skip every LLM call and run scripted ticks. The CEO emits goals about every 75 seconds,
+              roles fire actions about every 30 seconds, and the Live feed shows your company at work
               the moment you click <em>Form company</em>. Toggle off later to switch to real
               local-LLM inference. <strong>Recommended for first-time setups + pitches.</strong>
             </p>
@@ -285,7 +285,7 @@
       <div class="wiz__actions">
         <button
           v-if="step > 0"
-          class="button is-medium is-light fira-sans-condensed-black-italic"
+          class="bz-btn is-light fira-sans-condensed-black-italic"
           @click="step--"
         >
           <span class="material-symbols-outlined mr-1">arrow_back</span> Back
@@ -294,7 +294,7 @@
         <div class="wiz__actions-right">
           <button
             v-if="step < steps.length - 1"
-            class="button is-medium is-success fira-sans-condensed-black-italic"
+            class="bz-btn is-success fira-sans-condensed-black-italic"
             :disabled="!canAdvance"
             @click="step++"
           >
@@ -302,8 +302,8 @@
           </button>
           <button
             v-else
-            class="button is-medium is-warning fira-sans-condensed-black-italic"
-            :class="{ 'is-loading': busy }"
+            class="bz-btn is-warning fira-sans-condensed-black-italic"
+            :class="{ 'bz-btn--running': busy }"
             :disabled="busy || !canForm"
             @click="formCompany"
           >
@@ -569,7 +569,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 1), transparent);
+  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
 }
 .muted { color: rgba(255, 255, 255, 0.65); font-size: 0.92em; }
 .icon-only-btn { width: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
@@ -587,7 +587,6 @@ hr {
 .wiz-overlay {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(8px);
   z-index: 9998;
   display: flex; align-items: center; justify-content: center;
   padding: 2em;
@@ -599,7 +598,6 @@ hr {
   padding: 2em 2.5em !important;
   background: var(--bz-scrim-strong) !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
-  backdrop-filter: blur(32px) !important;
   border-radius: 8px !important;
 }
 
@@ -667,7 +665,6 @@ hr {
 .tpl-card {
   background: rgba(0, 0, 0, 0.32);
   border: 1px solid var(--bz-border-strong);
-  backdrop-filter: blur(32px);
   border-radius: 6px;
   padding: 1.25em;
   cursor: pointer;
@@ -789,7 +786,6 @@ hr {
   flex-direction: column;
   align-items: center;
   gap: 0.35em;
-  backdrop-filter: blur(32px);
 }
 .conn-tile:hover { border-color: var(--bz-fg-faint); }
 .conn-tile.is-required {
@@ -885,7 +881,6 @@ hr {
   background: var(--bz-scrim) !important;
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
   color: var(--bz-fg) !important;
-  backdrop-filter: blur(32px) !important;
 }
 :deep(.input::placeholder), :deep(.textarea::placeholder) {
   color: var(--bz-fg-low) !important;
@@ -894,7 +889,6 @@ hr {
   background: var(--bz-scrim) !important;
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
   color: var(--bz-fg) !important;
-  backdrop-filter: blur(32px) !important;
 }
 :deep(.tag.is-light) {
   background: var(--bz-border-strong) !important;

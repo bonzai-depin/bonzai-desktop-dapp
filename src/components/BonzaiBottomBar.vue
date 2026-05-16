@@ -18,7 +18,7 @@
             </div>
 
             <button
-              class="button is-success"
+              class="bz-btn bz-btn--success fira-sans-condensed-black-italic"
               @click="connect"
               :disabled="isConnecting"
             >
@@ -31,7 +31,7 @@
             <span class="connect-divider">or</span>
 
             <button
-              class="button is-info"
+              class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
               @click="openPrivyWallet"
               :disabled="isConnecting"
               title="Sign in with email — no crypto wallet needed"
@@ -43,7 +43,7 @@
             <!-- Cancel/Reset button when stuck connecting -->
             <button
               v-if="isConnecting"
-              class="button is-danger ml-2"
+              class="bz-btn bz-btn--destructive bz-btn--sm"
               @click="cancelConnection"
               title="Cancel connection"
             >
@@ -114,7 +114,7 @@
             </div>
 
             <button
-              class="button is-warning ml-2"
+              class="bz-btn bz-btn--ghost bz-btn--sm"
               @click="refresh"
               title="Refresh"
             >
@@ -127,7 +127,7 @@
             </button>
 
             <button
-              class="button is-danger ml-2"
+              class="bz-btn bz-btn--destructive bz-btn--sm"
               @click="disconnect"
               title="Disconnect"
             >
@@ -153,13 +153,13 @@
           <a
             :href="buyLink"
             target="_blank"
-            class="button is-info is-outlined"
+            class="bz-btn bz-btn--ghost"
             title="Buy BONZAI"
           >
             <span class="material-symbols-outlined">shopping_cart</span>
           </a>
           <button
-            class="button is-warning ml-2 rewards-btn"
+            class="bz-btn bz-btn--warning rewards-btn fira-sans-condensed-black-italic"
             @click="showRewardsModal = true"
             title="Rewards & Pool Revenue"
           >
@@ -200,18 +200,27 @@
         </div>
 
         <button
-          class="p2p button"
+          class="p2p bz-btn fira-sans-condensed-black-italic"
           :class="p2pButtonClass"
           @click="showNetworkModal = true"
           title="Peer-to-Peer Network"
         >
           <span
             class="material-symbols-outlined mr-2"
-            :class="{ 'pulse-icon': p2pStatus.started }"
+            :class="{ 'spinning': p2pStatus.started }"
           >
             {{ p2pModeIcon }}
           </span>
           {{ p2pModeLabel }}
+        </button>
+        <button
+          class="p2p bz-btn bz-btn--ghost"
+          @click="toggleTheme"
+          :title="themeLabel"
+        >
+          <span class="material-symbols-outlined">
+            {{ themeIcon }}
+          </span>
         </button>
       </div>
     </div>
@@ -291,8 +300,8 @@
                   <span
                     class="value"
                     :class="{
-                      'has-text-danger': needsReauth,
-                      'has-text-warning': tokenExpiringSoon,
+                      'value--danger': needsReauth,
+                      'value--warning': tokenExpiringSoon,
                     }"
                   >
                     {{
@@ -304,11 +313,11 @@
                 </div>
                 <div class="detail-row" v-if="pendingOps > 0">
                   <span class="label">Queued Operations</span>
-                  <span class="value has-text-warning">{{ pendingOps }}</span>
+                  <span class="value value--warning">{{ pendingOps }}</span>
                 </div>
                 <div class="detail-row" v-if="vaultStatus.isUnlocked">
                   <span class="label">Vault</span>
-                  <span class="value has-text-success">Unlocked</span>
+                  <span class="value value--success">Unlocked</span>
                 </div>
               </div>
 
@@ -316,25 +325,25 @@
               <div class="auth-actions">
                 <button
                   v-if="needsReauth"
-                  class="button is-warning is-fullwidth"
+                  class="bz-btn bz-btn--warning auth-action-btn fira-sans-condensed-black-italic"
                   @click="handleReauth"
                   :disabled="isReauthing"
-                  :class="{ 'is-loading': isReauthing }"
+                  :class="{ 'bz-btn--running': isReauthing }"
                 >
                   <span class="material-symbols-outlined mr-2">refresh</span>
                   Reconnect Session
                 </button>
                 <button
                   v-else-if="tokenExpiringSoon"
-                  class="button is-info is-fullwidth"
+                  class="bz-btn bz-btn--primary auth-action-btn fira-sans-condensed-black-italic"
                   @click="handleRefreshToken"
                   :disabled="isRefreshingToken"
-                  :class="{ 'is-loading': isRefreshingToken }"
+                  :class="{ 'bz-btn--running': isRefreshingToken }"
                 >
                   <span class="material-symbols-outlined mr-2">sync</span>
                   Refresh Token
                 </button>
-                <p v-else class="has-text-centered has-text-grey-light">
+                <p v-else class="auth-ok">
                   Your session is active. No action needed.
                 </p>
               </div>
@@ -376,7 +385,7 @@
               <p class="privy-subtitle">Sign in with email — no crypto wallet needed. Your wallet opens in a secure window.</p>
 
               <button
-                class="button is-success is-fullwidth is-large mt-4"
+                class="bz-btn bz-btn--success bz-btn--lg auth-action-btn fira-sans-condensed-black-italic"
                 @click="openPrivyWallet"
               >
                 <span class="material-symbols-outlined mr-2">open_in_new</span>
@@ -420,6 +429,7 @@ import { modelPicker } from "../services/modelPicker.service.js";
 import BzCloseButton from "./BzCloseButton.vue";
 import { switchNetwork } from "../services/web3.service.js";
 import { modelStore } from "../stores/modelStore.js";
+import { themeService } from "../services/theme.service.js";
 
 const {
   isConnected,
@@ -485,6 +495,12 @@ const isPipelineModel = computed(
   () => !!modelStore.state.current?.pipelineMode,
 );
 const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
+
+const themeIcon = computed(() => themeService.state.current === 'light' ? 'dark_mode' : 'light_mode');
+const themeLabel = computed(() => themeService.state.current === 'light' ? 'Switch to dark mode' : 'Switch to light mode');
+const toggleTheme = () => {
+  themeService.set(themeService.state.current === 'light' ? 'default' : 'light');
+};
 
 const openBrowseModels = () => {
   // Use the global picker so we don't have to switch to the Chat tab
@@ -631,11 +647,11 @@ const p2pModeLabel = computed(() => {
 });
 
 const p2pButtonClass = computed(() => {
-  if (p2pMode.value === "consumer") return "is-info";
+  if (p2pMode.value === "consumer") return "bz-btn--ghost";
   if (p2pMode.value === "provider" && p2pStatus.value.started)
-    return "is-warning";
-  if (p2pMode.value === "provider") return "is-info";
-  return "is-info";
+    return "bz-btn--warning";
+  if (p2pMode.value === "provider") return "bz-btn--ghost";
+  return "bz-btn--ghost";
 });
 
 // Unlock status styling
@@ -1151,7 +1167,7 @@ watch(
 .address-text {
   font-family: "JetBrains Mono", monospace;
   font-size: 13px;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .network-badge {
@@ -1165,17 +1181,17 @@ watch(
 
 .network-badge.arbitrum {
   background: linear-gradient(135deg, #28a0f0 0%, #1a73e8 100%);
-  color: white;
+  color: var(--bz-fg);
 }
 
 .network-badge.lukso {
   background: linear-gradient(135deg, #fe2d6e 0%, #fe7eb0 100%);
-  color: white;
+  color: var(--bz-fg);
 }
 
 .network-badge.up-badge {
   background: linear-gradient(135deg, #fe2d6e 0%, #c41f9a 100%);
-  color: white;
+  color: var(--bz-fg);
   text-decoration: none;
   cursor: pointer;
   font-weight: 900;
@@ -1192,7 +1208,7 @@ watch(
 
 .current-level-label {
   font-size: 14px;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .current-level-label .no-level {
@@ -1210,8 +1226,8 @@ watch(
 }
 
 .disconnect-btn:hover {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--bz-danger);
+  color: var(--bz-danger);
 }
 
 .tag {
@@ -1327,7 +1343,7 @@ watch(
 .balance-amount {
   font-size: 18px;
   font-weight: 800;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .balance-token {
@@ -1373,11 +1389,11 @@ watch(
 
 .action-btn.buy-btn:hover {
   background: var(--bonzai-green);
-  color: white;
+  color: var(--bz-fg);
 }
 
 .spinning {
-  animation: spin 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
   will-change: transform;
 }
 
@@ -1424,8 +1440,7 @@ watch(
 .level-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.78);
-  backdrop-filter: blur(16px);
+  background: var(--bz-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1440,7 +1455,7 @@ watch(
   border-radius: 16px;
   padding: 24px;
   position: relative;
-  color: #fff; /* ensure white text */
+  color: var(--bz-fg); /* ensure white text */
 }
 
 .close-btn {
@@ -1470,13 +1485,13 @@ watch(
   background: var(--bonzai-green);
   border-radius: 20px;
   font-weight: 900;
-  color: #fff;
+  color: var(--bz-fg);
   margin-bottom: 10px;
 }
 
 .modal-header h2 {
   margin: 0;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .modal-status {
@@ -1600,7 +1615,7 @@ hr {
 .primary-btn {
   background: linear-gradient(135deg, var(--bonzai-green) 0%, #059669 100%);
   border: none;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .primary-btn:disabled {
@@ -1611,7 +1626,7 @@ hr {
 .secondary-btn {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .spinner {
@@ -1621,7 +1636,7 @@ hr {
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.35);
   border-top-color: rgba(255, 255, 255, 0.95);
-  animation: spin 0.9s linear infinite;
+  animation: bz-spin 0.9s linear infinite;
 }
 
 /* Transitions */
@@ -1662,7 +1677,7 @@ hr {
 }
 
 .pulse-icon {
-  animation: pulseGreen 2s ease-in-out infinite;
+  animation: bz-pulse 2s ease-in-out infinite;
 }
 
 @keyframes pulseGreen {
@@ -1679,8 +1694,7 @@ hr {
 .network-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(16px);
+  background: var(--bz-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1757,19 +1771,19 @@ hr {
 .auth-indicator.is-success .auth-dot {
   background: var(--bz-emerald-500);
   box-shadow: 0 0 6px var(--bz-emerald-500);
-  animation: status-blink 1.5s ease-in-out infinite;
+  animation: bz-pulse 1.5s ease-in-out infinite;
 }
 
 .auth-indicator.is-warning .auth-dot {
   background: var(--bz-warning);
   box-shadow: 0 0 6px var(--bz-warning);
-  animation: status-blink 1.5s ease-in-out infinite;
+  animation: bz-pulse 1.5s ease-in-out infinite;
 }
 
 .auth-indicator.is-danger .auth-dot {
   background: var(--bz-danger);
   box-shadow: 0 0 6px var(--bz-danger);
-  animation: status-blink 1s ease-in-out infinite;
+  animation: bz-pulse 1s ease-in-out infinite;
 }
 
 @keyframes status-blink {
@@ -1792,8 +1806,7 @@ hr {
 .auth-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
+  background: var(--bz-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1869,7 +1882,7 @@ hr {
 
 .status-label {
   font-size: 18px;
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .auth-details {
@@ -1893,7 +1906,7 @@ hr {
 }
 
 .auth-details .value {
-  color: #fff;
+  color: var(--bz-fg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1902,12 +1915,33 @@ hr {
   font-family: "JetBrains Mono", monospace;
 }
 
+.auth-details .value--danger {
+  color: var(--bz-danger);
+}
+
+.auth-details .value--warning {
+  color: var(--bz-warning);
+}
+
+.auth-details .value--success {
+  color: var(--bz-emerald-500);
+}
+
 .auth-actions {
   padding-top: 10px;
 }
 
-.auth-actions .button {
-  margin-bottom: 10px;
+.auth-action-btn {
+  width: 100%;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.auth-ok {
+  margin: 0;
+  color: var(--bz-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 /* Responsive */
@@ -1943,16 +1977,15 @@ hr {
 }
 
 .network-badge.privy-badge {
-  background: linear-gradient(135deg, #6851ff 0%, #a855f7 100%);
-  color: white;
+  background: linear-gradient(135deg, #6851ff 0%, var(--bz-purple-300) 100%);
+  color: var(--bz-fg);
   font-weight: 900;
 }
 
 .privy-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(16px);
+  background: var(--bz-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1989,7 +2022,7 @@ hr {
 .privy-label {
   display: block;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 6px;
@@ -2028,7 +2061,7 @@ hr {
   border-radius: 10px;
   padding: 12px 14px;
   margin-bottom: 16px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
   font-size: 13px;
 }
 
@@ -2037,7 +2070,7 @@ hr {
 }
 
 .privy-otp-banner strong {
-  color: #fff;
+  color: var(--bz-fg);
 }
 
 .privy-divider {
@@ -2071,7 +2104,7 @@ hr {
 .privy-social-btn {
   background: rgba(255, 255, 255, 0.06) !important;
   border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  color: rgba(255, 255, 255, 0.8) !important;
+  color: var(--bz-fg-mid) !important;
   transition: all 0.2s ease;
 }
 
@@ -2123,6 +2156,6 @@ hr {
   border-radius: 50%;
   background: var(--bz-emerald-500);
   box-shadow: 0 0 6px var(--bz-emerald-500);
-  animation: status-blink 1.5s ease-in-out infinite;
+  animation: bz-pulse 1.5s ease-in-out infinite;
 }
 </style>

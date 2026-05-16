@@ -401,8 +401,11 @@ export const onAuditChange = audit.onChange;
  * Used by the "Clear feed" button to start a fresh demo run.
  */
 export const clearAudit = (id) => audit.clear(id);
+export const removeAuditEntry = (id, entryId) => audit.remove(id, entryId);
 export const listCatalog = (id) => dist.listCatalog(id);
 export const getContent = (id, contentId) => dist.getRecord(id, contentId);
+export const clearCatalog = (id) => dist.clear(id);
+export const removeContent = (id, contentId) => dist.remove(id, contentId);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Manual heartbeat triggers (UI buttons)

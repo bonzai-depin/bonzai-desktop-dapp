@@ -27,6 +27,9 @@ export default {
   packagerConfig: {
     icon: "./src/assets/logo",
     executableName: appName,
+    extendInfo: {
+      NSMicrophoneUsageDescription: "BonzAI uses the microphone for optional voice dictation in chat.",
+    },
 
     // Ignore large build artifacts (anchored to root to not match .vite/build)
     ignore: [

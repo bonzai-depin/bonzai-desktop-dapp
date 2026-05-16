@@ -15,12 +15,14 @@
         </span>
       </button>
     </header>
-    <pre class="bz-code__body" :class="`bz-code__body--${displayLang}`"><code><slot>{{ code }}</slot></code></pre>
+    <pre class="bz-code__body" :class="`bz-code__body--${displayLang}`"><code ref="codeEl"><slot>{{ code }}</slot></code></pre>
   </figure>
 </template>
 
 <script setup>
 import { ref, computed } from "vue";
+
+const codeEl = ref(null);
 
 const props = defineProps({
   /** Language label shown top-right (mono uppercase eyebrow style). */
@@ -49,8 +51,7 @@ async function onCopy() {
 
 function extractSlotText() {
   // Best-effort: pull text from the rendered <code> if a slot was used.
-  // Most callers pass `code` as a prop, so this is just a fallback.
-  return "";
+  return codeEl.value?.textContent ?? "";
 }
 </script>
 

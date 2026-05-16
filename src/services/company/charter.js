@@ -495,8 +495,8 @@ export function makeCharter(cfg = {}) {
 
     /**
      * Demo mode — when true, every LLM call is replaced by a scripted
-     * planner (see `demoMode.js`). Heartbeat timers also accelerate so
-     * activity becomes visible within seconds. Use for pitch demos,
+     * planner (see `demoMode.js`). Heartbeat timers run faster than
+     * real mode but leave enough time to inspect each handoff. Use for pitch demos,
      * onboarding, and the Live "watch me work" feed without requiring
      * a loaded model. Toggle on/off at runtime — restart-safe.
      */

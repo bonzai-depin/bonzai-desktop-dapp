@@ -14,7 +14,7 @@
       <span class="material-symbols-outlined" aria-hidden="true">
         {{ a.icon }}
       </span>
-      <span v-if="!iconOnly" class="bz-gen-action__label">{{ a.label }}</span>
+      <span v-if="!isIconOnly(a)" class="bz-gen-action__label">{{ a.label }}</span>
     </button>
     <slot />
   </div>
@@ -42,8 +42,12 @@ const visibleActions = computed(() => props.actions.filter((a) => !a.hidden));
 function actionClass(a) {
   return [
     `bz-gen-action--${a.variant || "default"}`,
-    { "bz-gen-action--icon-only": props.iconOnly },
+    { "bz-gen-action--icon-only": isIconOnly(a) },
   ];
+}
+
+function isIconOnly(a) {
+  return props.iconOnly || a.iconOnly || ["copy", "restore", "delete"].includes(a.id);
 }
 </script>
 
@@ -56,16 +60,24 @@ function actionClass(a) {
 
 .bz-gen-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--bz-space-2);
+  flex-wrap: nowrap;
+  gap: 6px;
   align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.bz-gen-actions::-webkit-scrollbar {
+  display: none;
 }
 
 .bz-gen-action {
   display: inline-flex;
   align-items: center;
-  gap: var(--bz-space-2);
-  padding: 6px var(--bz-space-3);
+  gap: 6px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
   background: transparent;
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r-sm);
@@ -90,6 +102,7 @@ function actionClass(a) {
 }
 .bz-gen-action .material-symbols-outlined {
   font-size: 16px !important;
+  flex-shrink: 0;
 }
 
 .bz-gen-action--icon-only {
@@ -104,12 +117,12 @@ function actionClass(a) {
 .bz-gen-action--primary {
   background: var(--bz-gradient-brand);
   border-color: transparent;
-  color: #fff;
+  color: var(--bz-fg);
 }
 .bz-gen-action--primary:hover:not(:disabled) {
   filter: brightness(1.08);
   background: var(--bz-gradient-brand);
-  color: #fff;
+  color: var(--bz-fg);
 }
 .bz-gen-action--success {
   color: var(--bz-emerald-500);

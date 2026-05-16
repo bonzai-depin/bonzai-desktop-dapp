@@ -2,15 +2,10 @@
   <Teleport to="body">
     <Transition name="fade">
       <div v-if="visible" class="mint-modal-overlay" @click.self="handleClose">
-        <div class="mint-modal">
-          <!-- Header -->
-          <div class="mint-modal-header p-5">
-            <h2
-              class="fira-sans-condensed-black-italic is-size-3 has-text-white"
-            >
-              <span class="material-symbols-outlined mr-2 is-size-2">
-                token
-              </span>
+        <div class="mint-modal" role="dialog" aria-modal="true" aria-labelledby="mint-modal-title">
+          <div class="mint-modal-header">
+            <h2 id="mint-modal-title" class="mint-modal-title">
+              <span class="material-symbols-outlined" aria-hidden="true">token</span>
               Mint Collectible
             </h2>
             <div class="header-right">
@@ -25,9 +20,9 @@
             </div>
           </div>
 
-          <div class="mint-modal-body p-5">
+          <div class="mint-modal-body">
             <!-- Content Preview -->
-            <div class="content-preview mb-5">
+            <div class="content-preview" :class="{ 'content-preview--text': contentType?.startsWith('text/') }">
               <div
                 v-if="contentType?.startsWith('image/')"
                 class="preview-image"
@@ -66,15 +61,11 @@
                 </button>
               </div>
               <div v-else-if="contentType?.startsWith('text/')" class="preview-text">
-                <img :src="customBgSrc || textBgSrc" class="text-bg" :class="{ blurred: !customBgSrc }" alt="" />
-                <div class="preview-shade"></div>
-                <img v-if="!customBgSrc" :src="logoSrc" class="text-logo" alt="BonzAI" />
+                <div class="preview-text__head">
+                  <span class="material-symbols-outlined" aria-hidden="true">article</span>
+                  <span>{{ generationType }}</span>
+                </div>
                 <p class="text-snippet">{{ textSnippet }}</p>
-                <span class="preview-type text-type-label">{{ generationType }}</span>
-                <button class="shuffle-bg-btn" @click="generateBackground" :disabled="isGeneratingBg" title="Shuffle Background">
-                  <span v-if="isGeneratingBg" class="material-symbols-outlined rotating">progress_activity</span>
-                  <span v-else class="material-symbols-outlined">auto_fix_high</span>
-                </button>
               </div>
               <div v-else-if="contentType?.startsWith('model/')" class="preview-3d">
                 <iframe
@@ -86,10 +77,7 @@
                 <span class="preview-type">{{ generationType }}</span>
               </div>
               <div v-else class="preview-icon">
-                <span
-                  class="material-symbols-outlined"
-                  style="font-size: 48px; opacity: 0.5"
-                >
+                <span class="material-symbols-outlined">
                   {{ previewIcon }}
                 </span>
                 <span class="preview-type">{{ generationType }}</span>
@@ -99,7 +87,7 @@
             <!-- Editable Fields (before minting) -->
             <div v-if="stage === 'ready'" class="mint-fields">
               <!-- Wallet not connected -->
-              <div v-if="!isWalletConnected" class="bz-notice bz-notice--danger mb-4">
+              <div v-if="!isWalletConnected" class="bz-notice bz-notice--danger">
                 <span class="bz-notice__icon"><span class="material-symbols-outlined">account_balance_wallet</span></span>
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">Wallet not connected</p>
@@ -108,7 +96,7 @@
               </div>
 
               <!-- Checking levels -->
-              <div v-else-if="isCheckingLevels" class="bz-notice mb-4">
+              <div v-else-if="isCheckingLevels" class="bz-notice">
                 <span class="bz-notice__icon"><span class="material-symbols-outlined rotating">sync</span></span>
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">Checking mint access&hellip;</p>
@@ -116,7 +104,7 @@
               </div>
 
               <!-- Level gate banner -->
-              <div v-else-if="!mintAccess.canMint" class="bz-notice bz-notice--warning mb-4">
+              <div v-else-if="!mintAccess.canMint" class="bz-notice bz-notice--warning">
                 <span class="bz-notice__icon"><span class="material-symbols-outlined">lock</span></span>
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">{{ mintAccess.levelRequired }} required</p>
@@ -124,31 +112,30 @@
                 </div>
               </div>
 
-              <div class="field mb-5">
-                <label class="label fira-sans-condensed-black-italic">
+              <div class="mint-field">
+                <label class="mint-label">
                   Collectible Title
                 </label>
                 <input
                   v-model="mintTitle"
-                  class="input"
+                  class="mint-input"
                   type="text"
                   maxlength="80"
                 />
               </div>
-              <div class="field mb-5">
-                <label class="label fira-sans-condensed-black-italic">Collectible Description</label>
+              <div class="mint-field">
+                <label class="mint-label">Collectible Description</label>
                 <textarea
                   v-model="mintDescription"
-                  class="textarea"
+                  class="mint-input mint-input--textarea"
                   rows="2"
                   maxlength="500"
                 ></textarea>
               </div>
-              <hr />
-              <div class="has-text-centered">
+              <div class="mint-actions">
                 <button
                   type="button"
-                  class="bz-btn bz-btn--primary bz-btn--lg mt-4 mb-5"
+                  class="bz-btn bz-btn--primary bz-btn--lg"
                   @click="startMint"
                   :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields"
                 >
@@ -180,15 +167,11 @@
                 </div>
               </div>
 
-              <progress
-                class="progress is-warning"
-                :value="progressPercent"
-                max="100"
-              >
-                {{ progressPercent }}%
-              </progress>
+              <div class="mint-progress-bar" role="progressbar" :aria-valuenow="progressPercent" aria-valuemin="0" aria-valuemax="100">
+                <span :style="{ width: `${progressPercent}%` }"></span>
+              </div>
               <p class="progress-message">{{ progressMessage }}</p>
-              <div class="has-text-centered mt-4">
+              <div class="mint-actions">
                 <button type="button" class="bz-btn bz-btn--destructive bz-btn--sm" @click="cancelMint">
                   <span class="material-symbols-outlined">close</span>
                   Cancel
@@ -200,13 +183,12 @@
             <div v-else-if="stage === 'success'" class="mint-result">
               <div class="result-icon success">
                 <span
-                  class="material-symbols-outlined"
-                  style="font-size: 48px; color: var(--bz-emerald-500)"
+                  class="material-symbols-outlined result-icon__glyph"
                 >
                   check_circle
                 </span>
               </div>
-              <h3 class="bz-h2 has-text-centered mb-4 fira-sans-condensed-black-italic">
+              <h3 class="mint-result-title">
                 Minted successfully
               </h3>
 
@@ -229,10 +211,7 @@
                     class="value link"
                   >
                     View on Explorer
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 14px"
-                    >
+                    <span class="material-symbols-outlined">
                       open_in_new
                     </span>
                   </a>
@@ -245,10 +224,7 @@
                     class="value link"
                   >
                     View on IPFS
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 14px"
-                    >
+                    <span class="material-symbols-outlined">
                       open_in_new
                     </span>
                   </a>
@@ -257,8 +233,7 @@
 
               <button
                 type="button"
-                class="bz-btn bz-btn--success bz-btn--lg mt-4"
-                style="width: 100%;"
+                class="bz-btn bz-btn--success bz-btn--lg mint-result-done"
                 @click="handleClose"
               >
                 Done
@@ -274,9 +249,8 @@
                   <p class="bz-notice__text">There was an error during the minting of your collectible. Please retry.</p>
                 </div>
               </div>
-              <hr />
               <div class="error-actions">
-                <button type="button" class="bz-btn bz-btn--primary mr-3" @click="startMint">
+                <button type="button" class="bz-btn bz-btn--primary" @click="startMint">
                   <span class="material-symbols-outlined">refresh</span>
                   Retry
                 </button>
@@ -297,10 +271,10 @@
           <span class="material-symbols-outlined wallet-sign-icon pulse">
             account_balance_wallet
           </span>
-          <h3 class="bz-h2 fira-sans-condensed-black-italic mt-3 mb-2">
+          <h3 class="wallet-sign-title">
             Wallet confirmation required
           </h3>
-          <p class="bz-body" style="color: var(--bz-fg-mid);">
+          <p class="wallet-sign-text">
             Confirm the transaction in your wallet (MetaMask / WalletConnect).
           </p>
         </div>
@@ -319,7 +293,6 @@ import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
 import audioBgSrc from "../assets/bonzai_music.webp";
 import videoPosterSrc from "../assets/bonzai_video.webp";
-import textBgSrc from "../assets/bonzai_chat.webp";
 import logoSrc from "../assets/bonzai_logo-full.png";
 
 const props = defineProps({
@@ -408,12 +381,20 @@ const audioPreviewSrc = computed(() => {
   return "";
 });
 
+function stripThinkTags(text) {
+  return String(text || "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*$/i, "")
+    .replace(/<\/think>/gi, "")
+    .trim();
+}
+
 const textSnippet = computed(() => {
   if (!props.content || !props.contentType?.startsWith("text/")) return "";
   const raw = typeof props.content === "string" ? props.content : "";
-  const clean = raw.replace(/[#*_`~\[\]]/g, "").trim();
-  if (clean.length <= 100) return clean;
-  return clean.substring(0, 100) + "...";
+  const clean = stripThinkTags(raw).replace(/[#*_`~\[\]]/g, "").trim();
+  if (clean.length <= 1400) return clean;
+  return clean.substring(0, 1400) + "...";
 });
 
 const videoPreviewSrc = computed(() => {
@@ -579,164 +560,139 @@ function handleClose() {
 .mint-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
+  z-index: 10003;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10003;
+  padding: var(--bz-space-4);
+  background: var(--bz-overlay);
 }
 
 .mint-modal {
-  width: 90%;
-  max-width: 640px;
-  max-height: 90vh;
+  width: min(680px, 100%);
+  max-height: min(90vh, 820px);
+  overflow: auto;
+  background: var(--bz-canvas);
   border: 1px solid var(--bz-border);
-  border-radius: 16px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  border-radius: var(--bz-r);
+  box-shadow: 0 24px 80px var(--bz-scrim-strong);
 }
 
 .mint-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  background: var(--bz-scrim);
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
   border-bottom: 1px solid var(--bz-border);
 }
 
-.mint-modal-header h2 {
+.mint-modal-title {
   display: flex;
   align-items: center;
+  gap: var(--bz-space-2);
   margin: 0;
+  color: var(--bz-fg);
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-size: 28px;
+  font-style: italic;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.mint-modal-title .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 24px;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--bz-space-2);
 }
 
 .network-pill {
-  padding: 8px 10px;
-  border-radius: 4px;
-  font-size: 8px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-low);
+  font-family: var(--bz-font-mono);
+  font-size: var(--bz-size-micro);
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .network-pill.base {
-  background: rgba(0, 82, 255, 0.2);
-  color: #5b8eff;
-  border: 1px solid rgba(0, 82, 255, 0.4);
+  background: rgba(0, 82, 255, 0.12);
+  border-color: rgba(0, 82, 255, 0.35);
+  color: var(--bz-info);
 }
 
 .mint-modal-body {
-  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-4);
 }
 
-hr {
-  margin: 12px 0;
-  width: 100%;
-  border: none;
-  height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    rgba(255, 255, 255, 1),
-    transparent
-  );
-}
-
-/* Content Preview */
 .content-preview {
-  margin-bottom: 16px;
-  max-width: 50%;
-  margin-left: auto;
-  margin-right: auto;
-  border-radius: 4px !important;
+  width: min(360px, 100%);
+  margin: 0 auto;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--bz-canvas);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+
+.content-preview--text {
+  width: 100%;
 }
 
 .preview-image {
   display: flex;
   align-items: center;
   justify-content: center;
-  max-height: 200px;
-  overflow: hidden;
+  max-height: 300px;
+  background: var(--bz-canvas);
 }
 
 .preview-image img {
   max-width: 100%;
+  max-height: 300px;
   object-fit: contain;
 }
 
 .preview-shade {
   position: absolute;
   inset: 0;
-  background: var(--bz-scrim-deep);
   z-index: 1;
   pointer-events: none;
+  background: var(--bz-scrim-deep);
 }
 
-.preview-audio {
+.preview-audio,
+.preview-video,
+.preview-3d {
   position: relative;
   width: 100%;
-  padding-top: 100%;
   overflow: hidden;
-  border-radius: 4px;
+  background: var(--bz-canvas);
 }
 
-.preview-audio .audio-bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.preview-audio .audio-bg.blurred {
-  filter: blur(12px);
-  transform: scale(1.08);
-}
-
-.preview-audio .audio-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 24px;
-  z-index: 2;
-}
-
-.preview-audio audio {
-  width: 90%;
-  max-width: 360px;
-  margin-bottom: 8px;
-}
-
-.preview-audio .preview-type {
-  color: var(--bz-fg);
-  font-size: 13px;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-  opacity: 0.8;
+.preview-audio,
+.preview-3d {
+  aspect-ratio: 1;
 }
 
 .preview-video {
-  position: relative;
-  width: 100%;
-  padding-top: 75%;
-  background: #000;
-  border-radius: 4px;
-  overflow: hidden;
+  aspect-ratio: 4 / 3;
 }
 
+.preview-audio .audio-bg,
 .preview-video .video-bg {
   position: absolute;
   inset: 0;
@@ -745,48 +701,62 @@ hr {
   object-fit: cover;
 }
 
+.preview-audio .audio-bg.blurred,
 .preview-video .video-bg.blurred {
   filter: blur(12px);
-  transform: scale(1.08);
 }
 
+.preview-audio .audio-overlay,
 .preview-video .video-overlay {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  padding: 24px;
-  z-index: 2;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-4);
+}
+
+.preview-audio audio {
+  width: min(360px, 92%);
 }
 
 .preview-video video {
-  width: 90%;
-  max-height: 200px;
-  border-radius: 4px;
+  width: min(380px, 92%);
+  max-height: 220px;
+  border-radius: var(--bz-r-sm);
 }
 
-.preview-video .preview-type {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  color: var(--bz-fg);
-  font-size: 11px;
-  text-transform: uppercase;
-  opacity: 0.7;
+.preview-logo {
+  width: min(180px, 70%);
+  height: auto;
+  margin-bottom: auto;
+  filter: drop-shadow(0 2px 8px var(--bz-scrim-strong));
+}
+
+.preview-type {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 var(--bz-space-2);
   background: var(--bz-scrim-strong);
-  padding: 2px 8px;
-  border-radius: 3px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-low);
+  font-family: var(--bz-font-mono);
+  font-size: var(--bz-size-micro);
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
-.preview-3d {
-  position: relative;
-  width: 100%;
-  padding-top: 100%;
-  border-radius: 4px;
-  overflow: hidden;
-  background: #1a1a2e;
+.preview-video .preview-type,
+.preview-3d .preview-type {
+  position: absolute;
+  top: var(--bz-space-2);
+  right: var(--bz-space-2);
+  z-index: 3;
 }
 
 .preview-3d .three-iframe {
@@ -797,114 +767,63 @@ hr {
   border: none;
 }
 
-.preview-3d .preview-type {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  color: var(--bz-fg);
-  font-size: 11px;
-  text-transform: uppercase;
-  opacity: 0.7;
-  background: var(--bz-scrim-strong);
-  padding: 2px 8px;
-  border-radius: 3px;
-  z-index: 1;
-}
-
-.preview-logo {
-  max-height: 50%;
-  width: auto;
-  object-fit: contain;
-  margin-bottom: auto;
-  margin-top: 0;
-  padding-top: 5%;
-  filter: drop-shadow(0 2px 8px var(--bz-scrim-strong));
-}
-
 .preview-text {
-  position: relative;
-  width: 100%;
-  padding-top: 100%;
-  overflow: hidden;
-  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  max-height: min(46vh, 380px);
+  padding: var(--bz-space-4);
+  overflow: auto;
+  background: var(--bz-canvas);
 }
 
-.preview-text .text-bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.preview-text .text-bg.blurred {
-  filter: blur(12px);
-  transform: scale(1.08);
-}
-
-.preview-text .text-logo {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -100%);
-  max-height: 45%;
-  width: auto;
-  z-index: 2;
-  filter: drop-shadow(0 2px 8px var(--bz-scrim-strong));
-}
-
-.preview-text .text-snippet {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, 0);
-  width: 80%;
-  color: var(--bz-fg);
-  font-size: 13px;
-  line-height: 1.5;
-  text-align: center;
-  word-break: break-word;
-  padding-top: 8px;
-  z-index: 2;
-}
-
-.preview-text .text-type-label {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: var(--bz-fg);
-  font-size: 13px;
+.preview-text__head {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-purple-300);
+  font-family: var(--bz-font-mono);
+  font-size: var(--bz-size-micro);
+  font-weight: 700;
   text-transform: uppercase;
-  opacity: 0.8;
-  z-index: 2;
+}
+
+.preview-text__head .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.text-snippet {
+  margin: 0;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .shuffle-bg-btn {
   position: absolute;
-  bottom: 8px;
-  right: 8px;
-  background: rgba(138, 43, 226, 0.9);
-  border: none;
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  display: flex;
+  right: var(--bz-space-2);
+  bottom: var(--bz-space-2);
+  z-index: 3;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  width: 32px;
+  height: 32px;
   color: var(--bz-fg);
-  z-index: 3;
-  transition: opacity 0.2s, transform 0.2s;
-}
-
-.shuffle-bg-btn .material-symbols-outlined {
-  font-size: 16px;
+  background: var(--bz-purple-soft);
+  border: 1px solid var(--bz-purple-300);
+  border-radius: var(--bz-r-sm);
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out);
 }
 
 .shuffle-bg-btn:hover:not(:disabled) {
-  background: rgba(138, 43, 226, 1);
-  transform: scale(1.1);
+  background: var(--bz-raised);
+  border-color: var(--bz-fg-faint);
 }
 
 .shuffle-bg-btn:disabled {
@@ -912,13 +831,12 @@ hr {
   opacity: 0.7;
 }
 
-.rotating {
-  animation: spin 1s linear infinite;
+.shuffle-bg-btn .material-symbols-outlined {
+  font-size: 16px;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.rotating {
+  animation: bz-spin 1s linear infinite;
 }
 
 .preview-icon {
@@ -926,107 +844,252 @@ hr {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  min-height: 180px;
+  gap: var(--bz-space-2);
   color: var(--bz-fg-low);
 }
 
-.preview-type {
-  font-size: 12px;
+.preview-icon .material-symbols-outlined {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.mint-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+}
+
+.mint-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+}
+
+.mint-label {
+  color: var(--bz-fg-low);
+  font-family: var(--bz-font-mono);
+  font-size: var(--bz-size-micro);
+  font-weight: 700;
   text-transform: uppercase;
-  margin-top: 8px;
-  opacity: 0.6;
 }
 
-/* Fields */
-.mint-fields .field {
-  margin-bottom: 12px;
-}
-
-.mint-fields .label {
-  color: rgba(255, 255, 255, 1);
-  font-size: 12px;
-  margin-bottom: 10px;
-}
-
-.mint-fields .input,
-.mint-fields .textarea {
+.mint-input {
+  width: 100%;
+  min-height: 40px;
+  padding: var(--bz-space-2) var(--bz-space-3);
+  resize: none;
   background: var(--bz-canvas);
   border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r-sm);
   color: var(--bz-fg);
-  border-radius: 4px;
-  resize: none;
+  font: inherit;
 }
 
-.mint-fields .input:focus,
-.mint-fields .textarea:focus {
-  border-color: var(--bz-fg-faint);
-  box-shadow: none;
+.mint-input--textarea {
+  min-height: 76px;
 }
 
-/* Fee */
-.fee-display {
+.mint-input:focus {
+  border-color: var(--bz-purple-300);
+  outline: none;
+}
+
+.mint-actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: var(--bz-canvas);
-  border-radius: 8px;
-  border: 1px solid var(--bz-card);
+  justify-content: center;
+  margin-top: var(--bz-space-1);
 }
 
-.fee-label {
-  color: var(--bz-fg-mid);
-  font-size: 13px;
-}
-
-.fee-amount {
-  color: var(--bz-warning);
-  font-size: 16px;
-}
-
-/* Progress */
 .mint-progress {
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
 }
 
 .progress-stages {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--bz-space-2);
 }
 
 .progress-stage {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  opacity: 0.4;
-  transition: opacity 0.3s;
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
 }
 
 .progress-stage.active {
-  opacity: 1;
+  color: var(--bz-warning);
+  border-color: var(--bz-warning);
 }
 
 .progress-stage.done {
-  opacity: 0.8;
-}
-
-.progress-stage.done .stage-icon {
   color: var(--bz-emerald-500);
 }
 
 .stage-icon {
+  font-size: 22px;
+}
+
+.stage-label {
+  font-size: var(--bz-size-micro);
+  text-transform: uppercase;
+}
+
+.mint-progress-bar {
+  height: 6px;
+  overflow: hidden;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: 999px;
+}
+
+.mint-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--bz-purple-300);
+  transition: width var(--bz-dur-base) var(--bz-ease-out);
+}
+
+.progress-message {
+  margin: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  text-align: center;
+}
+
+.mint-result,
+.mint-error {
+  text-align: center;
+}
+
+.result-icon {
+  margin-bottom: var(--bz-space-2);
+}
+
+.result-icon__glyph {
+  color: var(--bz-emerald-500);
+  font-size: 48px;
+}
+
+.mint-result-title,
+.wallet-sign-title {
+  margin: 0 0 var(--bz-space-3);
+  color: var(--bz-fg);
+  font-family: "Fira Sans Condensed", sans-serif;
   font-size: 24px;
+  font-style: italic;
+  font-weight: 900;
+}
+
+.result-details {
+  margin-top: var(--bz-space-3);
+  text-align: left;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.detail-row:last-child {
+  border-bottom: 0;
+}
+
+.detail-row .label {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+}
+
+.detail-row .value {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+  font-weight: 600;
+  text-align: right;
+}
+
+.detail-row .value.monospace {
+  font-family: var(--bz-font-mono);
+  font-size: 12px;
+}
+
+.detail-row .value.link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  color: var(--bz-info);
+  text-decoration: none;
+}
+
+.detail-row .value.link:hover {
+  text-decoration: underline;
+}
+
+.detail-row .value.link .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.mint-result-done {
+  width: 100%;
+  margin-top: var(--bz-space-4);
+}
+
+.error-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--bz-space-2);
+  margin-top: var(--bz-space-4);
+}
+
+.wallet-sign-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--bz-space-4);
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.wallet-sign-card {
+  width: min(400px, 100%);
+  padding: var(--bz-space-5);
+  text-align: center;
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-warning);
+  border-radius: var(--bz-r);
+}
+
+.wallet-sign-icon {
+  color: var(--bz-warning);
+  font-size: 56px;
+}
+
+.wallet-sign-icon.pulse {
+  animation: wallet-pulse 1.8s ease-in-out infinite;
+}
+
+.wallet-sign-text {
+  margin: 0;
   color: var(--bz-fg-mid);
 }
 
-.progress-stage.active .stage-icon {
-  color: var(--bz-warning);
-  animation: pulse-icon 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-icon {
+@keyframes wallet-pulse {
   0%,
   100% {
     opacity: 1;
@@ -1036,133 +1099,41 @@ hr {
   }
 }
 
-.stage-label {
-  font-size: 11px;
-  color: var(--bz-fg-mid);
-}
-
-.progress {
-  margin-bottom: 12px;
-  height: 6px;
-  border-radius: 3px;
-}
-
-.progress-message {
-  color: var(--bz-fg-mid);
-  font-size: 13px;
-}
-
-/* Result */
-.mint-result,
-.mint-error {
-  text-align: center;
-}
-
-.result-icon {
-  margin-bottom: 12px;
-}
-
-.result-details {
-  text-align: left;
-  margin-top: 16px;
-}
-
-.result-details .detail-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--bz-card);
-}
-
-.result-details .detail-row:last-child {
-  border-bottom: none;
-}
-
-.result-details .label {
-  color: var(--bz-fg-low);
-  font-size: 12px;
-}
-
-.result-details .value {
-  color: var(--bz-fg);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.result-details .value.monospace {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 12px;
-}
-
-.result-details .value.link {
-  color: #5b8eff;
-  text-decoration: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.result-details .value.link:hover {
-  text-decoration: underline;
-}
-
-/* Error */
-.error-message {
-  color: var(--bz-danger);
-  margin: 12px 0;
-  font-size: 14px;
-}
-
-.error-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  margin-top: 16px;
-}
-
-/* Wallet Signature Overlay — z-index above everything */
-.wallet-sign-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.88);
-  backdrop-filter: blur(16px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 99999;
-}
-
-.wallet-sign-card {
-  text-align: center;
-  padding: 40px 48px;
-  background: var(--bz-canvas);
-  border: 1px solid rgba(255, 224, 138, 0.25);
-  border-radius: 20px;
-  max-width: 400px;
-}
-
-.wallet-sign-icon {
-  font-size: 56px;
-  color: var(--bz-warning);
-}
-
-.wallet-sign-icon.pulse {
-  animation: wallet-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes wallet-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.92); }
-}
-
-/* Transitions */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--bz-dur-fast) var(--bz-ease-out);
 }
+
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@media (max-width: 640px) {
+  .mint-modal-overlay {
+    align-items: stretch;
+    padding: var(--bz-space-2);
+  }
+
+  .mint-modal {
+    max-height: 100%;
+  }
+
+  .mint-modal-header,
+  .mint-modal-body {
+    padding: var(--bz-space-3);
+  }
+
+  .mint-modal-title {
+    font-size: 22px;
+  }
+
+  .network-pill {
+    display: none;
+  }
+
+  .progress-stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

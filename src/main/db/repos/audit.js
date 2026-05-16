@@ -148,6 +148,15 @@ export function clear(companyId) {
   orm.delete(auditEntries).where(eq(auditEntries.companyId, companyId)).run();
 }
 
+/** Delete one audit entry for a company. */
+export function remove(companyId, entryId) {
+  const { orm } = get();
+  orm.delete(auditEntries)
+    .where(and(eq(auditEntries.companyId, companyId), eq(auditEntries.id, entryId)))
+    .run();
+  return true;
+}
+
 /** Bulk-insert helper used by the first-boot store migration. Wraps in a
  *  single transaction for ~100× throughput vs. per-row inserts. */
 export function bulkInsert(rows) {

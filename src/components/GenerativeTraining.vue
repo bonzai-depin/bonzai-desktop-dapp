@@ -4,49 +4,31 @@
     <div class="models__deployment-install">
       <div class="columns">
         <div class="column is-12 p-5">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
-                  <span
-                    class="material-symbols-outlined mr-2"
-                    style="font-size: 92px !important"
-                  >
-                    exercise
-                  </span>
-                  Training
-                </h1>
-              </div>
+          <header class="bz-screen-header">
+            <div class="bz-screen-titleblock">
+              <p class="bz-eyebrow">Train</p>
+              <h1 class="bz-h1 fira-sans-condensed-black-italic">
+                <span class="material-symbols-outlined bz-title-icon" aria-hidden="true">chat</span>
+                Chat Training
+              </h1>
             </div>
-          </div>
+          </header>
 
           <!-- TRAINING PROGRESS -->
           <div
             v-if="training.active"
-            class="training notification is-info"
-            style="margin-bottom: 1rem"
+            class="training-progress-card"
           >
-            <p class="mb-2">
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                <button
-                  disabled
-                  class="button is-loading is-info is-small mr-2 p-4"
-                ></button>
+            <div class="training-progress-card__head">
+              <span class="training-progress-card__title fira-sans-condensed-black-italic">
+                <BonzaiPulse variant="dot" />
                 Crafting...
               </span>
-              <span
-                class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
-              >
+              <span class="training-progress-card__pct fira-sans-condensed-black-italic">
                 {{ Math.round(training.pct) }}%
               </span>
-            </p>
-            <progress
-              class="progress is-success"
-              :value="Math.max(0, Math.min(100, training.pct))"
-              max="100"
-            >
-              {{ Math.round(training.pct) }}%
-            </progress>
+            </div>
+            <BonzaiPulse variant="bar" :percent="Math.max(0, Math.min(100, training.pct))" />
           </div>
 
           <!-- ACCESS REQUIREMENTS -->
@@ -59,32 +41,19 @@
           <!-- ═══════════════════════════════════════════════════════════ -->
           <!-- MAIN TABS: Dataset / Run                                   -->
           <!-- ═══════════════════════════════════════════════════════════ -->
-          <div class="tabs is-large is-fullwidth mb-5">
-            <ul>
-              <li :class="{ 'is-active': activeTab === 'dataset' }">
-                <a
-                  @click.prevent="activeTab = 'dataset'"
-                  class="fira-sans-condensed-black-italic is-size-1"
-                >
-                  <span class="material-symbols-outlined mr-2 is-size-1">
-                    dataset
-                  </span>
-                  Dataset
-                </a>
-              </li>
-              <li :class="{ 'is-active': activeTab === 'run' }">
-                <a
-                  @click.prevent="activeTab = 'run'"
-                  class="fira-sans-condensed-black-italic is-size-1"
-                >
-                  <span class="material-symbols-outlined mr-2 is-size-1">
-                    start
-                  </span>
-                  Run
-                </a>
-              </li>
-            </ul>
-          </div>
+          <ModeChipBar
+            v-model="activeTab"
+            :items="trainingTabs"
+            class="training-tabs"
+          />
+
+          <section class="training-rhythm">
+            <article v-for="card in trainingStats" :key="card.label" class="training-rhythm__card">
+              <span class="material-symbols-outlined" aria-hidden="true">{{ card.icon }}</span>
+              <strong class="fira-sans-condensed-black-italic">{{ card.value }}</strong>
+              <span>{{ card.label }}</span>
+            </article>
+          </section>
 
           <!-- ═══════════════════════════════════════════════════════════ -->
           <!-- DATASET TAB                                                -->
@@ -92,14 +61,11 @@
           <div v-if="activeTab === 'dataset'">
             <!-- DATASET STUDIO -->
             <div class="models__activity--payouts mb-5">
-              <h3
-                class="fira-sans-condensed-black-italic is-size-1 mb-3 has-text-left"
-              >
+              <h3 class="bz-h2 fira-sans-condensed-black-italic mb-3 has-text-left">
                 Dataset Studio
               </h3>
-              <p class="has-text-left has-text-white">
-                Use the studio to prepare and export your training data as a
-                JSONL file.
+              <p class="training-copy has-text-left">
+                Write examples that teach tone, format, procedures, and domain knowledge. Each saved entry becomes one JSONL training sample.
               </p>
               <hr />
 
@@ -108,7 +74,7 @@
                 <div class="studio-sidebar has-text-left">
                   <div class="studio-example-list">
                     <div
-                      v-for="ex in studio.examples"
+                      v-for="ex in studioTextExamples"
                       :key="ex.id"
                       class="studio-example-item"
                       :class="{ 'is-active': studio.selected?.id === ex.id }"
@@ -119,19 +85,19 @@
                       </span>
                     </div>
                     <div
-                      v-if="studio.examples.length === 0"
-                      class="has-text-grey-light is-size-7 p-3"
+                      v-if="studioTextExamples.length === 0"
+                      class="training-empty-note"
                     >
-                      No examples yet. Click Add New.
+                      No chat examples yet. Add one and teach the model how to answer.
                     </div>
                   </div>
 
                   <button
-                    class="button is-success is-medium is-fullwidth mt-3"
+                    class="bz-btn bz-btn--primary fira-sans-condensed-black-italic skill-fullwidth mt-3"
                     @click="studioAddNew"
                   >
                     <span class="material-symbols-outlined mr-1">add</span>
-                    Add New Data
+                    Add Example
                   </button>
                 </div>
 
@@ -139,7 +105,7 @@
                 <div class="studio-main has-text-left">
                   <div v-if="studio.selected" class="studio-preview">
                     <!-- Mode toggle -->
-                    <div class="control mb-3 has-text-left studio-mode-toggle">
+                    <div v-if="false" class="control mb-3 has-text-left studio-mode-toggle">
                       <input
                         v-model="studio.editMode"
                         value="game"
@@ -175,7 +141,7 @@
                     </div>
 
                     <!-- Tier dropdown (game mode only) -->
-                    <div v-if="studio.editMode === 'game'" class="field mb-3">
+                    <div v-if="false" class="field mb-3">
                       <label
                         class="label is-small fira-sans-condensed-black-italic"
                       >
@@ -195,7 +161,7 @@
                     </div>
 
                     <!-- Game mode: 3 textareas + libraries -->
-                    <div v-if="studio.editMode === 'game'">
+                    <div v-if="false">
                       <div class="field mb-3 fira-sans-condensed-black-italic">
                         <label class="label is-small">HTML</label>
                         <textarea
@@ -267,7 +233,7 @@
                     </div>
 
                     <!-- Text mode: 1 large textarea -->
-                    <div v-else>
+                    <div>
                       <div class="field mb-3">
                         <label
                           class="label is-small fira-sans-condensed-black-italic"
@@ -278,7 +244,7 @@
                           v-model="studio.editText"
                           class="studio-code-area"
                           spellcheck="false"
-                          placeholder="Paste or write your training text..."
+                          placeholder="Example:\nUser: Explain our refund policy in one paragraph.\nAssistant: Refunds are available within 14 days when..."
                           rows="16"
                         ></textarea>
                       </div>
@@ -288,13 +254,13 @@
                       <label
                         class="label is-small fira-sans-condensed-black-italic"
                       >
-                        DESCRIPTION
+                        INSTRUCTION / BEHAVIOR
                       </label>
                       <div class="studio-describe-row">
                         <textarea
                           v-model="studio.editDescription"
                           class="studio-description-area"
-                          placeholder="Detailed instruction for this training entry..."
+                          placeholder="What should the model learn from this example?"
                           rows="3"
                         ></textarea>
                       </div>
@@ -302,7 +268,7 @@
 
                     <div class="studio-actions">
                       <button
-                        class="button is-link is-medium studio-describe-btn mr-5"
+                        class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic studio-describe-btn"
                         @click="studioDescribe"
                         :disabled="studio.describing || !studioHasContent"
                       >
@@ -310,16 +276,16 @@
                           v-if="studio.describing"
                           class="loader mr-1"
                         ></span>
-                        Generate Description
+                        Draft Instruction
                       </button>
                       <button
-                        class="button is-success is-medium mr-5"
+                        class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
                         @click="studioSave"
                       >
-                        Save Data
+                        Save Example
                       </button>
                       <button
-                        class="button is-danger is-medium"
+                        class="bz-iconbtn bz-iconbtn--danger"
                         @click="studioDelete"
                       >
                         <span class="material-symbols-outlined">delete</span>
@@ -334,7 +300,7 @@
                     >
                       dataset
                     </span>
-                    <p class="has-text-grey-light mt-2">No data selected.</p>
+                    <p class="bz-meta mt-2">Select or add an example.</p>
                   </div>
                 </div>
               </div>
@@ -344,15 +310,23 @@
                 <span
                   class="is-size-1 has-text-white fira-sans-condensed-black-italic"
                 >
-                  {{ studio.examples.length }} entries
+                  {{ studioTextExamples.length }} examples
                 </span>
                 <button
-                  class="button is-success is-large"
+                  class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
                   @click="studioExport"
-                  :disabled="studio.examples.length === 0"
+                  :disabled="studioTextExamples.length === 0"
                 >
                   <span class="material-symbols-outlined mr-2">download</span>
                   Export JSONL
+                </button>
+                <button
+                  class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+                  @click="studioCreateDataset"
+                  :disabled="studioTextExamples.length === 0 || creatingDataset"
+                >
+                  <span class="material-symbols-outlined mr-2">dataset</span>
+                  Create LLM Dataset
                 </button>
               </div>
             </div>
@@ -361,13 +335,13 @@
             <div class="models__activity--payouts mb-5">
               <div class="buttons mb-3">
                 <button
-                  class="button is-success is-medium mr-5"
+                  class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
                   @click="showCreateDataset = true"
                 >
                   <span class="material-symbols-outlined mr-1">add</span>
                   Create Dataset
                 </button>
-                <button class="button is-info is-medium" @click="loadDatasets">
+                <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="loadDatasets">
                   <span class="material-symbols-outlined mr-1">refresh</span>
                   Refresh
                 </button>
@@ -391,7 +365,7 @@
                     </div>
                   </div>
                   <button
-                    class="button is-small is-danger"
+                    class="bz-iconbtn bz-iconbtn--danger"
                     @click.stop="deleteDataset(ds.id)"
                     title="Delete dataset"
                   >
@@ -399,9 +373,8 @@
                   </button>
                 </div>
               </div>
-              <div v-else class="notification is-info is-size-6 p-3">
-                No datasets yet. Create one above, or prepare your data using
-                the Dataset Studio.
+              <div v-else class="bz-notice bz-notice--info is-size-6 p-3">
+                No LLM datasets yet. Create one from the studio above or upload text files.
               </div>
             </div>
           </div>
@@ -412,7 +385,7 @@
           <div v-if="activeTab === 'run'">
             <div class="models__activity--payouts mb-5">
               <!-- TRAINING TYPE SELECTION -->
-              <div class="control mb-5 has-text-left">
+              <div v-if="false" class="control mb-5 has-text-left">
                 <input
                   v-model="trainingType"
                   :value="'llm'"
@@ -430,7 +403,7 @@
                     chat
                   </span>
                   Chat Model
-                  <span class="tag is-info is-light ml-1">LLaMa</span>
+                  <span class="skill-chip skill-chip--info ml-1">LLaMa</span>
                 </label>
                 <input
                   v-model="trainingType"
@@ -448,7 +421,7 @@
                     image
                   </span>
                   Image Model
-                  <span class="tag is-warning is-light ml-1">SDXL</span>
+                  <span class="skill-chip skill-chip--warning ml-1">SDXL</span>
                 </label>
               </div>
 
@@ -489,8 +462,7 @@
                   </div>
                 </div>
                 <div v-else class="has-text-grey-light is-size-6 p-3">
-                  No {{ trainingType === "llm" ? "text" : "image" }} datasets
-                  found.
+                  No text datasets found.
                   <a
                     @click.prevent="activeTab = 'dataset'"
                     class="has-text-info"
@@ -519,7 +491,7 @@
                 <label class="label fira-sans-condensed-black-italic is-size-5">
                   Base Model
                 </label>
-                <div class="select is-fullwidth is-medium mb-5 is-large">
+                <div class="select skill-fullwidth is-medium mb-5 is-large">
                   <select v-model="llmConfig.base_model">
                     <option value="llama-3.2-1b">LLaMa 3.2 1B (Fastest)</option>
                     <option value="llama-3.2-3b">
@@ -541,7 +513,7 @@
                       Epochs: {{ llmConfig.epochs }}
                     </label>
                     <input
-                      class="slider is-fullwidth p-4"
+                      class="slider skill-fullwidth p-4"
                       type="range"
                       v-model.number="llmConfig.epochs"
                       min="1"
@@ -557,7 +529,7 @@
                     >
                       Batch Size
                     </label>
-                    <div class="select is-fullwidth is-large">
+                    <div class="select skill-fullwidth is-large">
                       <select v-model.number="llmConfig.batch_size">
                         <option :value="1">1 (Low VRAM)</option>
                         <option :value="2">2</option>
@@ -578,7 +550,7 @@
                       LoRA Rank: {{ llmConfig.lora_r }}
                     </label>
                     <input
-                      class="slider is-fullwidth p-4"
+                      class="slider skill-fullwidth p-4"
                       type="range"
                       v-model.number="llmConfig.lora_r"
                       min="4"
@@ -595,7 +567,7 @@
                       LoRA Alpha: {{ llmConfig.lora_alpha }}
                     </label>
                     <input
-                      class="slider is-fullwidth p-4"
+                      class="slider skill-fullwidth p-4"
                       type="range"
                       v-model.number="llmConfig.lora_alpha"
                       min="8"
@@ -632,7 +604,7 @@
 
             <!-- SDXL TRAINING CONFIGURATION -->
             <div
-              v-if="trainingType === 'sdxl'"
+              v-if="false"
               class="models__activity--payouts mb-5 has-text-left"
             >
               <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
@@ -682,7 +654,7 @@
                       Training Steps: {{ sdxlConfig.epochs }}
                     </label>
                     <input
-                      class="slider is-fullwidth p-4"
+                      class="slider skill-fullwidth p-4"
                       type="range"
                       v-model.number="sdxlConfig.epochs"
                       min="100"
@@ -698,7 +670,7 @@
                     >
                       Resolution
                     </label>
-                    <div class="select is-fullwidth is-large">
+                    <div class="select skill-fullwidth is-large">
                       <select v-model.number="sdxlConfig.resolution">
                         <option :value="512">512 (Fast)</option>
                         <option :value="768">768</option>
@@ -718,7 +690,7 @@
                       LoRA Rank: {{ sdxlConfig.lora_rank }}
                     </label>
                     <input
-                      class="slider is-fullwidth p-4"
+                      class="slider skill-fullwidth p-4"
                       type="range"
                       v-model.number="sdxlConfig.lora_rank"
                       min="4"
@@ -759,21 +731,21 @@
             <div class="models__activity--payouts">
               <!-- START TRAINING BUTTON -->
               <button
-                class="button is-danger is-large"
+                class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic"
                 @click="startTraining"
                 :disabled="!canStartTraining || training.active"
               >
                 <span class="material-symbols-outlined mr-2 is-size-2">
                   exercise
                 </span>
-                Start Training Now
+                Start Chat Fine-tune
               </button>
             </div>
 
             <!-- TRAINED MODELS -->
             <div
               v-if="trainedModels.length"
-              class="notification is-success mb-5 mt-5"
+              class="bz-notice bz-notice--success mb-5 mt-5"
             >
               <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3">
                 <span class="material-symbols-outlined mr-2">verified</span>
@@ -785,7 +757,7 @@
                 class="trained-model-item"
               >
                 <div class="model-info">
-                  <span class="tag is-dark mr-2">
+                  <span class="skill-chip mr-2">
                     {{ model.type === "llm_lora" ? "🧠 LLM" : "🎨 SDXL" }}
                   </span>
                   <div>
@@ -799,27 +771,27 @@
                       class="input is-small mt-1"
                       type="text"
                       placeholder="HuggingFace repo (e.g. username/model-name)"
-                      style="max-width: 320px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff; font-size: 11px;"
+                      style="max-width: 320px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg); font-size: 11px;"
                     />
                   </div>
                 </div>
                 <div class="buttons">
                   <button
-                    class="button is-small is-info"
+                    class="bz-btn bz-btn--sm is-info"
                     @click="exportModel(model)"
                     title="Export model"
                   >
                     <span class="material-symbols-outlined">download</span>
                   </button>
                   <button
-                    class="button is-small is-warning"
+                    class="bz-btn bz-btn--sm is-warning"
                     @click="mintModelNFT(model)"
                     title="Mint as NFT"
                   >
                     <span class="material-symbols-outlined">token</span>
                   </button>
                   <button
-                    class="button is-small is-link"
+                    class="bz-btn bz-btn--sm is-link"
                     @click="launchModelToken(model)"
                     :disabled="!model.contentTokenId"
                     :title="model.contentTokenId ? 'Issue ERC-20 Token' : 'Mint as NFT first'"
@@ -827,7 +799,7 @@
                     <span class="material-symbols-outlined">currency_exchange</span>
                   </button>
                   <button
-                    class="button is-small is-danger"
+                    class="bz-btn bz-btn--sm is-danger"
                     @click="deleteModel(model.id)"
                     title="Delete model"
                   >
@@ -840,7 +812,7 @@
             <!-- TRAINING ERROR -->
             <div
               v-if="training.error"
-              class="notification is-danger"
+              class="bz-notice bz-notice--danger"
               style="margin-bottom: 1rem"
             >
               <strong>Training failed:</strong>
@@ -877,17 +849,17 @@
                 class="dataset-status-pill fira-sans-condensed-black-italic is-size-5"
               >
                 {{
-                  newDataset.type === "text" ? "TEXT DATASET" : "IMAGE DATASET"
+                  "TEXT DATASET"
                 }}
               </span>
             </div>
             <div class="dataset-type-tags">
               <span class="dataset-tag fira-sans-condensed-black-italic">
-                {{ newDataset.type === "text" ? "LLaMa" : "SDXL" }}
+                LLM
               </span>
               <span
                 v-if="newDataset.files.length"
-                class="dataset-tag is-count fira-sans-condensed-black-italic"
+                class="dataset-tag dataset-tag--count fira-sans-condensed-black-italic"
               >
                 {{ newDataset.files.length }} files
               </span>
@@ -912,27 +884,20 @@
               <label class="dataset-label fira-sans-condensed-black-italic">
                 Dataset Type
               </label>
-              <div class="dataset-select-wrapper">
-                <select v-model="newDataset.type" class="dataset-select">
-                  <option value="text">Text (for LLM training)</option>
-                  <option value="image">Image (for SDXL LoRA)</option>
-                </select>
-              </div>
+              <div class="dataset-static-type">Text for chat fine-tuning</div>
             </div>
 
             <div class="dataset-field">
               <label class="dataset-label fira-sans-condensed-black-italic">
                 Upload
-                {{ newDataset.type === "text" ? "Text Files" : "Images" }}
+                Text Files
               </label>
               <div class="dataset-upload-zone">
                 <input
                   class="file-input"
                   type="file"
                   :accept="
-                    newDataset.type === 'text'
-                      ? '.txt,.md,.json,.jsonl'
-                      : 'image/*'
+                    '.txt,.md,.json,.jsonl'
                   "
                   multiple
                   @change="handleDatasetFiles"
@@ -944,13 +909,11 @@
                   </span>
                   <span class="fira-sans-condensed-black-italic">
                     Click to select
-                    {{ newDataset.type === "text" ? "text" : "image" }} files
+                    text files
                   </span>
                   <span class="dataset-upload-hint">
                     {{
-                      newDataset.type === "text"
-                        ? "Supports .txt, .md, .json, .jsonl"
-                        : "Upload 10-50 images (same size preferred)"
+                      "Supports .txt, .md, .json, .jsonl"
                     }}
                   </span>
                 </label>
@@ -981,7 +944,7 @@
 
         <div class="dataset-modal-footer mb-5">
           <button
-            class="button dataset-primary-btn is-medium fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--primary dataset-primary-btn fira-sans-condensed-black-italic"
             @click="createDataset"
             :disabled="
               !newDataset.name || !newDataset.files.length || creatingDataset
@@ -992,7 +955,7 @@
             Create Dataset
           </button>
           <button
-            class="button is-danger is-medium"
+            class="bz-btn bz-btn--destructive is-medium"
             @click="showCreateDataset = false"
           >
             Cancel
@@ -1041,34 +1004,34 @@
               </p>
 
               <div class="field mb-4">
-                <label class="label" style="color: rgba(255,255,255,0.8); font-size: 12px;">Token Name</label>
+                <label class="label" style="color: var(--bz-fg-mid); font-size: 12px;">Token Name</label>
                 <input v-model="tokenName" class="input" type="text" maxlength="64"
-                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff;" />
+                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg);" />
               </div>
 
               <div class="field mb-4">
-                <label class="label" style="color: rgba(255,255,255,0.8); font-size: 12px;">Token Symbol</label>
+                <label class="label" style="color: var(--bz-fg-mid); font-size: 12px;">Token Symbol</label>
                 <input v-model="tokenSymbol" class="input" type="text" maxlength="10"
-                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff; text-transform: uppercase;" />
+                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg); text-transform: uppercase;" />
               </div>
 
               <div class="field mb-5">
-                <label class="label" style="color: rgba(255,255,255,0.8); font-size: 12px;">ETH for Liquidity</label>
+                <label class="label" style="color: var(--bz-fg-mid); font-size: 12px;">ETH for Liquidity</label>
                 <input v-model="tokenEthAmount" class="input" type="number" step="0.001" min="0.01"
-                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #fff;" />
+                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg);" />
                 <p class="help" style="color: rgba(255,255,255,0.4);">Min 0.01 ETH. LP tokens are burned (unruggable).</p>
               </div>
 
-              <div v-if="tokenLaunchResult?.error" class="notification is-danger mb-4">
+              <div v-if="tokenLaunchResult?.error" class="bz-notice bz-notice--danger mb-4">
                 {{ tokenLaunchResult.error }}
               </div>
 
               <div class="has-text-centered">
                 <button
-                  class="button is-link is-large"
+                  class="bz-btn bz-btn--primary is-large"
                   @click="executeTokenLaunch"
                   :disabled="isLaunchingToken || !tokenName || !tokenSymbol"
-                  :class="{ 'is-loading': isLaunchingToken }"
+                  :class="{ 'bz-btn--running': isLaunchingToken }"
                 >
                   <span class="material-symbols-outlined mr-2">rocket_launch</span>
                   Launch Token
@@ -1078,30 +1041,30 @@
 
             <!-- Success -->
             <div v-else class="has-text-centered">
-              <span class="material-symbols-outlined" style="font-size: 48px; color: #48c78e;">check_circle</span>
+              <span class="material-symbols-outlined" style="font-size: 48px; color: var(--bz-emerald-500);">check_circle</span>
               <h3 class="has-text-white mt-3 mb-4">Token Launched!</h3>
               <div style="text-align: left;" class="mb-4">
                 <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
-                  <span style="color: rgba(255,255,255,0.5); font-size: 12px;">Symbol</span>
+                  <span style="color: var(--bz-fg-low); font-size: 12px;">Symbol</span>
                   <span class="has-text-white" style="font-size: 13px; font-weight: 600;">${{ tokenLaunchResult.symbol }}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
-                  <span style="color: rgba(255,255,255,0.5); font-size: 12px;">Token</span>
+                  <span style="color: var(--bz-fg-low); font-size: 12px;">Token</span>
                   <a :href="`https://basescan.org/token/${tokenLaunchResult.tokenAddress}`" target="_blank"
-                    style="color: #5b8eff; font-size: 12px; font-family: monospace;">
+                    style="color: var(--bz-info); font-size: 12px; font-family: monospace;">
                     {{ tokenLaunchResult.tokenAddress?.slice(0, 10) }}...
                   </a>
                 </div>
                 <div style="display: flex; justify-content: space-between; padding: 8px 0;">
-                  <span style="color: rgba(255,255,255,0.5); font-size: 12px;">Trade</span>
+                  <span style="color: var(--bz-fg-low); font-size: 12px;">Trade</span>
                   <a :href="`https://app.uniswap.org/swap?chain=base&outputCurrency=${tokenLaunchResult.tokenAddress}`"
-                    target="_blank" style="color: #5b8eff; font-size: 12px;">
+                    target="_blank" style="color: var(--bz-info); font-size: 12px;">
                     Uniswap
                     <span class="material-symbols-outlined" style="font-size: 12px;">open_in_new</span>
                   </a>
                 </div>
               </div>
-              <button class="button is-success is-fullwidth" @click="showTokenLaunchModal = false">Done</button>
+              <button class="bz-btn bz-btn--success skill-fullwidth" @click="showTokenLaunchModal = false">Done</button>
             </div>
           </div>
         </div>
@@ -1124,7 +1087,9 @@ import axios from "axios";
 import { io } from "socket.io-client";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import BonzaiPulse from "./BonzaiPulse.vue";
 import BzCloseButton from "./BzCloseButton.vue";
+import ModeChipBar from "./generative/ModeChipBar.vue";
 import { fineTuneTokenService } from "../services/fineTuneToken.service.js";
 
 const API_BASE =
@@ -1136,13 +1101,17 @@ const WS_TRAINING = `${API_BASE}/training`;
 
 export default {
   name: "GenerativeTraining",
-  components: { AccessRequirements, MintModal },
+  components: { AccessRequirements, MintModal, BonzaiPulse, BzCloseButton, ModeChipBar },
   setup() {
     // Main tabs
     const activeTab = ref("dataset");
+    const trainingTabs = [
+      { value: "dataset", label: "Dataset", icon: "dataset" },
+      { value: "run", label: "Fine-tune", icon: "model_training" },
+    ];
 
     // Training type selection
-    const trainingType = ref("llm"); // 'llm' or 'sdxl'
+    const trainingType = ref("llm"); // production path: chat/LLM fine-tuning
 
     // Datasets
     const datasets = ref([]);
@@ -1257,7 +1226,7 @@ export default {
     const studio = reactive({
       examples: [],
       selected: null,
-      editMode: "game",
+      editMode: "text",
       editTier: 1,
       editHtml: "",
       editCss: "",
@@ -1282,8 +1251,20 @@ export default {
 
     // Computed
     const filteredDatasets = computed(() => {
-      const expectedType = trainingType.value === "llm" ? "text" : "image";
-      return datasets.value.filter((ds) => ds.type === expectedType);
+      return datasets.value.filter((ds) => ds.type === "text");
+    });
+
+    const studioTextExamples = computed(() => {
+      return studio.examples.filter((ex) => (ex.mode || "text") === "text");
+    });
+
+    const trainingStats = computed(() => {
+      const activeModels = trainedModels.value.filter((m) => m.type === "llm_lora").length;
+      return [
+        { icon: "format_quote", value: String(studioTextExamples.value.length), label: "draft examples" },
+        { icon: "dataset", value: String(filteredDatasets.value.length), label: "LLM datasets" },
+        { icon: "model_training", value: String(activeModels), label: "fine-tunes" },
+      ];
     });
 
     const canStartTraining = computed(() => {
@@ -1384,7 +1365,7 @@ export default {
       try {
         const { data } = await axios.post(`${API_BASE}/training/datasets`, {
           name: newDataset.name,
-          type: newDataset.type,
+          type: "text",
           files: newDataset.fileContents,
         });
 
@@ -1655,8 +1636,7 @@ export default {
     const studioAddNew = () => {
       const newEx = {
         id: uuid(),
-        mode: studio.editMode,
-        ...(studio.editMode !== "text" ? { tier: studio.editTier } : {}),
+        mode: "text",
         html: "",
         css: "",
         js: "",
@@ -1692,7 +1672,7 @@ export default {
       if (!confirm("Delete this example?")) return;
       await window.electronAPI?.synthExampleDelete(studio.selected.id);
       studio.selected = null;
-      studio.editMode = "game";
+      studio.editMode = "text";
       studio.editTier = 1;
       studio.editHtml = "";
       studio.editCss = "";
@@ -1774,6 +1754,57 @@ export default {
       }
     };
 
+    const base64FromString = (value) => {
+      const bytes = new TextEncoder().encode(value);
+      let binary = "";
+      bytes.forEach((b) => { binary += String.fromCharCode(b); });
+      return btoa(binary);
+    };
+
+    const studioCreateDataset = async () => {
+      if (!studioTextExamples.value.length) return;
+      const fallback = `chat-dataset-${new Date().toISOString().slice(0, 10)}`;
+      const name = prompt("Dataset name:", fallback);
+      if (!name) return;
+
+      creatingDataset.value = true;
+      try {
+        await studioSave();
+        const lines = studioTextExamples.value
+          .map((ex) => {
+            const text = [
+              ex.description ? `Instruction: ${ex.description}` : "",
+              ex.text || "",
+            ].filter(Boolean).join("\n\n").trim();
+            return text ? JSON.stringify({ text }) : "";
+          })
+          .filter(Boolean)
+          .join("\n");
+
+        const { data } = await axios.post(`${API_BASE}/training/datasets`, {
+          name,
+          type: "text",
+          files: [
+            {
+              filename: `${name.replace(/[^a-z0-9_-]+/gi, "-").toLowerCase() || "dataset"}.jsonl`,
+              content_base64: base64FromString(lines),
+            },
+          ],
+        });
+
+        if (data.ok) {
+          datasets.value.push(data.dataset);
+          selectedDataset.value = data.dataset;
+          activeTab.value = "run";
+        }
+      } catch (e) {
+        console.error("Failed to create studio dataset:", e);
+        alert("Failed to create dataset: " + (e.response?.data?.error || e.message));
+      } finally {
+        creatingDataset.value = false;
+      }
+    };
+
     // Lifecycle
     onMounted(async () => {
       setupTrainingSocket();
@@ -1790,6 +1821,7 @@ export default {
 
     return {
       activeTab,
+      trainingTabs,
       trainingType,
       datasets,
       filteredDatasets,
@@ -1801,6 +1833,7 @@ export default {
       llmConfig,
       sdxlConfig,
       training,
+      trainingStats,
       canStartTraining,
       loadDatasets,
       handleDatasetFiles,
@@ -1831,6 +1864,7 @@ export default {
       // Studio
       GAME_TIERS,
       studio,
+      studioTextExamples,
       studioHasContent,
       studioItemLabel,
       studioSelect,
@@ -1841,21 +1875,194 @@ export default {
       studioAddLib,
       studioRemoveLib,
       studioExport,
+      studioCreateDataset,
     };
   },
 };
 </script>
 
 <style scoped>
-/* Fonts imported from App.vue for offline mode */
+.models__deployment-install {
+  overflow-y: auto;
+  padding: var(--bz-space-5) var(--bz-space-6);
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+}
 
-.training {
-  position: fixed;
-  width: 33%;
-  top: 1em;
-  right: 1em;
-  z-index: 1;
-  opacity: 0.95;
+.models__deployment-install > .columns {
+  display: block;
+  margin: 0;
+}
+
+.models__deployment-install > .columns > .column {
+  width: 100%;
+  padding: 0 !important;
+}
+
+.models__activity--payouts {
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r) !important;
+  background: var(--bz-card);
+  width: 100%;
+}
+
+.models__activity--payouts > .columns {
+  margin: 0;
+}
+
+.models__activity--payouts > .columns > .column {
+  padding: 0;
+}
+
+h1.bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
+.bz-screen-header .bz-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 28px !important;
+}
+
+.bz-screen-header .bz-eyebrow {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  line-height: 1.2;
+  text-align: left;
+  font-weight: 400;
+}
+
+.bz-screen-header .bz-screen-subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
+  text-align: left;
+}
+
+h2.bz-h2,
+h3.bz-h2 {
+  font-size: var(--bz-size-h2) !important;
+  line-height: var(--bz-line-tight);
+  color: var(--bz-fg);
+  margin: 0;
+}
+
+.training-copy {
+  margin: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-body);
+  line-height: var(--bz-line-body);
+}
+
+.training-rhythm {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+
+.training-rhythm__card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: var(--bz-space-2) var(--bz-space-3);
+  align-items: center;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+}
+
+.training-rhythm__card .material-symbols-outlined {
+  grid-row: span 2;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bz-accent);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+}
+
+.training-rhythm__card strong {
+  color: var(--bz-fg);
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.training-rhythm__card span:last-child {
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.training-empty-note {
+  padding: var(--bz-space-3);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.dataset-static-type {
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+}
+
+@media (max-width: 900px) {
+  .training-rhythm {
+    grid-template-columns: 1fr;
+  }
+}
+
+.training-progress-card {
+  margin-bottom: 1rem;
+  padding: 14px 16px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+}
+
+.training-progress-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.training-progress-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.training-progress-card__pct {
+  color: var(--bz-fg);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.training-progress-card :deep(.bz-pulse-wrap--bar) {
+  margin-top: 12px;
+}
+
+.training-tabs {
+  margin-bottom: var(--bz-space-5);
 }
 
 .background {
@@ -1872,22 +2079,6 @@ export default {
   background: transparent;
   padding: 0 !important;
   margin: 0 !important;
-}
-
-.models__deployment-install {
-  overflow-y: auto;
-  padding: var(--bz-space-5) var(--bz-space-6);
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  background: var(--bz-scrim);
-}
-
-.models__activity--payouts {
-  padding: 4em;
-  border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-  border-radius: 4px !important;
 }
 
 h1,
@@ -1909,7 +2100,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -1941,10 +2132,9 @@ input[type="radio"] + label {
 }
 
 input[type="radio"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 
 .notification.is-dark {
@@ -2027,7 +2217,7 @@ input[type="radio"]:checked + label {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #61378e;
+  background: var(--bz-purple-500);
   cursor: pointer;
 }
 
@@ -2046,31 +2236,31 @@ input[type="radio"]:checked + label {
   color: var(--bz-fg);
 }
 
-.modal-card {
-  background: #1a1a2e;
+.bz-modal-panel {
+  background: var(--bz-card);
   color: var(--bz-fg);
 }
 
-.modal-card-head,
-.modal-card-foot {
+.bz-modal-head,
+.bz-modal-foot {
   background: rgba(30, 30, 40, 0.9);
   border-color: var(--bz-border);
 }
 
-.modal-card-title {
+.bz-modal-title {
   color: var(--bz-fg);
 }
 
-.modal-card-body {
-  background: #1a1a2e;
+.bz-modal-body {
+  background: var(--bz-card);
 }
 
-.modal-card-body .label {
+.bz-modal-body .label {
   color: var(--bz-fg);
 }
 
-.modal-card-body .input,
-.modal-card-body .select select {
+.bz-modal-body .input,
+.bz-modal-body .select select {
   background: var(--bz-border);
   border-color: var(--bz-fg-faint);
   color: var(--bz-fg);
@@ -2110,8 +2300,7 @@ input[type="radio"]:checked + label {
 .dataset-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.78);
-  backdrop-filter: blur(16px);
+  background: var(--bz-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2135,7 +2324,7 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-modal-header .material-symbols-outlined {
-  color: #9333ea;
+  color: var(--bz-purple-500);
   display: block;
   margin-bottom: 8px;
 }
@@ -2143,7 +2332,7 @@ input[type="radio"]:checked + label {
 .dataset-modal-badge {
   display: inline-block;
   padding: 6px 16px;
-  background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
+  background: linear-gradient(135deg, var(--bz-purple-500) 0%, var(--bz-purple-700) 100%);
   border-radius: 20px;
   font-weight: 900;
   color: var(--bz-fg);
@@ -2163,7 +2352,7 @@ input[type="radio"]:checked + label {
   background: var(--bz-canvas);
   border-radius: 10px;
   padding: 1.5em;
-  border: 1px solid rgba(147, 51, 234, 0.25);
+  border: 1px solid var(--bz-purple-soft);
   margin-bottom: 16px;
   text-align: center;
 }
@@ -2179,7 +2368,7 @@ input[type="radio"]:checked + label {
   padding: 8px 14px;
   border-radius: 999px;
   border: 2px solid rgba(147, 51, 234, 0.6);
-  color: #a855f7;
+  color: var(--bz-purple-300);
   font-size: 14px;
   font-weight: 600;
   background: rgba(147, 51, 234, 0.1);
@@ -2201,9 +2390,9 @@ input[type="radio"]:checked + label {
   font-size: 12px;
 }
 
-.dataset-tag.is-count {
+.dataset-tag.dataset-tag--count {
   background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  color: var(--bz-emerald-500);
   font-weight: 600;
 }
 
@@ -2245,7 +2434,7 @@ input[type="radio"]:checked + label {
 .dataset-input:focus,
 .dataset-select:focus {
   outline: none;
-  border-color: #9333ea;
+  border-color: var(--bz-purple-500);
 }
 
 .dataset-input::placeholder {
@@ -2262,13 +2451,13 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-select option {
-  background: #1a1a2e;
+  background: var(--bz-card);
   color: var(--bz-fg);
 }
 
 .dataset-upload-zone {
   position: relative;
-  border: 2px dashed rgba(147, 51, 234, 0.4);
+  border: 2px dashed var(--bz-purple-soft);
   border-radius: 10px;
   padding: 2em;
   text-align: center;
@@ -2277,7 +2466,7 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-upload-zone:hover {
-  border-color: #9333ea;
+  border-color: var(--bz-purple-500);
   background: rgba(147, 51, 234, 0.05);
 }
 
@@ -2300,7 +2489,7 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-upload-label .material-symbols-outlined {
-  color: #9333ea;
+  color: var(--bz-purple-500);
 }
 
 .dataset-upload-hint {
@@ -2328,19 +2517,19 @@ input[type="radio"]:checked + label {
   background: rgba(147, 51, 234, 0.15);
   border: 1px solid rgba(147, 51, 234, 0.3);
   border-radius: 6px;
-  color: #a855f7;
+  color: var(--bz-purple-300);
   font-size: 12px;
 }
 
 .dataset-preview-box {
   background: rgba(147, 51, 234, 0.08);
-  border: 1px solid rgba(147, 51, 234, 0.25);
+  border: 1px solid var(--bz-purple-soft);
   border-radius: 10px;
   padding: 1em 1.25em;
 }
 
 .dataset-preview-box p:first-child {
-  color: #9333ea;
+  color: var(--bz-purple-500);
   margin-bottom: 8px;
   font-size: 13px;
 }
@@ -2352,7 +2541,7 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-preview-text strong {
-  color: #a855f7;
+  color: var(--bz-purple-300);
 }
 
 .dataset-modal-footer {
@@ -2368,13 +2557,13 @@ input[type="radio"]:checked + label {
 }
 
 .dataset-primary-btn {
-  background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
+  background: linear-gradient(135deg, var(--bz-purple-500) 0%, var(--bz-purple-700) 100%);
   border: none;
   color: var(--bz-fg);
 }
 
 .dataset-primary-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+  background: linear-gradient(135deg, var(--bz-purple-300) 0%, var(--bz-purple-500) 100%);
 }
 
 .dataset-primary-btn:disabled {
@@ -2428,8 +2617,8 @@ input[type="radio"]:checked + label {
 }
 
 .tabs a:hover {
-  color: rgba(255, 255, 255, 1);
-  border-color: rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border-color: var(--bz-fg);
 }
 
 .tabs li.is-active a {
@@ -2470,7 +2659,7 @@ input[type="radio"]:checked + label {
   background: var(--bz-scrim);
   border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--bz-fg-mid);
   font-size: 12px;
   cursor: pointer;
   appearance: auto;
@@ -2478,11 +2667,11 @@ input[type="radio"]:checked + label {
 
 .studio-tier-select select:focus {
   outline: none;
-  border-color: #9333ea;
+  border-color: var(--bz-purple-500);
 }
 
 .studio-tier-select select option {
-  background: #1a1a2e;
+  background: var(--bz-card);
   color: var(--bz-fg);
 }
 
@@ -2499,7 +2688,7 @@ input[type="radio"]:checked + label {
   background: var(--bz-scrim);
   border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--bz-fg-mid);
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
   font-size: 12px;
   padding: 10px;
@@ -2509,7 +2698,7 @@ input[type="radio"]:checked + label {
 
 .studio-code-area:focus {
   outline: none;
-  border-color: #9333ea;
+  border-color: var(--bz-purple-500);
 }
 
 .studio-lib-tags {
@@ -2525,9 +2714,9 @@ input[type="radio"]:checked + label {
   gap: 4px;
   padding: 3px 8px;
   background: rgba(147, 51, 234, 0.2);
-  border: 1px solid rgba(147, 51, 234, 0.4);
+  border: 1px solid var(--bz-purple-soft);
   border-radius: 4px;
-  color: #c084fc;
+  color: var(--bz-purple-100);
   font-size: 12px;
   font-family: "SF Mono", "Fira Code", "Consolas", monospace;
 }
@@ -2552,7 +2741,7 @@ input[type="radio"]:checked + label {
   background: var(--bz-scrim);
   border: 1px solid var(--bz-border-strong);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--bz-fg-mid);
   font-size: 13px;
   padding: 10px;
   resize: vertical;
@@ -2561,7 +2750,7 @@ input[type="radio"]:checked + label {
 
 .studio-description-area:focus {
   outline: none;
-  border-color: #9333ea;
+  border-color: var(--bz-purple-500);
 }
 
 .studio-describe-btn {
@@ -2611,8 +2800,7 @@ input[type="radio"]:checked + label {
 .token-launch-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
+  background: var(--bz-overlay);
   display: flex;
   align-items: center;
   justify-content: center;

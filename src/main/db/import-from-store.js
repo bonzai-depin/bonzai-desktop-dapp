@@ -181,7 +181,7 @@ function importGenerationArray(arr, hint) {
     const params = entry.params || entry.options || _extractKnownParams(entry);
 
     // Pull text-shaped output (text gen, vision, 3D code, skill responses).
-    let outputText = entry.text || entry.response || entry.output_text
+    let outputText = entry.text || entry.response || entry.output_text || entry.answer?.text
       || entry.result?.text || entry.result?.response || entry.code || null;
     if (typeof outputText !== "string" && outputText != null) {
       try { outputText = JSON.stringify(outputText); } catch { outputText = null; }
@@ -209,7 +209,7 @@ function importGenerationArray(arr, hint) {
       id,
       pipeline,
       mode: entry.mode || hint.mode || null,
-      prompt: entry.prompt || entry.input || entry.userPrompt || null,
+      prompt: entry.prompt || entry.question || entry.input || entry.userPrompt || null,
       negativePrompt: entry.negativePrompt || entry.negative_prompt || null,
       systemPrompt: entry.systemPrompt || entry.system || null,
       modelKey: entry.modelKey || entry.model || entry.modelname || null,

@@ -64,7 +64,7 @@
         <div class="conn-row__main">
           <div class="conn-row__name fira-sans-condensed-black-italic">{{ c.label || c.kind }}</div>
           <div class="conn-row__meta muted">
-            <span class="tag is-small" :class="statusClass(c.status)">{{ c.status.replace('_', ' ') }}</span>
+            <span class="skill-chip" :class="statusClass(c.status)">{{ c.status.replace('_', ' ') }}</span>
             <span class="conn-row__id">{{ c.kind }}</span>
             <span v-if="c.lastUsedAt" class="conn-row__time">last used {{ fmtTime(c.lastUsedAt) }}</span>
           </div>
@@ -72,7 +72,7 @@
         <div class="conn-row__actions">
           <button
             v-if="c.status === 'needs_auth' || c.status === 'expired' || c.status === 'broken'"
-            class="button is-small is-warning fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--sm is-warning fira-sans-condensed-black-italic"
             @click="openAuth(c)"
             title="Provide credentials"
           >
@@ -81,14 +81,14 @@
           </button>
           <button
             v-if="c.status === 'active'"
-            class="button is-small is-light fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--sm is-light fira-sans-condensed-black-italic"
             @click="revoke(c)"
           >
             <span class="material-symbols-outlined mr-1">link_off</span>
             Revoke
           </button>
           <button
-            class="button is-small is-danger fira-sans-condensed-black-italic icon-only-btn ml-2"
+            class="bz-btn bz-btn--sm is-danger fira-sans-condensed-black-italic icon-only-btn ml-2"
             @click="remove(c)"
             aria-label="Delete connector"
           >
@@ -148,12 +148,12 @@
         />
         <hr />
         <div class="conn-auth__actions">
-          <button class="button is-medium is-light fira-sans-condensed-black-italic" @click="authFor = null">
+          <button class="bz-btn is-light fira-sans-condensed-black-italic" @click="authFor = null">
             Cancel
           </button>
           <button
-            class="button is-medium is-success fira-sans-condensed-black-italic ml-5"
-            :class="{ 'is-loading': busy }"
+            class="bz-btn is-success fira-sans-condensed-black-italic ml-5"
+            :class="{ 'bz-btn--running': busy }"
             :disabled="busy || !authDraft.secret.trim()"
             @click="saveAuth"
           >
@@ -229,10 +229,10 @@ export default {
     }
     function statusClass(s) {
       return ({
-        active: "is-success",
-        needs_auth: "is-warning",
-        expired: "is-warning",
-        broken: "is-danger",
+        active: "bz-btn--success",
+        needs_auth: "bz-btn--warning",
+        expired: "bz-btn--warning",
+        broken: "bz-btn--destructive",
         revoked: "is-light",
       })[s] || "is-light";
     }
@@ -296,7 +296,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 1), transparent);
+  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
 }
 .muted { color: rgba(255, 255, 255, 0.65); font-size: 0.92em; }
 .icon-only-btn { width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
@@ -331,7 +331,6 @@ hr {
 .conn-kpi {
   background: rgba(0, 0, 0, 0.32);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(32px);
   border-radius: 4px;
   padding: 0.85em 1em;
   text-align: center;
@@ -362,14 +361,13 @@ hr {
   border: 1px solid rgba(255, 153, 51, 0.6);
   border-radius: 4px;
   background: rgba(255, 153, 51, 0.08);
-  color: #fff;
+  color: var(--bz-fg);
   cursor: pointer;
   font-family: "Fira Sans", sans-serif;
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  backdrop-filter: blur(32px);
   display: inline-flex;
   align-items: center;
   transition: all 0.18s ease;
@@ -391,7 +389,6 @@ hr {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(32px);
   transition: border-color 0.15s;
 }
 .conn-row:hover { border-color: rgba(255, 255, 255, 0.25); }
@@ -408,9 +405,9 @@ hr {
   font-size: 10px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--bz-fg-low);
 }
-.conn-row__time { color: rgba(255, 255, 255, 0.5); }
+.conn-row__time { color: var(--bz-fg-low); }
 .conn-row__actions { display: flex; align-items: center; }
 
 /* ───────── Catalog grid ───────── */
@@ -431,11 +428,10 @@ hr {
   flex-direction: column;
   align-items: center;
   gap: 0.3em;
-  color: #fff;
-  backdrop-filter: blur(32px);
+  color: var(--bz-fg);
 }
 .conn-catalog__tile:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: var(--bz-fg-faint);
   background: rgba(97, 55, 142, 0.18);
 }
 .conn-catalog__tile:disabled { opacity: 0.35; cursor: not-allowed; }
@@ -450,7 +446,6 @@ hr {
 .conn-auth-overlay {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(8px);
   z-index: 9999;
   display: flex; align-items: center; justify-content: center;
   padding: 2em;
@@ -460,9 +455,8 @@ hr {
   padding: 2em 2.5em !important;
   background: var(--bz-scrim-strong) !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
-  backdrop-filter: blur(32px) !important;
   border-radius: 8px !important;
-  color: #fff;
+  color: var(--bz-fg);
 }
 .conn-auth__head {
   display: flex; justify-content: space-between; align-items: flex-start;
@@ -492,7 +486,6 @@ hr {
   background: var(--bz-scrim) !important;
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
   color: #fff !important;
-  backdrop-filter: blur(32px) !important;
 }
 :deep(.input::placeholder) {
   color: rgba(255, 255, 255, 0.4) !important;

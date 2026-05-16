@@ -6,6 +6,7 @@
         class="bz-picker"
         role="dialog"
         aria-modal="true"
+        aria-labelledby="bz-picker-title"
         @click.self="close"
       >
         <div class="bz-picker__shell">
@@ -13,7 +14,7 @@
           <header class="bz-picker__header">
             <div class="bz-picker__heading">
               <p class="bz-eyebrow">Local model</p>
-              <h1 class="bz-display">Choose your engine.</h1>
+              <h1 id="bz-picker-title" class="bz-display">Choose your engine.</h1>
               <p class="bz-picker__subhead bz-meta">
                 Ranked by how comfortably each model fits the hardware
                 you have right now. The highlighted row is the engine
@@ -57,9 +58,11 @@
               <span class="material-symbols-outlined bz-search__icon">search</span>
               <input
                 v-model="search"
+                ref="searchInputRef"
                 type="text"
                 class="bz-search__input"
                 placeholder="Filter by name, family, or quant…"
+                aria-label="Filter models"
               />
               <span class="bz-search__count bz-mono bz-meta">
                 {{ visibleModels.length }} / {{ allModels.length }}
@@ -69,8 +72,10 @@
               <button
                 v-for="t in tierFilters"
                 :key="t.tier"
+                type="button"
                 class="bz-chip"
                 :class="{ 'bz-chip--on': activeTiers.has(t.tier) }"
+                :aria-pressed="activeTiers.has(t.tier) ? 'true' : 'false'"
                 @click="toggleTier(t.tier)"
               >
                 <span class="bz-chip__dot" :class="`bz-chip__dot--t${t.tier}`"></span>
@@ -104,10 +109,18 @@
                   class="bz-row"
                   :class="{
                     'bz-row--current': currentFilename === model.filename,
+                    'bz-row--highlighted': activeFilename === model.filename,
                     'bz-row--unfit':   model.fitTier === 3,
                     'bz-row--ready':   availability[model.filename],
                   }"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="rowAriaLabel(model)"
+                  :aria-current="currentFilename === model.filename ? 'true' : undefined"
+                  @focus="setActiveModel(model)"
                   @click="onActivate(model)"
+                  @keydown.enter.prevent="onActivate(model)"
+                  @keydown.space.prevent="onActivate(model)"
                 >
                   <!-- Status dot (left) -->
                   <span
@@ -152,20 +165,23 @@
 
                     <button
                       v-else-if="!availability[model.filename]"
+                      type="button"
                       class="bz-btn bz-btn--ghost"
                       :class="{ 'bz-btn--running': downloading[model.filename] != null }"
-                      :disabled="downloading[model.filename] != null"
-                      @click.stop="onDownload(model)"
+                      :aria-busy="downloading[model.filename] != null ? 'true' : 'false'"
+                      @click.stop="downloading[model.filename] != null ? onCancelDownload(model) : onDownload(model)"
                     >
                       <template v-if="downloading[model.filename] != null">
                         <span class="bz-mono">{{ downloading[model.filename] }}%</span>
                         <span class="bz-btn__progress bz-generating"></span>
+                        <span>Cancel</span>
                       </template>
-                      <template v-else>Download</template>
+                      <template v-else>{{ downloadErrors[model.filename] ? "Retry" : "Download" }}</template>
                     </button>
 
                     <button
                       v-else
+                      type="button"
                       class="bz-btn bz-btn--primary"
                       :disabled="loading[model.filename] || model.fitTier === 3"
                       @click.stop="onLoad(model)"
@@ -176,6 +192,7 @@
                     <!-- Delete is one click away, never primary. -->
                     <button
                       v-if="availability[model.filename] && currentFilename !== model.filename"
+                      type="button"
                       class="bz-iconbtn bz-row__delete"
                       @click.stop="onDelete(model)"
                       title="Remove downloaded weights"
@@ -208,7 +225,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, reactive } from "vue";
+import { ref, computed, nextTick, onMounted, onUnmounted, watch, reactive } from "vue";
 import { listAllLLMs } from "../skills/flagship.js";
 import { modelStore } from "../stores/modelStore.js";
 import { modelPicker } from "../services/modelPicker.service.js";
@@ -233,9 +250,12 @@ const fetchSysInfo = async () => {
 // LIST + GROUPING
 // ─────────────────────────────────────────────────────────────────────
 const search = ref("");
+const searchInputRef = ref(null);
 const availability = reactive({});
 const downloading = reactive({});
+const downloadErrors = reactive({});
 const loading = reactive({});
+const activeIndex = ref(0);
 const currentFilename = computed(() => modelStore.state.current?.filename || null);
 
 const TIER_LABEL = {
@@ -307,6 +327,18 @@ const visibleGroups = computed(() => {
     .map(([tier, models]) => ({ tier, label: TIER_LABEL[tier], models }));
 });
 
+const activeModel = computed(() => visibleModels.value[activeIndex.value] || null);
+const activeFilename = computed(() => activeModel.value?.filename || null);
+
+function clampActiveIndex() {
+  const max = visibleModels.value.length - 1;
+  if (max < 0) {
+    activeIndex.value = 0;
+    return;
+  }
+  activeIndex.value = Math.min(Math.max(activeIndex.value, 0), max);
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // FORMATTING — keep monospace + locale-aware where it counts
 // ─────────────────────────────────────────────────────────────────────
@@ -338,8 +370,21 @@ const rowStatusClass = (model) => ({
 const rowStatusTitle = (model) => {
   if (currentFilename.value === model.filename) return "Currently loaded";
   if (availability[model.filename]) return "Downloaded · ready to load";
+  if (downloading[model.filename] != null) return `Downloading ${downloading[model.filename]} percent`;
   if (model.fitTier === 3) return model.fitReason;
+  if (downloadErrors[model.filename]) return "Download failed · retry available";
   return "Available to download";
+};
+
+const rowAriaLabel = (model) => {
+  const status = rowStatusTitle(model);
+  return `${model.modelname}. ${model.filesize || "Unknown size"}. ${vramOf(model)} VRAM. ${model.fitLabel}. ${status}.`;
+};
+
+const downloadSucceeded = (result) => {
+  if (result === true) return true;
+  if (!result || result.canceled || result.error) return false;
+  return !!result.savedPath;
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -360,12 +405,26 @@ let _unsubProgress = null;
 async function onDownload(model) {
   if (!window.electronAPI?.downloadModel) return;
   downloading[model.filename] = 0;
+  delete downloadErrors[model.filename];
   try {
-    const ok = await window.electronAPI.downloadModel(model.url, model.filename);
-    if (ok) availability[model.filename] = true;
+    const result = await window.electronAPI.downloadModel(model.url, model.filename);
+    if (downloadSucceeded(result)) {
+      availability[model.filename] = true;
+    } else if (result?.canceled) {
+      downloadErrors[model.filename] = "Canceled";
+    } else {
+      downloadErrors[model.filename] = result?.error || "Download failed";
+    }
+  } catch (error) {
+    downloadErrors[model.filename] = error?.message || "Download failed";
   } finally {
     delete downloading[model.filename];
   }
+}
+
+async function onCancelDownload(model) {
+  if (!window.electronAPI?.cancelModelDownload) return;
+  await window.electronAPI.cancelModelDownload(model.filename);
 }
 
 async function onLoad(model) {
@@ -402,8 +461,14 @@ async function onDelete(model) {
 function onActivate(model) {
   if (model.fitTier === 3) return;
   if (currentFilename.value === model.filename) return;
+  if (downloading[model.filename] != null) return;
   if (availability[model.filename]) onLoad(model);
   else if (downloading[model.filename] == null) onDownload(model);
+}
+
+function setActiveModel(model) {
+  const idx = visibleModels.value.findIndex((m) => m.filename === model.filename);
+  if (idx >= 0) activeIndex.value = idx;
 }
 
 function close() {
@@ -412,12 +477,26 @@ function close() {
 
 function onKey(e) {
   if (!modelPicker.state.open) return;
-  if (e.key === "Escape") close();
-  else if (e.key === "Enter") {
-    const first = visibleModels.value.find(
-      (m) => m.fitTier !== 3 && currentFilename.value !== m.filename,
-    );
-    if (first) onActivate(first);
+  if (e.key === "Escape") {
+    e.preventDefault();
+    close();
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    activeIndex.value = Math.min(activeIndex.value + 1, visibleModels.value.length - 1);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    activeIndex.value = Math.max(activeIndex.value - 1, 0);
+  } else if (e.key === "Home") {
+    e.preventDefault();
+    activeIndex.value = 0;
+  } else if (e.key === "End") {
+    e.preventDefault();
+    activeIndex.value = Math.max(visibleModels.value.length - 1, 0);
+  } else if (e.key === "Enter") {
+    const tag = document.activeElement?.tagName?.toLowerCase();
+    if (tag === "button" || tag === "textarea" || tag === "select") return;
+    e.preventDefault();
+    if (activeModel.value) onActivate(activeModel.value);
   }
 }
 
@@ -431,8 +510,12 @@ watch(
     fetchSysInfo();
     setTimeout(fetchSysInfo, 1500);
     refreshAvailability();
+    activeIndex.value = 0;
+    nextTick(() => searchInputRef.value?.focus?.());
   },
 );
+
+watch(visibleModels, clampActiveIndex);
 
 onMounted(() => {
   window.addEventListener("keydown", onKey);
@@ -656,6 +739,12 @@ onUnmounted(() => {
   background: var(--bz-raised);
   border-color: var(--bz-border-strong);
 }
+.bz-row:focus-visible,
+.bz-row--highlighted {
+  outline: none;
+  border-color: var(--bz-border-brand);
+  box-shadow: 0 0 0 1px var(--bz-border-brand);
+}
 .bz-row--current {
   border-color: var(--bz-border-brand);
   background: var(--bz-purple-soft);
@@ -724,7 +813,7 @@ onUnmounted(() => {
   gap: var(--bz-space-2);
   padding: 6px var(--bz-space-3);
   background: var(--bz-gradient-brand);
-  color: #fff;
+  color: var(--bz-fg);
   border-radius: var(--bz-r-pill);
   font-size: var(--bz-size-micro);
   letter-spacing: var(--bz-track-eyebrow);
@@ -766,7 +855,7 @@ onUnmounted(() => {
 .bz-btn--primary {
   background: var(--bz-gradient-brand);
   border-color: transparent;
-  color: #fff;
+  color: var(--bz-fg);
 }
 .bz-btn--primary:hover:not(:disabled) {
   filter: brightness(1.08);

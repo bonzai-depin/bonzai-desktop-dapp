@@ -4,49 +4,36 @@
     <div class="models__deployment-install">
       <div class="columns">
         <div class="column is-12">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
+          <header class="bz-screen-header">
+            <div class="bz-screen-titleblock">
+              <p class="bz-eyebrow">Create</p>
+                <h1 class="bz-h1 fira-sans-condensed-black-italic">
                   <span
-                    class="material-symbols-outlined mr-2"
-                    style="font-size: 92px !important"
+                    class="material-symbols-outlined bz-title-icon"
+                    aria-hidden="true"
                   >
                     movie
                   </span>
                   Generative Video
                 </h1>
-              </div>
             </div>
-          </div>
+          </header>
 
           <!-- GENERATION PROGRESS -->
           <div
             v-if="generation && generation.active"
-            class="generation notification is-info"
-            style="margin-bottom: 1rem"
+            class="video-progress-card"
           >
-            <p class="mb-2">
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                <button
-                  disabled
-                  class="button is-loading is-info is-small mr-2 p-4"
-                ></button>
+            <div class="video-progress-card__head">
+              <span class="video-progress-card__title fira-sans-condensed-black-italic">
+                <BonzaiPulse variant="dot" />
                 Crafting...
               </span>
-              <span
-                class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
-              >
+              <span class="video-progress-card__pct fira-sans-condensed-black-italic">
                 {{ generationPctRounded }}%
               </span>
-            </p>
-            <progress
-              class="progress is-success"
-              :value="generationPctClamped"
-              max="100"
-            >
-              {{ generationPctRounded }}%
-            </progress>
+            </div>
+            <BonzaiPulse variant="bar" :percent="generationPctClamped" />
           </div>
 
           <div class="models__activity--payouts">
@@ -64,132 +51,48 @@
                   </label>
                 </div> -->
 
-                <!-- MODE / DURATION / FPS / RESOLUTION OPTIONS -->
-                <div class="control mb-5 has-text-left">
-                  <template v-if="videoModel === 'fast'">
-                  <input
-                    v-model="mode"
-                    :value="'t2v'"
-                    id="video_mode_t2v"
-                    type="radio"
-                    name="video_mode"
-                  />
-                  <label for="video_mode_t2v" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      text_fields
-                    </span>
-                    From Prompt
-                  </label>
-                  <input
-                    v-model="mode"
-                    :value="'i2v'"
-                    id="video_mode_i2v"
-                    type="radio"
-                    name="video_mode"
-                    checked
-                  />
-                  <label for="video_mode_i2v" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      image
-                    </span>
-                    From Image
-                  </label>
-                  </template>
+                <div class="video-control-stack">
+                  <div v-if="videoModel === 'fast'" class="video-control-row">
+                    <span class="bz-eyebrow">Mode</span>
+                    <ModeChipBar v-model="mode" :items="videoModeItems" compact />
+                  </div>
+                  <div v-else class="video-control-row">
+                    <span class="bz-eyebrow">Mode</span>
+                    <span class="bz-pill">Image to video only</span>
+                  </div>
+                  <div class="video-control-row">
+                    <span class="bz-eyebrow">Duration</span>
+                    <ModeChipBar v-model="duration" :items="durationItems" compact />
+                  </div>
+                  <div class="video-control-row">
+                    <span class="bz-eyebrow">FPS</span>
+                    <ModeChipBar
+                      v-if="videoModel === 'fast'"
+                      v-model="fps"
+                      :items="fpsItems"
+                      compact
+                    />
+                    <ModeChipBar
+                      v-else
+                      v-model="wanFps"
+                      :items="wanFpsItems"
+                      compact
+                    />
+                  </div>
+                  <div class="video-control-row">
+                    <span class="bz-eyebrow">Resolution</span>
+                    <ModeChipBar v-model="quality" :items="qualityItems" compact />
+                  </div>
 
-                  <template v-if="videoModel === 'quality'">
-                  <span class="tag is-info is-light">Image-to-Video only</span>
-                  </template>
-
-                  <!-- DURATION TOGGLES -->
-                  <span class="control">
-                    <template v-if="videoModel === 'quality'">
-                      <input v-model="duration" :value="2" id="video_duration_2s" type="radio" name="video_duration" />
-                      <label for="video_duration_2s" class="radio duration">2s</label>
-                      <input v-model="duration" :value="3" id="video_duration_3s" type="radio" name="video_duration" />
-                      <label for="video_duration_3s" class="radio duration">3s</label>
-                      <input v-model="duration" :value="5" id="video_duration_5s_q" type="radio" name="video_duration" checked />
-                      <label for="video_duration_5s_q" class="radio duration">5s</label>
-                    </template>
-                    <template v-else>
-                      <input v-model="duration" :value="5" id="video_duration_5s" type="radio" name="video_duration" checked />
-                      <label for="video_duration_5s" class="radio duration">5s</label>
-                      <input v-model="duration" :value="10" id="video_duration_10s" type="radio" name="video_duration" />
-                      <label for="video_duration_10s" class="radio duration">10s</label>
-                    </template>
-                  </span>
-
-                  <!-- FPS (fixed 16fps for Wan2.2, selectable for LTX-2) -->
-                  <span v-if="videoModel === 'fast'" class="control">
-                    <input v-model="fps" :value="12" id="video_fps_12" type="radio" name="video_fps" checked />
-                    <label for="video_fps_12" class="radio fps">12fps</label>
-                    <input v-model="fps" :value="24" id="video_fps_24" type="radio" name="video_fps" />
-                    <label for="video_fps_24" class="radio fps">24fps</label>
-                    <input v-model="fps" :value="48" id="video_fps_48" type="radio" name="video_fps" />
-                    <label for="video_fps_48" class="radio fps">48fps</label>
-                  </span>
-                  <span v-else class="control">
-                    <input v-model="wanFps" :value="8" id="wan_fps_8" type="radio" name="wan_fps" />
-                    <label for="wan_fps_8" class="radio fps">8fps</label>
-                    <input v-model="wanFps" :value="16" id="wan_fps_16" type="radio" name="wan_fps" checked />
-                    <label for="wan_fps_16" class="radio fps">16fps</label>
-                  </span>
-
-                  <!-- RESOLUTION TOGGLES (real resolutions shown for quality mode) -->
-                  <span class="control resolution-toggles">
-                    <template v-if="videoModel === 'quality'">
-                      <!-- 240p Draft is intentionally tiny so iteration on
-                           prompt / framing / negative-prompt tweaks
-                           takes ~2-3min on M3 Max instead of 10+. -->
-                      <input v-model="quality" value="240p" id="vq_240" type="radio" name="video_quality" />
-                      <label for="vq_240" class="radio quality">240×240 (Draft)</label>
-                      <input v-model="quality" value="320x240" id="vq_320x240" type="radio" name="video_quality" />
-                      <label for="vq_320x240" class="radio quality">320×240</label>
-                      <input v-model="quality" value="640x480" id="vq_640x480" type="radio" name="video_quality" checked />
-                      <label for="vq_640x480" class="radio quality">640×480</label>
-                      <input v-model="quality" value="480p" id="vq_480" type="radio" name="video_quality" />
-                      <label for="vq_480" class="radio quality">320×512</label>
-                      <input v-model="quality" value="540p" id="vq_540" type="radio" name="video_quality" />
-                      <label for="vq_540" class="radio quality">384×672</label>
-                      <input v-model="quality" value="720p" id="vq_720" type="radio" name="video_quality" />
-                      <label for="vq_720" class="radio quality">480×832</label>
-                      <input v-model="quality" value="1080p" id="vq_1080" type="radio" name="video_quality" />
-                      <label for="vq_1080" class="radio quality mr-0">576×1024</label>
-                    </template>
-                    <template v-else>
-                      <input v-model="quality" value="480p" id="video_quality_480p" type="radio" name="video_quality" checked />
-                      <label for="video_quality_480p" class="radio quality">480p</label>
-                      <input v-model="quality" value="540p" id="video_quality_540p" type="radio" name="video_quality" />
-                      <label for="video_quality_540p" class="radio quality">540p</label>
-                      <input v-model="quality" value="720p" id="video_quality_720p" type="radio" name="video_quality" />
-                      <label for="video_quality_720p" class="radio quality">720p</label>
-                      <input v-model="quality" value="1080p" id="video_quality_1080p" type="radio" name="video_quality" />
-                      <label for="video_quality_1080p" class="radio quality mr-0">1080p</label>
-                    </template>
-                  </span>
-
-                  <!-- AUTO-ENHANCE TOGGLE (Wan/quality only) -->
-                  <span v-if="videoModel === 'quality'" class="control">
-                    <input v-model="autoEnhance" id="video_auto_enhance" type="checkbox" />
-                    <label for="video_auto_enhance" class="radio quality" :title="'After generation, run Real-ESRGAN x4 + RIFE 4x. Adds 2-4 min.'">
-                      Auto-enhance ×4
-                    </label>
-                  </span>
                 </div>
 
                 <!-- READINESS CTA -->
                 <div
                   v-if="showUpdateCTA"
-                  class="notification is-danger mb-6 mt-6 p-6"
-                  style="margin-bottom: 1rem"
+                  class="video-notice video-notice--danger"
                 >
-                  <p class="mb-2">
-                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                  <div class="video-notice__body">
+                    <strong class="video-notice__title fira-sans-condensed-black-italic">
                       Download Required
                     </strong>
                     <span v-if="readiness.missingRepos.length">
@@ -216,59 +119,45 @@
                         </li>
                       </ul>
                     </span>
-                  </p>
-                  <hr />
-                  <div class="buttons">
-                    <button
-                      class="button is-warning mr-5 is-large"
-                      @click="prefetchForMode"
-                      :disabled="downloads.active || readiness.authRequired"
-                      title="(Re)download required files"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        download
-                      </span>
-                      Download Now
-                    </button>
                   </div>
+                  <button
+                    class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                    @click="prefetchForMode"
+                    :disabled="downloads.active || readiness.authRequired"
+                    title="(Re)download required files"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">
+                      download
+                    </span>
+                    Download Now
+                  </button>
                 </div>
 
                 <!-- GENERATION ERROR -->
                 <div
                   v-else-if="generation && generation.error"
-                  class="notification is-danger"
-                  style="margin-bottom: 1rem"
+                  class="video-notice video-notice--danger"
                 >
-                  <strong>Generation failed.</strong>
-                  {{ generation.error }}
+                  <div class="video-notice__body">
+                    <strong class="video-notice__title fira-sans-condensed-black-italic">Generation failed</strong>
+                    <span>{{ generation.error }}</span>
+                  </div>
                 </div>
                 <!-- DOWNLOAD PROGRESS -->
                 <div
                   v-if="downloads && downloads.active"
-                  class="notification is-info p-6"
-                  style="margin-bottom: 1.25rem"
+                  class="video-progress-card"
                 >
-                  <p class="mb-2">
-                    <span class="fira-sans-condensed-black-italic is-size-4">
+                  <div class="video-progress-card__head">
+                    <span class="video-progress-card__title fira-sans-condensed-black-italic">
+                      <BonzaiPulse variant="dot" />
                       Downloading
-                      <button
-                        disabled
-                        class="button is-loading is-info is-small mr-2 p-4"
-                      ></button>
                     </span>
-                    <span
-                      class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
-                    >
+                    <span class="video-progress-card__pct fira-sans-condensed-black-italic">
                       {{ Math.round(downloads.total_progress || 0) }}%
                     </span>
-                  </p>
-                  <progress
-                    class="progress is-success is-large"
-                    :value="downloads.progress || 0"
-                    max="100"
-                  >
-                    {{ Math.round(downloads.progress || 0) }}%
-                  </progress>
+                  </div>
+                  <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
                   <div
                     v-if="downloadTaskList.length"
                     style="max-height: 180px; overflow: auto"
@@ -299,7 +188,7 @@
                 </div>
 
                 <!-- IMAGE PICKER (only for I2V mode) -->
-                <div v-if="mode === 'i2v'" class="notification p4 preview">
+                <div v-if="mode === 'i2v'" class="bz-card-shell preview">
                   <div class="file is-fullwidth is-medium">
                     <label class="file-label">
                       <input
@@ -357,11 +246,8 @@
             <div class="level pt-5 mt-5">
               <div class="level-left">
                 <div class="level-item">
-                  <h2
-                    class="fira-sans-condensed-black-italic has-text-left mt-0 is-size-1 has-text-white"
-                    v-if="inferences"
-                  >
-                    <span class="material-symbols-outlined is-size-1 mr-2">
+                  <h2 class="bz-h2 fira-sans-condensed-black-italic" v-if="inferences">
+                    <span class="material-symbols-outlined bz-section-icon">
                       history
                     </span>
                     Generation History
@@ -371,25 +257,25 @@
               <div class="level-right">
                 <div class="level-item buttons">
                   <button
-                    class="button is-warning is-small"
+                    class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                     @click="importHistory()"
                   >
-                    <span class="material-symbols-outlined mr-2">upload</span>
+                    <span class="material-symbols-outlined" aria-hidden="true">upload</span>
                     Import
                   </button>
                   <button
-                    class="button is-warning is-small ml-4"
+                    class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                     @click="exportHistory()"
                     :disabled="!inferences || inferences.length === 0"
                   >
-                    <span class="material-symbols-outlined mr-2">download</span>
+                    <span class="material-symbols-outlined" aria-hidden="true">download</span>
                     Export
                   </button>
                   <button
-                    class="button is-danger is-small ml-4"
+                    class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
                     @click="clearHistory()"
                   >
-                    <span class="material-symbols-outlined mr-2">
+                    <span class="material-symbols-outlined" aria-hidden="true">
                       ink_eraser
                     </span>
                     Clear
@@ -399,38 +285,52 @@
             </div>
             <div class="mt-5">
               <!-- GENERATION HISTORY HEADER -->
-              <div class="columns">
-                <!-- RESULTS -->
-                <ol class="chat" v-if="inferences && inferences.length">
+              <div>
+                <div
+                  v-if="inferences && inferences.length"
+                  ref="masonryGridRef"
+                  class="bz-video-masonry"
+                  :style="{ '--bz-video-masonry-columns': masonryColumns.length }"
+                >
+                <ol
+                  v-for="(column, columnIndex) in masonryColumns"
+                  :key="columnIndex"
+                  class="bz-video-masonry__column"
+                >
                   <li
-                    v-for="(inference, displayIndex) in paginatedInferences"
-                    :key="inference.id || inference._originalIndex"
+                    v-for="entry in column"
+                    :key="entry.inference.id || entry.inference._originalIndex"
                     class="history-item"
                     :style="{
-                      animationDelay: `${Math.min(displayIndex * 50, 500)}ms`,
+                      animationDelay: `${Math.min(entry.displayIndex * 35, 240)}ms`,
                     }"
                   >
                     <div class="question">
                       <!-- Video Player - UPDATED: Use HTTP streaming URL -->
                       <video
-                        v-if="getVideoUrl(inference)"
-                        :src="getVideoUrl(inference)"
+                        v-if="getVideoUrl(entry.inference)"
+                        :src="getVideoUrl(entry.inference)"
                         controls
                         class="generated__video"
+                        preload="metadata"
+                        playsinline
+                        :style="videoAspectStyle(entry.inference)"
                       ></video>
-                      <div class="bz-img-meta" v-if="inference.networkMode && inference.networkMode !== 'local'">
-                        <span class="bz-origin-pill" :class="`bz-origin-pill--${inference.networkMode}`">
+                      <div class="bz-img-meta" v-if="entry.inference.networkMode && entry.inference.networkMode !== 'local'">
+                        <span class="bz-origin-pill" :class="`bz-origin-pill--${entry.inference.networkMode}`">
                           <span class="bz-origin-pill__dot"></span>
-                          {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
+                          {{ entry.inference.networkMode === 'private' ? 'Private' : 'Remote' }}
                         </span>
                       </div>
                       <GenerativeActions
-                        :actions="actionsFor(inference)"
-                        @action="(id) => handleAction(id, inference)"
+                        :actions="actionsFor(entry.inference)"
+                        icon-only
+                        @action="(id) => handleAction(id, entry.inference)"
                       />
                     </div>
                   </li>
                 </ol>
+                </div>
 
                 <!-- LAZY LOAD SENTINEL -->
                 <div
@@ -458,6 +358,26 @@
     @close="mintTarget = null"
     @minted="onMinted"
   />
+
+  <Transition name="bz-image-toast">
+    <div
+      v-if="pendingDelete"
+      class="bz-image-delete-toast"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+      <span class="bz-image-delete-toast__body">
+        {{ pendingDelete.all ? 'Clear video history?' : 'Delete this video?' }}
+      </span>
+      <button type="button" class="bz-image-delete-toast__ghost" @click="dismissDeleteToast">
+        Cancel
+      </button>
+      <button type="button" class="bz-image-delete-toast__danger" @click="confirmDeleteVideo">
+        {{ pendingDelete.all ? 'Clear' : 'Delete' }}
+      </button>
+    </div>
+  </Transition>
 </template>
 
 <script>
@@ -466,6 +386,7 @@ import {
   reactive,
   shallowRef,
   computed,
+  nextTick,
   onMounted,
   onBeforeUnmount,
   watch,
@@ -478,10 +399,13 @@ import { io } from "socket.io-client";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import BonzaiPulse from "./BonzaiPulse.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
+import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addVideoInference } from "../stores/inferenceStore.js";
+import { inspector } from "../services/generationInspector.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -527,7 +451,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
-  components: { AccessRequirements, MintModal, GenerativeActions, GenerativeInput },
+  components: { AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput, ModeChipBar },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const { inferenceRequest } = useInferenceRouter();
@@ -586,8 +510,61 @@ export default {
     // Auto-enhance: chain /video/enhance (Real-ESRGAN x4 + RIFE 4x) after
     // /video/quality completes. Default off — adds 2-4 min per generation.
     const autoEnhance = ref(false);
+    const videoModeItems = [
+      { value: "t2v", label: "From Prompt", icon: "text_fields" },
+      { value: "i2v", label: "From Image", icon: "image" },
+    ];
+    const fastDurationItems = [
+      { value: 5, label: "5s" },
+      { value: 10, label: "10s" },
+      { value: 15, label: "15s" },
+      { value: 30, label: "30s" },
+      { value: 60, label: "60s" },
+    ];
+    const qualityDurationItems = [
+      { value: 2, label: "2s" },
+      { value: 3, label: "3s" },
+      { value: 5, label: "5s" },
+      { value: 10, label: "10s" },
+      { value: 15, label: "15s" },
+      { value: 30, label: "30s" },
+      { value: 60, label: "60s" },
+    ];
+    const fpsItems = [
+      { value: 12, label: "12fps" },
+      { value: 24, label: "24fps" },
+      { value: 48, label: "48fps" },
+    ];
+    const wanFpsItems = [
+      { value: 8, label: "8fps" },
+      { value: 16, label: "16fps" },
+      { value: 24, label: "24fps" },
+    ];
+    const fastQualityItems = [
+      { value: "480p", label: "480p" },
+      { value: "540p", label: "540p" },
+      { value: "720p", label: "720p" },
+      { value: "1080p", label: "1080p" },
+    ];
+    const qualityQualityItems = [
+      { value: "240p", label: "240px" },
+      { value: "320x240", label: "320x240" },
+      { value: "480p", label: "320x512" },
+      { value: "540p", label: "384x672" },
+      { value: "640x480", label: "640x480" },
+      { value: "720p", label: "480x832" },
+      { value: "1080p", label: "576x1024" },
+    ];
+    const durationItems = computed(() =>
+      videoModel.value === "quality" ? qualityDurationItems : fastDurationItems,
+    );
+    const qualityItems = computed(() =>
+      videoModel.value === "quality" ? qualityQualityItems : fastQualityItems,
+    );
     const isLoading = ref(false);
     const form = reactive({ prompt: "" });
+    const pendingDelete = ref(null);
+    let pendingDeleteTimer = null;
     // Use shallowRef for inferences - video data is large
     const inferences = shallowRef([]);
     const hasCopy = shallowRef([]);
@@ -597,9 +574,12 @@ export default {
     const ITEMS_PER_PAGE = 5;
     const displayedCount = ref(ITEMS_PER_PAGE);
     const loadMoreSentinel = ref(null);
+    const masonryGridRef = ref(null);
+    const masonryColumnCount = ref(3);
     const isLoadingMore = ref(false);
     const showScrollTop = ref(false);
     const scrollContainer = ref(null);
+    let masonryGridResizeObserver = null;
 
     // Get video path from any format
     const getVideoPath = (item) => {
@@ -666,9 +646,75 @@ export default {
       return reversedInferences.value.slice(0, displayedCount.value);
     });
 
+    const estimateVideoRatio = (inference) => {
+      const data = inference?.answer?.data || {};
+      const width = Number(data.width || data.video_width || inference?.width || 0);
+      const height = Number(data.height || data.video_height || inference?.height || 0);
+      if (width > 0 && height > 0) return height / width;
+      const q = String(data.quality || inference?.quality || quality.value || "");
+      if (/1080|720|540|480p/i.test(q)) return 9 / 16;
+      if (/640x480|320x240/i.test(q)) return 3 / 4;
+      if (/240x240/i.test(q)) return 1;
+      return 9 / 16;
+    };
+
+    const videoAspectStyle = (inference) => {
+      const data = inference?.answer?.data || {};
+      const width = Number(data.width || data.video_width || inference?.width || 0);
+      const height = Number(data.height || data.video_height || inference?.height || 0);
+      if (width > 0 && height > 0) return { aspectRatio: `${width} / ${height}` };
+      const ratio = estimateVideoRatio(inference);
+      if (ratio > 0) return { aspectRatio: `1 / ${ratio}` };
+      return null;
+    };
+
+    const masonryColumns = computed(() => {
+      const count = Math.max(
+        1,
+        Math.min(masonryColumnCount.value, paginatedInferences.value.length || 1),
+      );
+      const columns = Array.from({ length: count }, () => []);
+      const heights = Array.from({ length: count }, () => 0);
+
+      paginatedInferences.value.forEach((inference, displayIndex) => {
+        const firstOpenColumn = columns.findIndex((column) => column.length === 0);
+        const columnIndex = firstOpenColumn >= 0
+          ? firstOpenColumn
+          : heights.indexOf(Math.min(...heights));
+
+        columns[columnIndex].push({ inference, displayIndex });
+        heights[columnIndex] += estimateVideoRatio(inference) + 0.16;
+      });
+
+      return columns;
+    });
+
+    const updateMasonryColumnCount = () => {
+      const width =
+        masonryGridRef.value?.clientWidth ||
+        document.querySelector(".models__deployment-install")?.clientWidth ||
+        window.innerWidth;
+      const nextCount = width >= 1320 ? 3 : width >= 860 ? 2 : 1;
+      if (masonryColumnCount.value !== nextCount) {
+        masonryColumnCount.value = nextCount;
+      }
+    };
+
+    const setupMasonryGridObserver = () => {
+      masonryGridResizeObserver?.disconnect();
+      masonryGridResizeObserver = null;
+
+      nextTick(() => {
+        updateMasonryColumnCount();
+        if (!masonryGridRef.value) return;
+        masonryGridResizeObserver = new ResizeObserver(updateMasonryColumnCount);
+        masonryGridResizeObserver.observe(masonryGridRef.value);
+      });
+    };
+
     // Check if there are more items to load
     const hasMore = computed(
-      () => displayedCount.value < inferences.value.length
+      () => displayedCount.value < reversedInferences.value.length
     );
 
     // Load more items
@@ -678,7 +724,7 @@ export default {
       setTimeout(() => {
         displayedCount.value = Math.min(
           displayedCount.value + ITEMS_PER_PAGE,
-          inferences.value.length
+          reversedInferences.value.length
         );
         isLoadingMore.value = false;
       }, 100);
@@ -1449,7 +1495,8 @@ export default {
     };
 
     const sendMessage = async (prompt) => {
-      if (!prompt) return;
+      const promptText = String(prompt || "").trim();
+      if (!promptText) return;
       // For i2v mode, require an image
       if (mode.value === "i2v" && !hasAnyImage.value) return;
       if (!hasAccess.value) return;
@@ -1496,7 +1543,7 @@ export default {
 
       const payload = isQuality
         ? {
-            prompt: prompt,
+            prompt: promptText,
             height: h,
             width: w,
             num_frames: frames,
@@ -1510,7 +1557,7 @@ export default {
           }
         : {
             mode: mode.value,
-            prompt: prompt,
+            prompt: promptText,
             height: h,
             width: w,
             frames: frames,
@@ -1542,7 +1589,18 @@ export default {
       const onSuccess = async (response) => {
         // UPDATED: Check for video_url OR video_path
         if (response?.data?.video_path || response?.data?.video_url) {
-          let finalData = response.data;
+          let finalData = {
+            ...response.data,
+            prompt: promptText,
+            mode: mode.value,
+            engine: isQuality ? "quality" : "fast",
+            quality: quality.value,
+            duration: duration.value,
+            fps: isQuality ? wanFps.value : frameRate,
+            frames,
+            width: response.data?.width || w,
+            height: response.data?.height || h,
+          };
 
           // Auto-enhance: only meaningful for /video/quality (Wan) since LTX
           // already produces higher-FPS output. Chain Real-ESRGAN x4 + RIFE 4x
@@ -1567,10 +1625,16 @@ export default {
 
           const elapsedMs = Date.now() - _genStart;
           const newInference = {
-            question: `${mode.value}-i2v`,
+            question: promptText,
             answer: { data: finalData },
             id: uuid(),
             model: isQuality ? 'wan2.2-14b' : 'ltx-2',
+            mode: mode.value,
+            quality: quality.value,
+            duration: duration.value,
+            fps: finalData.output_fps || finalData.fps,
+            width: finalData.width,
+            height: finalData.height,
             elapsedMs,
             networkMode: _lastRoutingMode,
           };
@@ -1579,12 +1643,16 @@ export default {
           persistInferences([...inferences.value]);
 
           addVideoInference(
-            `${mode.value}-i2v`,
+            promptText,
             finalData.video_path || finalData.video_url,
             {
               pipeline: pipelineForMode(),
               duration: duration.value,
-              fps: finalData.output_fps || fps.value,
+              fps: finalData.output_fps || finalData.fps,
+              mode: mode.value,
+              quality: quality.value,
+              width: finalData.width,
+              height: finalData.height,
               elapsed: elapsedMs / 1000,
               source: 'bonzai',
               networkMode: _lastRoutingMode,
@@ -1620,6 +1688,50 @@ export default {
       return "";
     };
 
+    const openInspector = (inference) => {
+      if (!inference) return;
+      const data = inference.answer?.data || {};
+      const mediaUrl = getVideoUrl(inference);
+      const promptText = inference.question || data.prompt || "";
+      const width = data.width || data.video_width || inference.width || null;
+      const height = data.height || data.video_height || inference.height || null;
+      const frameRate = data.fps || data.frame_rate || inference.fps || fps.value || wanFps.value;
+      const durationValue = data.duration || inference.duration || duration.value;
+      const modelName = inference.model || (videoModel.value === "quality" ? "Wan2.2" : "LTX-2");
+      const pipeline = inference.pipeline || data.pipeline || (videoModel.value === "quality" ? "video_quality" : "video_fast");
+
+      inspector.show({
+        id: inference.id,
+        kind: "video",
+        mediaUrl,
+        prompt: promptText,
+        negativePrompt: data.negative_prompt || inference.negativePrompt,
+        model: modelName,
+        modelId: inference.modelId || pipeline,
+        status: inference.error ? "Error" : "Complete",
+        errorMessage: inference.errorMessage || inference.error || "",
+        seed: data.seed || inference.seed,
+        steps: data.steps || inference.steps,
+        guidanceScale: data.guidance_scale || inference.guidanceScale,
+        ...(width && height ? { width, height } : {}),
+        networkMode: inference.networkMode || "local",
+        peerId: inference.peerId,
+        mintState: inference.nft || null,
+        ts: inference.timestamp || inference.ts,
+        createdAt: inference.createdAt,
+        extra: {
+          mode: mode.value === "i2v" ? "Image to video" : "Text to video",
+          engine: videoModel.value === "quality" ? "Quality" : "Fast",
+          quality: data.quality || inference.quality || quality.value,
+          duration: durationValue ? `${durationValue}s` : "",
+          fps: frameRate ? `${frameRate} fps` : "",
+          frames: data.num_frames || data.frames || "",
+          enhanced: data.enhanced ? "Yes" : "No",
+          videoPath: data.video_path || "",
+        },
+      });
+    };
+
     // Convert local path to streaming URL
     const fileUrl = (p) => {
       if (!p) return "";
@@ -1648,14 +1760,63 @@ export default {
       persistInferences([...inferences.value]);
     };
 
-    const clearHistory = async () => {
-      inferences.value = [];
-      hasCopy.value = [];
-      try {
-        await window.electronAPI?.store?.set?.("videoInferences", []);
-      } catch (e) {
-        console.error("Failed to clear video inferences:", e);
+    const clearDeleteToastTimer = () => {
+      if (!pendingDeleteTimer) return;
+      window.clearTimeout(pendingDeleteTimer);
+      pendingDeleteTimer = null;
+    };
+
+    const dismissDeleteToast = () => {
+      clearDeleteToastTimer();
+      pendingDelete.value = null;
+    };
+
+    const requestDeleteVideo = (inference) => {
+      if (!inference) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = {
+        id: inference.id,
+        index: inference._originalIndex,
+        all: false,
+      };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const requestClearHistory = () => {
+      if (!inferences.value.length) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = { all: true };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const confirmDeleteVideo = async () => {
+      const pending = pendingDelete.value;
+      if (!pending) return;
+      dismissDeleteToast();
+
+      if (pending.all) {
+        inferences.value = [];
+        hasCopy.value = [];
+        try {
+          await window.electronAPI?.store?.set?.("videoInferences", []);
+        } catch (e) {
+          console.error("Failed to clear video inferences:", e);
+        }
+        return;
       }
+
+      const idx = inferences.value.findIndex((item) => item.id === pending.id);
+      await removeInference(idx >= 0 ? idx : pending.index);
+    };
+
+    const clearHistory = async () => {
+      requestClearHistory();
     };
 
     const exportHistory = () => {
@@ -1746,6 +1907,7 @@ export default {
       await probeCurrentMode();
       // Setup scroll observer after DOM is rendered
       setTimeout(setupScrollObserver, 100);
+      setupMasonryGridObserver();
       // Attach scroll listener for scroll-to-top button
       const container = document.querySelector(".models__deployment-install");
       if (container) {
@@ -1782,10 +1944,15 @@ export default {
         scrollObserver.disconnect();
         scrollObserver = null;
       }
+      if (masonryGridResizeObserver) {
+        masonryGridResizeObserver.disconnect();
+        masonryGridResizeObserver = null;
+      }
       // Cleanup scroll listener
       if (scrollContainer.value) {
         scrollContainer.value.removeEventListener("scroll", handleScroll);
       }
+      clearDeleteToastTimer();
       // Note: generation socket is shared and managed by generationStore
     });
 
@@ -1805,16 +1972,23 @@ export default {
       duration.value = 5;
       quality.value = newModel === "quality" ? "640x480" : "480p";
       probeCurrentMode();
+      nextTick(setupMasonryGridObserver);
     });
+
+    watch(
+      () => paginatedInferences.value.length,
+      () => nextTick(setupMasonryGridObserver),
+    );
 
     // Unified action descriptors for the video history items, fed
     // into <GenerativeActions>. Replaces 5 inline Bulma buttons.
     const actionsFor = (inference) => {
-      const hasVideo = !!inference?.answer?.data?.video_path;
+      const hasVideo = !!getVideoUrl(inference);
       const enhanced = !!inference?.answer?.data?.enhanced;
       const enhancing = !!enhancingIds[inference.id];
       const minted = !!inference?.nft;
       return [
+        { id: "inspect", icon: "info", label: "Inspect", variant: "default", title: "Open inspector" },
         { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasVideo, title: "Save video" },
         { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",
           label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
@@ -1839,6 +2013,7 @@ export default {
     };
     const handleAction = (id, inference) => {
       switch (id) {
+        case "inspect":  openInspector(inference); break;
         case "download": downloadVideo(inference._originalIndex); break;
         case "copy":
           form.prompt = inference.question;
@@ -1848,7 +2023,7 @@ export default {
           break;
         case "enhance": enhanceInference(inference); break;
         case "mint":    openMint(inference); break;
-        case "delete":  removeInference(inference._originalIndex); break;
+        case "delete":  requestDeleteVideo(inference); break;
       }
     };
 
@@ -1860,15 +2035,23 @@ export default {
       fps,
       wanFps,
       autoEnhance,
+      videoModeItems,
+      durationItems,
+      fpsItems,
+      wanFpsItems,
+      qualityItems,
       form,
       isLoading,
       inferences,
       hasCopy,
       // lazy loading pagination
       paginatedInferences,
+      masonryGridRef,
+      masonryColumns,
       loadMoreSentinel,
       hasMore,
       isLoadingMore,
+      videoAspectStyle,
       // scroll to top
       showScrollTop,
       scrollToTop,
@@ -1896,6 +2079,9 @@ export default {
       setCopied,
       downloadVideo,
       removeInference,
+      pendingDelete,
+      dismissDeleteToast,
+      confirmDeleteVideo,
       actionsFor,
       handleAction,
       clearHistory,
@@ -1907,6 +2093,7 @@ export default {
       probeCurrentMode,
       fileUrl,
       getVideoUrl,
+      openInspector,
       // Network modal
       requestOpenNetworkModal,
       // NFT Minting
@@ -1922,9 +2109,47 @@ export default {
 </script>
 
 <style scoped>
+.video-control-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  margin-bottom: var(--bz-space-5);
+}
+
+h1.bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
+h2.bz-h2 {
+  font-size: var(--bz-size-h2) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
+.video-control-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-3);
+}
+
+.video-control-row > .bz-eyebrow {
+  flex: 0 0 88px;
+  margin: 0;
+  color: var(--bz-fg-mid);
+}
+
+.level-item.buttons {
+  gap: var(--bz-space-2);
+}
+
 /* Spinner for the Upscale CTA while /video/enhance is in flight */
 .is-rotating {
-  animation: spin 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
   display: inline-block;
 }
 @keyframes spin {
@@ -1932,15 +2157,67 @@ export default {
   to { transform: rotate(360deg); }
 }
 
-/* Fonts imported from App.vue for offline mode */
-.generation {
-  position: fixed;
-  width: 33%;
-  top: 1em;
-  right: 1em;
-  z-index: 1;
-  opacity: 0.9;
+.video-progress-card,
+.video-notice {
+  margin-bottom: 1rem;
+  padding: 14px 16px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
 }
+
+.video-progress-card__head,
+.video-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.video-progress-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.video-progress-card__pct {
+  color: var(--bz-fg);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.video-progress-card :deep(.bz-pulse-wrap--bar) {
+  margin-top: 12px;
+}
+
+.video-notice--danger {
+  border-color: color-mix(in srgb, var(--bz-danger) 42%, var(--bz-border));
+  background: var(--bz-danger-soft);
+}
+
+.video-notice__body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.video-notice__title {
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.video-notice ul {
+  margin: 0.5rem 0 0;
+  padding-left: 0;
+  list-style: none;
+  text-transform: lowercase;
+}
+
 .notification {
   padding: 1.25rem 1.5rem 1.25rem 1.5rem;
 }
@@ -1979,18 +2256,64 @@ export default {
   flex: 1;
   min-height: 0;
   width: 100%;
-  background: var(--bz-scrim-strong);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+}
+.models__deployment-install > .columns {
+  display: block;
+  margin: 0;
+}
+.models__deployment-install > .columns > .column {
+  width: 100%;
+  padding: 0 !important;
 }
 .models__activity--payouts {
-  padding: 4em;
+  padding: var(--bz-space-4);
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-  border-radius: 4px !important;
+  border-radius: var(--bz-r) !important;
+  background: var(--bz-card);
+  width: 100%;
+}
+.models__activity--payouts > .columns {
+  margin: 0;
+}
+.models__activity--payouts > .columns > .column {
+  padding: 0;
 }
 .models__activity--payouts h2 {
   font-size: 48px;
   color: var(--bz-fg);
   text-align: right;
+}
+.bz-screen-header .bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+}
+.bz-screen-header .bz-eyebrow {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  line-height: 1.2;
+  text-align: left;
+  font-weight: 400;
+  transform: none;
+}
+.bz-screen-header .bz-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 28px !important;
+}
+.bz-screen-header .bz-screen-subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
+  text-align: left;
+  font-weight: 400;
+  transform: none;
 }
 h1 {
   margin-top: 0 !important;
@@ -2033,7 +2356,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -2070,10 +2393,9 @@ input[type="radio"] + label {
   border-radius: 4px;
 }
 input[type="radio"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 label.radio.quality,
 label.radio.duration,
@@ -2123,6 +2445,86 @@ ol.chat li {
   min-height: 20px;
 }
 
+.bz-image-delete-toast {
+  position: fixed;
+  right: max(var(--bz-space-5), env(safe-area-inset-right));
+  bottom: max(var(--bz-space-5), env(safe-area-inset-bottom));
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  max-width: min(420px, calc(100vw - 32px));
+  padding: var(--bz-space-3);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  box-shadow: var(--bz-shadow-lg);
+  color: var(--bz-fg);
+}
+
+.bz-image-delete-toast .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-danger);
+}
+
+.bz-image-delete-toast__body {
+  min-width: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+}
+
+.bz-image-delete-toast__ghost,
+.bz-image-delete-toast__danger {
+  height: 30px;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-3);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+}
+
+.bz-image-delete-toast__ghost {
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+}
+
+.bz-image-delete-toast__ghost:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.bz-image-delete-toast__danger {
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
+  color: var(--bz-danger);
+  font-weight: 700;
+}
+
+.bz-image-delete-toast__danger:hover {
+  filter: brightness(1.08);
+}
+
+.bz-image-toast-enter-active,
+.bz-image-toast-leave-active {
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
+}
+
+.bz-image-toast-enter-from,
+.bz-image-toast-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.bz-image-toast-enter-to,
+.bz-image-toast-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* Scroll to top button */
 .scroll-to-top-btn {
   position: absolute;
@@ -2141,7 +2543,7 @@ ol.chat li {
   box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
-  animation: fadeInUp 0.3s ease-out;
+  animation: bz-rise 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
@@ -2170,105 +2572,107 @@ ol.chat li {
   }
 }
 
-/* ════════════════════════════════════════════════════════════════
-    Phase 3 — cinematic content-first (Runway-style).
-    Hero video is full-bleed edge-to-edge with metadata overlay.
-    History wraps into a 2-column grid with minimal chrome.
-    ════════════════════════════════════════════════════════════════ */
-
-ol.chat {
+.bz-video-masonry {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--bz-space-5);
-  list-style: none;
+  grid-template-columns: repeat(var(--bz-video-masonry-columns), minmax(0, 1fr));
+  gap: 12px;
   padding: 0;
   margin: var(--bz-space-5) 0;
 }
 
-/* Hero */
-ol.chat .history-item:first-child {
-  grid-column: 1 / -1;
-}
-ol.chat .history-item:first-child .question {
-  background: transparent;
-  border: none;
+.bz-video-masonry__column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
   padding: 0;
-  border-radius: 0;
-}
-ol.chat .history-item:first-child video {
-  max-height: 85vh;
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  display: block;
-  border-radius: var(--bz-r-sm);
-}
-/* Bottom scrim for overlay controls */
-ol.chat .history-item:first-child .question::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 120px;
-  background: var(--bz-content-scrim);
-  pointer-events: none;
-  border-radius: 0 0 var(--bz-r-sm) var(--bz-r-sm);
-}
-ol.chat .history-item:first-child .bz-img-meta {
-  position: absolute;
-  bottom: var(--bz-space-4);
-  left: var(--bz-space-4);
-  z-index: 1;
   margin: 0;
 }
-ol.chat .history-item:first-child .bz-gen-actions {
+
+.history-item {
+  min-width: 0;
+  animation: bz-fade-rise 480ms var(--bz-ease-out) forwards;
+  opacity: 0;
+  margin: 0;
+}
+
+.history-item .question {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-card);
+}
+
+.history-item .question::after {
+  content: "";
   position: absolute;
-  bottom: var(--bz-space-4);
-  right: var(--bz-space-4);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(46%, 148px);
+  background:
+    linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(0, 0, 0, 0.18) 34%,
+      rgba(0, 0, 0, 0.76) 100%
+    );
+  pointer-events: none;
   z-index: 1;
-  background: rgba(0, 0, 0, 0.55);
+}
+
+.generated__video {
+  width: 100%;
+  height: auto;
+  min-height: 180px;
+  display: block;
+  border-radius: 0;
+  background: var(--bz-canvas);
+  object-fit: contain;
+}
+
+.history-item .bz-gen-actions {
+  position: absolute;
+  left: 50%;
+  top: var(--bz-space-3);
+  bottom: auto;
+  transform: translateX(-50%);
+  z-index: 2;
+  background: var(--bz-scrim);
   padding: var(--bz-space-2);
   border-radius: var(--bz-r-sm);
-  backdrop-filter: blur(4px);
   gap: var(--bz-space-2);
+  max-width: calc(100% - var(--bz-space-6));
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action {
+
+.history-item .bz-gen-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.history-item .bz-gen-actions .bz-gen-action {
   border-color: rgba(255, 255, 255, 0.18);
   color: var(--bz-fg);
 }
-ol.chat .history-item:first-child .bz-gen-actions .bz-gen-action:hover {
+
+.history-item .bz-gen-actions .bz-gen-action:hover {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.35);
-}
-ol.chat .history-item:first-child .bz-origin-pill {
-  background: rgba(0, 0, 0, 0.65);
-  border-color: transparent;
-  color: var(--bz-fg);
-  backdrop-filter: blur(4px);
-}
-
-/* History grid */
-@media (min-width: 880px) {
-  ol.chat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  ol.chat .history-item:first-child { grid-column: 1 / -1; }
-}
-ol.chat .history-item:not(:first-child) .question {
-  padding: var(--bz-space-3);
-}
-ol.chat .history-item:not(:first-child) video {
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  display: block;
-  border-radius: var(--bz-r-sm);
 }
 
 .bz-img-meta {
   display: flex;
   align-items: center;
   gap: var(--bz-space-3);
-  margin: var(--bz-space-3) 0;
+  margin: 0;
+  position: absolute;
+  left: var(--bz-space-3);
+  bottom: var(--bz-space-3);
+  z-index: 2;
 }
 .bz-origin-pill {
   display: inline-flex;

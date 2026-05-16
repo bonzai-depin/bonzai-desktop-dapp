@@ -1,22 +1,25 @@
 <template>
   <div class="chart-forecaster-skill">
-    <!-- Skill Header -->
-    <div class="models__activity--payouts mb-4 has-text-left">
-      <div class="columns is-vcentered">
-        <div class="column">
-          <h3 class="skill-name is-size-1 fira-sans-condensed-black-italic">
-            <span
-              class="material-symbols-outlined mr-2"
-              style="font-size: 48px; color: var(--bulma-primary)"
-            >
-              insights
-            </span>
-            {{ skill?.name || 'Chart Forecaster' }}
-          </h3>
-          <p class="is-size-5 mt-3 skill-description">
-            {{ skill?.description || 'Forecast top cryptos and tech stocks using Google TimesFM 2.0 (500M).' }}
-          </p>
-        </div>
+    <div class="forecast-tape">
+      <div class="forecast-tape-cell">
+        <span>Universe</span>
+        <strong>{{ assetType === 'crypto' ? 'Crypto' : 'Stocks' }}</strong>
+      </div>
+      <div class="forecast-tape-cell">
+        <span>Symbols</span>
+        <strong>{{ selectedSymbols.join(' / ') }}</strong>
+      </div>
+      <div class="forecast-tape-cell">
+        <span>Mode</span>
+        <strong>{{ mode }}</strong>
+      </div>
+      <div class="forecast-tape-cell">
+        <span>Horizon</span>
+        <strong>{{ horizonDays }}d</strong>
+      </div>
+      <div class="forecast-tape-cell">
+        <span>Output</span>
+        <strong>{{ assetResults.length ? 'Ready' : 'Empty' }}</strong>
       </div>
     </div>
 
@@ -24,17 +27,10 @@
          TimesFM readiness is handled by SmartAgent's standard
          "Download Required" banner (SKILL_MODEL_REQUIREMENTS maps the
          forecast_quality pipeline to this skill). No bespoke UI needed. -->
-    <div
-      class="models__activity--payouts pt-5 pb-5 mt-5"
-      style="position: relative; z-index: 11"
-    >
-      <div class="columns is-vcentered mb-3">
-        <div class="column">
-          <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-0">
-            Assets ({{ selectedSymbols.length }}/3)
-          </h2>
-        </div>
-        <div class="column is-narrow">
+    <section class="forecast-asset-deck skill-panel">
+      <div class="skill-panel-head">
+        <h2 class="bz-h2">Assets <span class="bz-meta bz-mono">{{ selectedSymbols.length }}/3</span></h2>
+        <div class="skill-panel-actions">
           <span class="category-selector asset-type-selector">
             <template v-for="t in ['crypto', 'stock']" :key="t">
               <input
@@ -45,7 +41,7 @@
                 :checked="assetType === t"
                 @change="setAssetType(t)"
               />
-              <label :for="'cf_type_' + t" class="radio category p-2">
+              <label :for="'cf_type_' + t" class="radio category">
                 {{ t === 'crypto' ? 'Crypto' : 'Stocks' }}
               </label>
             </template>
@@ -59,35 +55,32 @@
           v-for="a in activeAssetList"
           :key="a.symbol"
           type="button"
-          class="radio category pt-3 pb-3 ticker-pill"
+          class="radio category ticker-pill"
           :class="{ 'is-selected': selectedSymbols.includes(a.symbol) }"
           :disabled="!selectedSymbols.includes(a.symbol) && selectedSymbols.length >= 3"
           @click="toggleSymbol(a.symbol)"
         >
           <strong class="ticker-symbol">{{ a.symbol }}</strong>
-          <span class="is-size-7 ticker-name">{{ a.name }}</span>
+          <span class="ticker-name bz-meta">{{ a.name }}</span>
         </button>
       </div>
-    </div>
+    </section>
 
     <!-- Mode + Parameters -->
-    <div
-      class="models__activity--payouts pt-5 pb-5 mt-5"
-      style="position: relative; z-index: 11"
-    >
-      <div class="columns is-vcentered">
-        <div class="field column is-2">
-          <label class="label has-text-white has-text-left">Lookback (days)</label>
-          <input type="number" class="input is-large" v-model.number="lookbackDays" min="90" max="1825" />
+    <section class="forecast-parameter-deck skill-panel">
+      <div class="forecast-grid">
+        <div class="skill-field">
+          <label class="skill-label">Lookback (days)</label>
+          <input type="number" class="skill-input" v-model.number="lookbackDays" min="90" max="1825" />
         </div>
-        <div class="field column is-2">
-          <label class="label has-text-white has-text-left">Horizon (days)</label>
-          <input type="number" class="input is-large" v-model.number="horizonDays" min="7" max="180" />
+        <div class="skill-field">
+          <label class="skill-label">Horizon (days)</label>
+          <input type="number" class="skill-input" v-model.number="horizonDays" min="7" max="180" />
         </div>
-        <div class="field column is-3">
-          <label class="label has-text-white has-text-left">
+        <div class="skill-field skill-field--wide">
+          <label class="skill-label">
             Mode
-            <span class="has-text-grey-light is-size-7 ml-1">:: {{ modeHelp }}</span>
+            <span class="skill-label-hint">{{ modeHelp }}</span>
           </label>
           <span class="category-selector mode-selector">
             <template v-for="m in ['forecast', 'backtest']" :key="m">
@@ -99,57 +92,55 @@
                 :checked="mode === m"
                 @change="mode = m"
               />
-              <label :for="'cf_mode_' + m" class="radio category p-2">
+              <label :for="'cf_mode_' + m" class="radio category">
                 {{ m === 'forecast' ? 'Forecast' : 'Backtest' }}
               </label>
             </template>
           </span>
         </div>
-        <div v-if="mode === 'backtest'" class="field column is-2">
-          <label class="label has-text-white has-text-left">Backtest offset</label>
-          <input type="number" class="input is-large" v-model.number="backtestOffsetDays" min="7" :max="180" />
+        <div v-if="mode === 'backtest'" class="skill-field">
+          <label class="skill-label">Backtest offset</label>
+          <input type="number" class="skill-input" v-model.number="backtestOffsetDays" min="7" :max="180" />
         </div>
-        <div class="column">
+        <div class="skill-field skill-field--action">
           <button
-            class="button is-success is-large is-fullwidth fira-sans-condensed-black-italic forecast-cta"
-            :class="{ 'is-loading': isForecasting }"
+            class="bz-btn bz-btn--success bz-btn--lg forecast-cta"
+            :class="{ 'bz-btn--running': isForecasting }"
             :disabled="isForecasting || selectedSymbols.length === 0"
             @click="runForecast"
           >
-            <span class="material-symbols-outlined mr-2">auto_graph</span>
+            <span class="material-symbols-outlined">auto_graph</span>
             {{ mode === 'backtest' ? 'Run backtest' : 'Forecast' }}
             {{ selectedSymbols.join(', ') || '—' }}
+            <span v-if="isForecasting" class="bz-btn__progress"></span>
           </button>
         </div>
       </div>
-      <div v-if="error" class="error-card mt-5">
-        <div class="error-card-icon">
-          <span class="material-symbols-outlined">error</span>
+      <div v-if="error" class="bz-notice bz-notice--danger skill-notice">
+        <span class="bz-notice__icon"><span class="material-symbols-outlined">error</span></span>
+        <div class="bz-notice__body">
+          <div class="bz-notice__title">Forecast couldn't complete</div>
+          <p class="bz-notice__text">{{ error }}</p>
+          <p class="bz-notice__text" v-if="errorHint">{{ errorHint }}</p>
         </div>
-        <div class="error-card-body">
-          <div class="error-card-title">Forecast couldn't complete</div>
-          <div class="error-card-message">{{ error }}</div>
-          <div class="error-card-hint" v-if="errorHint">{{ errorHint }}</div>
-        </div>
-        <button class="button is-small is-outlined" @click="runForecast">
-          <span class="material-symbols-outlined mr-1" style="font-size: 14px">refresh</span>
+        <button class="bz-btn bz-btn--sm" @click="runForecast">
+          <span class="material-symbols-outlined">refresh</span>
           Retry
         </button>
       </div>
-    </div>
+    </section>
 
     <!-- Chart -->
-    <div
+    <section
       v-if="assetResults.length > 0"
-      class="models__activity--payouts pt-5 pb-5 mt-5"
-      style="position: relative; z-index: 11"
+      class="forecast-chart-stage skill-panel"
     >
-      <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4">
+      <h2 class="bz-h2 skill-section-title">
         {{ chartTitle }}
       </h2>
 
       <!-- Per-asset legend with start→end change (makes multi-asset intuitive) -->
-      <div class="asset-legend mb-3">
+      <div class="asset-legend">
         <div
           v-for="(r, idx) in assetResults"
           :key="r.symbol"
@@ -178,47 +169,45 @@
       </div>
 
       <div ref="chartContainer" class="chart-container"></div>
-      <div class="is-size-7 has-text-grey-light mt-3">
+      <div class="chart-helper bz-meta">
         <template v-if="selectedSymbols.length > 1">
           Multi-asset: values rebased so <em>day 0 = 100</em>, so lines show
           <strong>percentage change</strong> — not dollar price. A reading of
           110 means +10% since the window started.
         </template>
         <template v-else-if="mode === 'backtest'">
-          <span style="color: var(--bulma-warning)">Orange</span> = forecast from {{ backtestOffsetDays }} days ago ·
-          <span style="color: var(--bulma-success)">Green</span> = what actually happened ·
+          <span style="color: var(--bz-warning)">Orange</span> = forecast from {{ backtestOffsetDays }} days ago ·
+          <span style="color: var(--bz-emerald-500)">Green</span> = what actually happened ·
           MAPE: <strong>{{ backtestAccuracy.mape.toFixed(2) }}%</strong> over {{ backtestAccuracy.n }} days
         </template>
         <template v-else>
           Past: solid · forecast: dashed · shaded band = 80% confidence interval.
         </template>
       </div>
-    </div>
+    </section>
 
     <!-- LLM Narrative -->
-    <div
+    <section
       v-if="narrative || isGeneratingNarrative"
-      class="models__activity--payouts pt-5 pb-5 mt-5"
-      style="position: relative; z-index: 11"
+      class="forecast-narrative-panel skill-panel"
     >
-      <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-3">
-        <span class="material-symbols-outlined mr-2 is-size-1" style="vertical-align: middle">neurology</span>
+      <h2 class="bz-h2 skill-section-title">
+        <span class="material-symbols-outlined">neurology</span>
         Analysis
       </h2>
-      <div v-if="isGeneratingNarrative" class="has-text-grey-light is-size-6">
-        <span
-          class="material-symbols-outlined mr-1 rotating"
-          style="vertical-align: middle"
-        >sync</span>
-        Generating narrative with Qwen3.5 4B…
-      </div>
-      <div v-else class="narrative-body has-text-left">{{ narrative }}</div>
-    </div>
+      <BonzaiPulse
+        v-if="isGeneratingNarrative"
+        variant="dot"
+        label="Generating narrative with Qwen3.5 4B"
+      />
+      <div v-else class="narrative-body">{{ narrative }}</div>
+    </section>
   </div>
 </template>
 
 <script>
 import { ref, computed, onBeforeUnmount, nextTick, watch } from 'vue';
+import BonzaiPulse from '../BonzaiPulse.vue';
 import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
 
 const SKILL_ID = 'chart-forecaster-v1.0.0';
@@ -288,6 +277,7 @@ async function fetchHistoryViaProxy(symbol, assetType, days) {
 
 export default {
   name: 'ChartForecasterSkill',
+  components: { BonzaiPulse },
   props: {
     skill: { type: Object, default: null },
   },
@@ -610,6 +600,92 @@ export default {
 </script>
 
 <style scoped>
+.chart-forecaster-skill {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+  color: var(--bz-fg);
+}
+.skill-panel {
+  padding: var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+.skill-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  margin-bottom: var(--bz-space-4);
+}
+.skill-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  flex-wrap: wrap;
+}
+.skill-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-4);
+}
+.skill-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 42px !important;
+  line-height: 1;
+}
+.skill-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-4);
+  color: var(--bz-fg);
+}
+.forecast-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.65fr) minmax(120px, 0.65fr) minmax(260px, 1.2fr) minmax(180px, 0.8fr) minmax(240px, 1.4fr);
+  gap: var(--bz-space-4);
+  align-items: end;
+}
+.skill-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+  min-width: 0;
+}
+.skill-field--wide { min-width: 240px; }
+.skill-field--action { justify-content: flex-end; }
+.skill-label {
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  line-height: 1.35;
+}
+.skill-label-hint {
+  display: block;
+  margin-top: var(--bz-space-1);
+  color: var(--bz-fg-low);
+}
+.skill-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-input:focus {
+  outline: none;
+  border-color: var(--bz-border-brand);
+}
+.skill-notice { margin-top: var(--bz-space-4); }
+.chart-helper {
+  margin-top: var(--bz-space-3);
+  color: var(--bz-fg-mid);
+}
+
 .chart-container {
   height: 420px;
   width: 100%;
@@ -620,7 +696,7 @@ export default {
   white-space: pre-wrap;
   color: rgba(255, 255, 255, 0.92);
   background: var(--bz-scrim);
-  border-left: 3px solid var(--bulma-primary);
+  border-left: 3px solid var(--bz-purple-500);
   padding: 16px 20px;
   border-radius: 4px;
 }
@@ -651,7 +727,7 @@ export default {
   cursor: not-allowed;
 }
 .ticker-pill.is-selected {
-  border: 1px solid rgba(255, 255, 255, 1);
+  border: 1px solid var(--bz-fg);
   background: var(--bz-purple-soft);
 }
 /* Brand-gradient ticker labels — match the skill title color treatment. */
@@ -665,7 +741,7 @@ export default {
   background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
 }
 .ticker-name {
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--bz-fg-mid);
 }
 
 /* Forecast CTA — green (success), full brand treatment. */
@@ -682,7 +758,7 @@ export default {
   background: linear-gradient(135deg, rgba(209, 83, 76, 0.18), rgba(209, 83, 76, 0.08));
   border: 1px solid rgba(209, 83, 76, 0.4);
   border-radius: 6px;
-  color: white;
+  color: var(--bz-fg);
 }
 .error-card-icon {
   flex: 0 0 auto;
@@ -787,24 +863,22 @@ export default {
   font-weight: 600;
   font-size: 14px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--bz-fg-faint);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
-  backdrop-filter: blur(32px);
 }
 .category-selector input[type='radio'] + label.radio.category:hover {
   background: var(--bz-purple-soft);
-  border-color: rgba(255, 255, 255, 0.5);
-  color: rgba(255, 255, 255, 0.8);
+  border-color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
 }
 .category-selector input[type='radio']:checked + label.radio.category {
-  color: rgba(255, 255, 255, 1);
-  border: 1px solid rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border: 1px solid var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 .category-selector input[type='radio']:disabled + label.radio.category {
   opacity: 0.35;
@@ -814,7 +888,7 @@ export default {
 .input {
   background: var(--bz-scrim);
   border-color: rgba(255, 255, 255, 0.2);
-  color: white;
+  color: var(--bz-fg);
 }
 .input::placeholder {
   color: rgba(255, 255, 255, 0.4);
@@ -824,7 +898,6 @@ export default {
 .models__activity--payouts {
   padding: 2em;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 
@@ -838,17 +911,116 @@ export default {
   background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
 }
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   margin-bottom: 0.5em;
   text-align: left;
 }
 
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
   display: inline-block;
 }
 @keyframes rotate {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* Agentic redesign: Forecast Terminal */
+.forecast-asset-deck,
+.forecast-parameter-deck,
+.forecast-chart-stage,
+.forecast-narrative-panel {
+  background: var(--bz-panel);
+}
+.forecast-asset-deck {
+  background:
+    linear-gradient(135deg, rgba(24, 144, 255, 0.12), transparent 42%),
+    var(--bz-panel);
+}
+.forecast-asset-deck .skill-panel-head {
+  align-items: center;
+}
+.forecast-asset-deck .ticker-grid {
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)) !important;
+}
+.forecast-parameter-deck .forecast-grid {
+  grid-template-columns: minmax(120px, 0.6fr) minmax(120px, 0.6fr) minmax(260px, 1.1fr) minmax(170px, 0.7fr) minmax(260px, 1.2fr);
+  align-items: stretch;
+}
+.forecast-parameter-deck .skill-field {
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+.forecast-parameter-deck .skill-field--action {
+  display: flex;
+  justify-content: flex-end;
+}
+.forecast-chart-stage .asset-legend {
+  margin-bottom: var(--bz-space-3);
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+.forecast-chart-stage .chart-container {
+  min-height: clamp(420px, 56vh, 680px);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+.forecast-narrative-panel .narrative-body {
+  border-left-color: var(--bz-info);
+}
+@media (max-width: 1120px) {
+  .forecast-parameter-deck .forecast-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+  .forecast-parameter-deck .skill-field--wide,
+  .forecast-parameter-deck .skill-field--action {
+    grid-column: 1 / -1;
+  }
+}
+
+
+/* Signature upgrade: forecast tape */
+.forecast-tape {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: var(--bz-space-3);
+}
+.forecast-tape-cell {
+  min-height: 88px;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background:
+    linear-gradient(135deg, rgba(24, 144, 255, 0.1), transparent 52%),
+    var(--bz-panel);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.forecast-tape-cell span {
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.forecast-tape-cell strong {
+  color: var(--bz-fg);
+  font-size: 18px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  text-transform: capitalize;
+}
+.forecast-asset-deck,
+.forecast-parameter-deck {
+  border-color: var(--bz-border-strong);
+}
+@media (max-width: 980px) {
+  .forecast-tape { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 </style>

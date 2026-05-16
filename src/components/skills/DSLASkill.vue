@@ -1,29 +1,28 @@
 <template>
   <div class="dsla-skill">
-    <!-- Skill Header -->
-    <div class="models__activity--payouts mb-4 has-text-left">
-      <div class="columns is-vcentered">
-        <div class="column">
-          <h3 class="skill-name is-size-1 fira-sans-condensed-black-italic">
-            <span
-              class="material-symbols-outlined mr-2"
-              style="font-size: 48px; color: var(--bulma-primary)"
-            >
-              online_prediction
-            </span>
-            {{ skill?.name || 'Prediction Market Maker' }}
-          </h3>
-          <p class="is-size-5 mt-3 skill-description">
-            {{ skill?.description || 'Create prediction markets using the DSLA Protocol. Define verifiable SLA-based outcomes for any measurable metric.' }}
-          </p>
+    <div class="dsla-usecase-stage skill-panel">
+      <div class="dsla-foundry-board">
+        <div class="dsla-orbit">
+          <span v-for="idx in 6" :key="idx" :class="['dsla-orbit-dot', 'dsla-orbit-dot--' + idx]"></span>
+          <span class="material-symbols-outlined">online_prediction</span>
+        </div>
+        <div class="dsla-board-metric">
+          <span class="dsla-console-label">Template</span>
+          <strong>{{ selectedUseCase?.label || 'Unselected' }}</strong>
+        </div>
+        <div class="dsla-board-metric">
+          <span class="dsla-console-label">Leverage</span>
+          <strong>{{ slaForm.leverage }}x</strong>
+        </div>
+        <div class="dsla-board-metric">
+          <span class="dsla-console-label">Sources</span>
+          <strong>{{ configuredSources }}</strong>
+        </div>
+        <div class="dsla-board-metric">
+          <span class="dsla-console-label">Readiness</span>
+          <strong>{{ foundryProgress }}%</strong>
         </div>
       </div>
-    </div>
-
-    <div
-      class="models__activity--payouts pt-5 pb-5"
-      style="position: relative; bottom: -40px; z-index: 11"
-    >
       <!-- Use Case Selector -->
       <div class="columns">
         <div class="column is-12">
@@ -40,7 +39,7 @@
                 :checked="selectedUseCase?.key === useCase.key"
                 @change="selectUseCase(useCase)"
               />
-              <label :for="'dsla_uc_' + useCase.key" class="radio category pt-3 pb-3">
+              <label :for="'dsla_uc_' + useCase.key" class="radio category">
                 {{ useCase.label }}
               </label>
             </template>
@@ -49,7 +48,7 @@
       </div>
 
       <!-- Generated Future Event Example -->
-      <div v-if="selectedUseCase && generatedEvent" class="notification is-info mt-5 has-text-left">
+      <div v-if="selectedUseCase && generatedEvent" class="bz-notice bz-notice--info mt-5 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-3 mb-2">
           Example Prediction Market
         </h4>
@@ -58,8 +57,9 @@
     </div>
 
     <!-- SLA Configuration -->
-    <div v-if="selectedUseCase" class="models__activity--payouts mt-5">
-      <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4">
+    <div v-if="selectedUseCase" class="dsla-foundry skill-panel mt-5">
+      <h2 class="dsla-stage-title fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4">
+        <span class="dsla-stage-number">02</span>
         Market Configuration
       </h2>
 
@@ -71,7 +71,7 @@
           </label>
           <div class="control">
             <input
-              class="input is-large"
+              class="skill-input"
               v-model="slaForm.serviceName"
               placeholder="e.g. Ethereum Staking Rewards"
             />
@@ -83,7 +83,7 @@
           </label>
           <div class="control">
             <input
-              class="input is-large"
+              class="skill-input"
               v-model="slaForm.serviceTicker"
               placeholder="e.g. ETH"
               maxlength="10"
@@ -97,7 +97,7 @@
           </label>
           <div class="control">
             <input
-              class="input is-large"
+              class="skill-input"
               v-model="slaForm.serviceAddress"
               placeholder="e.g. 0x..., validator.eth, api.example.com"
             />
@@ -106,7 +106,8 @@
       </div>
 
       <!-- SLO Configuration -->
-      <h3 class="fira-sans-condensed-black-italic is-size-4 has-text-white has-text-left mb-3 mt-4">
+      <h3 class="dsla-section-kicker fira-sans-condensed-black-italic is-size-4 has-text-white has-text-left mb-3 mt-4">
+        <span>03</span>
         Service Level Objective (SLO)
       </h3>
       <div class="columns">
@@ -124,7 +125,7 @@
                 :checked="slaForm.sloType === sloType.key"
                 @change="slaForm.sloType = sloType.key"
               />
-              <label :for="'slo_type_' + sloType.key" class="radio category p-2">
+              <label :for="'slo_type_' + sloType.key" class="radio category">
                 {{ sloType.symbol }}
               </label>
             </template>
@@ -137,7 +138,7 @@
           </label>
           <div class="control">
             <input
-              class="input is-large"
+              class="skill-input"
               type="number"
               v-model.number="slaForm.sloValue"
               placeholder="99000"
@@ -153,7 +154,7 @@
           </label>
           <div class="control">
             <input
-              class="input is-large"
+              class="skill-input"
               type="number"
               v-model.number="slaForm.leverage"
               placeholder="1"
@@ -165,7 +166,8 @@
       </div>
 
       <!-- Time Period -->
-      <h3 class="fira-sans-condensed-black-italic is-size-4 has-text-white has-text-left mb-3 mt-4">
+      <h3 class="dsla-section-kicker fira-sans-condensed-black-italic is-size-4 has-text-white has-text-left mb-3 mt-4">
+        <span>04</span>
         Time Period
       </h3>
       <div class="columns">
@@ -175,7 +177,7 @@
           </label>
           <div class="control">
             <input
-              class="input is-large"
+              class="skill-input"
               type="datetime-local"
               v-model="slaForm.startDate"
             />
@@ -187,7 +189,7 @@
           </label>
           <div class="control">
             <input
-              class="input is-large"
+              class="skill-input"
               type="datetime-local"
               v-model="slaForm.endDate"
             />
@@ -196,7 +198,8 @@
       </div>
 
       <!-- Severity & Penalty -->
-      <h3 class="fira-sans-condensed-black-italic is-size-4 has-text-white has-text-left mb-3 mt-4">
+      <h3 class="dsla-section-kicker fira-sans-condensed-black-italic is-size-4 has-text-white has-text-left mb-3 mt-4">
+        <span>05</span>
         Severity & Penalty Tiers
       </h3>
       <div class="severity-tiers">
@@ -211,7 +214,7 @@
             </label>
             <div class="control">
               <input
-                class="input is-large"
+                class="skill-input"
                 type="number"
                 v-model.number="tier.severity"
                 placeholder="90000"
@@ -224,7 +227,7 @@
             </label>
             <div class="control">
               <input
-                class="input is-large"
+                class="skill-input"
                 type="number"
                 v-model.number="tier.penalty"
                 placeholder="2500"
@@ -235,7 +238,7 @@
           <div class="column is-2">
             <button
               v-if="slaForm.severityTiers.length > 1"
-              class="button is-danger is-large mt-3"
+              class="bz-btn bz-btn--destructive bz-btn--lg mt-3"
               @click="removeSeverityTier(idx)"
             >
               <span class="material-symbols-outlined">remove</span>
@@ -244,10 +247,10 @@
         </div>
         <button
           v-if="slaForm.severityTiers.length < 5"
-          class="button is-info is-medium m-5"
+          class="bz-btn bz-btn--primary m-5"
           @click="addSeverityTier"
         >
-          <span class="material-symbols-outlined mr-1">add</span>
+          <span class="material-symbols-outlined">add</span>
           Add Tier
         </button>
       </div>
@@ -274,7 +277,7 @@
               </label>
               <div class="control">
                 <input
-                  class="input is-large"
+                  class="skill-input"
                   v-model="source.name"
                   placeholder="e.g. Chainlink Oracle"
                 />
@@ -286,7 +289,7 @@
               </label>
               <div class="control">
                 <input
-                  class="input is-large"
+                  class="skill-input"
                   v-model="source.endpoint"
                   placeholder="https://api.example.com/metric"
                 />
@@ -298,7 +301,7 @@
               </label>
               <div class="control">
                 <input
-                  class="input is-large"
+                  class="skill-input"
                   v-model="source.description"
                   placeholder="Primary oracle feed"
                 />
@@ -307,7 +310,7 @@
             <div class="column is-1">
               <button
                 v-if="slaForm.dataSources.length > 1"
-                class="button is-danger is-large mt-3"
+                class="bz-btn bz-btn--destructive bz-btn--lg mt-3"
                 @click="removeDataSource(idx)"
               >
                 <span class="material-symbols-outlined">remove</span>
@@ -317,10 +320,10 @@
         </div>
         <button
           v-if="slaForm.dataSources.length < 10"
-          class="button is-info is-medium m-3 mb-5"
+          class="bz-btn bz-btn--primary m-3 mb-5"
           @click="addDataSource"
         >
-          <span class="material-symbols-outlined mr-1">add</span>
+          <span class="material-symbols-outlined">add</span>
           Add Data Source
         </button>
       </div>
@@ -334,7 +337,7 @@
       </div>
 
       <!-- Preview -->
-      <div class="notification is-warning mt-5 has-text-left">
+      <div class="bz-notice bz-notice--warning mt-5 has-text-left">
         <h4 class="fira-sans-condensed-black-italic is-size-3 mb-2">
           Market Preview
         </h4>
@@ -356,17 +359,17 @@
       <!-- Create Market Button -->
       <div class="control mt-5 has-text-centered">
         <button
-          class="button is-success is-large"
+          class="bz-btn bz-btn--success bz-btn--lg"
           @click="createPredictionMarket"
           :disabled="!canCreate || isCreating"
         >
           <span
             v-if="isCreating"
-            class="material-symbols-outlined rotating mr-2"
+            class="material-symbols-outlined rotating"
           >
             progress_activity
           </span>
-          <span v-else class="material-symbols-outlined mr-2">
+          <span v-else class="material-symbols-outlined">
             online_prediction
           </span>
           {{ isCreating ? 'Creating...' : 'Create Prediction Market' }}
@@ -375,7 +378,7 @@
     </div>
 
     <!-- Active Markets -->
-    <div v-if="markets.length > 0" class="models__activity--payouts mt-5 has-text-left">
+    <div v-if="markets.length > 0" class="skill-panel mt-5 has-text-left">
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-brand has-text-left mb-4">
         Your Prediction Markets
       </h2>
@@ -394,8 +397,8 @@
             </p>
           </div>
           <div class="column is-narrow">
-            <span class="tag is-info is-medium">{{ market.useCase }}</span>
-            <span class="tag is-warning is-medium ml-2">{{ market.leverage }}x</span>
+            <span class="skill-chip skill-chip--info">{{ market.useCase }}</span>
+            <span class="skill-chip skill-chip--warning ml-2">{{ market.leverage }}x</span>
           </div>
         </div>
       </div>
@@ -589,6 +592,20 @@ export default {
     });
 
     // Validation
+    const configuredSources = computed(() => slaForm.dataSources.filter((s) => s.name || s.endpoint).length);
+    const foundryProgress = computed(() => {
+      const checks = [
+        !!selectedUseCase.value,
+        !!slaForm.serviceName,
+        !!slaForm.serviceTicker,
+        slaForm.sloValue > 0,
+        !!slaForm.startDate,
+        !!slaForm.endDate,
+        configuredSources.value > 0,
+      ];
+      return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+    });
+
     const canCreate = computed(() => {
       return (
         selectedUseCase.value &&
@@ -729,6 +746,8 @@ export default {
       slaForm,
       generatedEvent,
       sloTypeLabel,
+      configuredSources,
+      foundryProgress,
       canCreate,
       markets,
       selectUseCase,
@@ -745,6 +764,104 @@ export default {
 </script>
 
 <style scoped>
+/* Design-system compatibility layer for migrated skill workflow surfaces. */
+.skill-panel {
+  padding: var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r) !important;
+  color: var(--bz-fg);
+}
+.skill-panel + .skill-panel,
+.analysis-history .skill-panel + .skill-panel {
+  margin-top: var(--bz-space-5);
+}
+.skill-card {
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+}
+.skill-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-4);
+}
+.skill-title-icon,
+.skill-name .material-symbols-outlined {
+  color: var(--bz-purple-300) !important;
+  font-size: 42px !important;
+  line-height: 1;
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 24px;
+  padding: 2px var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  line-height: 1.2;
+}
+.skill-chip--brand { background: var(--bz-purple-soft); border-color: var(--bz-border-brand); color: var(--bz-fg); }
+.skill-chip--success { background: var(--bz-emerald-soft); border-color: var(--bz-emerald-500); color: var(--bz-emerald-300); }
+.skill-chip--warning { background: var(--bz-warning-soft); border-color: var(--bz-warning); color: var(--bz-warning); }
+.skill-chip--info { background: var(--bz-info-soft); border-color: var(--bz-info); color: var(--bz-info); }
+.skill-chip--danger { background: var(--bz-danger-soft); border-color: var(--bz-danger); color: var(--bz-danger); }
+.skill-input,
+.config-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-input--sm { height: 32px; }
+.skill-input:focus,
+.config-input:focus {
+  outline: none;
+  border-color: var(--bz-border-brand);
+}
+.skill-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-unit {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+  color: var(--bz-fg-low);
+  pointer-events: none;
+}
+.skill-fullwidth { width: 100%; }
+.skill-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+}
+.skill-progress::-webkit-progress-value { background: var(--bz-gradient-brand); }
+.bz-btn--running { opacity: 0.72; }
+
 .dsla-skill {
   width: 100%;
 }
@@ -775,7 +892,6 @@ export default {
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
-  backdrop-filter: blur(32px);
 }
 
 .category-selector input[type='radio'] + label.radio.category:hover {
@@ -785,10 +901,9 @@ export default {
 }
 
 .category-selector input[type='radio']:checked + label.radio.category {
-  color: rgba(255, 255, 255, 1);
-  border: 1px solid rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border: 1px solid var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 
 /* SLO Type selector - compact version */
@@ -836,7 +951,7 @@ export default {
 .select select {
   background: var(--bz-scrim);
   border-color: var(--bz-border-strong);
-  color: white;
+  color: var(--bz-fg);
 }
 
 .input::placeholder {
@@ -858,14 +973,13 @@ export default {
 
 /* Rotating animation */
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 
-.models__activity--payouts {
+.skill-panel {
   padding: 2em;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 
@@ -900,4 +1014,144 @@ export default {
     transform: rotate(360deg);
   }
 }
+
+/* Agentic redesign: SLA Market Foundry */
+.dsla-usecase-stage {
+  display: grid;
+  gap: var(--bz-space-4);
+  background:
+    linear-gradient(135deg, rgba(82, 196, 26, 0.1), transparent 44%),
+    var(--bz-panel);
+}
+.dsla-usecase-stage .columns,
+.dsla-usecase-stage .column {
+  margin: 0;
+  padding: 0;
+}
+.dsla-usecase-stage h2::before {
+  content: '01';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 24px;
+  margin-right: var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-emerald-300);
+  font-size: 12px;
+}
+.dsla-usecase-stage .category-selector {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+.dsla-foundry {
+  background: var(--bz-panel);
+}
+.dsla-foundry > .columns {
+  display: grid;
+  grid-template-columns: 1fr 0.75fr 1.2fr;
+  gap: var(--bz-space-4);
+  margin: 0;
+}
+.dsla-foundry > .columns > .column {
+  width: auto;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+.dsla-stage-title,
+.dsla-section-kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  letter-spacing: 0;
+}
+.dsla-stage-number,
+.dsla-section-kicker span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 24px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-emerald-300);
+  font-size: 12px;
+}
+.dsla-foundry .columns:not(:first-of-type) {
+  margin: 0;
+}
+.dsla-foundry .field.column {
+  padding: var(--bz-space-3);
+}
+.severity-tiers,
+.data-sources {
+  border: 1px solid var(--bz-border);
+  background: var(--bz-canvas);
+}
+@media (max-width: 980px) {
+  .dsla-foundry > .columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Signature upgrade: foundry instrument board */
+.dsla-foundry-board {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) repeat(4, minmax(120px, 1fr));
+  gap: var(--bz-space-3);
+  align-items: stretch;
+}
+.dsla-orbit {
+  position: relative;
+  min-height: 116px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background:
+    radial-gradient(circle at center, rgba(82, 196, 26, 0.18), transparent 42%),
+    var(--bz-canvas);
+  overflow: hidden;
+}
+.dsla-orbit::before,
+.dsla-orbit::after {
+  content: '';
+  position: absolute;
+  border: 1px solid rgba(82, 196, 26, 0.28);
+  border-radius: 50%;
+}
+.dsla-orbit::before { width: 86px; height: 86px; }
+.dsla-orbit::after { width: 128px; height: 58px; transform: rotate(-24deg); }
+.dsla-orbit .material-symbols-outlined { color: var(--bz-emerald-300); font-size: 34px; z-index: 2; }
+.dsla-orbit-dot { position: absolute; width: 6px; height: 6px; border-radius: 999px; background: var(--bz-emerald-300); }
+.dsla-orbit-dot--1 { top: 20%; left: 52%; }
+.dsla-orbit-dot--2 { top: 42%; left: 78%; }
+.dsla-orbit-dot--3 { top: 72%; left: 61%; }
+.dsla-orbit-dot--4 { top: 72%; left: 32%; }
+.dsla-orbit-dot--5 { top: 42%; left: 18%; }
+.dsla-orbit-dot--6 { top: 20%; left: 38%; }
+.dsla-board-metric {
+  min-height: 116px;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.dsla-board-metric strong {
+  margin-top: var(--bz-space-1);
+  color: var(--bz-fg);
+  font-size: clamp(20px, 2.3vw, 32px);
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1040px) {
+  .dsla-foundry-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 </style>

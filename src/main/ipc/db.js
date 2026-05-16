@@ -64,6 +64,11 @@ export function registerDbIpc() {
     broadcast("db:audit:changed", { companyId });
     return { ok: true };
   });
+  ipcMain.handle("db:audit:remove", (_e, companyId, entryId) => {
+    const ok = auditRepo.remove(companyId, entryId);
+    broadcast("db:audit:changed", { companyId });
+    return { ok };
+  });
   ipcMain.handle("db:audit:bulkInsert", (_e, rows) => {
     const n = auditRepo.bulkInsert(rows);
     if (rows.length) broadcast("db:audit:changed", { companyId: rows[0].companyId });
@@ -239,7 +244,16 @@ export function registerDbIpc() {
   });
   ipcMain.handle("db:distribution:listCatalog", (_e, companyId) => distributionRepo.listCatalog(companyId));
   ipcMain.handle("db:distribution:getRecord", (_e, companyId, id) => distributionRepo.getRecord(companyId, id));
-  ipcMain.handle("db:distribution:clear", (_e, companyId) => { distributionRepo.clear(companyId); return { ok: true }; });
+  ipcMain.handle("db:distribution:clear", (_e, companyId) => {
+    distributionRepo.clear(companyId);
+    broadcast("db:distribution:changed", { companyId });
+    return { ok: true };
+  });
+  ipcMain.handle("db:distribution:remove", (_e, companyId, contentId) => {
+    const ok = distributionRepo.remove(companyId, contentId);
+    broadcast("db:distribution:changed", { companyId });
+    return { ok };
+  });
   ipcMain.handle("db:distribution:bulkInsert", (_e, rows) => ({ inserted: distributionRepo.bulkInsert(rows) }));
 
   // ─── connectors ───────────────────────────────────────────────────

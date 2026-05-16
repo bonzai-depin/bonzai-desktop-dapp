@@ -12,65 +12,61 @@
               position: 'fixed',
               inset: '0',
               zIndex: 9999,
-              background: '#0a0a0a',
+              background: 'var(--bz-canvas)',
               overflowY: 'auto',
               padding: '24px',
             }
           : null
       "
     >
-      <!-- Skill Header -->
-      <div class="models__activity--payouts mb-4 has-text-left">
-        <div class="columns is-vcentered">
-          <div class="column">
-            <h3 class="skill-name is-size-1 fira-sans-condensed-black-italic">
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 48px; color: var(--bulma-primary)"
-              >
-                forum
-              </span>
-              {{ skill?.name || "Mass Chat" }}
-            </h3>
-            <p class="is-size-5 mt-3 skill-description">
-              {{
-                skill?.description ||
-                "Ask the same question to every downloaded LLM in sequence and compare answers side-by-side."
-              }}
-            </p>
-          </div>
-          <div class="column is-narrow">
-            <button
-              class="button is-outlined is-info mr-5"
-              @click="showLibrary = !showLibrary"
-              title="Prompt library"
-            >
-              <span class="material-symbols-outlined">library_books</span>
-            </button>
-            <button
-              class="button is-outlined is-info"
-              @click="isFullscreen = !isFullscreen"
-              :title="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
-            >
-              <span class="material-symbols-outlined">
-                {{ isFullscreen ? "fullscreen_exit" : "fullscreen" }}
-              </span>
-            </button>
-          </div>
+      <div class="arena-scoreboard">
+        <div class="arena-score-card">
+          <span>Ready Models</span>
+          <strong>{{ availableModels.length }}</strong>
         </div>
+        <div class="arena-score-card">
+          <span>Selected</span>
+          <strong>{{ selectedModels.length }}</strong>
+        </div>
+        <div class="arena-score-card">
+          <span>Responses</span>
+          <strong>{{ results.length }}</strong>
+        </div>
+        <div class="arena-score-card">
+          <span>State</span>
+          <strong>{{ isRunning ? 'Running' : 'Idle' }}</strong>
+        </div>
+      </div>
+
+      <div class="arena-toolbar">
+        <button
+          class="bz-iconbtn"
+          @click="showLibrary = !showLibrary"
+          title="Prompt library"
+        >
+          <span class="material-symbols-outlined">library_books</span>
+        </button>
+        <button
+          class="bz-iconbtn"
+          @click="isFullscreen = !isFullscreen"
+          :title="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+        >
+          <span class="material-symbols-outlined">
+            {{ isFullscreen ? "fullscreen_exit" : "fullscreen" }}
+          </span>
+        </button>
       </div>
 
       <!-- Prompt Library -->
       <div
         v-if="showLibrary"
-        class="models__activity--payouts pt-5 pb-5 mt-5"
-        style="position: relative; z-index: 11"
+        class="arena-library skill-panel"
       >
         <h2
-          class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4"
+          class="bz-h2 skill-section-title"
         >
           <span
-            class="material-symbols-outlined mr-2"
+            class="material-symbols-outlined"
             style="vertical-align: middle"
           >
             library_books
@@ -79,14 +75,14 @@
         </h2>
         <p
           v-if="savedPrompts.length === 0"
-          class="has-text-grey-light is-size-6"
+          class="bz-meta"
         >
           No saved prompts yet. Run a comparison and click "Save to library".
         </p>
         <div v-else class="library-grid">
           <div v-for="(p, i) in savedPrompts" :key="p.id" class="library-card">
             <div class="library-card-body" @click="loadSavedPrompt(p)">
-              <div class="is-size-7 has-text-grey-light mb-1">
+              <div class="bz-meta library-card-meta">
                 {{ new Date(p.savedAt).toLocaleDateString() }} ·
                 {{ p.models?.length || 0 }} models
               </div>
@@ -96,7 +92,7 @@
               </div>
             </div>
             <button
-              class="button is-small is-danger is-outlined"
+              class="bz-iconbtn bz-iconbtn--sm danger-icon"
               @click.stop="deleteSavedPrompt(i)"
             >
               <span class="material-symbols-outlined" style="font-size: 14px">
@@ -113,14 +109,13 @@
          gaps are handled by SmartAgent's standard "Download Required"
          banner earlier in the flow. -->
       <div
-        class="models__activity--payouts pt-5 pb-5 mt-5"
-        style="position: relative; z-index: 11"
+        class="arena-models skill-panel"
       >
         <h2
-          class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4"
+          class="bz-h2 skill-section-title"
         >
           Select Models
-          <span class="is-size-6 has-text-grey-light ml-2">
+          <span class="bz-meta bz-mono title-count">
             ({{ selectedModels.length }} /
             {{ availableModels.length }} selected)
           </span>
@@ -128,7 +123,7 @@
 
         <div
           v-if="availableModels.length === 0"
-          class="has-text-grey-light is-size-6"
+          class="bz-meta"
         >
           No LLMs downloaded yet. Use the Chat tab to download at least two
           models, then come back to compare them.
@@ -148,7 +143,7 @@
             />
             <div class="model-card-content">
               <strong class="model-card-name">{{ m.modelname }}</strong>
-              <div class="is-size-7 has-text-grey-light mt-1">
+              <div class="model-card-meta bz-meta bz-mono">
                 {{ m.parameters ? (m.parameters / 1e9).toFixed(1) + "B" : "" }}
                 {{
                   m.context
@@ -163,85 +158,81 @@
       </div>
 
       <!-- Prompt + Run -->
-      <div
-        class="models__activity--payouts pt-5 pb-5 mt-5"
-        style="position: relative; z-index: 11"
-      >
+      <section class="arena-prompt skill-panel">
         <h2
-          class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-4"
+          class="bz-h2 skill-section-title"
         >
           Prompt
         </h2>
         <textarea
           v-model="prompt"
-          class="textarea is-large"
+          class="skill-textarea"
           rows="3"
           placeholder="Ask every selected model the same question..."
         ></textarea>
 
         <div
-          class="is-flex is-align-items-center mt-4"
-          style="gap: 16px; flex-wrap: wrap"
+          class="skill-action-row"
         >
           <div style="flex: 1"></div>
           <button
             v-if="prompt.trim()"
-            class="button is-large is-success is-outlined has-text-white mr-2 pl-2 pr-2"
+            class="bz-iconbtn"
             @click="saveCurrentPrompt"
           >
-            <span class="material-symbols-outlined is-size-1">save</span>
+            <span class="material-symbols-outlined">save</span>
           </button>
           <button
-            class="button is-success is-large fira-sans-condensed-black-italic pl-2"
-            :class="{ 'is-loading': isRunning }"
+            class="bz-btn bz-btn--success bz-btn--lg mass-chat-cta"
+            :class="{ 'bz-btn--running': isRunning }"
             :disabled="
               isRunning || !prompt.trim() || selectedModels.length === 0
             "
             @click="runMassChat"
           >
-            <span class="material-symbols-outlined is-size-1">play_arrow</span>
+            <span class="material-symbols-outlined">play_arrow</span>
             Run Mass Chat ({{ selectedModels.length || 0 }})
+            <span v-if="isRunning" class="bz-btn__progress"></span>
           </button>
         </div>
-      </div>
+      </section>
 
       <!-- Split View Results -->
-      <div
+      <section
         v-if="results.length > 0"
-        class="models__activity--payouts pt-5 pb-5 mt-5"
-        style="position: relative; z-index: 11"
+        class="arena-responses skill-panel"
       >
         <div
-          class="is-flex is-align-items-center is-justify-content-space-between mb-4"
+          class="skill-panel-head"
         >
           <h2
-            class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left mb-0"
+            class="bz-h2 skill-section-title"
           >
             Responses
           </h2>
           <button
-            class="button is-outlined is-info"
+            class="bz-btn"
             :disabled="results.length === 0"
             @click="exportMarkdown"
             title="Export comparison to markdown"
           >
-            <span class="material-symbols-outlined mr-2">download</span>
+            <span class="material-symbols-outlined">download</span>
             Export
           </button>
         </div>
         <div class="mass-chat-grid" :style="gridStyle">
           <div v-for="r in results" :key="r.filename" class="mass-chat-panel">
             <header class="panel-header">
-              <div class="is-flex is-align-items-center">
+              <div class="response-title-row">
                 <span
-                  class="material-symbols-outlined mr-1"
-                  style="font-size: 18px; color: var(--bulma-info)"
+                  class="material-symbols-outlined"
+                  style="font-size: 18px; color: var(--bz-info)"
                 >
                   neurology
                 </span>
                 <strong class="response-modelname">{{ r.modelname }}</strong>
               </div>
-              <span class="is-size-7 has-text-grey-light">
+              <span class="bz-meta bz-mono">
                 <template v-if="r.status === 'running'">generating…</template>
                 <template v-else-if="r.status === 'done'">
                   {{ r.tokensPerSecond.toFixed(1) }} tok/s ·
@@ -253,7 +244,7 @@
             </header>
             <div class="panel-body">
               <template v-if="r.status === 'error'">
-                <div class="notification is-danger is-light">{{ r.error }}</div>
+                <div class="bz-notice bz-notice--danger"><p class="bz-notice__text">{{ r.error }}</p></div>
               </template>
               <template v-else>
                 <div
@@ -277,7 +268,7 @@
             </div>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   </Teleport>
 </template>
@@ -635,10 +626,71 @@ export default {
 </script>
 
 <style scoped>
+.mass-chat-skill {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+  color: var(--bz-fg);
+}
+.skill-panel {
+  padding: var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+}
+.skill-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  margin-bottom: var(--bz-space-4);
+}
+.skill-panel-actions,
+.skill-action-row,
+.response-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  flex-wrap: wrap;
+}
+.skill-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-4);
+}
+.skill-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 42px !important;
+  line-height: 1;
+}
+.skill-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-4);
+  color: var(--bz-fg);
+}
+.skill-textarea {
+  width: 100%;
+  min-height: 132px;
+  padding: var(--bz-space-4);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+  resize: vertical;
+}
+.skill-textarea:focus {
+  outline: none;
+  border-color: var(--bz-border-brand);
+}
+.danger-icon { color: var(--bz-danger); }
+.title-count { margin-left: var(--bz-space-2); }
+
 .mass-chat-skill.fullscreen {
   background: rgba(18, 18, 22, 0.5) !important;
   border-color: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(32px);
 }
 
 /* Run CTA — same green treatment as Chart Forecaster's forecast button. */
@@ -673,7 +725,7 @@ export default {
   background: var(--bz-purple-soft);
 }
 .mass-chat-model-card.selected {
-  border: 1px solid rgba(255, 255, 255, 1);
+  border: 1px solid var(--bz-fg);
   background: var(--bz-purple-soft);
 }
 .mass-chat-checkbox {
@@ -768,7 +820,7 @@ export default {
   font-size: 16px;
 }
 .response-text :deep(strong) {
-  color: white;
+  color: var(--bz-fg);
 }
 .response-text :deep(em) {
   color: rgba(255, 255, 255, 0.85);
@@ -808,7 +860,7 @@ export default {
   border-left: 3px solid rgba(155, 109, 200, 0.6);
   padding-left: 10px;
   margin: 0.5em 0;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
 }
 .response-text :deep(a) {
   color: #91caff;
@@ -869,7 +921,7 @@ export default {
 .textarea {
   background: var(--bz-scrim);
   border-color: rgba(255, 255, 255, 0.2);
-  color: white;
+  color: var(--bz-fg);
 }
 .input::placeholder,
 .textarea::placeholder {
@@ -881,7 +933,6 @@ export default {
 .models__activity--payouts {
   padding: 2em;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(32px);
   border-radius: 4px !important;
 }
 
@@ -896,8 +947,110 @@ export default {
     text;
 }
 .skill-description {
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--bz-fg-mid);
   margin-bottom: 0.5em;
   text-align: left;
 }
+
+/* Agentic redesign: Model Arena */
+.arena-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--bz-space-2);
+}
+.arena-library,
+.arena-models,
+.arena-prompt,
+.arena-responses {
+  background: var(--bz-panel);
+}
+.arena-models {
+  position: relative;
+}
+.arena-models::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--bz-gradient-brand);
+  border-radius: var(--bz-r-pill);
+}
+.arena-prompt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--bz-space-4);
+  align-items: end;
+}
+.arena-prompt .skill-section-title,
+.arena-prompt .skill-textarea {
+  grid-column: 1 / -1;
+}
+.arena-prompt .skill-action-row {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+.mass-chat-model-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.mass-chat-model-card {
+  min-height: 88px;
+}
+.arena-responses .mass-chat-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)) !important;
+}
+.mass-chat-panel {
+  min-height: 360px;
+  max-height: 68vh;
+}
+.mass-chat-panel .panel-header {
+  min-height: 58px;
+}
+@media (max-width: 780px) {
+  .arena-prompt {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Signature upgrade: arena scoreboard */
+.arena-scoreboard {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: var(--bz-space-3);
+}
+.arena-score-card {
+  min-height: 92px;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background:
+    linear-gradient(135deg, rgba(155, 109, 200, 0.12), transparent 50%),
+    var(--bz-panel);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.arena-score-card span {
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.arena-score-card strong {
+  color: var(--bz-fg);
+  font-size: clamp(22px, 3vw, 36px);
+  line-height: 1;
+}
+.arena-toolbar {
+  margin-top: calc(var(--bz-space-3) * -1);
+}
+.arena-models,
+.arena-prompt,
+.arena-responses {
+  border-color: var(--bz-border-strong);
+}
+@media (max-width: 820px) {
+  .arena-scoreboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 </style>

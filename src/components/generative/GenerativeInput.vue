@@ -255,26 +255,8 @@ defineExpose({ focus() { taEl.value?.focus(); } });
     0 0 24px var(--bz-purple-soft);
 }
 .bz-gen-input--running {
-  border-color: var(--bz-border-brand);
-  box-shadow: 0 0 0 1px var(--bz-border-brand);
-}
-.bz-gen-input--running::before {
-  /* Sweeping brand strip across the top edge while running — same
-     vocabulary as BonzaiPulse but baked into the composer outline so
-     the user feels the work without a separate spinner. */
-  content: '';
-  position: absolute;
-  top: -1px; left: -1px; right: -1px;
-  height: 2px;
-  border-radius: var(--bz-r-lg) var(--bz-r-lg) 0 0;
-  background-image: linear-gradient(
-    90deg,
-    var(--bz-purple-500) 0%,
-    var(--bz-purple-300) 50%,
-    var(--bz-purple-500) 100%
-  );
-  background-size: 200% 100%;
-  animation: bz-gradient-sweep 2.4s linear infinite;
+  border-color: var(--bz-border);
+  box-shadow: none;
 }
 .bz-gen-input--disabled { opacity: 0.6; pointer-events: none; }
 
@@ -417,9 +399,7 @@ defineExpose({ focus() { taEl.value?.focus(); } });
   display: flex;
   flex-direction: column;
   gap: var(--bz-space-2);
-  margin-top: var(--bz-space-2);
-  padding-top: var(--bz-space-3);
-  border-top: 1px solid var(--bz-border);
+  margin-top: var(--bz-space-3);
 }
 .bz-gen-input__progress-row {
   display: flex;

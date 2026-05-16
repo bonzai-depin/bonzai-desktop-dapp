@@ -166,17 +166,17 @@
           </template>
         </div>
         <div class="control-buttons mb-3">
-          <button v-if="!p2pStatus.started" class="button is-success is-medium" @click="startP2P" :disabled="isStarting">
+          <button v-if="!p2pStatus.started" class="bz-btn bz-btn--success is-medium" @click="startP2P" :disabled="isStarting">
             <span v-if="isStarting" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">play_arrow</span>
             {{ isStarting ? "Starting..." : "Start Node" }}
           </button>
-          <button v-else class="button is-danger is-medium" @click="stopP2P" :disabled="isStopping">
+          <button v-else class="bz-btn bz-btn--destructive is-medium" @click="stopP2P" :disabled="isStopping">
             <span v-if="isStopping" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">stop</span>
             {{ isStopping ? "Stopping..." : "Stop Node" }}
           </button>
-          <button class="button is-warning is-medium ml-2" @click="refreshStatus" :disabled="isRefreshing">
+          <button class="bz-btn bz-btn--warning is-medium ml-2" @click="refreshStatus" :disabled="isRefreshing">
             <span class="material-symbols-outlined" :class="{ spinning: isRefreshing }">refresh</span>
           </button>
         </div>
@@ -198,8 +198,8 @@
               </span>
             </div>
             <button
-              class="button is-small"
-              :class="enableRelay ? 'is-danger' : 'is-success'"
+              class="bz-btn bz-btn--sm"
+              :class="enableRelay ? 'bz-btn--destructive' : 'bz-btn--success'"
               :disabled="p2pStatus.natStatus !== 'public'"
               @click="enableRelay = !enableRelay"
             >
@@ -254,11 +254,11 @@
                 <span class="provider-status online">Online</span>
               </div>
               <div style="margin-left: auto; display: flex; gap: 6px; align-items: center">
-                <span v-if="provider.latencyMs" class="tag is-dark" :title="provider.latencyMs + 'ms'">
+                <span v-if="provider.latencyMs" class="skill-chip" :title="provider.latencyMs + 'ms'">
                   {{ provider.latencyMs }}ms
                 </span>
-                <span class="tag is-success">LAN</span>
-                <span class="tag is-info">FREE</span>
+                <span class="skill-chip skill-chip--success">LAN</span>
+                <span class="skill-chip skill-chip--info">FREE</span>
               </div>
             </div>
             <div class="provider-pricing">
@@ -322,7 +322,7 @@
             </p>
             <hr />
             <button
-              class="button is-warning is-medium mt-3"
+              class="bz-btn bz-btn--warning is-medium mt-3"
               @click="refreshProviders"
               :disabled="isRefreshingProviders"
             >
@@ -427,7 +427,7 @@
         </div>
 
         <div class="selected-provider-info mt-4" v-if="selectedProviders.length > 0">
-          <div class="notification is-success is-light">
+          <div class="bz-notice bz-notice--success">
             <span class="material-symbols-outlined mr-2">check_circle</span>
             {{ selectedProviders.length }} provider{{ selectedProviders.length > 1 ? 's' : '' }} selected.
             Inference requests will be routed to {{ selectedProviders.length > 1 ? 'a random provider' : 'this provider' }}.
@@ -454,7 +454,7 @@
               <span class="material-symbols-outlined mr-2" :class="pipelineEnabled ? 'icon-success' : 'icon-muted'">{{ pipelineEnabled ? "check_circle" : "cancel" }}</span>
               <span>{{ pipelineEnabled ? "Enabled — providers never see your conversation" : "Disabled — providers see all requests and responses" }}</span>
             </div>
-            <button class="button is-small" :class="pipelineEnabled ? 'is-danger' : 'is-success'" @click="pipelineEnabled = !pipelineEnabled">{{ pipelineEnabled ? "Disable" : "Enable" }}</button>
+            <button class="bz-btn bz-btn--sm" :class="pipelineEnabled ? 'bz-btn--destructive' : 'bz-btn--success'" @click="pipelineEnabled = !pipelineEnabled">{{ pipelineEnabled ? "Disable" : "Enable" }}</button>
           </div>
         </div>
         <template v-if="pipelineEnabled">
@@ -465,10 +465,10 @@
                 <span class="material-symbols-outlined mr-2" :class="pipelineLocalTest ? 'icon-success' : 'icon-muted'">{{ pipelineLocalTest ? "check_circle" : "cancel" }}</span>
                 <span>{{ pipelineLocalTest ? "Running private inference on this machine" : "Requires remote providers" }}</span>
               </div>
-              <button class="button is-small" :class="pipelineLocalTest ? 'is-danger' : 'is-success'" @click="pipelineLocalTest = !pipelineLocalTest">{{ pipelineLocalTest ? "Stop" : "Start" }}</button>
+              <button class="bz-btn bz-btn--sm" :class="pipelineLocalTest ? 'bz-btn--destructive' : 'bz-btn--success'" @click="pipelineLocalTest = !pipelineLocalTest">{{ pipelineLocalTest ? "Stop" : "Start" }}</button>
             </div>
             <div v-if="pipelineLocalTestStatus" class="mt-2">
-              <span class="tag" :class="pipelineLocalTestStatus === 'running' ? 'is-success' : pipelineLocalTestStatus === 'starting' ? 'is-warning' : 'is-danger'" style="white-space: normal; height: auto; max-width: 100%">
+              <span class="skill-chip network-status-chip" :class="pipelineLocalTestStatus === 'running' ? 'skill-chip--success' : pipelineLocalTestStatus === 'starting' ? 'skill-chip--warning' : 'skill-chip--danger'">
                 <span class="material-symbols-outlined mr-1" style="font-size: 14px">{{ pipelineLocalTestStatus === 'running' ? 'check_circle' : pipelineLocalTestStatus === 'starting' ? 'hourglass_empty' : 'error' }}</span>
                 {{ pipelineLocalTestStatus }}
               </span>
@@ -486,7 +486,7 @@
                 <span class="material-symbols-outlined mr-2" :class="pipelineDPEnabled ? 'icon-success' : 'icon-muted'">{{ pipelineDPEnabled ? "check_circle" : "cancel" }}</span>
                 <span>{{ pipelineDPEnabled ? "Enabled" : "Disabled" }}</span>
               </div>
-              <button class="button is-small" :class="pipelineDPEnabled ? 'is-danger' : 'is-success'" @click="pipelineDPEnabled = !pipelineDPEnabled">{{ pipelineDPEnabled ? "Disable" : "Enable" }}</button>
+              <button class="bz-btn bz-btn--sm" :class="pipelineDPEnabled ? 'bz-btn--destructive' : 'bz-btn--success'" @click="pipelineDPEnabled = !pipelineDPEnabled">{{ pipelineDPEnabled ? "Disable" : "Enable" }}</button>
             </div>
             <template v-if="pipelineDPEnabled">
               <div class="mt-3">
@@ -520,7 +520,7 @@
               <span class="material-symbols-outlined mr-2" :class="openclawEnabled ? 'icon-success' : 'icon-muted'">{{ openclawEnabled ? "check_circle" : "cancel" }}</span>
               <span>{{ openclawEnabled ? "Enabled" : "Disabled" }}</span>
             </div>
-            <button class="button is-small" :class="openclawEnabled ? 'is-danger' : 'is-success'" :disabled="openclawToggling" @click="toggleOpenClaw">
+            <button class="bz-btn bz-btn--sm" :class="openclawEnabled ? 'bz-btn--destructive' : 'bz-btn--success'" :disabled="openclawToggling" @click="toggleOpenClaw">
               <span v-if="openclawToggling" class="material-symbols-outlined mr-1 spinning">progress_activity</span>
               {{ openclawEnabled ? "Disable" : "Enable" }}
             </button>
@@ -534,7 +534,7 @@
               <span class="material-symbols-outlined mr-2" :class="hermesEnabled ? 'icon-success' : 'icon-muted'">{{ hermesEnabled ? "check_circle" : "cancel" }}</span>
               <span>{{ hermesEnabled ? "Enabled" : "Disabled" }}</span>
             </div>
-            <button class="button is-small" :class="hermesEnabled ? 'is-danger' : 'is-success'" :disabled="hermesToggling" @click="toggleHermes">
+            <button class="bz-btn bz-btn--sm" :class="hermesEnabled ? 'bz-btn--destructive' : 'bz-btn--success'" :disabled="hermesToggling" @click="toggleHermes">
               <span v-if="hermesToggling" class="material-symbols-outlined mr-1 spinning">progress_activity</span>
               {{ hermesEnabled ? "Disable" : "Enable" }}
             </button>
@@ -692,7 +692,7 @@
 
         <div class="test-panel">
           <button
-            class="button is-success is-medium"
+            class="bz-btn bz-btn--success is-medium"
             @click="runSelfTest"
             :disabled="isSelfTesting"
           >
@@ -801,7 +801,7 @@
             </div>
             <div class="control">
               <button
-                class="button is-success is-large"
+                class="bz-btn bz-btn--success is-large"
                 @click="testConnection"
                 :disabled="!testPeerId || isTesting"
                 style="box-shadow: none"
@@ -876,7 +876,7 @@
           epoch close from the relevant MintPool's provider-side share.
         </p>
 
-        <div v-if="!serviceTimeReady" class="notification is-warning is-light">
+        <div v-if="!serviceTimeReady" class="bz-notice bz-notice--warning">
           <strong>Pending audit deploy.</strong>
           The on-chain BonzaiServiceTime address isn't populated yet.
           Sessions still accumulate locally — they'll submit when the
@@ -905,7 +905,7 @@
 
         <div class="mt-4 buttons">
           <button
-            class="button is-info"
+            class="bz-btn bz-btn--primary"
             :disabled="!serviceTimeReady || serviceTimeFlushing || !serviceTimePending?.rows"
             @click="flushServiceTime"
             :title="serviceTimeEligibility?.ok ? 'Submit pending seconds to Arbitrum' : (serviceTimeEligibility?.balance >= 0n ? 'Need 1000 BONZAI on Arbitrum to submit' : 'Connect wallet to check eligibility')"
@@ -915,7 +915,7 @@
             <span v-else>Submit Pending</span>
           </button>
           <button
-            class="button is-light"
+            class="bz-btn bz-btn--ghost"
             @click="refreshServiceTime"
             :disabled="serviceTimeFlushing"
           >
@@ -924,11 +924,11 @@
           </button>
         </div>
 
-        <div v-if="serviceTimeFlushResult" class="mt-3 notification is-success is-light">
+        <div v-if="serviceTimeFlushResult" class="mt-3 bz-notice bz-notice--success">
           Submitted {{ serviceTimeFlushResult.rowsSubmitted }} rows · tx
           <code>{{ serviceTimeFlushResult.txHash?.slice(0, 10) }}…</code>
         </div>
-        <div v-if="serviceTimeFlushError" class="mt-3 notification is-danger is-light">
+        <div v-if="serviceTimeFlushError" class="mt-3 bz-notice bz-notice--danger">
           {{ serviceTimeFlushError }}
         </div>
       </div>
@@ -1705,7 +1705,7 @@ onUnmounted(() => {
 :root {
   --bonzai-bg-dark: #0a0a0f;
   --bonzai-bg-card: rgba(20, 20, 30, 0.92);
-  --bonzai-green: #10b981;
+  --bonzai-green: var(--bz-emerald-500);
   --bonzai-green-glow: rgba(16, 185, 129, 0.3);
   --bonzai-purple: #8b5cf6;
   --bonzai-text: #f0f0f5;
@@ -1730,7 +1730,7 @@ onUnmounted(() => {
   border: 3px solid var(--bz-border);
   border-top-color: var(--bonzai-green);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: bz-spin 0.8s linear infinite;
 }
 
 .loading-text {
@@ -1747,7 +1747,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -1831,10 +1831,9 @@ hr {
 }
 
 .mode-selector input[type="radio"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 
 .mode-selector input[type="radio"] + label .material-symbols-outlined {
@@ -1881,7 +1880,7 @@ hr {
 }
 
 .description-card.consumer .material-symbols-outlined {
-  color: #3b82f6;
+  color: var(--bz-info);
 }
 
 .description-card.provider {
@@ -1920,7 +1919,7 @@ hr {
 }
 
 .description-card.orchestration .material-symbols-outlined {
-  color: #a855f7;
+  color: var(--bz-purple-300);
 }
 
 .description-card.pipeline {
@@ -2004,7 +2003,7 @@ hr {
 .orchestration-status-info {
   display: flex;
   align-items: center;
-  color: rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
   font-weight: 700;
 }
 
@@ -2208,12 +2207,12 @@ hr {
 
 .status-panel.online {
   border-color: rgba(16, 185, 129, 0.25);
-  animation: pulseGreen 2s infinite;
+  animation: bz-pulse 2s infinite;
 }
 
 .status-panel.offline {
   border-color: rgba(241, 70, 104, 0.25);
-  animation: pulseRed 2s infinite;
+  animation: bz-pulse 2s infinite;
 }
 
 @keyframes pulseGreen {
@@ -2267,7 +2266,7 @@ hr {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ef4444;
+  background: var(--bz-danger);
   margin-right: 8px;
 }
 
@@ -2307,7 +2306,7 @@ hr {
   color: var(--bonzai-green);
 }
 .nat-relayed {
-  color: #f59e0b;
+  color: var(--bz-warning);
 }
 .nat-unknown {
   color: var(--bz-fg-low);
@@ -2353,7 +2352,7 @@ hr {
   border: 2px solid var(--bz-fg-faint);
   border-top-color: var(--bz-fg);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: bz-spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -2363,7 +2362,7 @@ hr {
 }
 
 .spinning {
-  animation: spin 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 /* Provider Settings */
@@ -2604,7 +2603,7 @@ hr {
 
 /* Test Icon Colors */
 .test-icon.icon-success {
-  color: #10b981 !important;
+  color: var(--bz-emerald-500) !important;
 }
 
 .test-icon.icon-error {
@@ -2612,7 +2611,7 @@ hr {
 }
 
 .test-icon.icon-warning {
-  color: #f59e0b !important;
+  color: var(--bz-warning) !important;
 }
 
 .test-result-row.warning {
@@ -2669,13 +2668,13 @@ hr {
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.3);
   color: var(--bonzai-green);
-  animation: pulseGreen 2s infinite;
+  animation: bz-pulse 2s infinite;
 }
 
 .overall-status.not-ready {
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.3);
-  color: #f59e0b;
+  color: var(--bz-warning);
 }
 
 /* Input styling to match modal */

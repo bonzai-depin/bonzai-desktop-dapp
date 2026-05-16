@@ -55,7 +55,7 @@
 [data-theme="terminal"] {
   --bz-canvas:        #000000;
   --bz-panel:         #050505;
-  --bz-card:          #0a0a0a;
+  --bz-card:          var(--bz-canvas);
   --bz-raised:        #121212;
   --bz-overlay:       rgba(0, 0, 0, 0.88);
 
@@ -64,7 +64,7 @@
      emerald-only feel reads as terminal-native. */
   --bz-purple-100:    #6ee7b7;
   --bz-purple-300:    #34d399;
-  --bz-purple-500:    #10b981;
+  --bz-purple-500:    var(--bz-emerald-500);
   --bz-purple-700:    #047857;
   --bz-purple-900:    #022c22;
   --bz-purple-glow:   rgba(52, 211, 153, 0.32);
@@ -99,7 +99,73 @@
   text-transform: uppercase;
 }
 
-/* ─── MISTRAL — purple minimalism on light cream ─────────────── */
+/* ─── LIGHT — professional light mode, Stripe+Linear-inspired ────── */
+[data-theme="light"] {
+  --bz-canvas:        #f9fafb;
+  --bz-panel:         #ffffff;
+  --bz-card:          #ffffff;
+  --bz-raised:        #f3f4f6;
+  --bz-overlay:       rgba(15, 23, 42, 0.4);
+
+  --bz-purple-100:    #ddd6fe;
+  --bz-purple-300:    #7c3aed;
+  --bz-purple-500:    #6d28d9;
+  --bz-purple-700:    #4c1d95;
+  --bz-purple-900:    #2e1065;
+  --bz-purple-glow:   rgba(124, 58, 237, 0.24);
+  --bz-purple-soft:   rgba(109, 40, 217, 0.08);
+  --bz-gradient-brand:
+    linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%);
+  --bz-gradient-brand-soft:
+    linear-gradient(135deg, rgba(109,40,217,0.08) 0%, rgba(124,58,237,0.08) 100%);
+
+  --bz-emerald-300:   #34d399;
+  --bz-emerald-500:   #059669;
+  --bz-emerald-700:   #047857;
+  --bz-emerald-soft:  rgba(5, 150, 105, 0.10);
+
+  --bz-fg:            #0f172a;
+  --bz-fg-mid:        #475569;
+  --bz-fg-low:        #94a3b8;
+  --bz-fg-faint:      #cbd5e1;
+
+  --bz-danger:        #dc2626;
+  --bz-danger-soft:   rgba(220, 38, 38, 0.08);
+  --bz-warning:       #b45309;
+  --bz-warning-soft:  rgba(180, 83, 9, 0.08);
+  --bz-info:          #2563eb;
+  --bz-info-soft:     rgba(37, 99, 235, 0.08);
+
+  --bz-border:        rgba(15, 23, 42, 0.08);
+  --bz-border-strong: rgba(15, 23, 42, 0.14);
+  --bz-border-brand:  rgba(109, 40, 217, 0.40);
+
+  --bz-hairline-0:    rgba(15, 23, 42, 0.04);
+  --bz-hairline-1:    var(--bz-border);
+  --bz-hairline-2:    var(--bz-border-strong);
+
+  --bz-scrim-soft:    rgba(15, 23, 42, 0.06);
+  --bz-scrim:         rgba(15, 23, 42, 0.12);
+  --bz-scrim-strong:  rgba(15, 23, 42, 0.30);
+  --bz-scrim-deep:    rgba(15, 23, 42, 0.50);
+
+  --bz-elev-1: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --bz-elev-2: 0 4px 16px rgba(15, 23, 42, 0.10);
+  --bz-elev-3: 0 12px 40px rgba(15, 23, 42, 0.14);
+  --bz-elev-brand:
+    0 0 0 1px var(--bz-border-brand),
+    0 0 32px var(--bz-purple-glow);
+
+  --bz-content-scrim:
+    linear-gradient(180deg, transparent 35%, rgba(15,23,42,0.30) 70%, rgba(15,23,42,0.50) 100%);
+}
+
+[data-theme="light"] .bz-notif--info,
+[data-theme="light"] .bz-notif--success,
+[data-theme="light"] .bz-notif--warning,
+[data-theme="light"] .bz-notif--danger {
+  color: var(--bz-fg);
+}
 [data-theme="mistral"] {
   --bz-canvas:        #faf7f2;
   --bz-panel:         #f3eee5;

@@ -25,8 +25,13 @@
 
     <!-- Browse models CTA — a quiet secondary action so it doesn't
          compete with the prompt cards above it. -->
-    <p class="bz-empty-chat__cta">
-      <button type="button" class="bz-empty-chat__link" @click="$emit('browse-models')">
+    <p v-if="showBrowseModels || modelName" class="bz-empty-chat__cta">
+      <button
+        v-if="showBrowseModels"
+        type="button"
+        class="bz-empty-chat__link"
+        @click="$emit('browse-models')"
+      >
         <span class="material-symbols-outlined" aria-hidden="true">memory</span>
         <span>Choose a different model</span>
       </button>
@@ -44,7 +49,7 @@ defineProps({
   /** Optional subhead under the headline. */
   subhead: {
     type: String,
-    default: "Pick a starter or type your own. Streaming, vision, code, roleplay — same input.",
+    default: "",
   },
   /** Quick prompt cards — [{ icon, title, subtitle, value }, …] */
   prompts: {
@@ -58,6 +63,8 @@ defineProps({
   },
   /** Currently loaded model name — shown as a quiet hint. */
   modelName: { type: String, default: "" },
+  /** Whether to show the secondary browse-models link. */
+  showBrowseModels: { type: Boolean, default: true },
 });
 
 defineEmits(["pick", "browse-models"]);
@@ -65,11 +72,13 @@ defineEmits(["pick", "browse-models"]);
 
 <style scoped>
 .bz-empty-chat {
-  max-width: 760px;
-  margin: 0;
+  width: 100%;
+  margin: 0 auto;
   padding: var(--bz-space-8) var(--bz-space-5);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   gap: var(--bz-space-7);
 }
 

@@ -5,12 +5,11 @@
   <Transition name="notification-slide">
     <div
       v-if="statusNotification.show"
-      class="generation notification fira-sans-condensed-black-italic"
-      :class="'is-' + statusNotification.type"
+      class="agent-status-toast fira-sans-condensed-black-italic"
+      :class="`agent-status-toast--${statusNotification.type}`"
     >
-      <p>
-        <span class="fira-sans-condensed-black-italic is-size-4">
-          <span class="material-symbols-outlined mr-2 is-size-4" style="vertical-align: middle">
+      <span class="agent-status-toast__body">
+          <span class="material-symbols-outlined" aria-hidden="true">
             {{
               statusNotification.type === "success"
                 ? "check_circle"
@@ -22,212 +21,189 @@
             }}
           </span>
           {{ statusNotification.message }}
-        </span>
-      </p>
+      </span>
     </div>
   </Transition>
 
-  <div class="bz-tab-shell">
-    <div class="models__deployment-install">
-      <div class="columns">
-        <div class="column is-12 p-5">
-          <!-- Header -->
-          <div class="level mb-5">
-            <div class="level-left">
-              <h1 class="fira-sans-condensed-black-italic has-text-white">
-                <span
-                  class="material-symbols-outlined mr-2"
-                  style="font-size: 64px"
-                >
-                  hub
-                </span>
-                Agentic Skills
-              </h1>
-            </div>
+  <div class="bz-tab-shell bz-tab-shell--agent">
+    <ChatLayout
+      class="agent-command-center"
+      :messages="[]"
+      :busy="isAnalyzing || isGenerating || isExecuting"
+      :rail-collapsed="isAgentRailCollapsed"
+      rail-label="agent workspace"
+      :rail-count="agentRailItems.length"
+      @toggle-rail="toggleAgentRail"
+    >
+      <template #rail>
+        <aside class="agent-command-rail" aria-label="Agent workspace navigation">
+          <div class="agent-command-rail__head">
+            <span class="bz-eyebrow">Menu</span>
           </div>
 
-          <!-- Tabs -->
-          <div class="tabs is-large is-fullwidth mb-5">
-            <ul>
-              <li :class="{ 'is-active': activeTab === 'browseSkills' }">
-                <a @click.prevent="activeTab = 'browseSkills'" class="fira-sans-condensed-black-italic is-size-1">
-                  <span class="material-symbols-outlined mr-2 is-size-1">shopping_cart</span>
-                  Browse Skills
-                </a>
-              </li>
-              <li :class="{ 'is-active': activeTab === 'browseAgents' }">
-                <a @click.prevent="activeTab = 'browseAgents'" class="fira-sans-condensed-black-italic is-size-1">
-                  <span class="material-symbols-outlined mr-2 is-size-1">groups</span>
-                  Agents
-                </a>
-              </li>
-              <li :class="{ 'is-active': activeTab === 'my-skills' }">
-                <a @click.prevent="activeTab = 'my-skills'" class="fira-sans-condensed-black-italic is-size-1">
-                  <span class="material-symbols-outlined mr-2 is-size-1">play_arrow</span>
-                  Run Skill
-                </a>
-              </li>
-            </ul>
+          <div class="agent-command-rail__section">
+            <button
+              v-for="item in agentRailItems"
+              :key="item.value"
+              type="button"
+              class="agent-rail-item"
+              :class="{ 'is-active': activeTab === item.value }"
+              @click="selectAgentMode(item.value)"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">{{ item.icon }}</span>
+              <span class="agent-rail-item__label">{{ item.label }}</span>
+              <span v-if="item.count !== null" class="agent-rail-item__count bz-mono">{{ item.count }}</span>
+            </button>
           </div>
 
-          <!-- BROWSE SKILLS TAB -->
-          <div v-if="activeTab === 'browseSkills'">
-            <!-- Category Filter -->
-            <div class="category-filter mb-5">
-              <span class="category-selector">
-                <input
-                  type="radio"
-                  name="skill_category"
-                  id="category_all"
-                  :checked="!selectedCategory"
-                  @change="setCategory(null)"
-                />
-                <label for="category_all" class="radio category">
-                  <span class="material-symbols-outlined mr-1">apps</span>
-                  All
-                </label>
-                <template v-for="cat in categories" :key="cat.key">
-                  <input
-                    type="radio"
-                    name="skill_category"
-                    :id="'category_' + cat.key"
-                    :checked="selectedCategory === cat.key"
-                    @change="setCategory(cat.key)"
-                  />
-                  <label :for="'category_' + cat.key" class="radio category">
-                    <span
-                      class="material-symbols-outlined mr-1"
-                      style="font-size: 32px !important"
-                    >
-                      {{ cat.icon }}
-                    </span>
-                    {{ cat.label }}
-                  </label>
-                </template>
+        </aside>
+      </template>
+
+      <template #header>
+        <div class="agent-command-head">
+          <div class="agent-command-head__title">
+            <span class="bz-eyebrow">{{ agentModeEyebrow }}</span>
+            <h1 class="bz-h1 fira-sans-condensed-black-italic">
+              <span class="material-symbols-outlined bz-title-icon" aria-hidden="true">{{ agentModeIcon }}</span>
+              {{ agentModeTitle }}
+            </h1>
+          </div>
+          <div class="agent-command-head__actions">
+            <button
+              type="button"
+              class="bz-iconbtn"
+              :title="isAgentRailCollapsed ? 'Show agent rail' : 'Hide agent rail'"
+              :aria-label="isAgentRailCollapsed ? 'Show agent rail' : 'Hide agent rail'"
+              @click="toggleAgentRail"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">
+                {{ isAgentRailCollapsed ? 'left_panel_open' : 'left_panel_close' }}
               </span>
-            </div>
+            </button>
+            <button type="button" class="bz-iconbtn" title="Refresh skills" aria-label="Refresh skills" @click="refreshSkills">
+              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+            </button>
+          </div>
+        </div>
+      </template>
 
-            <!-- Skills Grid -->
-            <div v-if="filteredSkills.length > 0" class="skills-grid">
-              <div
+      <template #stream>
+        <div class="agent-command-stream">
+          <section class="agent-mode-surface">
+          <!-- BROWSE SKILLS TAB -->
+          <div v-if="activeTab === 'browseSkills'" class="agent-market">
+            <ModeChipBar
+              :model-value="selectedCategory || 'all'"
+              :items="categoryItems"
+              class="category-filter"
+              compact
+              @update:model-value="setCategory($event === 'all' ? null : $event)"
+            />
+
+            <div v-if="filteredSkills.length > 0" class="agent-market-grid">
+              <article
                 v-for="skill in filteredSkills"
                 :key="skill.id"
-                class="skill-card models__activity--payouts"
+                class="agent-market-card"
                 :class="{
                   'is-owned': canRunSkill(skill.id).canRun,
                   featured: skill.featured,
                 }"
               >
-                <div class="skill-header">
-                  <h3
-                    class="skill-name is-size-3 fira-sans-condensed-black-italic"
-                  >
-                    <span class="material-symbols-outlined mr-2 is-size-3">
-                      {{ getCategoryIcon(skill.category) }}
+                <div class="agent-market-card__main">
+                  <div class="agent-market-card__top">
+                    <span class="agent-market-card__icon">
+                      <span class="material-symbols-outlined" aria-hidden="true">
+                        {{ getCategoryIcon(skill.category) }}
+                      </span>
                     </span>
-                    {{ skill.name }}
-                  </h3>
-                  <div class="tags">
-                    <span
-                      class="tag is-info is-medium fira-sans-condensed-black-italic"
-                    >
-                      {{ getCategoryLabel(skill.category) }}
-                    </span>
-                    <span
-                      v-if="skill.platform?.os === 'darwin'"
-                      class="tag is-dark is-medium fira-sans-condensed-black-italic"
-                    >
-                      <span class="material-symbols-outlined mr-1" style="font-size: 16px">laptop_mac</span>
-                      For macOS
-                    </span>
-                    <span
-                      v-if="skill.author?.verified"
-                      class="tag is-success is-medium fira-sans-condensed-black-italic"
-                    >
-                      Verified
-                    </span>
-                    <span
-                      v-if="skill.tags?.includes('demo')"
-                      class="tag is-link is-medium fira-sans-condensed-black-italic"
-                    >
-                      Demo
-                    </span>
+                    <div class="agent-market-card__meta">
+                      <h3 class="fira-sans-condensed-black-italic">
+                        {{ skill.name }}
+                      </h3>
+                      <p>{{ getCategoryLabel(skill.category) }}</p>
+                    </div>
+                  </div>
+
+                  <p class="agent-market-card__description">{{ skill.description }}</p>
+
+                  <div class="agent-market-card__badges">
+                    <span v-if="skill.author?.verified" class="agent-market-pill">Verified</span>
+                    <span v-if="skill.tags?.includes('demo')" class="agent-market-pill">Demo</span>
+                    <span v-if="isSkillPurchased(skill.id)" class="agent-market-pill agent-market-pill--success">Purchased</span>
                   </div>
                 </div>
 
-                <p class="skill-description">{{ skill.description }}</p>
+                <dl class="agent-market-card__facts">
+                  <div>
+                    <dt>Fit</dt>
+                    <dd>{{ skillCompatibilityLabel(skill) }}</dd>
+                  </div>
+                  <div>
+                    <dt>Access</dt>
+                    <dd>{{ skillRequirementLabel(skill) }}</dd>
+                  </div>
+                  <div>
+                    <dt>Output</dt>
+                    <dd>{{ skillRoiLabel(skill) }}</dd>
+                  </div>
+                </dl>
 
-                <hr />
-
-                <div class="skill-footer">
-                  <div class="skill-actions">
-                    <!-- Platform requirement (Apple Silicon) -->
-                    <span
-                      v-if="skill.platform && !isAppleSilicon"
-                      class="tag is-dark is-medium"
-                      style="opacity: 0.6"
-                    >
-                      <span class="material-symbols-outlined mr-1" style="font-size: 16px">laptop_mac</span>
-                      Requires Apple Silicon Mac
-                    </span>
-
-                    <!-- Free skill or already purchased: show Run -->
-                    <template v-else-if="isFreeSkill(skill) || isSkillPurchased(skill.id)">
+                <div class="agent-market-card__actions">
+                  <span
+                    v-if="skill.platform && !isAppleSilicon"
+                    class="agent-market-card__blocked"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">laptop_mac</span>
+                    Requires Apple Silicon
+                  </span>
+                  <template v-else-if="isFreeSkill(skill) || isSkillPurchased(skill.id)">
                       <button
-                        class="button is-info is-medium"
+                        class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
                         @click="runSkill(skill)"
                       >
-                        <span class="material-symbols-outlined mr-1">play_arrow</span>
+                      <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
                         Run
                       </button>
-                      <span v-if="isSkillPurchased(skill.id)" class="tag is-success is-light ml-2">
-                        <span class="material-symbols-outlined mr-1" style="font-size: 14px">check_circle</span>
-                        Purchased
-                      </span>
                     </template>
-
-                    <!-- Paid skill, not purchased: Preview + Purchase (wallet connects silently if needed) -->
-                    <template v-else>
+                  <template v-else>
                       <button
-                        class="button is-info is-medium"
+                        class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
                         @click="previewSkill(skill)"
                       >
-                        <span class="material-symbols-outlined mr-1">visibility</span>
+                      <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
                         Preview
                       </button>
                       <button
-                        class="button is-warning is-medium ml-2"
-                        :class="{ 'is-loading': purchasingSkillId === skill.id }"
+                      class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+                        :class="{ 'bz-btn--running': purchasingSkillId === skill.id }"
                         :disabled="purchasingSkillId === skill.id"
                         @click.stop="purchaseSkill(skill)"
                       >
-                        <span class="material-symbols-outlined mr-1">shopping_cart</span>
-                        Purchase
+                      <span class="material-symbols-outlined" aria-hidden="true">shopping_cart</span>
+                      {{ skillPriceLabel(skill) }}
                       </button>
-                      <span class="skill-price-tag ml-5">
-                        <span class="skill-price-amount">{{ skill.price }}</span>
-                        <span class="skill-price-currency">USDC</span>
-                      </span>
                     </template>
-                  </div>
                 </div>
-              </div>
+              </article>
             </div>
 
-            <div v-else class="notification is-info">
-              <span class="fira-sans-condensed-black-italic is-size-1">
-                Coming Soon.
-              </span>
-            </div>
+            <BonzaiEmptyState
+              v-else
+              size="small"
+              icon="extension"
+              title="Coming soon"
+              :show-orb="false"
+            />
           </div>
 
           <!-- BROWSE AGENTS TAB -->
-          <div v-if="activeTab === 'browseAgents'">
-            <BrowseAgents />
+          <div v-if="activeTab === 'browseAgents'" class="agent-agents-view">
+            <BrowseAgents :skills="marketplaceSkills" />
           </div>
 
           <!-- MY SKILLS TAB -->
-          <div v-if="activeTab === 'my-skills'">
+          <div v-if="activeTab === 'my-skills'" class="agent-runner-view">
             <!-- Always show skill UI - gating happens inside the skill component -->
             <div>
               <!-- DOWNLOAD REQUIRED (only when not actively downloading and check is complete) -->
@@ -238,21 +214,21 @@
                   hasMissingModels &&
                   !downloads.active
                 "
-                class="notification is-danger mb-6 mt-4 p-6 has-text-left"
+                class="agent-notice agent-notice--danger"
               >
-                <div class="mb-2">
-                  <strong class="fira-sans-condensed-black-italic is-size-2">
+                <div class="agent-notice__body">
+                  <strong class="agent-notice__title fira-sans-condensed-black-italic">
                     Download Required
                   </strong>
                   <!-- Show all missing repos -->
-                  <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                  <ul class="agent-model-list">
                     <template v-for="model in missingModels" :key="model.key">
                       <li
                         v-for="repo in modelReadinessDetails[model.key]
                           ?.repos || []"
                         :key="repo"
                       >
-                        <span class="material-symbols-outlined is-size-3 mr-1">
+                        <span class="material-symbols-outlined" aria-hidden="true">
                           deployed_code
                         </span>
                         {{ repo }}
@@ -260,7 +236,7 @@
                     </template>
                   </ul>
                   <!-- Show all missing files/ggufs -->
-                  <ul style="text-transform: lowercase">
+                  <ul class="agent-model-list">
                     <template
                       v-for="model in missingModels"
                       :key="model.key + '_files'"
@@ -270,7 +246,7 @@
                           ?.files || []"
                         :key="file"
                       >
-                        <span class="material-symbols-outlined is-size-3 mr-1">
+                        <span class="material-symbols-outlined" aria-hidden="true">
                           deployed_code
                         </span>
                         {{ file }}
@@ -289,7 +265,8 @@
                             :key="model.key + '_fallback_repo_' + rIdx"
                           >
                             <span
-                              class="material-symbols-outlined is-size-3 mr-1"
+                              class="material-symbols-outlined"
+                              aria-hidden="true"
                             >
                               deployed_code
                             </span>
@@ -298,9 +275,7 @@
                         </template>
                         <!-- Handle single repo/filename -->
                         <li v-else>
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-1"
-                          >
+                          <span class="material-symbols-outlined" aria-hidden="true">
                             deployed_code
                           </span>
                           {{ model.filename || model.repo || model.name }}
@@ -309,58 +284,40 @@
                     </template>
                   </ul>
                 </div>
-                <hr />
-                <div class="buttons">
-                  <button
-                    class="button is-warning mr-5 is-large"
-                    @click="downloadAllMissingModels"
-                    :disabled="downloads.active"
-                  >
-                    <span class="material-symbols-outlined mr-1">download</span>
-                    Download Now
-                  </button>
-                </div>
+                <button
+                  class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                  @click="downloadAllMissingModels"
+                  :disabled="downloads.active"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true">download</span>
+                  Download Now
+                </button>
               </div>
 
               <!-- DOWNLOAD PROGRESS (like GenerativeImage.vue) -->
               <div
                 v-if="downloads && downloads.active"
-                class="notification is-info p-6 mb-6 mt-4 has-text-left"
+                class="agent-progress-card"
               >
-                <p class="mb-2">
-                  <span class="fira-sans-condensed-black-italic is-size-4">
+                <div class="agent-progress-card__head">
+                  <span class="agent-progress-card__title fira-sans-condensed-black-italic">
+                    <BonzaiPulse variant="dot" />
                     Downloading
-                    <button
-                      disabled
-                      class="button is-loading is-info is-small mr-2 p-4"
-                    ></button>
                   </span>
-                  <span
-                    class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
-                  >
+                  <span class="agent-progress-card__pct fira-sans-condensed-black-italic">
                     {{ Math.round(downloads.total_progress || 0) }}%
                   </span>
-                </p>
-                <progress
-                  class="progress is-success is-large"
-                  :value="downloads.progress || 0"
-                  max="100"
-                >
-                  {{ Math.round(downloads.progress || 0) }}%
-                </progress>
-                <div
-                  v-if="downloadTaskList.length"
-                  style="max-height: 180px; overflow: auto"
-                >
-                  <ul>
+                </div>
+                <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
+                <div v-if="downloadTaskList.length" class="agent-download-scroll">
+                  <ul class="agent-download-list">
                     <li
                       v-for="t in downloadTaskList"
                       :key="t.task_id"
-                      class="is-size-7 columns"
-                      style="text-transform: lowercase"
+                      class="agent-download-task"
                     >
-                      <div class="column has-text-left">
-                        <span class="material-symbols-outlined is-size-6">
+                      <div class="agent-download-task__name">
+                        <span class="material-symbols-outlined" aria-hidden="true">
                           deployed_code
                         </span>
                         {{ t.filename || t.name || t.task_id }} —
@@ -368,9 +325,7 @@
                           {{ t.status }}
                         </span>
                       </div>
-                      <div
-                        class="column is-2 fira-sans-condensed-black-italic has-text-right"
-                      >
+                      <div class="agent-download-task__pct fira-sans-condensed-black-italic">
                         {{ Math.round(t.progress || 0) }}%
                       </div>
                     </li>
@@ -385,7 +340,7 @@
               >
                 <div class="preview-gate-content">
                   <span class="material-symbols-outlined preview-gate-icon">lock</span>
-                  <h3 class="fira-sans-condensed-black-italic is-size-4 has-text-white">
+                  <h3 class="bz-h3 fira-sans-condensed-black-italic">
                     Preview Mode
                   </h3>
                   <p class="preview-gate-desc">
@@ -393,8 +348,8 @@
                   </p>
                   <div class="preview-gate-actions">
                       <button
-                        class="button is-warning"
-                        :class="{ 'is-loading': purchasingSkillId === selectedSkill.id }"
+                        class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                        :class="{ 'bz-btn--running': purchasingSkillId === selectedSkill.id }"
                         :disabled="purchasingSkillId === selectedSkill.id"
                         @click="purchaseSkill(selectedSkill)"
                       >
@@ -409,9 +364,75 @@
                 </div>
               </div>
 
+              <section
+                v-if="selectedSkill"
+                class="agent-runner-cockpit"
+                :class="'agent-runner-cockpit--' + selectedSkillProfile.tone"
+              >
+                <div class="agent-runner-cockpit__main">
+                  <div class="agent-runner-cockpit__badge">
+                    <span class="material-symbols-outlined" aria-hidden="true">{{ selectedSkillProfile.icon }}</span>
+                    <span>{{ selectedSkillProfile.workspace }}</span>
+                  </div>
+                  <h2 class="agent-runner-cockpit__title fira-sans-condensed-black-italic">
+                    {{ selectedSkill.name }}
+                  </h2>
+                  <p class="agent-runner-cockpit__promise">
+                    {{ selectedSkillProfile.promise }}
+                  </p>
+                  <div class="agent-runner-pipeline" aria-label="Workflow pipeline">
+                    <span
+                      v-for="(step, index) in selectedSkillProfile.steps"
+                      :key="step"
+                      class="agent-runner-pipeline__step"
+                      :class="{ 'is-active': index === selectedSkillStageIndex }"
+                    >
+                      <span class="bz-mono">{{ String(index + 1).padStart(2, '0') }}</span>
+                      {{ step }}
+                    </span>
+                  </div>
+                </div>
+
+                <aside class="agent-runner-cockpit__panel" aria-label="Runner profile">
+                  <div class="agent-runner-metric agent-runner-metric--hero">
+                    <span>{{ selectedSkillProfile.confidenceLabel }}</span>
+                    <strong class="fira-sans-condensed-black-italic">{{ selectedSkillReadiness }}</strong>
+                  </div>
+                  <div class="agent-runner-metric-grid">
+                    <div class="agent-runner-metric">
+                      <span>Mode</span>
+                      <strong>{{ selectedSkillProfile.mode }}</strong>
+                    </div>
+                    <div class="agent-runner-metric">
+                      <span>Output</span>
+                      <strong>{{ selectedSkillProfile.primaryOutput }}</strong>
+                    </div>
+                    <div class="agent-runner-metric">
+                      <span>Cadence</span>
+                      <strong>{{ selectedSkillProfile.cadence }}</strong>
+                    </div>
+                    <div class="agent-runner-metric">
+                      <span>Models</span>
+                      <strong>{{ selectedSkillModelCount }}</strong>
+                    </div>
+                  </div>
+                  <div class="agent-runner-outcomes">
+                    <span
+                      v-for="outcome in selectedSkillProfile.outcomes"
+                      :key="outcome"
+                      class="agent-runner-outcome"
+                    >
+                      <span class="material-symbols-outlined" aria-hidden="true">check_small</span>
+                      {{ outcome }}
+                    </span>
+                  </div>
+                </aside>
+              </section>
+
               <!-- POLYMARKET SKILL (modular component) -->
               <div
                 v-if="selectedSkillId === 'polymarket-top-performers-v1.0.0'"
+                class="agent-skill-runtime"
               >
                 <PolymarketSkill
                   :skill="selectedSkill"
@@ -423,6 +444,7 @@
               <!-- DSLA SKILL (modular component) -->
               <div
                 v-else-if="selectedSkillId === 'prediction-market-maker-v1.0.0'"
+                class="agent-skill-runtime"
               >
                 <DSLASkill
                   :skill="selectedSkill"
@@ -435,7 +457,7 @@
               <!-- MEDITATION FORGE SKILL (modular component) -->
               <div
                 v-else-if="selectedSkillId === 'meditation-forge-v1.0.0'"
-                class="meditation-interface"
+                class="meditation-interface agent-skill-runtime"
               >
                 <MeditationForgeSkill
                   :skill="selectedSkill"
@@ -450,7 +472,7 @@
               <!-- VIDEO CAPTIONING SKILL (modular component) -->
               <div
                 v-else-if="selectedSkillId === 'video-captioning-v1.0.0'"
-                class="meditation-interface"
+                class="meditation-interface agent-skill-runtime"
               >
                 <VideoCaptioningSkill
                   :skill="selectedSkill"
@@ -465,7 +487,7 @@
               <!-- TRADING CARD GAME ANALYSIS (modular component) -->
               <div
                 v-else-if="selectedSkillId === 'tcg-analysis-v1.0.0'"
-                class="meditation-interface"
+                class="meditation-interface agent-skill-runtime"
               >
                 <TCGScannerSkill
                   :skill="selectedSkill"
@@ -480,7 +502,7 @@
               <!-- LIVE STREAMER PLAYGROUND (modular component) -->
               <div
                 v-else-if="selectedSkillId === 'live-streaming-v1.0.0'"
-                class="meditation-interface"
+                class="meditation-interface agent-skill-runtime"
               >
                 <LiveStreamerSkill
                   :skill="selectedSkill"
@@ -490,7 +512,7 @@
               </div>
 
               <!-- MASS CHAT (education skill) -->
-              <div v-else-if="selectedSkillId === 'mass-chat-v1.0.0'">
+              <div v-else-if="selectedSkillId === 'mass-chat-v1.0.0'" class="agent-skill-runtime">
                 <MassChatSkill
                   :skill="selectedSkill"
                   @status-update="loadingMessage = $event"
@@ -498,7 +520,7 @@
               </div>
 
               <!-- CHART FORECASTER (finance skill) -->
-              <div v-else-if="selectedSkillId === 'chart-forecaster-v1.0.0'">
+              <div v-else-if="selectedSkillId === 'chart-forecaster-v1.0.0'" class="agent-skill-runtime">
                 <ChartForecasterSkill
                   :skill="selectedSkill"
                   @status-update="loadingMessage = $event"
@@ -508,31 +530,8 @@
               <!-- Roleplay Companion - Special Chat Interface -->
               <div
                 v-else-if="selectedSkillId === 'roleplay-companion-v1.0.0' && selectedSkill"
-                class="roleplay-interface"
+                class="roleplay-interface agent-skill-runtime agent-skill-runtime--flush"
               >
-                <div class="models__activity--payouts mb-4 has-text-left">
-                  <!-- Skill Header -->
-                  <div class="columns is-vcentered">
-                    <div class="column">
-                      <h3
-                        class="skill-name is-size-1 fira-sans-condensed-black-italic"
-                      >
-                        <span
-                          class="material-symbols-outlined mr-2"
-                          style="font-size: 48px; color: var(--bulma-primary)"
-                        >
-                          {{ getCategoryIcon(selectedSkill.category) }}
-                        </span>
-                        {{ selectedSkill.name }}
-                      </h3>
-                      <p class="is-size-5 mt-3">
-                        {{ selectedSkill.description }}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Roleplay Chat Component -->
                 <RoleplayChat
                   :skill="selectedSkill"
                   @charge-fee="handleRoleplayFee"
@@ -540,23 +539,49 @@
               </div>
             </div>
           </div>
+          </section>
         </div>
-      </div>
-    </div>
+      </template>
+
+      <template #input>
+        <ChatInput
+          v-model="agentPrompt"
+          :placeholder="agentCommandPlaceholder"
+          :enable-attachments="false"
+          :enable-dictation="false"
+          :hint="agentCommandHint"
+          :slash-commands="agentSlashCommands"
+          submit-label="Apply"
+          aria-label="Agent command composer"
+          @submit="submitAgentCommand"
+          @run-command="runAgentSlashCommand"
+        >
+          <template #tools>
+            <button type="button" class="agent-command-tool" @click="selectAgentMode('browseSkills')">
+              <span class="material-symbols-outlined" aria-hidden="true">search</span>
+              Search workflows
+            </button>
+            <button type="button" class="agent-command-tool" @click="selectAgentMode('browseAgents')">
+              <span class="material-symbols-outlined" aria-hidden="true">groups</span>
+              Open agents
+            </button>
+            <button type="button" class="agent-command-tool" @click="selectAgentMode('my-skills')">
+              <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
+              Open runner
+            </button>
+          </template>
+        </ChatInput>
+      </template>
+    </ChatLayout>
 
     <!-- Loading Overlay -->
     <div v-if="isAnalyzing || isGenerating" class="loading-overlay">
       <div class="loading-content">
-        <span
-          class="material-symbols-outlined rotating is-size-1"
-          style="font-size: 64px"
-        >
-          progress_activity
-        </span>
-        <p class="fira-sans-condensed-black-italic is-size-4 mt-3">
+        <BonzaiPulse variant="dot" />
+        <p class="fira-sans-condensed-black-italic">
           {{ loadingMessage }}
         </p>
-        <progress class="progress is-success mt-3" max="100"></progress>
+        <BonzaiPulse variant="bar" />
       </div>
     </div>
 
@@ -633,7 +658,7 @@
 
         <div class="position-modal-footer mb-5">
           <button
-            class="button position-primary-btn is-medium fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
             @click="confirmPosition"
             :disabled="!positionModal.amount || positionModal.amount <= 0"
           >
@@ -641,7 +666,7 @@
             Confirm Position
           </button>
           <button
-            class="button is-danger is-medium"
+            class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic"
             @click="closePositionModal"
           >
             Cancel
@@ -670,7 +695,7 @@
           >
             Issue Skill Token
           </h2>
-          <p class="has-text-grey-light mt-2">
+          <p class="token-modal-subtitle">
             {{ tokenIssuanceModal.skill?.name }}
           </p>
         </div>
@@ -678,11 +703,11 @@
         <div class="tcg-modal-body">
           <!-- Token Identity -->
           <div class="tcg-form-section has-text-left">
-            <h4 class="fira-sans-condensed-black-italic has-text-white mb-3">
+            <h4 class="bz-h3 fira-sans-condensed-black-italic mb-3">
               Token Identity
             </h4>
-            <div class="columns">
-              <div class="column is-8">
+            <div class="token-modal-grid token-modal-grid--identity">
+              <div>
                 <div class="tcg-field">
                   <label class="tcg-label fira-sans-condensed-black-italic">
                     Token Name
@@ -695,7 +720,7 @@
                   />
                 </div>
               </div>
-              <div class="column is-4">
+              <div>
                 <div class="tcg-field">
                   <label class="tcg-label fira-sans-condensed-black-italic">
                     Symbol
@@ -711,7 +736,7 @@
               </div>
             </div>
 
-            <div class="tcg-field mt-4">
+            <div class="tcg-field">
               <label class="tcg-label fira-sans-condensed-black-italic">
                 Total Supply
               </label>
@@ -730,18 +755,18 @@
 
           <!-- Liquidity Settings -->
           <div class="tcg-form-section has-text-left">
-            <h4 class="fira-sans-condensed-black-italic has-text-white mb-3">
+            <h4 class="bz-h3 fira-sans-condensed-black-italic token-modal-section-title">
               <span
-                class="material-symbols-outlined mr-1"
-                style="vertical-align: middle; font-size: 20px"
+                class="material-symbols-outlined"
+                aria-hidden="true"
               >
                 water_drop
               </span>
               Initial Liquidity (Uniswap V3)
             </h4>
 
-            <div class="columns">
-              <div class="column is-6">
+            <div class="token-modal-grid">
+              <div>
                 <div class="tcg-field">
                   <label class="tcg-label fira-sans-condensed-black-italic">
                     Tokens for Liquidity
@@ -753,7 +778,7 @@
                     min="1"
                     :disabled="tokenIssuanceModal.isIssuing"
                   />
-                  <p class="help has-text-grey-light">
+                  <p class="tcg-help">
                     {{
                       Math.round(
                         (tokenIssuanceModal.initialLiquidityTokens /
@@ -764,7 +789,7 @@
                   </p>
                 </div>
               </div>
-              <div class="column is-6">
+              <div>
                 <div class="tcg-field">
                   <label class="tcg-label fira-sans-condensed-black-italic">
                     ETH for Liquidity
@@ -782,7 +807,7 @@
               </div>
             </div>
 
-            <div class="tcg-field mt-4">
+            <div class="tcg-field">
               <label class="tcg-label fira-sans-condensed-black-italic">
                 Starting Price (ETH per token)
               </label>
@@ -799,27 +824,30 @@
             <!-- DSLA Pool (for prediction market skills) -->
             <div
               v-if="isDslaSkill(tokenIssuanceModal.skill)"
-              class="dsla-pool-section mt-5"
+              class="dsla-pool-section"
             >
-              <h5 class="fira-sans-condensed-black-italic has-text-info mb-3">
+              <h5 class="fira-sans-condensed-black-italic token-modal-subhead">
                 <span
-                  class="material-symbols-outlined mr-1"
-                  style="vertical-align: middle; font-size: 18px"
+                  class="material-symbols-outlined"
+                  aria-hidden="true"
                 >
                   currency_exchange
                 </span>
                 DSLA Pool (Prediction Market)
               </h5>
 
-              <div class="notification is-info is-light mb-3">
-                <p class="is-size-7">
+              <div class="bz-notice bz-notice--info">
+                <span class="bz-notice__icon"><span class="material-symbols-outlined" aria-hidden="true">info</span></span>
+                <div class="bz-notice__body">
+                <p class="bz-notice__text">
                   As a DSLA prediction market skill, an additional SKILL/DSLA
                   liquidity pool will be created.
                 </p>
+                </div>
               </div>
 
-              <div class="columns is-vcentered">
-                <div class="column is-6">
+              <div class="token-modal-grid">
+                <div>
                   <div class="tcg-field">
                     <label class="tcg-label fira-sans-condensed-black-italic">
                       DSLA for Liquidity
@@ -833,24 +861,24 @@
                     />
                   </div>
                 </div>
-                <div class="column is-6">
+                <div>
                   <div class="dsla-price-info">
-                    <p class="is-size-7 has-text-grey-light">
+                    <p class="tcg-help">
                       Current DSLA/ETH:
-                      <span v-if="isFetchingDslaPrice" class="has-text-warning">
+                      <span v-if="isFetchingDslaPrice" class="token-status token-status--warning">
                         Loading...
                       </span>
-                      <span v-else-if="dslaEthPrice" class="has-text-success">
+                      <span v-else-if="dslaEthPrice" class="token-status token-status--success">
                         {{ dslaEthPrice.toFixed(10) }} ETH
                       </span>
-                      <span v-else class="has-text-danger">Unavailable</span>
+                      <span v-else class="token-status token-status--danger">Unavailable</span>
                     </p>
                     <p
                       v-if="dslaEthPrice && tokenIssuanceModal.startingPriceEth"
-                      class="is-size-7 has-text-grey-light mt-1"
+                      class="tcg-help"
                     >
                       Starting Price in DSLA:
-                      <strong class="has-text-info">
+                      <strong class="token-status token-status--info">
                         {{
                           (
                             parseFloat(tokenIssuanceModal.startingPriceEth) /
@@ -869,37 +897,28 @@
           <!-- Progress -->
           <div
             v-if="tokenIssuanceModal.isIssuing"
-            class="issuance-progress mt-4"
+            class="issuance-progress"
           >
-            <div class="notification is-warning">
-              <div class="columns is-vcentered">
-                <div class="column is-narrow">
-                  <span
-                    class="material-symbols-outlined rotating"
-                    style="font-size: 32px"
-                  >
-                    progress_activity
-                  </span>
-                </div>
-                <div class="column">
-                  <p class="fira-sans-condensed-black-italic">
+            <div class="bz-notice bz-notice--warning bz-notice--stacked">
+              <div class="bz-notice__body">
+                  <p class="bz-notice__title">
                     {{ tokenIssuanceModal.progress.message || "Processing..." }}
                   </p>
-                  <p class="is-size-7 has-text-grey">
+                  <p class="bz-notice__text">
                     Step {{ tokenIssuanceModal.progress.step }} of
                     {{ tokenIssuanceModal.progress.total }}
                   </p>
-                </div>
               </div>
+              <BonzaiPulse variant="bar" :percent="(tokenIssuanceModal.progress.step / tokenIssuanceModal.progress.total) * 100 || 0" />
             </div>
           </div>
 
           <!-- Summary -->
           <div
             v-if="!tokenIssuanceModal.isIssuing"
-            class="tcg-preview-box mt-4"
+            class="tcg-preview-box"
           >
-            <p class="tcg-preview-text has-text-centered">
+            <p class="tcg-preview-text">
               <strong>{{ tokenIssuanceModal.tokenSymbol }}</strong>
               token will be created with
               <strong>
@@ -907,7 +926,7 @@
               </strong>
               total supply.
               <br />
-              <span class="is-size-7">
+              <span class="tcg-preview-subtext">
                 SKILL/ETH pool with
                 {{ tokenIssuanceModal.initialLiquidityEth }} ETH liquidity
                 <span
@@ -931,7 +950,7 @@
 
         <div class="tcg-modal-footer mb-5">
           <button
-            class="button tcg-primary-btn is-medium fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
             @click="issueToken"
             :disabled="
               tokenIssuanceModal.isIssuing ||
@@ -957,7 +976,7 @@
             }}
           </button>
           <button
-            class="button is-danger is-medium"
+            class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic"
             @click="closeTokenIssuanceModal"
             :disabled="tokenIssuanceModal.isIssuing"
           >
@@ -977,7 +996,12 @@ import { io } from "socket.io-client";
 import { useSkillStore } from "../stores/skillStore.js";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { SKILL_CATEGORY_META } from "../skills/types.js";
+import BonzaiEmptyState from "./BonzaiEmptyState.vue";
+import BonzaiPulse from "./BonzaiPulse.vue";
 import BzCloseButton from "./BzCloseButton.vue";
+import ChatInput from "./chat/ChatInput.vue";
+import ChatLayout from "./chat/ChatLayout.vue";
+import ModeChipBar from "./generative/ModeChipBar.vue";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
 import { purchaseSkillUSDC, loadPurchasedSkillsOnChain, isDevMode } from "../services/agent.service.js";
@@ -1053,6 +1077,130 @@ const API_BASE =
 
 const WS_DL = `${API_BASE}/downloads`;
 
+const DEFAULT_SKILL_PROFILE = {
+  tone: "studio",
+  workspace: "Skill Cockpit",
+  mode: "Workflow",
+  promise: "Run the selected workflow with model readiness, inputs, and outputs in one operating surface.",
+  icon: "terminal",
+  primaryOutput: "Execution",
+  cadence: "On demand",
+  confidenceLabel: "Readiness",
+  steps: ["Prepare", "Run", "Review", "Export"],
+  outcomes: ["Local execution", "Model readiness", "Persistent history"],
+};
+
+const SKILL_RUNNER_PROFILES = {
+  "roleplay-companion-v1.0.0": {
+    tone: "scene",
+    workspace: "Companion Studio",
+    mode: "Scene Engine",
+    promise: "Character memory, scene state, and multimodal replies are staged together before the conversation takes over.",
+    icon: "theater_comedy",
+    primaryOutput: "Text, voice, image, video",
+    cadence: "Conversational",
+    confidenceLabel: "Persona fidelity",
+    steps: ["Cast", "Scene", "Memory", "Media"],
+    outcomes: ["13 companions", "Autonomous mode", "Scene continuity"],
+  },
+  "polymarket-top-performers-v1.0.0": {
+    tone: "signal",
+    workspace: "Signal Desk",
+    mode: "Whale Consensus",
+    promise: "Top PnL traders are scanned for overlapping positions so agreement, conviction, and market timing are visible at a glance.",
+    icon: "finance_mode",
+    primaryOutput: "Copy-trading signals",
+    cadence: "Market scan",
+    confidenceLabel: "Conviction",
+    steps: ["Rank traders", "Scan positions", "Cluster overlap", "Recommend"],
+    outcomes: ["PnL leaders", "Position overlap", "Conviction filters"],
+  },
+  "prediction-market-maker-v1.0.0": {
+    tone: "market",
+    workspace: "SLA Market Foundry",
+    mode: "Outcome Design",
+    promise: "A measurable service condition becomes a tradable market with terms, collateral, and verification kept explicit.",
+    icon: "contract",
+    primaryOutput: "Prediction market",
+    cadence: "Deployable terms",
+    confidenceLabel: "Oracle clarity",
+    steps: ["Define metric", "Set bounds", "Price risk", "Launch"],
+    outcomes: ["SLA templates", "DSLA token flow", "Verifiable outcomes"],
+  },
+  "meditation-forge-v1.0.0": {
+    tone: "wellness",
+    workspace: "Session Forge",
+    mode: "Guided Experience",
+    promise: "A meditation scenario becomes a complete sensory session with narration, visuals, pacing, and ambience aligned.",
+    icon: "self_improvement",
+    primaryOutput: "Guided session",
+    cadence: "Immersive run",
+    confidenceLabel: "Calm fit",
+    steps: ["Intention", "Scenario", "Voice", "Atmosphere"],
+    outcomes: ["8 journeys", "ASMR narration", "Generated visuals"],
+  },
+  "video-captioning-v1.0.0": {
+    tone: "caption",
+    workspace: "Caption Lab",
+    mode: "Vision Timeline",
+    promise: "Video frames are interpreted into transcript and subtitle artifacts with source, timing, and export flow kept together.",
+    icon: "closed_caption",
+    primaryOutput: "SRT + transcript",
+    cadence: "Frame analysis",
+    confidenceLabel: "Timing quality",
+    steps: ["Load source", "Analyze frames", "Sync text", "Export"],
+    outcomes: ["Local files", "Direct URLs", "Accessibility-ready"],
+  },
+  "tcg-analysis-v1.0.0": {
+    tone: "grading",
+    workspace: "Grading Bench",
+    mode: "Collector Appraisal",
+    promise: "Card identification, OCR, condition scoring, and market pricing are staged like a professional grading station.",
+    icon: "style",
+    primaryOutput: "Grade + price",
+    cadence: "Single scan",
+    confidenceLabel: "Condition signal",
+    steps: ["Capture", "Identify", "Grade", "Price"],
+    outcomes: ["PGT score", "Live pricing", "Multi-game support"],
+  },
+  "live-streaming-v1.0.0": {
+    tone: "broadcast",
+    workspace: "Broadcast Console",
+    mode: "Chat-to-Creation",
+    promise: "Audience prompts become moderated images, audio, video, and companion moments ready for stream overlays.",
+    icon: "sensors",
+    primaryOutput: "Live overlay assets",
+    cadence: "Realtime queue",
+    confidenceLabel: "Show control",
+    steps: ["Connect chat", "Moderate", "Generate", "Send to OBS"],
+    outcomes: ["OBS bridge", "Viewer commands", "Companion bot"],
+  },
+  "mass-chat-v1.0.0": {
+    tone: "arena",
+    workspace: "Model Arena",
+    mode: "Comparative Reasoning",
+    promise: "One prompt fans out across local LLMs so answer quality, latency, and model character can be compared side by side.",
+    icon: "forum",
+    primaryOutput: "Model comparison",
+    cadence: "Sequential run",
+    confidenceLabel: "Consensus",
+    steps: ["Prompt", "Dispatch", "Compare", "Synthesize"],
+    outcomes: ["Side-by-side answers", "Tok/s metrics", "Ask companion"],
+  },
+  "chart-forecaster-v1.0.0": {
+    tone: "forecast",
+    workspace: "Forecast Terminal",
+    mode: "Time-Series Desk",
+    promise: "Historical market data is transformed into forecast bands, directional narrative, and decision context.",
+    icon: "monitoring",
+    primaryOutput: "Forecast path",
+    cadence: "Asset horizon",
+    confidenceLabel: "Model fit",
+    steps: ["Select asset", "Fetch history", "Forecast", "Explain"],
+    outcomes: ["TimesFM 2.0", "Crypto + equities", "Narrative summary"],
+  },
+};
+
 export default {
   name: "SmartAgent",
   components: {
@@ -1069,6 +1217,12 @@ export default {
     TCGScannerSkill,
     LiveStreamerSkill,
     BrowseAgents,
+    BonzaiEmptyState,
+    BonzaiPulse,
+    BzCloseButton,
+    ChatInput,
+    ChatLayout,
+    ModeChipBar,
   },
   setup() {
     // Store
@@ -1077,6 +1231,14 @@ export default {
 
     // Tab state
     const activeTab = ref("browseSkills");
+    const isAgentRailCollapsed = ref(false);
+    const agentPrompt = ref("");
+    const agentCommandMode = ref("search");
+    const agentTabs = [
+      { value: "browseSkills", label: "Workflows", icon: "manage_search" },
+      { value: "browseAgents", label: "Agents", icon: "groups" },
+      { value: "my-skills", label: "Runner", icon: "play_arrow" },
+    ];
 
     // Notifications
     const statusNotification = ref({ show: false, message: "", type: "info" });
@@ -1993,12 +2155,85 @@ Return ONLY the JSON, no explanation.`;
     // Computed from store
     const categories = computed(() => skillStore.categories);
     const selectedCategory = computed(() => skillStore.selectedCategory);
+    const categoryItems = computed(() => [
+      { value: "all", label: "All", icon: "apps" },
+      ...categories.value.map((cat) => ({
+        value: cat.key,
+        label: cat.label,
+        icon: cat.icon,
+      })),
+    ]);
     const searchQuery = computed({
       get: () => skillStore.searchQuery,
       set: (val) => skillStore.setSearchQuery(val),
     });
     const filteredSkills = computed(() => skillStore.filteredSkills);
+    const marketplaceSkills = computed(() => skillStore.skills || []);
     const accessibleSkills = computed(() => skillStore.accessibleSkills);
+    const agentRailItems = computed(() => [
+      {
+        value: "browseSkills",
+        label: "Workflows",
+        icon: "manage_search",
+        count: filteredSkills.value.length,
+      },
+      {
+        value: "browseAgents",
+        label: "Agents",
+        icon: "groups",
+        count: null,
+      },
+      {
+        value: "my-skills",
+        label: "Runner",
+        icon: "play_arrow",
+        count: hasMissingModels.value ? missingModels.value.length : null,
+      },
+    ]);
+    const activeAgentTab = computed(() => agentTabs.find((tab) => tab.value === activeTab.value) || agentTabs[0]);
+    const agentModeEyebrow = computed(() => {
+      if (activeTab.value === "browseAgents") return "Agents";
+      if (activeTab.value === "my-skills") return "Run";
+      return "Automate";
+    });
+    const agentModeIcon = computed(() => activeAgentTab.value.icon);
+    const agentModeTitle = computed(() => {
+      if (activeTab.value === "browseAgents") return "Companion Operations";
+      if (activeTab.value === "my-skills") return selectedSkill.value?.name || "Skill Runner";
+      return "Agentic Skills";
+    });
+    const agentCommandPlaceholder = computed(() => {
+      if (activeTab.value === "browseAgents") return "Search agents, wallets, revenue, or type /run...";
+      if (activeTab.value === "my-skills") return "Search workflows, type /agents, or /workflows...";
+      return "Search workflows, type /agents or /run...";
+    });
+    const agentCommandHint = computed(() => {
+      if (agentCommandMode.value === "agents") return "Opens Agents";
+      if (agentCommandMode.value === "runner") return selectedSkill.value?.name || "Opens Runner";
+      return activeTab.value === "browseSkills" ? String(filteredSkills.value.length) + " workflows" : "Search and route";
+    });
+    const agentSlashCommands = [
+      { id: "workflows", label: "Workflows", description: "Open the workflow list", icon: "manage_search" },
+      { id: "agents", label: "Agents", description: "Open companion operations", icon: "groups" },
+      { id: "run", label: "Runner", description: "Open the selected workflow runner", icon: "play_arrow" },
+      { id: "clear", label: "Clear Search", description: "Clear workflow filtering", icon: "backspace" },
+    ];
+    const selectedSkillProfile = computed(() => ({
+      ...DEFAULT_SKILL_PROFILE,
+      ...(SKILL_RUNNER_PROFILES[selectedSkillId.value] || {}),
+    }));
+    const selectedSkillModelCount = computed(() => skillModelRequirements.value.length || 0);
+    const selectedSkillReadiness = computed(() => {
+      if (!modelAvailabilityChecked.value && selectedSkillModelCount.value > 0) return "Checking";
+      if (hasMissingModels.value) return String(Math.max(0, selectedSkillModelCount.value - missingModels.value.length)) + "/" + selectedSkillModelCount.value;
+      return selectedSkillModelCount.value > 0 ? "Ready" : "Native";
+    });
+    const selectedSkillStageIndex = computed(() => {
+      if (downloads.active) return 0;
+      if (isAnalyzing.value || isGenerating.value || isExecuting.value) return 1;
+      if (executionStatus.value) return 2;
+      return 0;
+    });
     const isAppleSilicon = skillStore.isAppleSilicon;
 
     // Level-based access
@@ -2024,12 +2259,84 @@ Return ONLY the JSON, no explanation.`;
       skillStore.setCategory(category);
     };
 
+    const toggleAgentRail = () => {
+      isAgentRailCollapsed.value = !isAgentRailCollapsed.value;
+    };
+
+    const selectAgentMode = (mode) => {
+      activeTab.value = mode;
+      agentCommandMode.value =
+        mode === "browseAgents" ? "agents" : mode === "my-skills" ? "runner" : "search";
+    };
+
+    const routeAgentCommand = (query) => {
+      const lower = query.toLowerCase();
+      if (["/agents", "agents", "agent", "companions", "companion", "wallet", "wallets", "revenue"].includes(lower)) {
+        selectAgentMode("browseAgents");
+        return;
+      }
+      if (["/run", "runner", "run", "active skill", "skill runner"].includes(lower)) {
+        selectAgentMode("my-skills");
+        return;
+      }
+      if (["/workflows", "workflows", "workflow", "browse", "search"].includes(lower)) {
+        selectAgentMode("browseSkills");
+        return;
+      }
+      selectAgentMode("browseSkills");
+      searchQuery.value = query.replace(/^find\s+/i, "").replace(/^search\s+/i, "");
+    };
+
+    const submitAgentCommand = (value) => {
+      const query = String(value || "").trim();
+      if (!query) return;
+      routeAgentCommand(query);
+      agentPrompt.value = "";
+    };
+
+    const runAgentSlashCommand = (cmd) => {
+      const id = cmd?.id;
+      if (id === "clear") {
+        searchQuery.value = "";
+        agentPrompt.value = "";
+        return;
+      }
+      routeAgentCommand("/" + id);
+      agentPrompt.value = "";
+    };
+
     const getCategoryLabel = (categoryKey) => {
       return SKILL_CATEGORY_META[categoryKey]?.label || categoryKey;
     };
 
     const getCategoryIcon = (categoryKey) => {
       return SKILL_CATEGORY_META[categoryKey]?.icon || "extension";
+    };
+
+    const skillPriceLabel = (skill) => {
+      if (isFreeSkill(skill)) return "Free";
+      return `${skill.price || 0} USDC`;
+    };
+
+    const skillRequirementLabel = (skill) => {
+      const access = canRunSkill(skill.id);
+      if (access.canRun) return "Ready";
+      return getRequiredLevel(skill) || "Locked";
+    };
+
+    const skillCompatibilityLabel = (skill) => {
+      if (skill.platform?.os === "darwin") return "macOS";
+      const icons = getSkillContentIcons(skill.id);
+      return `${icons.length} pipeline${icons.length === 1 ? "" : "s"}`;
+    };
+
+    const skillRoiLabel = (skill) => {
+      if (skill.marketplace?.roi) return skill.marketplace.roi;
+      if (skill.tags?.includes("demo")) return "Demo";
+      if (skill.category === "prediction-market") return "Signals";
+      if (skill.category === "content") return "Assets";
+      if (skill.category === "productivity") return "Time saved";
+      return "Execution";
     };
 
     const getCategoryColor = (categoryKey) => {
@@ -2421,7 +2728,7 @@ Provide a concise analysis covering:
         selectedUseCase.value = null;
 
         // Switch to browse tab
-        activeTab.value = "browse";
+        activeTab.value = "browseSkills";
         await skillStore.initialize();
       } else {
         showNotification(`Failed to create skill: ${result.error}`, "danger");
@@ -2531,7 +2838,7 @@ Provide a concise analysis covering:
         skillForm.steps = [];
 
         // Switch to browse tab
-        activeTab.value = "browse";
+        activeTab.value = "browseSkills";
       } else {
         showNotification(`Failed to publish: ${result.error}`, "danger");
       }
@@ -2787,6 +3094,25 @@ Provide a concise analysis covering:
     return {
       // Tab
       activeTab,
+      agentTabs,
+      activeAgentTab,
+      isAgentRailCollapsed,
+      agentPrompt,
+      agentRailItems,
+      agentModeEyebrow,
+      agentModeIcon,
+      agentModeTitle,
+      agentCommandPlaceholder,
+      agentCommandHint,
+      agentSlashCommands,
+      selectedSkillProfile,
+      selectedSkillModelCount,
+      selectedSkillReadiness,
+      selectedSkillStageIndex,
+      toggleAgentRail,
+      selectAgentMode,
+      submitAgentCommand,
+      runAgentSlashCommand,
 
       // Notifications
       statusNotification,
@@ -2795,11 +3121,17 @@ Provide a concise analysis covering:
       // Categories & Filtering
       categories,
       selectedCategory,
+      categoryItems,
       setCategory,
       searchQuery,
       filteredSkills,
+      marketplaceSkills,
       getCategoryLabel,
       getCategoryIcon,
+      skillPriceLabel,
+      skillRequirementLabel,
+      skillCompatibilityLabel,
+      skillRoiLabel,
       getCategoryColor,
       formatOptionLabel,
       hasImageResults,
@@ -2923,6 +3255,454 @@ Provide a concise analysis covering:
 </script>
 
 <style scoped>
+.bz-tab-shell--agent {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.agent-command-center {
+  height: 100%;
+  min-height: 0;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  overflow: hidden;
+  background: var(--bz-canvas);
+}
+
+.agent-command-center :deep(.bz-chat__rail) {
+  width: 260px;
+}
+
+.agent-command-center :deep(.bz-chat__rail.is-collapsed) {
+  width: 56px;
+}
+
+.agent-command-center :deep(.bz-chat__header),
+.agent-command-center :deep(.bz-chat__input) {
+  background: color-mix(in srgb, var(--bz-canvas) 92%, var(--bz-panel));
+}
+
+.agent-command-center :deep(.bz-chat__stream) {
+  min-width: 0;
+}
+
+.agent-command-rail {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3);
+  overflow-y: auto;
+}
+
+.agent-command-rail__head {
+  padding: 0 0 var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.agent-command-rail__head .bz-eyebrow {
+  margin: 0;
+}
+
+.agent-command-rail__section {
+  display: grid;
+  gap: var(--bz-space-2);
+}
+
+.agent-rail-item {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 0 var(--bz-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--bz-r-sm);
+  background: transparent;
+  color: var(--bz-fg-mid);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    color var(--bz-dur-fast) var(--bz-ease-out);
+}
+
+.agent-rail-item:hover,
+.agent-rail-item.is-active {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-card);
+  color: var(--bz-fg);
+}
+
+.agent-rail-item .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 20px !important;
+}
+
+.agent-rail-item__label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: var(--bz-size-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-rail-item__count {
+  min-width: 28px;
+  padding: 2px 6px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-size: 11px;
+  text-align: center;
+}
+
+.agent-command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+
+.agent-command-head__title {
+  min-width: 0;
+}
+
+.agent-command-head__title .bz-eyebrow,
+.agent-command-head__title h1 {
+  margin: 0;
+}
+
+.agent-command-head__title .bz-eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--bz-fg-low);
+}
+
+.agent-command-head__title h1 {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  line-height: 1.05;
+}
+
+.agent-command-head__actions {
+  display: inline-flex;
+  gap: var(--bz-space-2);
+  flex-shrink: 0;
+}
+
+.agent-command-stream {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: var(--bz-space-4) var(--bz-space-4) var(--bz-space-6);
+}
+
+.agent-command-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  height: 32px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast),
+    color var(--bz-dur-fast),
+    border-color var(--bz-dur-fast);
+}
+
+.agent-command-tool:hover {
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.agent-command-tool .material-symbols-outlined {
+  font-size: 16px !important;
+}
+
+.agent-mode-surface,
+.agent-mode-surface > div,
+.agent-agents-view,
+.agent-market,
+.agent-market-grid,
+.agent-runner-view,
+.agent-runner-view > div,
+.meditation-interface,
+.roleplay-interface {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.agent-command-center :deep(.browse-agents),
+.agent-command-center :deep(.meditation-skill),
+.agent-command-center :deep(.captioning-skill),
+.agent-command-center :deep(.tcg-skill),
+.agent-command-center :deep(.polymarket-skill),
+.agent-command-center :deep(.dsla-skill),
+.agent-command-center :deep(.mass-chat-skill),
+.agent-command-center :deep(.chart-forecaster-skill),
+.agent-command-center :deep(.live-streamer-skill),
+.agent-command-center :deep(.roleplay-chat) {
+  width: 100%;
+  max-width: none;
+}
+
+.agent-command-center :deep(.bz-input__field) {
+  min-height: 48px;
+}
+
+.agent-runner-cockpit {
+  --agent-runner-accent: var(--bz-purple-300);
+  --agent-runner-soft: var(--bz-purple-soft);
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  gap: var(--bz-space-4);
+  margin-bottom: var(--bz-space-4);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--agent-runner-accent) 12%, transparent), transparent 44%),
+    color-mix(in srgb, var(--bz-card) 88%, var(--bz-canvas));
+  box-shadow: inset 3px 0 0 var(--agent-runner-accent);
+}
+
+.agent-runner-cockpit--signal,
+.agent-runner-cockpit--forecast,
+.agent-runner-cockpit--market {
+  --agent-runner-accent: var(--bz-info);
+  --agent-runner-soft: var(--bz-info-soft);
+}
+
+.agent-runner-cockpit--wellness {
+  --agent-runner-accent: var(--bz-emerald-300);
+  --agent-runner-soft: var(--bz-emerald-soft);
+}
+
+.agent-runner-cockpit--grading {
+  --agent-runner-accent: var(--bz-warning);
+  --agent-runner-soft: var(--bz-warning-soft);
+}
+
+.agent-runner-cockpit--broadcast {
+  --agent-runner-accent: var(--bz-purple-100);
+  --agent-runner-soft: var(--bz-purple-soft);
+}
+
+.agent-runner-cockpit--caption,
+.agent-runner-cockpit--arena {
+  --agent-runner-accent: var(--bz-purple-300);
+  --agent-runner-soft: var(--bz-purple-soft);
+}
+
+.agent-runner-cockpit__main,
+.agent-runner-cockpit__panel {
+  min-width: 0;
+}
+
+.agent-runner-cockpit__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+}
+
+.agent-runner-cockpit__badge {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  min-height: 30px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid color-mix(in srgb, var(--agent-runner-accent) 48%, var(--bz-border));
+  border-radius: var(--bz-r-pill);
+  background: var(--agent-runner-soft);
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+}
+
+.agent-runner-cockpit__badge .material-symbols-outlined {
+  color: var(--agent-runner-accent);
+  font-size: 17px !important;
+}
+
+.agent-runner-cockpit__title {
+  margin: 0;
+  color: var(--bz-fg);
+  font-size: clamp(2rem, 4vw, 3.75rem);
+  line-height: 0.92;
+  letter-spacing: 0;
+}
+
+.agent-runner-cockpit__promise {
+  max-width: 84ch;
+  margin: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-body);
+  line-height: var(--bz-line-body);
+}
+
+.agent-runner-pipeline {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--bz-space-2);
+  margin-top: auto;
+}
+
+.agent-runner-pipeline__step {
+  min-width: 0;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--bz-space-2) var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: color-mix(in srgb, var(--bz-panel) 88%, transparent);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.agent-runner-pipeline__step .bz-mono {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+}
+
+.agent-runner-pipeline__step.is-active {
+  border-color: color-mix(in srgb, var(--agent-runner-accent) 58%, var(--bz-border));
+  background: var(--agent-runner-soft);
+  color: var(--bz-fg);
+}
+
+.agent-runner-cockpit__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+}
+
+.agent-runner-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-2);
+}
+
+.agent-runner-metric {
+  min-width: 0;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: color-mix(in srgb, var(--bz-panel) 88%, transparent);
+}
+
+.agent-runner-metric span {
+  display: block;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  text-transform: uppercase;
+}
+
+.agent-runner-metric strong {
+  display: block;
+  margin-top: var(--bz-space-1);
+  overflow: hidden;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-runner-metric--hero {
+  border-color: color-mix(in srgb, var(--agent-runner-accent) 52%, var(--bz-border));
+  background: var(--agent-runner-soft);
+}
+
+.agent-runner-metric--hero strong {
+  color: var(--agent-runner-accent);
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 0.92;
+}
+
+.agent-runner-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+
+.agent-runner-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 28px;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-panel);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-micro);
+  text-transform: uppercase;
+}
+
+.agent-runner-outcome .material-symbols-outlined {
+  color: var(--agent-runner-accent);
+  font-size: 16px !important;
+}
+
+.agent-skill-runtime {
+  width: 100%;
+  min-width: 0;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bz-panel) 82%, transparent), transparent 180px),
+    var(--bz-canvas);
+}
+
+.agent-skill-runtime--flush {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.agent-skill-runtime :deep(.skill-panel) {
+  border-color: var(--bz-border);
+  background: color-mix(in srgb, var(--bz-card) 88%, var(--bz-canvas));
+  box-shadow: none;
+}
+
+
+@media (max-width: 1200px) {
+  .agent-runner-cockpit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .agent-runner-pipeline,
+  .agent-runner-metric-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 
 .material-symbols-outlined {
   font-variation-settings:
@@ -2933,8 +3713,39 @@ Provide a concise analysis covering:
   border-radius: 100%;
 }
 
+h1.bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
+.bz-screen-header .bz-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 28px !important;
+}
+
+.bz-screen-header .bz-eyebrow {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  line-height: 1.2;
+  text-align: left;
+  font-weight: 400;
+}
+
+.bz-screen-header .bz-screen-subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
+  text-align: left;
+  font-weight: 400;
+}
+
 .rotating {
-  animation: spin 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 @keyframes spin {
@@ -2970,20 +3781,268 @@ Provide a concise analysis covering:
   margin: 0 !important;
 }
 
-.models__deployment-install {
+.agent-workspace {
   overflow-y: auto;
   padding: var(--bz-space-5) var(--bz-space-6);
   flex: 1;
   min-height: 0;
   width: 100%;
-  background: var(--bz-scrim-strong);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
 }
 
 .models__activity--payouts {
-  padding: 2em;
+  padding: var(--bz-space-4);
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-  border-radius: 4px !important;
+  border-radius: var(--bz-r) !important;
+  background: var(--bz-card);
+  width: 100%;
+}
+.models__activity--payouts > .columns {
+  margin: 0;
+}
+.models__activity--payouts > .columns > .column {
+  padding: 0;
+}
+
+.agent-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  margin-bottom: var(--bz-space-4);
+}
+
+.agent-market {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-4);
+}
+
+.agent-market__search {
+  width: min(420px, 42vw);
+  min-width: 260px;
+  height: 38px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+  color: var(--bz-fg-mid);
+  padding: 0 var(--bz-space-3);
+}
+
+.agent-market__search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--bz-fg);
+  font: inherit;
+}
+
+.agent-market__search input::placeholder {
+  color: var(--bz-fg-faint);
+}
+
+.agent-market-grid {
+  width: 100%;
+  display: grid;
+  gap: var(--bz-space-3);
+}
+
+.agent-market-card {
+  min-width: 0;
+  min-height: 156px;
+  display: grid;
+  grid-template-columns: minmax(320px, 1.25fr) minmax(300px, 0.9fr) minmax(152px, auto);
+  grid-template-areas: "main facts actions";
+  align-items: stretch;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: color-mix(in srgb, var(--bz-card) 86%, var(--bz-canvas));
+}
+
+.agent-market-card:hover {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-card);
+}
+
+.agent-market-card.featured {
+  border-color: var(--bz-border-brand);
+  box-shadow: inset 3px 0 0 var(--bz-purple-300);
+}
+
+.agent-market-card.is-owned {
+  box-shadow: inset 3px 0 0 var(--bz-success);
+}
+
+.agent-market-card__main {
+  grid-area: main;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+}
+
+.agent-market-card__top {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: var(--bz-space-3);
+  align-items: center;
+  min-width: 0;
+}
+
+.agent-market-card__icon {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+  color: var(--bz-accent);
+}
+
+.agent-market-card__meta {
+  min-width: 0;
+}
+
+.agent-market-card__meta h3 {
+  margin: 0;
+  color: var(--bz-fg);
+  font-size: 1.25rem;
+  line-height: 1.18;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  hyphens: auto;
+  text-wrap: balance;
+}
+
+.agent-market-card.featured .agent-market-card__meta h3 {
+  color: var(--bz-purple-100);
+}
+
+.agent-market-card__meta p,
+.agent-market-card__description {
+  margin: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.agent-market-card__description {
+  line-height: var(--bz-line-body);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-market-card__facts {
+  grid-area: facts;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: stretch;
+  gap: var(--bz-space-2);
+  margin: 0;
+}
+
+.agent-market-card__facts div {
+  min-width: 0;
+  padding: var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+}
+
+.agent-market-card__facts dt {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  text-transform: uppercase;
+}
+
+.agent-market-card__facts dd {
+  margin: var(--bz-space-1) 0 0;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-market-card__badges,
+.agent-market-card__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+
+.agent-market-card__actions {
+  grid-area: actions;
+  align-self: end;
+  justify-self: end;
+  justify-content: flex-end;
+  min-width: 148px;
+}
+
+.agent-market-card__actions .bz-btn {
+  min-width: 112px;
+  justify-content: center;
+}
+
+.agent-market-card__blocked,
+.agent-market-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 28px;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: 999px;
+  color: var(--bz-fg-mid);
+  background: var(--bz-panel);
+  font-size: var(--bz-size-micro);
+  text-transform: uppercase;
+}
+
+.agent-market-pill--success {
+  color: var(--bz-success);
+  border-color: color-mix(in srgb, var(--bz-success) 44%, var(--bz-border));
+  background: var(--bz-success-soft);
+}
+
+@media (max-width: 1100px) {
+  .agent-market-card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "main"
+      "facts"
+      "actions";
+    align-items: stretch;
+  }
+  .agent-market-card__actions {
+    justify-self: stretch;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 900px) {
+  .agent-topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .agent-market__search {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 .tabs a {
@@ -2992,8 +4051,8 @@ Provide a concise analysis covering:
 }
 
 .tabs a:hover {
-  color: rgba(255, 255, 255, 1);
-  border-color: rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border-color: var(--bz-fg);
 }
 
 .tabs li.is-active a {
@@ -3009,7 +4068,7 @@ hr {
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -3028,13 +4087,91 @@ p {
   font-weight: 100;
 }
 
-.generation {
+.agent-status-toast {
   position: fixed;
-  width: 33%;
   top: 1em;
   right: 1em;
-  z-index: 1;
-  opacity: 0.9;
+  z-index: 50;
+  max-width: min(520px, calc(100vw - 2rem));
+  padding: 12px 14px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+  box-shadow: var(--bz-shadow-soft);
+}
+
+.agent-status-toast__body {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.agent-status-toast--success { border-color: var(--bz-emerald-500); }
+.agent-status-toast--danger { border-color: var(--bz-danger); }
+.agent-status-toast--warning { border-color: var(--bz-warning); }
+
+.agent-tabs {
+  margin-bottom: var(--bz-space-5);
+}
+
+.agent-notice,
+.agent-progress-card {
+  margin: var(--bz-space-4) 0 var(--bz-space-6);
+  padding: 14px 16px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+}
+
+.agent-notice,
+.agent-progress-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agent-notice--danger {
+  border-color: color-mix(in srgb, var(--bz-danger) 42%, var(--bz-border));
+  background: var(--bz-danger-soft);
+}
+
+.agent-notice__body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+}
+
+.agent-notice__title,
+.agent-progress-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.agent-notice ul {
+  margin: 0.5rem 0 0;
+  padding-left: 0;
+  list-style: none;
+  text-transform: lowercase;
+}
+
+.agent-progress-card__pct {
+  color: var(--bz-fg);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.agent-progress-card :deep(.bz-pulse-wrap--bar) {
+  margin-top: 12px;
 }
 
 /* Notification slide animation */
@@ -3098,7 +4235,6 @@ p {
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
-  backdrop-filter: blur(32px);
 }
 
 .category-selector input[type="radio"] + label.radio.category:hover {
@@ -3108,10 +4244,9 @@ p {
 }
 
 .category-selector input[type="radio"]:checked + label.radio.category {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 
 .category-selector label.radio.category .material-symbols-outlined {
@@ -3235,7 +4370,6 @@ p {
   border-radius: 20px;
   background: linear-gradient(135deg, rgba(155, 109, 200, 0.2), rgba(255, 153, 51, 0.2));
   border: 1px solid rgba(155, 109, 200, 0.45);
-  backdrop-filter: blur(8px);
   position: relative;
   overflow: hidden;
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
@@ -3299,7 +4433,6 @@ p {
   background: rgba(255, 167, 38, 0.08);
   border: 1px solid rgba(255, 167, 38, 0.3);
   border-radius: 4px;
-  backdrop-filter: blur(12px);
 }
 
 .preview-gate-icon {
@@ -3416,7 +4549,7 @@ p {
   width: 26px;
   left: 4px;
   bottom: 4px;
-  background-color: white;
+  background-color: var(--bz-fg);
   transition: 0.3s;
   border-radius: 50%;
 }
@@ -3775,11 +4908,67 @@ input:checked + .slider:before {
 }
 
 .dsla-price-info {
-  padding: 0.5em;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
 }
 
-.issuance-progress .notification {
-  margin-bottom: 0;
+.token-modal-subtitle,
+.tcg-help {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: 1.4;
+}
+
+.token-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+
+.token-modal-grid--identity {
+  grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr);
+}
+
+.token-modal-section-title,
+.token-modal-subhead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-3);
+  color: var(--bz-fg);
+}
+
+.token-modal-subhead {
+  font-size: 1.05rem;
+}
+
+.dsla-pool-section,
+.issuance-progress {
+  display: grid;
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-4);
+}
+
+.token-status--warning { color: var(--bz-warning); }
+.token-status--success { color: var(--bz-emerald-300); }
+.token-status--danger { color: var(--bz-danger); }
+.token-status--info { color: var(--bz-info); }
+
+.tcg-preview-subtext {
+  display: block;
+  margin-top: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+}
+
+@media (max-width: 720px) {
+  .token-modal-grid,
+  .token-modal-grid--identity {
+    grid-template-columns: 1fr;
+  }
 }
 
 .position-modal.is-for {
@@ -3913,7 +5102,7 @@ input:checked + .slider:before {
 .filesize {
   padding: 5px 10px;
   font-size: 14px;
-  color: rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
   background: var(--bz-border-strong);
   border-radius: 4px;
 }
@@ -3925,8 +5114,7 @@ input:checked + .slider:before {
   border-radius: 8px;
   padding: 1.5em;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-  animation: fadeInUp 0.4s ease-out forwards;
+  animation: bz-rise 0.4s ease-out forwards;
 }
 
 .thesis-header {

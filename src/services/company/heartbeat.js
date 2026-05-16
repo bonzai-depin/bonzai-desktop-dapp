@@ -25,15 +25,14 @@ const _schedulers = new Map(); // companyId -> { ceoTimer, roleTimer, charter }
 export function start(charter) {
   stop(charter.id);
 
-  // Demo mode runs an accelerated cadence so activity is visible within
-  // seconds — perfect for pitches and the Live "watch me work" feed.
-  // Real-mode cadence is the charter-defined minute counts.
+  // Demo mode is still faster than real cadence, but it should feel like
+  // a supervised business simulation, not a firehose.
   const demo = charter.demoMode === true;
   const ceoMs = demo
-    ? 20_000
+    ? 75_000
     : (charter.heartbeat?.ceoMin ?? 60) * 60 * 1000;
   const roleMs = demo
-    ? 8_000
+    ? 30_000
     : (charter.heartbeat?.roleMin ?? 30) * 60 * 1000;
 
   const inst = {
@@ -45,9 +44,9 @@ export function start(charter) {
   };
   _schedulers.set(charter.id, inst);
 
-  // Kick off an immediate CEO tick so the user sees activity right away,
-  // not after the first interval. Even shorter delay in demo mode.
-  setTimeout(() => _safeTickCEO(charter), demo ? 500 : 1500);
+  // Kick off one initial CEO tick after the UI settles; role execution
+  // then follows its own cadence so output is easier to understand.
+  setTimeout(() => _safeTickCEO(charter), demo ? 3500 : 1500);
 }
 
 /** Stop the heartbeat for a company. Idempotent. */

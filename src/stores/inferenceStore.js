@@ -379,6 +379,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     mode: String(metadata.mode || 'normal'),
     model: metadata.model ? String(metadata.model) : undefined,
     screenshots: Array.isArray(metadata.screenshots) ? metadata.screenshots : [],
+    thumbnail: metadata.thumbnail ? String(metadata.thumbnail) : undefined,
     visionVerified: Boolean(metadata.visionVerified),
     success: Boolean(metadata.success ?? true),
     title: metadata.title ? String(metadata.title) : undefined,
@@ -407,6 +408,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
       mode: String(metadata.mode || 'normal'),
       success: Boolean(metadata.success ?? true),
       screenshots: [],
+      thumbnail: metadata.thumbnail ? String(metadata.thumbnail) : undefined,
     };
     state.objectInferences = [...state.objectInferences, minimalRecord];
     state.totalInferences++;

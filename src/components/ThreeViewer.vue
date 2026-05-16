@@ -1,17 +1,17 @@
 <template>
   <div ref="threeContainer" class="three-container">
     <div class="loading-overlay" v-if="isGenerating">
-      <button disabled class="button is-loading is-info is-large"></button>
+      <BonzaiPulse variant="dot" />
       <p class="fira-sans-condensed-black-italic">Generating object...</p>
     </div>
     <div class="perf-stats">
-      <div class="notification is-info stat-notification">
+      <div class="stat-notification">
         <span class="material-symbols-outlined">speed</span>
         <span ref="fpsDisplay" class="fira-sans-condensed-black-italic">
           60 FPS
         </span>
       </div>
-      <div class="notification is-info stat-notification">
+      <div class="stat-notification">
         <span class="material-symbols-outlined">category</span>
         <span ref="objectCountDisplay" class="fira-sans-condensed-black-italic">
           0 Objects
@@ -29,7 +29,7 @@ import * as THREE from "three";
 import * as CANNON from "cannon-es";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PMREMGenerator } from "three";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 // Vite resolves `?url` imports to the emitted asset URL so the HDR
 // ships correctly with both dev server and packaged Electron renderer.
 import skyHdrUrl from "../assets/sky.hdr?url";
@@ -71,6 +71,7 @@ import { LightningBolt } from "../engine/weather/LightningBolt.js";
 // CSM port lands we can reinstate it; until then the single high-res
 // directional in setupLighting handles shadow-casting.
 import { markRaw, shallowRef } from "vue";
+import BonzaiPulse from "./BonzaiPulse.vue";
 
 // Install three-mesh-bvh on the three prototypes once at module load.
 // acceleratedRaycast is opt-in per-geometry (via computeBoundsTree) —
@@ -349,6 +350,7 @@ class DropletEffect extends Effect {
 
 export default {
   name: "ThreeViewer",
+  components: { BonzaiPulse },
   props: {
     hideUI: { type: Boolean, default: false },
     enablePhysics: { type: Boolean, default: true }
@@ -410,6 +412,8 @@ export default {
     this._moonCraters = null;
     this._sunRays = null;
     this._sunLight = null;
+    this._presentationStage = null;
+    this._lastHeroMetrics = null;
 
     // Shim: LLMs often call mesh.computeBoundingBox() instead of mesh.geometry.computeBoundingBox()
     if (!THREE.Mesh.prototype.computeBoundingBox) {
@@ -683,12 +687,10 @@ export default {
       el.insertBefore(renderer.domElement, el.firstChild);
       const pmremGen = new PMREMGenerator(renderer);
       pmremGen.compileEquirectangularShader();
-      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.setClearColor(0x0b1830, 1);
       try {
-        const hdrLoader = new RGBELoader();
-        const hdrUrl = new URL("../assets/sky.hdr", import.meta.url).href;
-        const hdrTexture = await hdrLoader.loadAsync(hdrUrl);
-        hdrTexture.encoding = THREE.LinearEncoding;
+        const hdrLoader = new HDRLoader();
+        const hdrTexture = await hdrLoader.loadAsync(skyHdrUrl);
         hdrTexture.wrapS = hdrTexture.wrapT = THREE.ClampToEdgeWrapping;
         const envMap = pmremGen.fromEquirectangular(hdrTexture).texture;
         this._envMap = envMap;
@@ -741,6 +743,7 @@ export default {
       this.initPhysicsWorld();
       this.setupDragControls();
       this.applyEnvironmentPreset("day");
+      this.applyWeatherPreset("sunny", { immediate: true });
       // Apply the default render-quality preset ("high") — tunable by
       // the user via setRenderQuality("low"|"medium"|"high"|"ultra").
       this.setRenderQuality("high");
@@ -898,7 +901,7 @@ export default {
       c.width = c.height = 64;
       const g = c.getContext("2d");
       const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-      grad.addColorStop(0.0, "rgba(255,255,255,1)");
+      grad.addColorStop(0.0, this._resolveCssColor("--bz-fg", "#ffffff"));
       grad.addColorStop(0.35, "rgba(255,255,255,0.65)");
       grad.addColorStop(0.75, "rgba(255,255,255,0.12)");
       grad.addColorStop(1.0, "rgba(255,255,255,0)");
@@ -910,6 +913,11 @@ export default {
       t.generateMipmaps = false;
       this.__softCircleTex = t;
       return t;
+    },
+    _resolveCssColor(name, fallback) {
+      const source = this.$el || document.documentElement;
+      const value = getComputedStyle(source).getPropertyValue(name).trim();
+      return value || fallback;
     },
     createHelpers(addUpdateCallback) {
       const self = this;
@@ -2635,9 +2643,9 @@ export default {
           uWeatherTint:  { value: new THREE.Color(0xc0c8d2) },  // overcast grey mix
           uWeatherMix:   { value: 0.0 },                         // 0 = full time-of-day, 1 = full overcast
         },
-        vertexShader: `varying vec3 vPos; void main() { vPos = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+        vertexShader: `varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
         fragmentShader: `
-          varying vec3 vPos;
+          varying vec3 vDir;
           uniform vec3 topColor;
           uniform vec3 midColor;
           uniform vec3 bottomColor;
@@ -2645,7 +2653,7 @@ export default {
           uniform vec3 uWeatherTint;
           uniform float uWeatherMix;
           void main() {
-            vec3 dir = normalize(vPos);
+            vec3 dir = normalize(vDir);
             float y = dir.y;
             // Base time-of-day gradient (3 zones).
             vec3 timeColor;
@@ -2675,10 +2683,12 @@ export default {
         `,
         side: THREE.BackSide,
         depthWrite: true,
+        depthTest: false,
       });
       const skyMesh = new THREE.Mesh(skyGeo, skyMat);
-      skyMesh.position.y = 200;
-      skyMesh.renderOrder = -1000;
+      skyMesh.position.copy(this.camera?.position || new THREE.Vector3());
+      skyMesh.renderOrder = -10000;
+      skyMesh.frustumCulled = false;
       this.scene.add(skyMesh);
       this._skyMesh = skyMesh;
     },
@@ -3810,7 +3820,7 @@ export default {
       let envMap = null;
       if (resolvedUrl) {
         try {
-          const loader = new RGBELoader();
+          const loader = new HDRLoader();
           const hdrTex = await loader.loadAsync(resolvedUrl);
           hdrTex.wrapS = hdrTex.wrapT = THREE.ClampToEdgeWrapping;
           const pmrem = new PMREMGenerator(this.renderer);
@@ -3832,7 +3842,11 @@ export default {
       if (this._envMap && this._envMap.dispose) this._envMap.dispose();
       this._envMap = envMap;
       this.scene.environment = envMap;
-      if (opts.background) this.scene.background = envMap;
+      if (opts.background === "environment") {
+        this.scene.background = envMap;
+      } else {
+        this.scene.background = null;
+      }
       if (opts.intensity !== undefined) this.scene.environmentIntensity = opts.intensity;
       return envMap;
     },
@@ -3950,6 +3964,8 @@ export default {
       const p = this._presets[presetName];
       if (!p) return;
       this.currentTimeOfDay = presetName;
+      if (this.scene) this.scene.background = null;
+      if (this.renderer) this.renderer.setClearColor(p.skyMid ?? p.skyTop, 1);
       const skyMat = this._skyMesh.material;
       skyMat.uniforms.topColor.value.set(p.skyTop);
       skyMat.uniforms.midColor.value.set(p.skyMid);
@@ -4005,6 +4021,7 @@ export default {
         this._bloomPass.intensity = p.bloomStrength;
       }
       this._sunRays.visible = false;
+      if (this.currentWeather === "sunny") this._syncSkyWeatherUniforms("sunny");
       this.renderer.toneMappingExposure = p.exposure * this.lightIntensity;
     },
     // Engine-level quality preset. Trades visual richness for FPS so
@@ -4669,7 +4686,26 @@ export default {
         }
       });
     },
-    applyWeatherPreset(mode) {
+    _syncSkyWeatherUniforms(mode = this.currentWeather || "sunny") {
+      if (!this._skyMesh?.material?.uniforms) return;
+      const preset = this._weatherPresets[mode] || this._weatherPresets.sunny || {};
+      const weatherTints = {
+        sunny:    { tint: 0xbfd4e8, mix: 0.00 },
+        cloudy:   { tint: 0x9aa2b0, mix: 0.45 },
+        rainy:    { tint: 0x545b68, mix: 0.75 },
+        stormy:   { tint: 0x4a5465, mix: 0.78 },
+        snowy:    { tint: 0xb8c4d2, mix: 0.55 },
+        blizzard: { tint: 0x8a94a5, mix: 0.85 },
+        foggy:    { tint: 0x9aa0ab, mix: 0.65 },
+      };
+      const target = weatherTints[mode] || weatherTints.sunny;
+      const u = this._skyMesh.material.uniforms;
+      u.uWeatherTint.value.set(target.tint);
+      u.uWeatherMix.value = target.mix;
+      u.uWeatherDim.value = preset.ambientDim ?? 1.0;
+      this._skyMesh.material.needsUpdate = true;
+    },
+    applyWeatherPreset(mode, opts = {}) {
       const p = this._weatherPresets[mode];
       if (!p) return;
       this.currentWeather = mode;
@@ -4677,7 +4713,12 @@ export default {
       // over ~2 seconds — replaces the previous hard-switch. Every new
       // visual subsystem (RainLines, LightningBolt, wet-surface broadcast)
       // reads from `this.weather` each frame so they transition smoothly.
-      if (this.weather) this.weather.setMode(mode, 2.0);
+      if (this.weather) this.weather.setMode(mode, opts.immediate ? 0 : 2.0);
+      if (opts.immediate && this.weather?.properties) {
+        for (const prop of Object.values(this.weather.properties)) {
+          prop.value = prop.target;
+        }
+      }
       // Legacy FogExp2 density TEMPORARILY forced to 0 alongside the
       // dome + height-fog disables. Atmospheric fog on the starfield +
       // particle background was adding its own horizon haze. Restore
@@ -4690,23 +4731,7 @@ export default {
       // disc dissolves into the sky color at the horizon instead of
       // ending as a hard circle. Grid lines fade uniformly with the
       // weather dim.
-      const weatherTints = {
-        sunny:    { tint: 0xbfd4e8, mix: 0.00 },
-        cloudy:   { tint: 0x9aa2b0, mix: 0.45 },
-        rainy:    { tint: 0x545b68, mix: 0.75 },
-        stormy:   { tint: 0x4a5465, mix: 0.78 },
-        snowy:    { tint: 0xb8c4d2, mix: 0.55 },
-        blizzard: { tint: 0x8a94a5, mix: 0.85 },
-        foggy:    { tint: 0x9aa0ab, mix: 0.65 },
-      };
-      const target = weatherTints[mode] || weatherTints.sunny;
-      const dim = p.ambientDim ?? 1.0;
-      if (this._skyMesh?.material?.uniforms) {
-        const u = this._skyMesh.material.uniforms;
-        u.uWeatherTint.value.set(target.tint);
-        u.uWeatherMix.value = target.mix;
-        u.uWeatherDim.value = dim;
-      }
+      this._syncSkyWeatherUniforms(mode);
       // Ground + grid lines are NOT touched by weather. Only the sky
       // dome transforms — horizon stays constant across every mode.
       if (this._cloudLayer) {
@@ -4959,6 +4984,9 @@ export default {
         this._updateLensFlareSun();
         this._updateUnderwater();
         this._updateDoF();
+        if (this.scene && this.scene.background === this._envMap) this.scene.background = null;
+        const clearPreset = this._presets[this.currentTimeOfDay] || this._presets.day;
+        if (this.renderer && clearPreset) this.renderer.setClearColor(clearPreset.skyMid ?? clearPreset.skyTop, 1);
         if (this.composer) this.composer.render();
         else this.renderer.render(this.scene, this.camera);
         this.updateStats(dt);
@@ -5012,6 +5040,50 @@ export default {
         this.controls.update();
       }
     },
+    captureSnapshot(label = "Preview", opts = {}) {
+      if (!this.renderer || !this.scene || !this.camera) return null;
+      const quality = opts.quality || "history";
+      const oldPixelRatio = this.renderer.getPixelRatio();
+      const oldQuality = this._renderQuality || "high";
+      const oldAutoRotate = this.controls?.autoRotate;
+      try {
+        if (quality !== "interactive") {
+          this.setRenderQuality("ultra");
+          this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5));
+          if (this.controls) {
+            this.controls.autoRotate = false;
+            this.controls.update();
+          }
+          if (this._lastHeroMetrics) this._frameHeroObject(this._lastHeroMetrics);
+        }
+        if (this.scene && this.scene.background === this._envMap) this.scene.background = null;
+        const clearPreset = this._presets[this.currentTimeOfDay] || this._presets.day;
+        if (this.renderer && clearPreset) this.renderer.setClearColor(clearPreset.skyMid ?? clearPreset.skyTop, 1);
+        if (this.composer) this.composer.render();
+        else this.renderer.render(this.scene, this.camera);
+        const dataUrl = this.renderer.domElement.toDataURL("image/png");
+        if (!dataUrl || dataUrl === "data:," || dataUrl.length < 128) return null;
+        return {
+          name: String(label || "preview").toLowerCase().replace(/\s+/g, "-"),
+          label,
+          dataUrl,
+          capturedAt: Date.now(),
+          quality,
+        };
+      } catch (e) {
+        console.warn("[ThreeViewer] Snapshot capture failed:", e?.message || e);
+        return null;
+      } finally {
+        if (quality !== "interactive") {
+          this.setRenderQuality(oldQuality);
+          this.renderer.setPixelRatio(oldPixelRatio);
+          if (this.controls && oldAutoRotate !== undefined) {
+            this.controls.autoRotate = oldAutoRotate;
+            this.controls.update();
+          }
+        }
+      }
+    },
     clear() {
       if (!this.scene) return;
       this._updateCallbacks = [];
@@ -5044,6 +5116,18 @@ export default {
         this._waterPlaneY = undefined;
         this._underwaterAuto = false;
       }
+      if (this._presentationStage) {
+        this.scene.remove(this._presentationStage);
+        this._presentationStage.traverse?.((n) => {
+          n.geometry?.dispose?.();
+          if (n.material) {
+            if (Array.isArray(n.material)) n.material.forEach((m) => m.dispose?.());
+            else n.material.dispose?.();
+          }
+        });
+        this._presentationStage = null;
+      }
+      this._lastHeroMetrics = null;
       const toRemove = [];
       this.scene.traverse((obj) => {
         if (
@@ -5068,6 +5152,238 @@ export default {
         this.scene.remove(obj);
       }
       this.resetCamera();
+    },
+    _getHeroBounds(root) {
+      const box = new THREE.Box3();
+      box.makeEmpty();
+      const tmpBox = new THREE.Box3();
+      root?.updateMatrixWorld?.(true);
+      root?.traverse?.((child) => {
+        if (!child.visible) return;
+        if (!child.isMesh && !child.isPoints && !child.isLine) return;
+        if (child.userData?.excludeFromBBox) return;
+        if (!child.geometry) return;
+        try {
+          tmpBox.setFromObject(child);
+          if (!tmpBox.isEmpty()) box.union(tmpBox);
+        } catch (_) {}
+      });
+      if (box.isEmpty() && root?.isObject3D) box.setFromObject(root);
+      if (box.isEmpty()) return null;
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const radius = Math.max(size.length() * 0.5, maxDim * 0.5, 0.01);
+      return { box, center, size, maxDim, radius };
+    },
+    _upgradeWeakMaterials(root, THREE) {
+      const envMap = this._envMap;
+      const convertMaterial = (mat) => {
+        if (!mat || mat.isShaderMaterial || mat.isRawShaderMaterial) return mat;
+        if (mat.isPointsMaterial || mat.isLineBasicMaterial || mat.isSpriteMaterial) return mat;
+        if (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial) return mat;
+        const next = new THREE.MeshStandardMaterial({
+          name: mat.name || "bonzai-standardized-material",
+          color: mat.color ? mat.color.clone() : new THREE.Color(0xffffff),
+          map: mat.map || null,
+          normalMap: mat.normalMap || null,
+          roughnessMap: mat.roughnessMap || null,
+          metalnessMap: mat.metalnessMap || null,
+          emissive: mat.emissive ? mat.emissive.clone() : new THREE.Color(0x000000),
+          emissiveMap: mat.emissiveMap || null,
+          emissiveIntensity: mat.emissiveIntensity || 0,
+          transparent: mat.transparent || mat.opacity < 1,
+          opacity: mat.opacity ?? 1,
+          side: mat.side ?? THREE.FrontSide,
+          alphaMap: mat.alphaMap || null,
+          alphaTest: mat.alphaTest || 0,
+          roughness: 0.48,
+          metalness: 0.02,
+          envMap,
+          envMapIntensity: envMap ? 0.8 : 0,
+        });
+        next.userData = { ...(mat.userData || {}), bonzaiStandardized: true };
+        return next;
+      };
+
+      root?.traverse?.((node) => {
+        if (!node.isMesh || !node.material) return;
+        const original = node.material;
+        const materials = Array.isArray(original) ? original : [original];
+        const upgraded = materials.map(convertMaterial);
+        node.material = Array.isArray(original) ? upgraded : upgraded[0];
+        const finalMaterials = Array.isArray(node.material) ? node.material : [node.material];
+        for (const mat of finalMaterials) {
+          if (!mat) continue;
+          if (envMap && "envMap" in mat && !mat.envMap) mat.envMap = envMap;
+          if ("envMapIntensity" in mat) {
+            mat.envMapIntensity = Math.max(mat.envMapIntensity || 0, mat.metalness > 0.45 ? 1.05 : 0.7);
+          }
+          if ("roughness" in mat && Number.isFinite(mat.roughness)) {
+            mat.roughness = THREE.MathUtils.clamp(mat.roughness, 0.18, 0.72);
+          }
+          if ("metalness" in mat && Number.isFinite(mat.metalness) && mat.metalness > 0) {
+            mat.metalness = THREE.MathUtils.clamp(mat.metalness, 0.02, 1.0);
+          }
+          if ("clearcoat" in mat && mat.metalness > 0.35) {
+            mat.clearcoat = Math.max(mat.clearcoat || 0, 0.18);
+            mat.clearcoatRoughness = Math.min(mat.clearcoatRoughness ?? 0.35, 0.42);
+          }
+          mat.needsUpdate = true;
+        }
+      });
+    },
+    _normalizeGeneratedPresentation(root) {
+      const first = this._getHeroBounds(root);
+      if (!first || !Number.isFinite(first.maxDim) || first.maxDim <= 0) return first;
+      if (!root.userData?.keepGeneratedScale) {
+        const targetMax = 2.05;
+        const scale = THREE.MathUtils.clamp(targetMax / first.maxDim, 0.35, 3.0);
+        if (Number.isFinite(scale) && Math.abs(scale - 1) > 0.04) {
+          root.scale.multiplyScalar(scale);
+          root.updateMatrixWorld(true);
+        }
+      }
+      const next = this._getHeroBounds(root) || first;
+      if (!root.userData?.keepGeneratedPlacement) {
+        root.position.x -= next.center.x;
+        root.position.z -= next.center.z;
+        root.position.y -= next.box.min.y;
+        root.updateMatrixWorld(true);
+      }
+      const metrics = this._getHeroBounds(root) || next;
+      this._lastHeroMetrics = metrics;
+      return metrics;
+    },
+    _getContactShadowTexture() {
+      if (this._contactShadowTexture) return this._contactShadowTexture;
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext("2d");
+      const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 124);
+      g.addColorStop(0, "rgba(0,0,0,0.46)");
+      g.addColorStop(0.45, "rgba(0,0,0,0.22)");
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 256, 256);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+      this._contactShadowTexture = tex;
+      return tex;
+    },
+    _ensurePresentationStage(metrics) {
+      if (!this.scene || !metrics) return;
+      if (this._presentationStage) {
+        this.scene.remove(this._presentationStage);
+        this._presentationStage.traverse?.((n) => {
+          n.geometry?.dispose?.();
+          if (n.material) {
+            if (Array.isArray(n.material)) n.material.forEach((m) => m.dispose?.());
+            else n.material.dispose?.();
+          }
+        });
+        this._presentationStage = null;
+      }
+      const radius = THREE.MathUtils.clamp(metrics.maxDim * 0.72, 1.25, 4.0);
+      const group = new THREE.Group();
+      group.name = "BonzAI_PresentationStage";
+      group.userData.excludeFromBBox = true;
+
+      const floor = new THREE.Mesh(
+        new THREE.CircleGeometry(radius, 96),
+        new THREE.MeshStandardMaterial({
+          color: 0x11141d,
+          roughness: 0.82,
+          metalness: 0.02,
+          transparent: true,
+          opacity: 0.42,
+          envMap: this._envMap || null,
+          envMapIntensity: 0.18,
+        })
+      );
+      floor.name = "BonzAI_LookdevFloor";
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.y = -0.012;
+      floor.receiveShadow = true;
+      floor.userData.excludeFromBBox = true;
+      group.add(floor);
+
+      const contact = new THREE.Mesh(
+        new THREE.CircleGeometry(radius * 0.62, 96),
+        new THREE.MeshBasicMaterial({
+          map: this._getContactShadowTexture(),
+          transparent: true,
+          opacity: 0.7,
+          depthWrite: false,
+        })
+      );
+      contact.name = "BonzAI_ContactShadow";
+      contact.rotation.x = -Math.PI / 2;
+      contact.position.y = 0.002;
+      contact.renderOrder = 1;
+      contact.userData.excludeFromBBox = true;
+      group.add(contact);
+
+      this.scene.add(group);
+      this._presentationStage = group;
+    },
+    _retargetLookdevRig(metrics) {
+      if (!metrics || !this._lights?.main) return;
+      const target = metrics.center.clone();
+      target.y += metrics.size.y * 0.08;
+      const radius = Math.max(metrics.radius, 1.2);
+      const main = this._lights.main;
+      main.position.set(target.x - radius * 1.4, target.y + radius * 2.2, target.z + radius * 1.55);
+      main.intensity = 1.15 * this.lightIntensity;
+      main.target.position.copy(target);
+      main.target.updateMatrixWorld();
+      if (main.shadow?.camera) {
+        const extent = Math.max(radius * 1.55, 2.4);
+        const cam = main.shadow.camera;
+        cam.left = -extent;
+        cam.right = extent;
+        cam.top = extent;
+        cam.bottom = -extent;
+        cam.near = 0.05;
+        cam.far = Math.max(radius * 6, 12);
+        cam.updateProjectionMatrix();
+      }
+      if (this._lights.fill) this._lights.fill.position.set(target.x + radius * 2.0, target.y + radius * 1.2, target.z + radius * 1.8);
+      if (this._lights.fill2) this._lights.fill2.position.set(target.x - radius * 1.9, target.y + radius * 0.9, target.z - radius * 1.8);
+      if (this._lights.rim) this._lights.rim.position.set(target.x, target.y + radius * 1.2, target.z - radius * 2.5);
+      if (this._lights.bounce) this._lights.bounce.position.set(target.x, Math.max(0.25, target.y - radius * 0.25), target.z);
+    },
+    _frameHeroObject(metrics, { animate = false } = {}) {
+      if (!metrics || !this.camera || !this.controls) return;
+      const target = metrics.center.clone();
+      target.y += metrics.size.y * 0.08;
+      const fov = THREE.MathUtils.degToRad(this.camera.fov || 45);
+      const fitHeightDistance = (metrics.size.y * 0.5) / Math.tan(fov * 0.5);
+      const fitWidthDistance = (Math.max(metrics.size.x, metrics.size.z) * 0.5) / Math.tan(fov * 0.5) / Math.max(this.camera.aspect || 1, 0.1);
+      const dist = Math.max(fitHeightDistance, fitWidthDistance, metrics.radius * 1.75, 2.4);
+      const dir = new THREE.Vector3(0.78, 0.52, 0.92).normalize();
+      const pos = target.clone().addScaledVector(dir, dist * 1.18);
+      this.controls.target.copy(target);
+      this.camera.position.copy(pos);
+      this.camera.near = Math.max(0.03, dist / 120);
+      this.camera.far = Math.max(80, dist * 80);
+      this.camera.updateProjectionMatrix();
+      this.controls.minDistance = Math.max(0.35, metrics.radius * 0.55);
+      this.controls.maxDistance = Math.max(12, metrics.radius * 12);
+      this.controls.update();
+    },
+    _applyGeneratedLookdev(root) {
+      const metrics = this._normalizeGeneratedPresentation(root);
+      if (!metrics) return null;
+      this._ensurePresentationStage(metrics);
+      this._retargetLookdevRig(metrics);
+      this._frameHeroObject(metrics);
+      this.setAO({ radius: Math.max(0.35, metrics.maxDim * 0.28), intensity: 3.1, falloff: 0.22, quality: "High" });
+      this.setBloom({ intensity: 0.78, threshold: 0.88, smoothing: 0.16, radius: 0.68 });
+      this.setColorGrade({ saturation: 1.1, contrast: 1.04 });
+      return metrics;
     },
     autoEnhanceObject(obj, THREE) {
       const envMap = this._envMap;
@@ -5229,17 +5545,12 @@ export default {
         // undoes our tame baseline and produces the "sun halo blown over
         // a stone fountain" look.
       }
-      // If any transmission material was found, ensure scene has a background
-      // for the transmission buffer to refract through (null background = black refraction)
-      let hasTransmission = false;
-      obj.traverse((n) => {
-        if (n.isMesh && n.material && n.material.transmission > 0) hasTransmission = true;
-      });
-      if (hasTransmission && !this.scene.background && this._envMap) {
-        this.scene.background = this._envMap;
-        this.scene.backgroundBlurriness = 1.0;
-        this.scene.backgroundIntensity = 0.3;
-      }
+      this._upgradeWeakMaterials(obj, THREE);
+
+      // Keep the procedural sky visible. Transmission/reflection materials
+      // use scene.environment; assigning scene.background to the HDR env
+      // hides the shader sky and can make every time-of-day preset black.
+      if (this.scene.background === this._envMap) this.scene.background = null;
     },
     async applyModuleCode(code, mode = "replace") {
       this.isGenerating = true;
@@ -5451,37 +5762,7 @@ export default {
           await this._applyFallbackAmbience(result, _engine);
           result.name = "GeneratedObject";
           this.scene.add(result);
-          // Build a bounding box that EXCLUDES backdrops (starfields,
-          // nebulae, skydomes) — anything marked `userData.excludeFromBBox`.
-          // Otherwise a large celestial radius forces the camera to back up
-          // and the hero object reads as tiny.
-          const box = new THREE.Box3();
-          box.makeEmpty();
-          const tmpBox = new THREE.Box3();
-          result.traverse((child) => {
-            if (!child.isMesh && !child.isPoints && !child.isLine) return;
-            if (child.userData?.excludeFromBBox) return;
-            if (!child.geometry) return;
-            tmpBox.setFromObject(child);
-            if (!tmpBox.isEmpty()) box.union(tmpBox);
-          });
-          // Fallback: if nothing qualified, use the full object's bbox.
-          if (box.isEmpty()) box.setFromObject(result);
-          const center = box.getCenter(new THREE.Vector3());
-          const size = box.getSize(new THREE.Vector3());
-          // Tighter framing — the object should fill ~70% of the viewport
-          // rather than sitting at 50%. Prior 2.0× multiplier produced
-          // "small floating hero" vibes.
-          const dist = Math.max(size.x, size.y, size.z) * 1.5;
-          // Aim at the visual center (biased slightly upward) so the camera
-          // doesn't sit nose-down against the ground plane.
-          this.controls.target.set(center.x, center.y + size.y * 0.1, center.z);
-          this.camera.position.set(
-            center.x + dist * 0.55,
-            center.y + dist * 0.45,
-            center.z + dist * 0.55
-          );
-          this.controls.update();
+          this._applyGeneratedLookdev(result);
         }
         this.$emit?.("generation-success", { mode, hasResult: !!result });
         return result;
@@ -5549,12 +5830,11 @@ export default {
   align-items: center;
   justify-content: center;
   background: rgba(5, 5, 10, 0.95);
-  backdrop-filter: blur(10px);
   z-index: 100;
 }
 .loading-overlay p {
   margin-top: 20px;
-  color: #a5a6ff;
+  color: var(--bz-fg);
   font-size: 18px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -5571,10 +5851,13 @@ export default {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0.75em 1.25em !important;
+  padding: 0.75em 1.25em;
   margin: 0 !important;
+  border: 1px solid var(--bz-border);
+  background: var(--bz-panel);
+  color: var(--bz-fg);
   font-size: 14px;
-  border-radius: 4px;
+  border-radius: 8px;
 }
 .stat-notification .material-symbols-outlined {
   font-size: 20px;
@@ -5586,7 +5869,6 @@ export default {
   background: var(--bz-scrim-deep);
   padding: 10px 16px;
   border-radius: 4px;
-  backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .controls-hint span {

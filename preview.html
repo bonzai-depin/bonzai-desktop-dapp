@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BonzAI Design System — Component Catalog</title>
+<!-- Font references relative to repo root (src/assets/fonts/) -->
+<style>
+@font-face { font-family:'Fira Sans'; font-display:swap; font-weight:100; src:url('src/assets/fonts/FiraSans-Light.ttf') format('truetype'); }
+@font-face { font-family:'Fira Sans'; font-display:swap; font-weight:400; src:url('src/assets/fonts/FiraSans-Regular.ttf') format('truetype'); }
+@font-face { font-family:'Fira Sans Condensed'; font-display:swap; font-style:italic; font-weight:900; src:url('src/assets/fonts/FiraSansCondensed-BlackItalic.ttf') format('truetype'); }
+@font-face { font-family:'Fira Sans Condensed'; font-display:swap; font-style:italic; font-weight:100; src:url('src/assets/fonts/FiraSansCondensed-LightItalic.ttf') format('truetype'); }
+@font-face { font-family:'Material Symbols Outlined'; font-display:block; font-style:normal; font-weight:100 700; src:url('src/assets/fonts/MaterialSymbolsOutlined.woff2') format('woff2'); }
+
+.material-symbols-outlined {
+  font-family:'Material Symbols Outlined',sans-serif;
+  font-weight:normal; font-style:normal; font-size:24px; line-height:1;
+  letter-spacing:normal; text-transform:none; display:inline-block;
+  white-space:nowrap; word-wrap:normal; direction:ltr;
+  font-feature-settings:'liga'; -webkit-font-feature-settings:'liga';
+  -webkit-font-smoothing:antialiased;
+}
+</style>
+<link rel="stylesheet" href="src/assets/tokens.css">
+<link rel="stylesheet" href="src/assets/buttons.css">
+<link rel="stylesheet" href="src/assets/notices.css">
+<style>
+/* Preview scaffolding only — not part of the design system */
+:root { --pv-gutter: 48px; }
+body { margin:0; background:var(--bz-canvas); color:var(--bz-fg); font-family:var(--bz-font-body); }
+.pv-header {
+  position:sticky; top:0; z-index:100;
+  background:rgba(10,10,15,0.92); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--bz-border);
+  padding:24px var(--pv-gutter);
+  display:flex; align-items:center; justify-content:space-between;
+}
+.pv-header h1 { margin:0; }
+.pv-header__meta { color:var(--bz-fg-low); font-size:12px; font-family:var(--bz-font-mono); }
+.pv-nav {
+  display:flex; gap:16px; flex-wrap:wrap;
+  padding:16px var(--pv-gutter);
+  border-bottom:1px solid var(--bz-border);
+  background:var(--bz-panel);
+  position:sticky; top:73px; z-index:90;
+}
+.pv-nav a {
+  color:var(--bz-fg-mid); text-decoration:none;
+  font-size:13px; padding:6px 12px; border-radius:var(--bz-r);
+  transition:background .14s, color .14s;
+}
+.pv-nav a:hover { background:var(--bz-raised); color:var(--bz-fg); }
+.pv-nav a:focus-visible { outline:2px solid var(--bz-border-brand); }
+.pv-section {
+  padding:48px var(--pv-gutter);
+  border-bottom:1px solid var(--bz-border);
+}
+.pv-section:last-child { border-bottom:none; }
+.pv-section__eyebrow {
+  margin-bottom:8px;
+}
+.pv-grid {
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap:var(--bz-space-4);
+}
+.pv-grid--2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.pv-swatch {
+  border-radius:var(--bz-r);
+  overflow:hidden;
+  border:1px solid var(--bz-border);
+}
+.pv-swatch__chip {
+  height:80px;
+}
+.pv-swatch__meta {
+  padding:var(--bz-space-3) var(--bz-space-4);
+  background:var(--bz-panel);
+  font-size:var(--bz-size-meta);
+}
+.pv-swatch__name { color:var(--bz-fg); font-family:var(--bz-font-mono); }
+.pv-swatch__hex { color:var(--bz-fg-low); }
+.pv-type-spec {
+  padding:var(--bz-space-4) 0;
+  border-bottom:1px solid var(--bz-hairline-0);
+}
+.pv-type-spec:last-child { border-bottom:none; }
+.pv-type-spec__row {
+  display:flex; align-items:baseline; justify-content:space-between;
+  gap:var(--bz-space-4);
+}
+.pv-type-spec__class { font-family:var(--bz-font-mono); color:var(--bz-purple-100); font-size:12px; }
+.pv-box {
+  background:var(--bz-card);
+  border:1px solid var(--bz-border);
+  border-radius:var(--bz-r);
+  padding:var(--bz-space-5);
+  margin-bottom:var(--bz-space-4);
+}
+.pv-box__label {
+  font-size:var(--bz-size-micro); color:var(--bz-fg-low);
+  text-transform:uppercase; letter-spacing:0.08em;
+  margin-bottom:var(--bz-space-3);
+}
+.pv-row-gap { display:flex; gap:var(--bz-space-3); flex-wrap:wrap; align-items:center; }
+.pv-dark-box { background:var(--bz-canvas); border:1px solid var(--bz-border); border-radius:var(--bz-r); padding:var(--bz-space-4); }
+.pv-table-preview { width:100%; border-collapse:collapse; font-size:var(--bz-size-body); }
+.pv-table-preview th, .pv-table-preview td {
+  text-align:left; padding:var(--bz-space-3) var(--bz-space-4);
+  border-bottom:1px solid var(--bz-hairline-0);
+}
+.pv-table-preview th { color:var(--bz-fg-low); font-family:var(--bz-font-mono); font-size:11px; text-transform:uppercase; letter-spacing:0.06em; }
+.pv-skeleton-demo { width:100%; max-width:480px; }
+.pv-kbdrow { display:flex; gap:var(--bz-space-3); flex-wrap:wrap; }
+.pv-wave-canvas { width:100%; height:64px; background:var(--bz-panel); border-radius:var(--bz-r); }
+</style>
+</head>
+<body>
+
+<header class="pv-header">
+  <div>
+    <h1 class="bz-h1">BonzAI</h1>
+    <p class="pv-header__meta">Design System v2.0 &middot; Component Catalog</p>
+  </div>
+  <span class="bz-eyebrow">Default Theme</span>
+</header>
+
+<nav class="pv-nav">
+  <a href="#colors">Colors</a>
+  <a href="#typography">Typography</a>
+  <a href="#buttons">Buttons</a>
+  <a href="#inputs">Inputs</a>
+  <a href="#notices">Notices</a>
+  <a href="#elevation">Elevation</a>
+  <a href="#motion">Motion</a>
+  <a href="#table">Table</a>
+  <a href="#skeleton">Skeleton</a>
+  <a href="#kbd">Shortcuts</a>
+  <a href="#waveform">Waveform</a>
+</nav>
+
+<!-- ─── COLORS ──────────────────────────────────────────────── -->
+<section class="pv-section" id="colors">
+  <div class="bz-eyebrow pv-section__eyebrow">01 &middot; Color Palette</div>
+  <h2 class="bz-h2">The 60 / 30 / 10 System</h2>
+  <p class="bz-body" style="color:var(--bz-fg-mid); max-width:600px; margin-bottom:24px;">
+    Five dark surfaces, one purple ramp, one emerald semantic accent.
+    No opacity hierarchy — four text stops handle all dimming.
+  </p>
+
+  <h3 class="bz-h3" style="margin:32px 0 16px;">Canvas (60%)</h3>
+  <div class="pv-grid">
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-canvas)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-canvas</div><div class="pv-swatch__hex">#0a0a0f</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-panel)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-panel</div><div class="pv-swatch__hex">#11141d</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-card)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-card</div><div class="pv-swatch__hex">#161a26</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-raised)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-raised</div><div class="pv-swatch__hex">#1d2230</div></div></div>
+  </div>
+
+  <h3 class="bz-h3" style="margin:32px 0 16px;">Brand Purple (30%)</h3>
+  <div class="pv-grid">
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-100)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-100</div><div class="pv-swatch__hex">#c4a8e8</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-300)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-300</div><div class="pv-swatch__hex">#8b5cf6</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-500)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-500</div><div class="pv-swatch__hex">#61378e</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-700)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-700</div><div class="pv-swatch__hex">#3a1f5c</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-purple-900)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-purple-900</div><div class="pv-swatch__hex">#1c0d2c</div></div></div>
+  </div>
+
+  <h3 class="bz-h3" style="margin:32px 0 16px;">Semantic Energy (10%)</h3>
+  <div class="pv-grid">
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-emerald-500)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-emerald-500</div><div class="pv-swatch__hex">#10b981</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-danger)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-danger</div><div class="pv-swatch__hex">#e25555</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-warning)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-warning</div><div class="pv-swatch__hex">#d4a017</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-info)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-info</div><div class="pv-swatch__hex">#5aa9e8</div></div></div>
+  </div>
+
+  <h3 class="bz-h3" style="margin:32px 0 16px;">Text Scale</h3>
+  <div class="pv-grid">
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-fg)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-fg</div><div class="pv-swatch__hex">#f0f0f5</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-fg-mid)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-fg-mid</div><div class="pv-swatch__hex">#c2c2cc</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-fg-low)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-fg-low</div><div class="pv-swatch__hex">#74748a</div></div></div>
+    <div class="pv-swatch"><div class="pv-swatch__chip" style="background:var(--bz-fg-faint)"></div><div class="pv-swatch__meta"><div class="pv-swatch__name">--bz-fg-faint</div><div class="pv-swatch__hex">#4a4a55</div></div></div>
+  </div>
+</section>
+
+<!-- ─── TYPOGRAPHY ──────────────────────────────────────────── -->
+<section class="pv-section" id="typography">
+  <div class="bz-eyebrow pv-section__eyebrow">02 &middot; Typography</div>
+  <h2 class="bz-h2">Three-Tier Cadence</h2>
+  <p class="bz-body" style="color:var(--bz-fg-mid); max-width:600px; margin-bottom:24px;">
+    Quiet display hero &rarr; Brand-voice section headings &rarr; Calm body + mono data.
+  </p>
+
+  <div class="pv-box">
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-display">Display — 40px Light</span><span class="pv-type-spec__class">.bz-display</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-h1">Heading 1 — 28px Black Italic</span><span class="pv-type-spec__class">.bz-h1</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-h2">Heading 2 — 22px Black Italic</span><span class="pv-type-spec__class">.bz-h2</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-h3">Heading 3 — 17px Regular</span><span class="pv-type-spec__class">.bz-h3</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-eyebrow">Eyebrow — 11px Uppercase +0.10em</span><span class="pv-type-spec__class">.bz-eyebrow</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-body">Body — 14px / 1.55 &middot; The default for all prose in the application.</span><span class="pv-type-spec__class">.bz-body</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-meta">Meta — 12px secondary color</span><span class="pv-type-spec__class">.bz-meta</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-micro">Micro — 11px faint color</span><span class="pv-type-spec__class">.bz-micro</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-mono">Mono — 0x8Ff…fEa89 &middot; 9.5 GB &middot; 12 / 47</span><span class="pv-type-spec__class">.bz-mono</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-data">Data — 13px tnum ss01 &middot; 1,234.56 BONZAI</span><span class="pv-type-spec__class">.bz-data</span></div></div>
+    <div class="pv-type-spec"><div class="pv-type-spec__row"><span class="bz-shout" style="font-size:16px;">Shout — Inline brand voice for emphatic values</span><span class="pv-type-spec__class">.bz-shout</span></div></div>
+  </div>
+</section>
+
+<!-- ─── BUTTONS ─────────────────────────────────────────────── -->
+<section class="pv-section" id="buttons">
+  <div class="bz-eyebrow pv-section__eyebrow">03 &middot; Buttons</div>
+  <h2 class="bz-h2">Three Variants + Status</h2>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Primary · Brand gradient</div>
+    <div class="pv-row-gap">
+      <button class="bz-btn bz-btn--primary">Start Generation</button>
+      <button class="bz-btn bz-btn--primary" disabled>Disabled</button>
+      <button class="bz-btn bz-btn--primary bz-btn--sm">Small</button>
+      <button class="bz-btn bz-btn--primary bz-btn--lg">Large</button>
+      <button class="bz-btn bz-btn--primary bz-btn--running">Running</button>
+    </div>
+  </div>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Ghost · Recessed canvas</div>
+    <div class="pv-row-gap">
+      <button class="bz-btn bz-btn--ghost">Cancel</button>
+      <button class="bz-btn bz-btn--ghost" disabled>Disabled</button>
+      <button class="bz-btn bz-btn--ghost"><span class="material-symbols-outlined">download</span> Export</button>
+    </div>
+  </div>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Default · Neutral outline</div>
+    <div class="pv-row-gap">
+      <button class="bz-btn">Secondary</button>
+      <button class="bz-btn" disabled>Disabled</button>
+    </div>
+  </div>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Status variants</div>
+    <div class="pv-row-gap">
+      <button class="bz-btn bz-btn--success">Claim Revenue</button>
+      <button class="bz-btn bz-btn--warning">Needs Setup</button>
+      <button class="bz-btn bz-btn--destructive">Revoke</button>
+    </div>
+  </div>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Icon buttons</div>
+    <div class="pv-row-gap">
+      <button class="bz-iconbtn" aria-label="Settings"><span class="material-symbols-outlined">settings</span></button>
+      <button class="bz-iconbtn" disabled aria-label="Locked"><span class="material-symbols-outlined">lock</span></button>
+      <button class="bz-iconbtn bz-iconbtn--sm" aria-label="Close"><span class="material-symbols-outlined">close</span></button>
+    </div>
+  </div>
+</section>
+
+<!-- ─── INPUTS ──────────────────────────────────────────────── -->
+<section class="pv-section" id="inputs">
+  <div class="bz-eyebrow pv-section__eyebrow">04 &middot; Forms</div>
+  <h2 class="bz-h2">Input Primitives</h2>
+
+  <div class="pv-box pv-grid--2" style="max-width:720px;">
+    <div>
+      <label class="bz-eyebrow" style="display:block; margin-bottom:6px;">Default input</label>
+      <input type="text" class="pv-input" placeholder="Wallet address…" />
+    </div>
+    <div>
+      <label class="bz-eyebrow" style="display:block; margin-bottom:6px;">Focus state</label>
+      <input type="text" class="pv-input" value="0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89" style="border-color:var(--bz-border-brand); box-shadow:0 0 0 4px rgba(139,92,246,0.12);" />
+    </div>
+    <div>
+      <label class="bz-eyebrow" style="display:block; margin-bottom:6px;">Disabled input</label>
+      <input type="text" class="pv-input" disabled value="Locked value" />
+    </div>
+    <div>
+      <label class="bz-eyebrow" style="display:block; margin-bottom:6px;">Error state</label>
+      <input type="text" class="pv-input" value="Invalid" style="border-color:var(--bz-danger);" />
+    </div>
+  </div>
+
+  <style>
+    .pv-input {
+      width:100%; height:40px;
+      background:var(--bz-canvas);
+      border:1px solid var(--bz-border);
+      border-radius:var(--bz-r);
+      color:var(--bz-fg);
+      padding:0 var(--bz-space-3);
+      font-family:var(--bz-font-body);
+      font-size:var(--bz-size-body);
+      outline:none;
+      transition:border-color .14s, box-shadow .14s;
+    }
+    .pv-input::placeholder { color:var(--bz-fg-low); font-style:italic; }
+    .pv-input:focus-visible { border-color:var(--bz-border-brand); box-shadow:0 0 0 4px rgba(139,92,246,0.12); }
+    .pv-input:disabled { opacity:.55; cursor:not-allowed; background:var(--bz-panel); }
+  </style>
+</section>
+
+<!-- ─── NOTICES ─────────────────────────────────────────────── -->
+<section class="pv-section" id="notices">
+  <div class="bz-eyebrow pv-section__eyebrow">05 &middot; Notices</div>
+  <h2 class="bz-h2">Inline Banners</h2>
+
+  <div class="bz-notice bz-notice--info" style="margin-bottom:16px;">
+    <div class="bz-notice__icon"><span class="material-symbols-outlined">info</span></div>
+    <div class="bz-notice__body">
+      <h4 class="bz-notice__title">Level Requirement</h4>
+      <p class="bz-notice__text">Minting video NFTs requires LVL4 (25,000 BONZAI) or a one-time 1 ETH unlock.</p>
+    </div>
+  </div>
+
+  <div class="bz-notice bz-notice--success" style="margin-bottom:16px;">
+    <div class="bz-notice__icon"><span class="material-symbols-outlined">check_circle</span></div>
+    <div class="bz-notice__body">
+      <h4 class="bz-notice__title">Model Ready</h4>
+      <p class="bz-notice__text">Qwen Coder 32B loaded. 19 GB VRAM. Ready to generate.</p>
+    </div>
+  </div>
+
+  <div class="bz-notice bz-notice--warning" style="margin-bottom:16px;">
+    <div class="bz-notice__icon"><span class="material-symbols-outlined">warning</span></div>
+    <div class="bz-notice__body">
+      <h4 class="bz-notice__title">Gas Spike</h4>
+      <p class="bz-notice__text">Base gas is 47 gwei. Consider waiting for a calmer window to mint.</p>
+    </div>
+  </div>
+
+  <div class="bz-notice bz-notice--danger">
+    <div class="bz-notice__icon"><span class="material-symbols-outlined">error</span></div>
+    <div class="bz-notice__body">
+      <h4 class="bz-notice__title">Transaction Failed</h4>
+      <p class="bz-notice__text">Insufficient ETH for gas. Required: 0.0025 ETH. Balance: 0.0012 ETH.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ─── ELEVATION ───────────────────────────────────────────── -->
+<section class="pv-section" id="elevation">
+  <div class="bz-eyebrow pv-section__eyebrow">06 &middot; Elevation</div>
+  <h2 class="bz-h2">Shadow Scale</h2>
+  <div class="pv-row-gap" style="align-items:stretch;">
+    <div class="pv-box" style="box-shadow:var(--bz-elev-1);"><div class="pv-box__label">Elev-1</div><span class="bz-micro">Subtle pop on hover</span></div>
+    <div class="pv-box" style="box-shadow:var(--bz-elev-2);"><div class="pv-box__label">Elev-2</div><span class="bz-micro">Floating panels</span></div>
+    <div class="pv-box" style="box-shadow:var(--bz-elev-3);"><div class="pv-box__label">Elev-3</div><span class="bz-micro">Modals</span></div>
+    <div class="pv-box" style="box-shadow:var(--bz-elev-brand);"><div class="pv-box__label">Elev-Brand</div><span class="bz-micro">Focus ring + glow</span></div>
+  </div>
+</section>
+
+<!-- ─── MOTION ──────────────────────────────────────────────── -->
+<section class="pv-section" id="motion">
+  <div class="bz-eyebrow pv-section__eyebrow">07 &middot; Motion</div>
+  <h2 class="bz-h2">Keyframes + Easings</h2>
+
+  <div class="pv-row-gap" style="margin-bottom:24px;">
+    <div class="pv-box" style="width:220px; text-align:center;">
+      <div style="width:40px;height:40px;border-radius:8px;background:var(--bz-purple-500); margin:0 auto 12px; animation:bz-rise .6s var(--bz-ease-out) infinite alternate;"></div>
+      <span class="bz-micro">bz-rise</span>
+    </div>
+    <div class="pv-box" style="width:220px; text-align:center;">
+      <div style="width:40px;height:40px;border-radius:8px;background:var(--bz-purple-500); margin:0 auto 12px; animation:bz-pulse 1.4s ease-in-out infinite;"></div>
+      <span class="bz-micro">bz-pulse</span>
+    </div>
+    <div class="pv-box" style="width:220px; text-align:center;">
+      <div style="width:100%;height:2px;border-radius:1px;background:var(--bz-purple-500); margin:20px auto;" class="bz-generating"></div>
+      <span class="bz-micro">bz-gradient-sweep</span>
+    </div>
+    <div class="pv-box" style="width:220px; text-align:center;">
+      <div style="width:40px;height:40px;border-radius:8px;background:var(--bz-purple-500); margin:0 auto 12px; animation:bz-spin 1.2s linear infinite;"></div>
+      <span class="bz-micro">bz-spin</span>
+    </div>
+  </div>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Duration tokens</div>
+    <div class="pv-row-gap">
+      <span class="bz-mono" style="background:var(--bz-panel);padding:4px 10px;border-radius:6px;">--bz-dur-fast 140ms</span>
+      <span class="bz-mono" style="background:var(--bz-panel);padding:4px 10px;border-radius:6px;">--bz-dur-base 220ms</span>
+      <span class="bz-mono" style="background:var(--bz-panel);padding:4px 10px;border-radius:6px;">--bz-dur-slow 420ms</span>
+    </div>
+  </div>
+</section>
+
+<!-- ─── DATA TABLE ──────────────────────────────────────────── -->
+<section class="pv-section" id="table">
+  <div class="bz-eyebrow pv-section__eyebrow">08 &middot; Data Table</div>
+  <h2 class="bz-h2">Fintech-Grade Dense Rows</h2>
+
+  <div class="pv-dark-box">
+    <table class="pv-table-preview">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Model</th>
+          <th>Size</th>
+          <th>Address</th>
+          <th style="text-align:right;">Fee</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--bz-emerald-500);margin-right:8px;"></span>Ready</td>
+          <td class="bz-mono">qwen3.5-27b-q2_k.gguf</td>
+          <td class="bz-mono">18.9 GB</td>
+          <td class="bz-mono">0x8Ff…fEa89</td>
+          <td style="text-align:right;" class="bz-data">0.0005 ETH</td>
+        </tr>
+        <tr>
+          <td><span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--bz-purple-300);margin-right:8px;"></span>Current</td>
+          <td class="bz-mono">deepseek-r1-32b-q4_k_m.gguf</td>
+          <td class="bz-mono">19.2 GB</td>
+          <td class="bz-mono">0x4135…0B93</td>
+          <td style="text-align:right;" class="bz-data">0.0010 ETH</td>
+        </tr>
+        <tr>
+          <td><span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--bz-fg-faint);margin-right:8px;"></span>Available</td>
+          <td class="bz-mono">phi-4-mini-q4_k_m.gguf</td>
+          <td class="bz-mono">2.5 GB</td>
+          <td class="bz-mono">0xc4d1…84ec</td>
+          <td style="text-align:right;" class="bz-data">0.0002 ETH</td>
+        </tr>
+        <tr>
+          <td><span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:var(--bz-danger);margin-right:8px;"></span>Unfit</td>
+          <td class="bz-mono">llama-3-70b-q8_0.gguf</td>
+          <td class="bz-mono">71 GB</td>
+          <td class="bz-mono">0x0a84…9a3</td>
+          <td style="text-align:right;" class="bz-data">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─── SKELETON ────────────────────────────────────────────── -->
+<section class="pv-section" id="skeleton">
+  <div class="bz-eyebrow pv-section__eyebrow">09 &middot; Skeleton</div>
+  <h2 class="bz-h2">Loading Placeholders</h2>
+
+  <div class="pv-box pv-skeleton-demo">
+    <div class="pv-box__label">List skeleton</div>
+    <div style="padding:8px 0; border-bottom:1px solid var(--bz-hairline-0); display:flex; gap:12px; align-items:center;">
+      <div style="width:36px;height:36px;border-radius:999px; background:linear-gradient(90deg, var(--bz-hairline-0), var(--bz-surface-3), var(--bz-hairline-0)); background-size:200% 100%; animation:bzsk-shimmer 1.8s ease-in-out infinite;"></div>
+      <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
+        <div style="width:45%;height:14px;border-radius:4px; background:linear-gradient(90deg, var(--bz-hairline-0), var(--bz-surface-3), var(--bz-hairline-0)); background-size:200% 100%; animation:bzsk-shimmer 1.8s ease-in-out infinite;"></div>
+        <div style="width:70%;height:10px;border-radius:4px; background:linear-gradient(90deg, var(--bz-hairline-0), var(--bz-surface-3), var(--bz-hairline-0)); background-size:200% 100%; animation:bzsk-shimmer 1.8s ease-in-out infinite;"></div>
+      </div>
+    </div>
+    <div style="padding:8px 0; border-bottom:1px solid var(--bz-hairline-0); display:flex; gap:12px; align-items:center;">
+      <div style="width:36px;height:36px;border-radius:999px; background:linear-gradient(90deg, var(--bz-hairline-0), var(--bz-surface-3), var(--bz-hairline-0)); background-size:200% 100%; animation:bzsk-shimmer 1.8s ease-in-out infinite 0.15s;"></div>
+      <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
+        <div style="width:55%;height:14px;border-radius:4px; background:linear-gradient(90deg, var(--bz-hairline-0), var(--bz-surface-3), var(--bz-hairline-0)); background-size:200% 100%; animation:bzsk-shimmer 1.8s ease-in-out infinite 0.15s;"></div>
+        <div style="width:40%;height:10px;border-radius:4px; background:linear-gradient(90deg, var(--bz-hairline-0), var(--bz-surface-3), var(--bz-hairline-0)); background-size:200% 100%; animation:bzsk-shimmer 1.8s ease-in-out infinite 0.15s;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── KEYBOARD SHORTCUTS ──────────────────────────────────── -->
+<section class="pv-section" id="kbd">
+  <div class="bz-eyebrow pv-section__eyebrow">10 &middot; Keyboard Hints</div>
+  <h2 class="bz-h2">BonzaiKbd Component</h2>
+
+  <div class="pv-box">
+    <div class="pv-kbdrow">
+      <kbd class="bzkbd bzkbd--md bzkbd--default"><span class="bzkbd__glyph">⌘</span><span class="bzkbd__sep">+</span><span class="bzkbd__glyph">K</span></kbd>
+      <kbd class="bzkbd bzkbd--md bzkbd--default"><span class="bzkbd__glyph">⌘</span><span class="bzkbd__sep">+</span><span class="bzkbd__glyph">↩</span></kbd>
+      <kbd class="bzkbd bzkbd--sm bzkbd--default"><span class="bzkbd__glyph">Esc</span></kbd>
+      <kbd class="bzkbd bzkbd--lg bzkbd--flat"><span class="bzkbd__glyph">⇧</span><span class="bzkbd__sep">+</span><span class="bzkbd__glyph">Tab</span></kbd>
+      <kbd class="bzkbd bzkbd--md bzkbd--flat"><span class="bzkbd__glyph">Ctrl</span><span class="bzkbd__sep">+</span><span class="bzkbd__glyph">C</span></kbd>
+    </div>
+  </div>
+
+  <style>
+    .bzkbd { display:inline-flex; align-items:center; font-family:var(--bz-font-mono); line-height:1; color:var(--bz-fg-mid); background:var(--bz-surface-1); border:1px solid var(--bz-border); vertical-align:middle; white-space:nowrap; user-select:none; }
+    .bzkbd--md { height:24px; padding:0 8px; font-size:11px; border-radius:6px; gap:4px; }
+    .bzkbd--sm { height:20px; padding:0 6px; font-size:10px; border-radius:5px; gap:3px; }
+    .bzkbd--lg { height:28px; padding:0 10px; font-size:12px; border-radius:7px; gap:5px; }
+    .bzkbd--flat { border-radius:var(--bz-r-sm); border-color:var(--bz-border-strong); }
+    .bzkbd__sep { margin:0 3px; color:var(--bz-fg-faint); }
+    .bzkbd__glyph { font-weight:600; letter-spacing:0.04em; }
+    .bzkbd:active { background:var(--bz-surface-3); border-color:var(--bz-border-brand); color:var(--bz-fg); }
+  </style>
+</section>
+
+<!-- ─── WAVEFORM ────────────────────────────────────────────── -->
+<section class="pv-section" id="waveform">
+  <div class="bz-eyebrow pv-section__eyebrow">11 &middot; Audio Visualization</div>
+  <h2 class="bz-h2">BonzaiWaveform Component</h2>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Minimal variant (48px)</div>
+    <canvas id="wave-min" class="pv-wave-canvas"></canvas>
+  </div>
+
+  <div class="pv-box">
+    <div class="pv-box__label">Spectrum variant (96px)</div>
+    <canvas id="wave-spec" class="pv-wave-canvas" style="height:96px;"></canvas>
+  </div>
+
+  <script>
+    (function() {
+      function drawWave(canvasId, barCount, vertical) {
+        const cvs = document.getElementById(canvasId);
+        if (!cvs) return;
+        const ctx = cvs.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        const w = cvs.clientWidth;
+        const h = cvs.clientHeight;
+        cvs.width = w * dpr;
+        cvs.height = h * dpr;
+        ctx.scale(dpr, dpr);
+
+        const gap = 0.25;
+        const barW = w / (barCount * (1 + gap) - gap);
+        const gapPx = barW * gap;
+        const col = '#8b5cf6';
+        const colMid = '#61378e';
+        const emerald = '#10b981';
+
+        ctx.clearRect(0, 0, w, h);
+
+        for (let i = 0; i < barCount; i++) {
+          let amp = 0.2 + Math.sin(i * 0.35 + Date.now() * 0.002) * 0.3 + Math.random() * 0.3;
+          amp = Math.max(0.1, Math.min(1, amp));
+
+          if (vertical) {
+            const bh = amp * h;
+            const x = i * (barW + gapPx);
+            const y = h - bh;
+            ctx.fillStyle = amp > 0.75 ? emerald : amp > 0.45 ? colMid : col;
+            ctx.globalAlpha = 0.7 + amp * 0.3;
+            ctx.beginPath();
+            ctx.roundRect(x, y, barW - 1, bh, [Math.min(barW/2,2), Math.min(barW/2,2), 0, 0]);
+            ctx.fill();
+          } else {
+            const bh = amp * h * 0.8;
+            const x = i * (barW + gapPx);
+            const y = (h - bh) / 2;
+            ctx.fillStyle = col;
+            ctx.globalAlpha = 0.5 + amp * 0.4;
+            ctx.beginPath();
+            ctx.roundRect(x, y, barW - 1, bh, Math.min(barW/2, 3));
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+        requestAnimationFrame(() => drawWave(canvasId, barCount, vertical));
+      }
+
+      if (document.getElementById('wave-min')) drawWave('wave-min', 64, false);
+      if (document.getElementById('wave-spec')) drawWave('wave-spec', 48, true);
+    })();
+  </script>
+</section>
+
+<footer style="text-align:center; padding:48px; color:var(--bz-fg-low); font-size:12px; border-top:1px solid var(--bz-border);">
+  <span class="bz-mono">BonzAI Design System v2.0</span> &middot; Reference: <a href="DESIGN.md" style="color:var(--bz-purple-100);">DESIGN.md</a>
+</footer>
+
+</body>
+</html>

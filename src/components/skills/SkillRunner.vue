@@ -1,38 +1,37 @@
 <template>
   <div class="skill-runner">
     <!-- Model Requirements Section -->
-    <div v-if="modelRequirements.length > 0" class="model-requirements mb-5">
-      <h3 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-4 mb-3">
-        <span class="material-symbols-outlined mr-2">deployed_code</span>
+    <div v-if="modelRequirements.length > 0" class="model-requirements skill-panel">
+      <h3 class="skill-panel__title fira-sans-condensed-black-italic">
+        <span class="material-symbols-outlined" aria-hidden="true">deployed_code</span>
         Required Models
       </h3>
 
       <!-- Missing Models Warning -->
-      <div v-if="missingModels.length > 0" class="notification is-danger mb-4">
-        <p class="mb-3">
-          <strong class="fira-sans-condensed-black-italic is-size-4">
-            Download Required
-          </strong>
-        </p>
+      <div v-if="missingModels.length > 0" class="bz-notice bz-notice--danger bz-notice--stacked">
+        <div class="bz-notice__body">
+          <p class="bz-notice__title">Download Required</p>
+        </div>
         <ul class="model-list">
           <li v-for="model in missingModels" :key="model.key" class="model-item">
             <div class="model-info">
-              <span class="material-symbols-outlined mr-2">{{ getModelIcon(model.type) }}</span>
+              <span class="material-symbols-outlined" aria-hidden="true">{{ getModelIcon(model.type) }}</span>
               <div>
                 <strong>{{ model.name }}</strong>
-                <span class="model-size ml-2 has-text-grey-light">{{ model.size }}</span>
-                <p class="is-size-7 has-text-grey-light">{{ model.description }}</p>
+                <span class="model-size bz-mono">{{ model.size }}</span>
+                <p>{{ model.description }}</p>
               </div>
             </div>
             <button
-              class="button is-warning is-small"
+              class="bz-btn bz-btn--sm bz-btn--warning fira-sans-condensed-black-italic"
               @click="downloadModel(model)"
               :disabled="downloadingModel === model.key"
+              :class="{ 'bz-btn--running': downloadingModel === model.key }"
             >
-              <span v-if="downloadingModel === model.key" class="material-symbols-outlined rotating mr-1">
+              <span v-if="downloadingModel === model.key" class="material-symbols-outlined rotating" aria-hidden="true">
                 progress_activity
               </span>
-              <span v-else class="material-symbols-outlined mr-1">download</span>
+              <span v-else class="material-symbols-outlined" aria-hidden="true">download</span>
               {{ downloadingModel === model.key ? `${downloadProgress}%` : 'Download' }}
             </button>
           </li>
@@ -41,18 +40,18 @@
 
       <!-- Available Models -->
       <div class="available-models">
-        <div class="tags">
+        <div class="skill-chip-list">
           <span
             v-for="model in modelRequirements"
             :key="model.key"
-            class="tag is-medium"
-            :class="isModelAvailable(model) ? 'is-success' : 'is-danger'"
+            class="skill-chip"
+            :class="isModelAvailable(model) ? 'skill-chip--success' : 'skill-chip--danger'"
           >
-            <span class="material-symbols-outlined mr-1" style="font-size: 16px;">
+            <span class="material-symbols-outlined" aria-hidden="true">
               {{ isModelAvailable(model) ? 'check_circle' : 'error' }}
             </span>
             {{ model.name }}
-            <span class="ml-1 has-text-grey-light" style="font-size: 10px;">
+            <span class="bz-mono">
               ({{ model.vram }})
             </span>
           </span>
@@ -61,60 +60,55 @@
     </div>
 
     <!-- LLM Auto-Fill Section -->
-    <div v-if="hasInputs && !isChatBased" class="autofill-section models__activity--payouts mb-5">
-      <div class="columns is-vcentered">
-        <div class="column">
-          <h3 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-5">
-            <span class="material-symbols-outlined mr-2">auto_awesome</span>
+    <div v-if="hasInputs && !isChatBased" class="autofill-section skill-panel">
+      <div class="skill-panel__head">
+        <div>
+          <h3 class="skill-panel__title fira-sans-condensed-black-italic">
+            <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
             AI Auto-Fill
           </h3>
-          <p class="has-text-grey-light is-size-7">
+          <p class="skill-help">
             Describe what you want and let AI fill in the details
           </p>
         </div>
-        <div class="column is-narrow">
           <button
-            class="button is-info"
+            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
             :disabled="!autoFillPrompt || isAutoFilling || !canAutoFill"
             @click="autoFillInputs"
+            :class="{ 'bz-btn--running': isAutoFilling }"
           >
-            <span v-if="isAutoFilling" class="material-symbols-outlined rotating mr-1">
+            <span v-if="isAutoFilling" class="material-symbols-outlined rotating" aria-hidden="true">
               progress_activity
             </span>
-            <span v-else class="material-symbols-outlined mr-1">magic_button</span>
+            <span v-else class="material-symbols-outlined" aria-hidden="true">magic_button</span>
             {{ isAutoFilling ? 'Generating...' : 'Generate' }}
           </button>
-        </div>
       </div>
-      <div class="field mt-3">
-        <div class="control">
           <textarea
             v-model="autoFillPrompt"
-            class="textarea"
+            class="skill-input skill-textarea"
             placeholder="Describe what you want to create (e.g., 'A cozy coffee shop scene with warm lighting and jazz music')..."
             rows="2"
             :disabled="isAutoFilling"
           ></textarea>
-        </div>
-      </div>
     </div>
 
     <!-- Skill Inputs Form -->
-    <div v-if="hasInputs && !isChatBased" class="skill-inputs models__activity--payouts">
-      <h3 class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-4 mb-4">
-        <span class="material-symbols-outlined mr-2">tune</span>
+    <div v-if="hasInputs && !isChatBased" class="skill-inputs skill-panel">
+      <h3 class="skill-panel__title fira-sans-condensed-black-italic">
+        <span class="material-symbols-outlined" aria-hidden="true">tune</span>
         Skill Settings
       </h3>
 
-      <div class="columns is-multiline">
+      <div class="skill-form-grid">
         <div
           v-for="(field, key) in skill.inputs"
           :key="key"
-          class="column"
-          :class="getFieldColumnClass(field)"
+          class="skill-field"
+          :class="{ 'skill-field--full': isWideField(field) }"
         >
-          <div class="field">
-            <label class="label has-text-white has-text-left fira-sans-condensed-black-italic">
+          <div class="skill-field__inner">
+            <label class="skill-label fira-sans-condensed-black-italic">
               {{ field.label || key }}
             </label>
 
@@ -122,14 +116,14 @@
             <div v-if="field.type === 'string'" class="control">
               <input
                 v-if="!isLongText(field)"
-                class="input is-medium"
+                class="skill-input"
                 type="text"
                 v-model="localInputs[key]"
                 :placeholder="field.description || `Enter ${field.label || key}`"
               />
               <textarea
                 v-else
-                class="textarea"
+                class="skill-input skill-textarea"
                 v-model="localInputs[key]"
                 :placeholder="field.description || `Enter ${field.label || key}`"
                 rows="3"
@@ -139,7 +133,7 @@
             <!-- Number Input -->
             <div v-else-if="field.type === 'number'" class="control">
               <input
-                class="input is-medium"
+                class="skill-input"
                 type="number"
                 v-model.number="localInputs[key]"
                 :min="field.min"
@@ -150,18 +144,16 @@
 
             <!-- Select Input -->
             <div v-else-if="field.type === 'select'" class="control">
-              <div class="select is-fullwidth is-medium">
-                <select v-model="localInputs[key]">
+                <select class="skill-input" v-model="localInputs[key]">
                   <option v-for="opt in field.options" :key="opt" :value="opt">
                     {{ formatOption(opt) }}
                   </option>
                 </select>
-              </div>
             </div>
 
             <!-- Boolean Input -->
             <div v-else-if="field.type === 'boolean'" class="control">
-              <label class="checkbox">
+              <label class="skill-checkbox">
                 <input type="checkbox" v-model="localInputs[key]" />
                 {{ field.description || 'Enable' }}
               </label>
@@ -193,7 +185,7 @@
               </div>
             </div>
 
-            <p v-if="field.description && field.type !== 'boolean'" class="help has-text-grey-light">
+            <p v-if="field.description && field.type !== 'boolean'" class="skill-help">
               {{ field.description }}
             </p>
           </div>
@@ -201,18 +193,19 @@
       </div>
 
       <!-- Run Button -->
-      <div class="control mt-5 has-text-center">
+      <div class="skill-run-actions">
         <button
-          class="button is-success is-large"
+          class="bz-btn bz-btn--success bz-btn--lg fira-sans-condensed-black-italic"
           :disabled="!canRun || isExecuting"
           @click="executeSkill"
+          :class="{ 'bz-btn--running': isExecuting }"
         >
-          <span v-if="isExecuting" class="material-symbols-outlined rotating mr-2">
+          <span v-if="isExecuting" class="material-symbols-outlined rotating" aria-hidden="true">
             progress_activity
           </span>
-          <span v-else class="material-symbols-outlined mr-2">play_arrow</span>
+          <span v-else class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
           {{ isExecuting ? executionStatus : 'Run Skill' }}
-          <span class="tag is-warning ml-3 fira-sans-condensed-black-italic">
+          <span class="skill-price-pill bz-mono">
             {{ skill.pricing?.runningFee || 99 }} BONZAI
           </span>
         </button>
@@ -223,22 +216,23 @@
     <div v-if="isChatBased" class="chat-setup">
       <slot name="chat-interface" :skill="skill" :inputs="localInputs">
         <!-- Default chat setup UI - override with slot -->
-        <div class="notification is-info">
-          <p>This skill uses a chat interface. Please configure the chat settings to begin.</p>
+        <div class="bz-notice bz-notice--info">
+          <span class="bz-notice__icon"><span class="material-symbols-outlined" aria-hidden="true">chat</span></span>
+          <div class="bz-notice__body"><p class="bz-notice__text">This skill uses a chat interface. Please configure the chat settings to begin.</p></div>
         </div>
       </slot>
     </div>
 
     <!-- Execution Results -->
-    <div v-if="executionResult && !isChatBased" class="execution-results mt-5">
+    <div v-if="executionResult && !isChatBased" class="execution-results">
       <slot name="results" :result="executionResult">
         <!-- Default results display -->
-        <div class="notification is-success">
-          <h4 class="fira-sans-condensed-black-italic is-size-4">
-            <span class="material-symbols-outlined mr-2">check_circle</span>
+        <div class="bz-notice bz-notice--success bz-notice--stacked">
+          <h4 class="skill-panel__title fira-sans-condensed-black-italic">
+            <span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
             Skill Executed Successfully
           </h4>
-          <pre class="mt-3" style="white-space: pre-wrap; max-height: 400px; overflow: auto;">{{ JSON.stringify(executionResult, null, 2) }}</pre>
+          <pre class="skill-result-code">{{ JSON.stringify(executionResult, null, 2) }}</pre>
         </div>
       </slot>
     </div>
@@ -339,10 +333,8 @@ export default {
       return icons[type] || 'deployed_code';
     };
 
-    const getFieldColumnClass = (field) => {
-      if (field.type === 'string' && isLongText(field)) return 'is-12';
-      if (field.type === 'image') return 'is-12';
-      return 'is-6';
+    const isWideField = (field) => {
+      return (field.type === 'string' && isLongText(field)) || field.type === 'image';
     };
 
     const isLongText = (field) => {
@@ -493,7 +485,7 @@ Return ONLY the JSON, no explanation.`;
       canAutoFill,
       isModelAvailable,
       getModelIcon,
-      getFieldColumnClass,
+      isWideField,
       isLongText,
       formatOption,
       handleImageUpload,
@@ -510,6 +502,34 @@ Return ONLY the JSON, no explanation.`;
 <style scoped>
 .skill-runner {
   width: 100%;
+  color: var(--bz-fg);
+}
+
+.skill-panel {
+  display: grid;
+  gap: var(--bz-space-4);
+  margin-bottom: var(--bz-space-5);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-card);
+}
+
+.skill-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+
+.skill-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0;
+  color: var(--bz-fg);
+  font-size: 1.25rem;
+  line-height: 1;
 }
 
 .model-requirements .model-list {
@@ -522,6 +542,7 @@ Return ONLY the JSON, no explanation.`;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--bz-space-3);
   padding: 0.75rem 0;
   border-bottom: 1px solid var(--bz-border);
 }
@@ -534,26 +555,122 @@ Return ONLY the JSON, no explanation.`;
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
+  min-width: 0;
+  color: var(--bz-fg-mid);
+}
+
+.model-requirements .model-info p {
+  margin: var(--bz-space-1) 0 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: 1.35;
 }
 
 .model-requirements .model-size {
-  font-size: 0.8rem;
+  margin-left: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
 }
 
 .available-models {
   margin-top: 1rem;
 }
 
-.autofill-section {
-  background: var(--bz-scrim);
-  border-radius: 8px;
-  padding: 1rem;
+.skill-chip-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
 }
 
-.skill-inputs {
-  background: var(--bz-scrim-soft);
+.skill-chip,
+.skill-price-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 28px;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: 999px;
+  background: var(--bz-panel);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.skill-chip--success {
+  border-color: color-mix(in srgb, var(--bz-emerald-500) 46%, var(--bz-border));
+  background: var(--bz-emerald-soft);
+  color: var(--bz-emerald-300);
+}
+
+.skill-chip--danger {
+  border-color: color-mix(in srgb, var(--bz-danger) 46%, var(--bz-border));
+  background: var(--bz-danger-soft);
+  color: var(--bz-danger);
+}
+
+.skill-price-pill {
+  border-color: color-mix(in srgb, var(--bz-warning) 52%, var(--bz-border));
+  background: var(--bz-warning-soft);
+  color: var(--bz-warning);
+}
+
+.skill-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-4);
+}
+
+.skill-field--full {
+  grid-column: 1 / -1;
+}
+
+.skill-field__inner,
+.skill-run-actions {
+  display: grid;
+  gap: var(--bz-space-2);
+}
+
+.skill-label {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+}
+
+.skill-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
   border-radius: 8px;
-  padding: 1.5rem;
+  outline: 0;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+  font: inherit;
+}
+
+.skill-input:focus {
+  border-color: var(--bz-border-brand);
+}
+
+.skill-textarea {
+  min-height: 88px;
+  padding-top: var(--bz-space-3);
+  resize: vertical;
+}
+
+.skill-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.skill-help {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: 1.4;
 }
 
 .image-preview {
@@ -567,18 +684,33 @@ Return ONLY the JSON, no explanation.`;
 }
 
 .execution-results {
-  margin-top: 1.5rem;
+  margin-top: var(--bz-space-5);
 }
 
-.execution-results pre {
+.skill-result-code {
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
   background: var(--bz-scrim);
-  padding: 1rem;
-  border-radius: 4px;
+  padding: var(--bz-space-4);
+  border-radius: 8px;
+  color: var(--bz-fg-mid);
   font-size: 0.85rem;
 }
 
+@media (max-width: 760px) {
+  .skill-panel__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .skill-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 
 @keyframes rotate {

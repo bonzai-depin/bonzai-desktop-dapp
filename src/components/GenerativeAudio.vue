@@ -4,112 +4,53 @@
     <div class="models__deployment-install">
       <div class="columns">
         <div class="column is-12">
-          <div class="level">
-            <div class="level-left">
-              <div class="level-item">
-                <h1 class="fira-sans-condensed-black-italic">
+          <header class="bz-screen-header">
+            <div class="bz-screen-titleblock">
+              <p class="bz-eyebrow">Create</p>
+                <h1 class="bz-h1 fira-sans-condensed-black-italic">
                   <span
-                    class="material-symbols-outlined mr-2"
-                    style="font-size: 92px !important"
+                    class="material-symbols-outlined bz-title-icon"
+                    aria-hidden="true"
                   >
                     graphic_eq
                   </span>
                   Generative Audio
                 </h1>
-              </div>
             </div>
-          </div>
+          </header>
 
           <!-- GENERATION PROGRESS -->
           <div
             v-if="generation.active"
-            class="generation notification is-info"
-            style="margin-bottom: 1rem"
+            class="audio-progress-card"
           >
-            <p class="mb-2">
-              <span class="fira-sans-condensed-black-italic is-size-4">
-                <button
-                  disabled
-                  class="button is-loading is-info is-small mr-2 p-4"
-                ></button>
+            <div class="audio-progress-card__head">
+              <span class="audio-progress-card__title fira-sans-condensed-black-italic">
+                <BonzaiPulse variant="dot" />
                 Crafting...
               </span>
-              <span
-                class="fira-sans-condensed-black-italic is-pulled-right is-size-4"
-              >
+              <span class="audio-progress-card__pct fira-sans-condensed-black-italic">
                 {{ Math.round(generation.pct) }}%
               </span>
-            </p>
-            <progress
-              class="progress is-success"
-              :value="Math.max(0, Math.min(100, generation.pct))"
-              max="100"
-            >
-              {{ Math.round(generation.pct) }}%
-            </progress>
+            </div>
+            <BonzaiPulse variant="bar" :percent="Math.max(0, Math.min(100, generation.pct))" />
           </div>
 
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
                 <!-- MODE TOGGLES (TTS vs Clone) -->
-                <div class="control mb-4 has-text-left">
-                  <input
+                <div class="audio-control-row">
+                  <ModeChipBar
                     v-model="mode"
-                    :value="'tts'"
-                    id="mode_tts"
-                    type="radio"
-                    name="mode"
-                    :checked="mode === 'tts'"
+                    :items="audioModeItems"
+                    compact
                   />
-                  <label for="mode_tts" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      record_voice_over
-                    </span>
-                    Text to Speech
-                  </label>
-
-                  <input
-                    v-model="mode"
-                    :value="'clone'"
-                    id="mode_clone"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_clone" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      genetics
-                    </span>
-                    Voice Clone
-                  </label>
-
-                  <input
-                    v-model="mode"
-                    :value="'music'"
-                    id="mode_music"
-                    type="radio"
-                    name="mode"
-                  />
-                  <label for="mode_music" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 32px !important"
-                    >
-                      music_note
-                    </span>
-                    Music
-                  </label>
 
                   <!-- LANGUAGE SELECTOR (hidden for music mode) -->
                   <div
                     v-if="mode !== 'music'"
-                    class="select is-dark is-pulled-right"
+                    class="bz-select audio-language-select"
                   >
                     <select v-model="language">
                       <option
@@ -124,40 +65,12 @@
                 </div>
 
                 <!-- VOICE GENDER SELECTOR (TTS mode only) -->
-                <div v-if="mode === 'tts'" class="control mb-4 has-text-left">
-                  <input
+                <div v-if="mode === 'tts'" class="audio-control-row audio-control-row--compact">
+                  <ModeChipBar
                     v-model="voiceGender"
-                    value="female"
-                    id="gender_female"
-                    type="radio"
-                    name="gender"
+                    :items="voiceGenderItems"
+                    compact
                   />
-                  <label for="gender_female" class="radio mr-2">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 24px !important"
-                    >
-                      female
-                    </span>
-                    Female
-                  </label>
-
-                  <input
-                    v-model="voiceGender"
-                    value="male"
-                    id="gender_male"
-                    type="radio"
-                    name="gender"
-                  />
-                  <label for="gender_male" class="radio">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 24px !important"
-                    >
-                      male
-                    </span>
-                    Male
-                  </label>
                 </div>
 
                 <!-- ACCESS REQUIREMENTS -->
@@ -177,13 +90,13 @@
                     <!-- Lyrics Theme Input (for LLM generation) -->
                     <div class="field has-text-left">
                       <label
-                        class="has-text-white fira-sans-condensed-black-italic is-size-3"
+                        class="audio-field-label fira-sans-condensed-black-italic"
                       >
                         Song Concept
                       </label>
                       <div class="lyrics-gen-row mt-3">
                         <input
-                          class="input is-medium"
+                          class="bz-field-input"
                           type="text"
                           v-model="lyricsTheme"
                           placeholder="e.g. summer road trip"
@@ -191,12 +104,11 @@
                         />
 
                         <div
-                          class="is-pulled-right has-text-white vocal-lang-row"
+                          class="vocal-lang-row"
                         >
-                          <div class="select is-dark is-size-5">
+                          <div class="bz-select">
                             <select
                               v-model="musicVocalLanguage"
-                              style="height: 50px; border-color: #fff"
                             >
                               <option value="en">🇺🇸 English</option>
                               <option value="zh">🇨🇳 Chinese</option>
@@ -213,20 +125,20 @@
                           </div>
                           <input
                             v-if="musicVocalLanguage === 'other'"
-                            class="input is-dark is-medium custom-language-input is-pulled-right"
+                            class="input is-dark is-medium custom-language-input skill-float-right"
                             type="text"
                             v-model="customVocalLanguage"
                             placeholder="e.g. Creole, Swahili, Hindi..."
                             style="
                               height: 50px;
-                              border-color: #fff;
+                              border-color: var(--bz-fg);
                               border-left: none;
                             "
                           />
                         </div>
                         <button
-                          class="button is-medium is-info"
-                          :class="{ 'is-loading': isGeneratingLyrics }"
+                          class="bz-btn is-info"
+                          :class="{ 'bz-btn--running': isGeneratingLyrics }"
                           :disabled="isGeneratingLyrics || !lyricsTheme.trim() || !lyricsModelReady"
                           @click.prevent="generateLyrics"
                           :title="
@@ -253,14 +165,12 @@
                     <hr />
                     <!-- Lyrics Textarea -->
                     <div class="field mt-2 has-text-left">
-                      <label
-                        class="has-text-white fira-sans-condensed-black-italic is-size-3"
-                      >
+                      <label class="audio-field-label fira-sans-condensed-black-italic">
                         Lyrics
                       </label>
                       <div class="control mt-3">
                         <textarea
-                          class="textarea is-small"
+                          class="bz-field-textarea"
                           v-model="musicLyrics"
                           placeholder="[intro]&#10;(instrumental)&#10;&#10;[verse]&#10;Walking through the city lights&#10;Everything feels so alive tonight&#10;Stars above are shining bright&#10;&#10;[chorus]&#10;We're on fire, burning bright&#10;Dancing through the neon night&#10;Nothing's gonna stop us now&#10;&#10;[bridge]&#10;When the world falls down around us&#10;We'll rise up from the ground&#10;&#10;[outro]&#10;(fade out)"
                           rows="8"
@@ -269,55 +179,55 @@
                       <div class="structure-tags-help mt-2">
                         <span class="help-label">Structure Tags:</span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[intro]')"
                         >
                           [intro]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[verse]')"
                         >
                           [verse]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[chorus]')"
                         >
                           [chorus]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[bridge]')"
                         >
                           [bridge]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[outro]')"
                         >
                           [outro]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[instrumental]')"
                         >
                           [instrumental]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[build]')"
                         >
                           [build]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable mr-1"
+                          class="skill-chip is-clickable mr-1"
                           @click="insertTag('[drop]')"
                         >
                           [drop]
                         </span>
                         <span
-                          class="tag is-small is-dark is-clickable"
+                          class="skill-chip is-clickable"
                           @click="insertTag('[breakdown]')"
                         >
                           [breakdown]
@@ -331,7 +241,7 @@
                        ═══════════════════════════════════════════════════════════ -->
                   <div class="music-section mt-4 has-text-left">
                     <label
-                      class="has-text-white fira-sans-condensed-black-italic is-size-3"
+                      class="audio-field-label fira-sans-condensed-black-italic"
                     >
                       Generation Settings
                     </label>
@@ -530,7 +440,7 @@
                     <div class="dimension-selectors">
                       <!-- Genre -->
                       <h3
-                        class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left"
+                        class="audio-field-label fira-sans-condensed-black-italic"
                       >
                         Genre
                       </h3>
@@ -539,9 +449,9 @@
                           <span
                             v-for="g in genreOptions"
                             :key="g"
-                            class="tag is-small is-clickable"
+                            class="skill-chip is-clickable"
                             :class="
-                              selectedGenres.includes(g) ? 'is-info' : 'is-dark'
+                              selectedGenres.includes(g) ? 'bz-btn--primary' : 'is-dark'
                             "
                             @click="toggleDimension('genre', g)"
                           >
@@ -553,7 +463,7 @@
 
                       <!-- Mood -->
                       <h3
-                        class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left"
+                        class="audio-field-label fira-sans-condensed-black-italic"
                       >
                         Mood
                       </h3>
@@ -562,10 +472,10 @@
                           <span
                             v-for="m in moodOptions"
                             :key="m"
-                            class="tag is-small is-clickable"
+                            class="skill-chip is-clickable"
                             :class="
                               selectedMoods.includes(m)
-                                ? 'is-warning'
+                                ? 'bz-btn--warning'
                                 : 'is-dark'
                             "
                             @click="toggleDimension('mood', m)"
@@ -577,7 +487,7 @@
                       <hr />
                       <!-- Instruments -->
                       <h3
-                        class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left"
+                        class="audio-field-label fira-sans-condensed-black-italic"
                       >
                         Instruments
                       </h3>
@@ -586,10 +496,10 @@
                           <span
                             v-for="i in instrumentOptions"
                             :key="i"
-                            class="tag is-small is-clickable"
+                            class="skill-chip is-clickable"
                             :class="
                               selectedInstruments.includes(i)
-                                ? 'is-success'
+                                ? 'bz-btn--success'
                                 : 'is-dark'
                             "
                             @click="toggleDimension('instrument', i)"
@@ -602,7 +512,7 @@
 
                       <!-- Vocals -->
                       <h3
-                        class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left"
+                        class="audio-field-label fira-sans-condensed-black-italic"
                       >
                         Vocals
                       </h3>
@@ -611,7 +521,7 @@
                           <span
                             v-for="v in vocalOptions"
                             :key="v"
-                            class="tag is-small is-clickable"
+                            class="skill-chip is-clickable"
                             :class="
                               selectedVocals.includes(v) ? 'is-link' : 'is-dark'
                             "
@@ -624,7 +534,7 @@
                       <hr />
                       <!-- Production -->
                       <h3
-                        class="fira-sans-condensed-black-italic is-size-3 has-text-white has-text-left"
+                        class="audio-field-label fira-sans-condensed-black-italic"
                       >
                         Production
                       </h3>
@@ -633,7 +543,7 @@
                           <span
                             v-for="p in productionOptions"
                             :key="p"
-                            class="tag is-small is-clickable"
+                            class="skill-chip is-clickable"
                             :class="
                               selectedProduction.includes(p)
                                 ? 'is-primary'
@@ -652,14 +562,14 @@
                     class="music-section mt-4 models__activity--payouts has-text-left"
                   >
                     <span
-                      class="fira-sans-condensed-black-italic has-text-brand is-size-1"
+                      class="audio-panel-title fira-sans-condensed-black-italic"
                       style="width: auto !important"
                     >
                       Ready ?
                     </span>
                     <div class="control mt-5">
                       <textarea
-                        class="textarea is-large"
+                        class="bz-field-textarea"
                         v-model="musicCaption"
                         placeholder="pop rock, energetic, electric guitar, drums, male vocals, polished production, 120 BPM"
                         rows="2"
@@ -672,10 +582,9 @@
                   <div
                     class="music-section mt-4 models__activity--payouts generate-row"
                   >
-                    <div class="select is-dark">
+                    <div class="bz-select">
                       <select
                         v-model="musicQuality"
-                        style="height: 52px; position: relative; top: -6px"
                       >
                         <option value="fast">Fast (v1.5)</option>
                         <option value="quality">Quality (v1.5 XL)</option>
@@ -714,9 +623,8 @@
                       Save Memory
                     </label>
                     <button
-                      class="button is-warning is-medium generate-music-btn"
-                      style="margin-left: auto"
-                      :class="{ 'is-loading': isLoading }"
+                      class="bz-btn bz-btn--primary fira-sans-condensed-black-italic generate-music-btn"
+                      :class="{ 'bz-btn--running': isLoading }"
                       :disabled="
                         isLoading ||
                         !canGenerateWithAccess ||
@@ -724,7 +632,7 @@
                       "
                       @click="generateMusic"
                     >
-                      <span class="material-symbols-outlined mr-2 is-size-1">
+                      <span class="material-symbols-outlined" aria-hidden="true">
                         graphic_eq
                       </span>
                       <span>Make Music</span>
@@ -734,7 +642,7 @@
 
                 <!-- VOICE CLONE FILE INPUT -->
                 <div v-if="mode === 'clone'">
-                  <div class="file is-fullwidth is-medium mb-3">
+                  <div class="file skill-fullwidth is-medium mb-3">
                     <label class="file-label">
                       <input
                         class="file-input"
@@ -757,7 +665,7 @@
                   </div>
                   <!-- Reference Transcript Input -->
                   <div v-if="synthesisBase64" class="field">
-                    <label class="label has-text-white has-text-left is-size-6">
+                    <label class="audio-field-label fira-sans-condensed-black-italic">
                       <span
                         class="material-symbols-outlined mr-1"
                         style="font-size: 18px; vertical-align: middle"
@@ -765,13 +673,13 @@
                         subtitles
                       </span>
                       Reference Transcript
-                      <span class="has-text-grey-light is-size-7 ml-2">
+                      <span class="bz-meta">
                         (type exactly what is said in the audio)
                       </span>
                     </label>
                     <div class="control">
                       <textarea
-                        class="textarea"
+                        class="bz-field-textarea"
                         v-model="referenceTranscript"
                         placeholder="Enter the exact words spoken in your reference audio..."
                         rows="2"
@@ -787,15 +695,14 @@
                 <!-- READINESS CTA -->
                 <div
                   v-if="showUpdateCTA && readiness.currentMode == mode"
-                  class="notification is-danger mb-6 mt-6 p-6"
-                  style="margin-bottom: 1rem"
+                  class="audio-notice audio-notice--danger"
                 >
-                  <p class="mb-2">
-                    <strong class="fira-sans-condensed-black-italic is-size-2">
+                  <div class="audio-notice__body">
+                    <strong class="audio-notice__title fira-sans-condensed-black-italic">
                       Download Required
                     </strong>
                     <span v-if="readiness.missingRepos.length">
-                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                      <ul>
                         <li v-for="d in readiness.repoDetails" :key="d.repo">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -808,7 +715,7 @@
                     </span>
 
                     <span v-if="readiness.missingGguf">
-                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
+                      <ul>
                         <li v-for="gguf in readiness.ggufNames" :key="gguf">
                           <span
                             class="material-symbols-outlined is-size-3 mr-1"
@@ -821,68 +728,53 @@
                     </span>
 
                     <span v-if="readiness.notes.length">
-                      <br />
                       Notes:
-                      <ul style="margin-top: 0.5rem">
+                      <ul>
                         <li v-for="(n, i) in readiness.notes" :key="i">
                           • {{ n }}
                         </li>
                       </ul>
                     </span>
-                  </p>
-                  <hr />
-                  <div class="buttons">
-                    <button
-                      class="button is-warning mr-5 is-large"
-                      @click="prefetchForMode"
-                      :disabled="downloads.active || readiness.authRequired"
-                      title="(Re)download required files"
-                    >
-                      <span class="material-symbols-outlined mr-1">
-                        download
-                      </span>
-                      Download Now
-                    </button>
                   </div>
+                  <button
+                    class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                    @click="prefetchForMode"
+                    :disabled="downloads.active || readiness.authRequired"
+                    title="(Re)download required files"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">
+                      download
+                    </span>
+                    Download Now
+                  </button>
                 </div>
 
                 <!-- GENERATION ERROR -->
                 <div
                   v-else-if="generation.error"
-                  class="notification is-danger"
-                  style="margin-bottom: 1rem"
+                  class="audio-notice audio-notice--danger"
                 >
-                  <strong>Generation failed.</strong>
-                  {{ generation.error }}
+                  <div class="audio-notice__body">
+                    <strong class="audio-notice__title fira-sans-condensed-black-italic">Generation failed</strong>
+                    <span>{{ generation.error }}</span>
+                  </div>
                 </div>
 
                 <!-- DOWNLOAD PROGRESS -->
                 <div
                   v-if="downloads && downloads.active"
-                  class="notification is-info p-6"
-                  style="margin-bottom: 1.25rem"
+                  class="audio-progress-card"
                 >
-                  <p class="mb-2">
-                    <span class="fira-sans-condensed-black-italic is-size-4">
+                  <div class="audio-progress-card__head">
+                    <span class="audio-progress-card__title fira-sans-condensed-black-italic">
+                      <BonzaiPulse variant="dot" />
                       Downloading
-                      <button
-                        disabled
-                        class="button is-loading is-info is-small mr-2 p-4"
-                      ></button>
                     </span>
-                    <span
-                      class="fira-sans-condensed-black-italic is-pulled-right is-size-1"
-                    >
+                    <span class="audio-progress-card__pct fira-sans-condensed-black-italic">
                       {{ Math.round(downloads.total_progress || 0) }}%
                     </span>
-                  </p>
-                  <progress
-                    class="progress is-success is-large"
-                    :value="downloads.progress || 0"
-                    max="100"
-                  >
-                    {{ Math.round(downloads.progress || 0) }}%
-                  </progress>
+                  </div>
+                  <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
                   <div
                     v-if="downloadTaskList.length"
                     style="max-height: 180px; overflow: auto"
@@ -934,10 +826,8 @@
                 <div class="level pt-5 mt-5">
                   <div class="level-left">
                     <div class="level-item">
-                      <h2
-                        class="fira-sans-condensed-black-italic has-text-white is-size-1"
-                      >
-                        <span class="material-symbols-outlined is-size-1 mr-2">
+                      <h2 class="bz-h2 fira-sans-condensed-black-italic">
+                        <span class="material-symbols-outlined bz-section-icon">
                           history
                         </span>
                         Generation History
@@ -947,29 +837,29 @@
                   <div class="level-right">
                     <div class="level-item buttons">
                       <button
-                        class="button is-warning is-small"
+                        class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                         @click="importHistory()"
                       >
-                        <span class="material-symbols-outlined mr-2">
+                        <span class="material-symbols-outlined" aria-hidden="true">
                           upload
                         </span>
                         Import
                       </button>
                       <button
-                        class="button is-warning is-small ml-4"
+                        class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                         @click="exportHistory()"
                         :disabled="inferences.length === 0"
                       >
-                        <span class="material-symbols-outlined mr-2">
+                        <span class="material-symbols-outlined" aria-hidden="true">
                           download
                         </span>
                         Export
                       </button>
                       <button
-                        class="button is-danger is-small ml-4"
+                        class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
                         @click="clearHistory()"
                       >
-                        <span class="material-symbols-outlined mr-2">
+                        <span class="material-symbols-outlined" aria-hidden="true">
                           ink_eraser
                         </span>
                         Clear
@@ -990,25 +880,25 @@
                   >
                     <div class="question">
                       <div class="audio-meta">
-                        <span class="tag is-dark">
+                        <span class="skill-chip">
                           {{
                             languageFlags[inference.language] ||
                             inference.language
                           }}
                         </span>
-                        <span v-if="inference.isMusic" class="tag is-warning ml-2">
+                        <span v-if="inference.isMusic" class="skill-chip skill-chip--warning ml-2">
                           <span class="material-symbols-outlined is-size-6 mr-1">music_note</span>
                           Music
                         </span>
-                        <span v-else-if="inference.hasClone" class="tag is-info ml-2">
+                        <span v-else-if="inference.hasClone" class="skill-chip skill-chip--info ml-2">
                           <span class="material-symbols-outlined is-size-6 mr-1">genetics</span>
                           Clone
                         </span>
-                        <span v-else class="tag is-success ml-2">
+                        <span v-else class="skill-chip skill-chip--success ml-2">
                           <span class="material-symbols-outlined is-size-6 mr-1">record_voice_over</span>
                           TTS
                         </span>
-                        <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="tag ml-2" :class="inference.networkMode === 'private' ? 'is-success is-light' : 'is-info is-light'">
+                        <span v-if="inference.networkMode && inference.networkMode !== 'local'" class="skill-chip ml-2" :class="inference.networkMode === 'private' ? 'skill-chip--success' : 'skill-chip--info'">
                           <span class="material-symbols-outlined is-size-6 mr-1">{{ inference.networkMode === 'private' ? 'lock' : 'cloud' }}</span>
                           {{ inference.networkMode === 'private' ? 'Private' : 'Remote' }}
                         </span>
@@ -1018,11 +908,35 @@
                         class="audio-container"
                         v-if="inference?.answer?.data?.audio_path"
                       >
+                        <div class="audio-wave-card">
+                          <button
+                            type="button"
+                            class="audio-wave-button"
+                            :aria-label="activeAudioId === audioElementId(inference) ? 'Pause audio' : 'Play audio'"
+                            @click="toggleAudioPlayback(inference)"
+                          >
+                            <span class="material-symbols-outlined" aria-hidden="true">
+                              {{ activeAudioId === audioElementId(inference) ? "pause" : "play_arrow" }}
+                            </span>
+                          </button>
+                          <div class="audio-wave-body">
+                            <BonzaiWaveform
+                              variant="player"
+                              :active="activeAudioId === audioElementId(inference)"
+                              :progress="audioProgress[audioElementId(inference)] || 0"
+                              :bars="inference.isMusic ? 96 : 64"
+                              :height="64"
+                            />
+                          </div>
+                        </div>
                         <audio
-                          controls
+                          :ref="(el) => setAudioRef(audioElementId(inference), el)"
                           :src="fileUrl(inference.answer.data.audio_path)"
-                          class="audio-player"
+                          class="audio-player-native"
                           preload="metadata"
+                          @timeupdate="(event) => onAudioTimeUpdate(inference, event)"
+                          @ended="onAudioEnded(inference)"
+                          @pause="onAudioPaused(inference)"
                         >
                           Your browser does not support the audio element.
                         </audio>
@@ -1070,6 +984,26 @@
     @close="mintTarget = null"
     @minted="onMinted"
   />
+
+  <Transition name="bz-image-toast">
+    <div
+      v-if="pendingDelete"
+      class="bz-image-delete-toast"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+      <span class="bz-image-delete-toast__body">
+        {{ pendingDelete.all ? 'Clear audio history?' : 'Delete this audio?' }}
+      </span>
+      <button type="button" class="bz-image-delete-toast__ghost" @click="dismissDeleteToast">
+        Cancel
+      </button>
+      <button type="button" class="bz-image-delete-toast__danger" @click="confirmDeleteAudio">
+        {{ pendingDelete.all ? 'Clear' : 'Delete' }}
+      </button>
+    </div>
+  </Transition>
 </template>
 
 <script>
@@ -1098,10 +1032,14 @@ import {
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
+import BonzaiPulse from "./BonzaiPulse.vue";
+import BonzaiWaveform from "./BonzaiWaveform.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
+import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addAudioInference } from "../stores/inferenceStore.js";
+import { inspector } from "../services/generationInspector.service.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -1116,11 +1054,23 @@ export default {
   components: {
     AccessRequirements,
     MintModal,
+    BonzaiPulse,
+    BonzaiWaveform,
     GenerativeActions,
     GenerativeInput,
+    ModeChipBar,
   },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
+    const audioModeItems = [
+      { value: "tts", label: "Text to Speech", icon: "record_voice_over" },
+      { value: "clone", label: "Voice Clone", icon: "genetics" },
+      { value: "music", label: "Music", icon: "music_note" },
+    ];
+    const voiceGenderItems = [
+      { value: "female", label: "Female", icon: "female" },
+      { value: "male", label: "Male", icon: "male" },
+    ];
 
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
@@ -1172,6 +1122,60 @@ export default {
     const mode = ref("tts"); // 'tts', 'clone', or 'music'
     const language = ref("en");
     const exaggerationPct = ref(50); // 0-100 -> maps to 0.0-1.0
+    const pendingDelete = ref(null);
+    let pendingDeleteTimer = null;
+    const activeAudioId = ref(null);
+    const audioProgress = ref({});
+    const audioElements = new Map();
+
+    const audioElementId = (inference) =>
+      String(inference?.id || inference?._originalIndex || "");
+    const setAudioRef = (id, el) => {
+      if (!id) return;
+      if (el) audioElements.set(id, el);
+      else audioElements.delete(id);
+    };
+    const pauseOtherAudio = (id) => {
+      audioElements.forEach((audio, audioId) => {
+        if (audioId !== id && !audio.paused) audio.pause();
+      });
+    };
+    const toggleAudioPlayback = async (inference) => {
+      const id = audioElementId(inference);
+      const audio = audioElements.get(id);
+      if (!audio) return;
+      if (!audio.paused) {
+        audio.pause();
+        activeAudioId.value = null;
+        return;
+      }
+      pauseOtherAudio(id);
+      activeAudioId.value = id;
+      try {
+        await audio.play();
+      } catch (e) {
+        activeAudioId.value = null;
+        console.warn("[GenerativeAudio] Playback failed:", e?.message || e);
+      }
+    };
+    const onAudioTimeUpdate = (inference, event) => {
+      const id = audioElementId(inference);
+      const audio = event?.target;
+      const duration = audio?.duration || 0;
+      audioProgress.value = {
+        ...audioProgress.value,
+        [id]: duration > 0 ? Math.min(1, audio.currentTime / duration) : 0,
+      };
+    };
+    const onAudioEnded = (inference) => {
+      const id = audioElementId(inference);
+      activeAudioId.value = activeAudioId.value === id ? null : activeAudioId.value;
+      audioProgress.value = { ...audioProgress.value, [id]: 0 };
+    };
+    const onAudioPaused = (inference) => {
+      const id = audioElementId(inference);
+      if (activeAudioId.value === id) activeAudioId.value = null;
+    };
 
     // Music mode refs
     const musicLyrics = ref("");
@@ -2850,11 +2854,101 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         console.error("Save cancelled or failed", result?.error);
     };
 
+    const openInspector = (inference) => {
+      if (!inference) return;
+      const data = inference.answer?.data || {};
+      const audioPath = data.audio_path_mp3 || data.audio_path || "";
+      const promptText = inference.question || data.prompt || "";
+      const isMusic = !!inference.isMusic;
+      const isClone = !!inference.hasClone;
+
+      inspector.show({
+        id: inference.id,
+        kind: isMusic ? "music" : "audio",
+        mediaUrl: fileUrl(audioPath),
+        prompt: promptText,
+        model: inference.model || data.model || (isMusic ? "ACE-Step" : isClone ? "Qwen3-TTS" : "Kokoro"),
+        modelId: inference.pipeline || data.pipeline || (isMusic ? "music" : isClone ? "audio_quality" : "audio_turbo"),
+        status: inference.error ? "Error" : "Complete",
+        errorMessage: inference.errorMessage || inference.error || "",
+        networkMode: inference.networkMode || "local",
+        peerId: inference.peerId,
+        mintState: inference.nft || null,
+        ts: inference.timestamp || inference.ts,
+        createdAt: inference.createdAt,
+        elapsedMs: inference.elapsedMs || (inference.elapsed ? Number(inference.elapsed) * 1000 : null),
+        extra: {
+          mode: isMusic ? "Music" : isClone ? "Voice clone" : "Text to speech",
+          language: languages[inference.language] || inference.language || language.value,
+          voice: inference.voiceGender || inference.gender || voiceGender.value,
+          duration: inference.duration ? `${inference.duration}s` : "",
+          sampleRate: inference.sampleRate || data.sample_rate || "",
+          audioPath,
+          songName: inference.songName || data.song_name || "",
+        },
+      });
+    };
+
     const removeInference = async (idx) => {
       if (idx < 0 || idx >= inferences.value.length) return;
       inferences.value = inferences.value.filter((_, i) => i !== idx);
       hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
       persistInferences([...inferences.value]);
+    };
+
+    const clearDeleteToastTimer = () => {
+      if (!pendingDeleteTimer) return;
+      window.clearTimeout(pendingDeleteTimer);
+      pendingDeleteTimer = null;
+    };
+
+    const dismissDeleteToast = () => {
+      clearDeleteToastTimer();
+      pendingDelete.value = null;
+    };
+
+    const requestDeleteAudio = (inference) => {
+      if (!inference) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = {
+        id: inference.id,
+        index: inference._originalIndex,
+        all: false,
+      };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const requestClearHistory = () => {
+      if (!inferences.value.length) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = { all: true };
+      pendingDeleteTimer = window.setTimeout(() => {
+        pendingDelete.value = null;
+        pendingDeleteTimer = null;
+      }, 7000);
+    };
+
+    const confirmDeleteAudio = async () => {
+      const pending = pendingDelete.value;
+      if (!pending) return;
+      dismissDeleteToast();
+
+      if (pending.all) {
+        inferences.value = [];
+        hasCopy.value = [];
+        try {
+          await window.electronAPI?.store?.set?.("audioInferences", []);
+        } catch (e) {
+          console.error("Failed to clear audio inferences:", e);
+        }
+        return;
+      }
+
+      const idx = inferences.value.findIndex((item) => item.id === pending.id);
+      await removeInference(idx >= 0 ? idx : pending.index);
     };
 
     // Unified action descriptors fed into <GenerativeActions>.
@@ -2863,6 +2957,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       const hasAudio = !!inference?.answer?.data?.audio_path;
       const minted = !!inference?.nft;
       return [
+        { id: "inspect", icon: "info", label: "Inspect", variant: "default", title: "Open inspector" },
         { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasAudio },
         { id: "restore",  icon: "content_copy", label: "Reuse",
           title: "Restore all parameters from this generation", variant: "default" },
@@ -2877,21 +2972,16 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     };
     const handleAction = (id, inference) => {
       switch (id) {
+        case "inspect":  openInspector(inference); break;
         case "download": downloadAudio(inference._originalIndex); break;
         case "restore":  restoreFromHistory(inference); break;
         case "mint":     openMint(inference); break;
-        case "delete":   removeInference(inference._originalIndex); break;
+        case "delete":   requestDeleteAudio(inference); break;
       }
     };
 
     const clearHistory = async () => {
-      inferences.value = [];
-      hasCopy.value = [];
-      try {
-        await window.electronAPI?.store?.set?.("audioInferences", []);
-      } catch (e) {
-        console.error("Failed to clear audio inferences:", e);
-      }
+      requestClearHistory();
     };
 
     const exportHistory = () => {
@@ -3002,6 +3092,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       if (scrollContainer.value) {
         scrollContainer.value.removeEventListener("scroll", handleScroll);
       }
+      clearDeleteToastTimer();
       // Note: generation socket is shared and managed by generationStore
     });
 
@@ -3010,6 +3101,8 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     return {
       selectedModel,
       mode,
+      audioModeItems,
+      voiceGenderItems,
       language,
       languages,
       languageFlags,
@@ -3044,6 +3137,9 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       setCopied,
       downloadAudio,
       removeInference,
+      pendingDelete,
+      dismissDeleteToast,
+      confirmDeleteAudio,
       actionsFor,
       handleAction,
       clearHistory,
@@ -3055,6 +3151,14 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       probeCurrentMode,
       handleSynthesisFile,
       fileUrl,
+      activeAudioId,
+      audioProgress,
+      audioElementId,
+      setAudioRef,
+      toggleAudioPlayback,
+      onAudioTimeUpdate,
+      onAudioEnded,
+      onAudioPaused,
       // Voice gender for TTS
       voiceGender,
       // Music mode
@@ -3082,6 +3186,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       lyricsModelReady,
       generateMusic,
       restoreFromHistory,
+      openInspector,
       // Dimension selectors
       selectedGenres,
       selectedMoods,
@@ -3114,15 +3219,203 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 </script>
 
 <style scoped>
-/* Fonts imported from App.vue for offline mode */
+.audio-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-2);
+  color: var(--bz-fg);
+  font-size: var(--bz-size-h3);
+  line-height: 1;
+}
 
-.generation {
+h1.bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
+h2.bz-h2 {
+  font-size: var(--bz-size-h2) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+  margin: 0;
+}
+
+.audio-panel-title {
+  display: inline-flex;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-h2) !important;
+  line-height: var(--bz-line-tight);
+  width: auto !important;
+}
+
+.level-item.buttons {
+  gap: var(--bz-space-2);
+}
+
+.audio-progress-card,
+.audio-notice {
+  margin-bottom: 1rem;
+  padding: 14px 16px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+}
+
+.audio-progress-card__head,
+.audio-notice,
+.audio-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.audio-control-row {
+  margin-bottom: 1rem;
+}
+
+.audio-control-row--compact {
+  justify-content: flex-start;
+}
+
+.audio-progress-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.audio-progress-card__pct {
+  color: var(--bz-fg);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.audio-progress-card :deep(.bz-pulse-wrap--bar) {
+  margin-top: 12px;
+}
+
+.audio-notice--danger {
+  border-color: color-mix(in srgb, var(--bz-danger) 42%, var(--bz-border));
+  background: var(--bz-danger-soft);
+}
+
+.audio-notice__body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.audio-notice__title {
+  color: var(--bz-fg);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.audio-notice ul {
+  margin: 0.5rem 0 0;
+  padding-left: 0;
+  list-style: none;
+  text-transform: lowercase;
+}
+
+.bz-select select {
+  min-height: 36px;
+  padding: 0 34px 0 12px;
+  border: 1px solid var(--bz-border);
+  border-radius: 8px;
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
+}
+
+.audio-language-select {
+  flex: 0 0 auto;
+}
+
+.bz-image-delete-toast {
   position: fixed;
-  width: 33%;
-  top: 1em;
-  right: 1em;
-  z-index: 1;
-  opacity: 0.9;
+  right: max(var(--bz-space-5), env(safe-area-inset-right));
+  bottom: max(var(--bz-space-5), env(safe-area-inset-bottom));
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  max-width: min(420px, calc(100vw - 32px));
+  padding: var(--bz-space-3);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  box-shadow: var(--bz-shadow-lg);
+  color: var(--bz-fg);
+}
+
+.bz-image-delete-toast .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-danger);
+}
+
+.bz-image-delete-toast__body {
+  min-width: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+}
+
+.bz-image-delete-toast__ghost,
+.bz-image-delete-toast__danger {
+  height: 30px;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-3);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+}
+
+.bz-image-delete-toast__ghost {
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+}
+
+.bz-image-delete-toast__ghost:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.bz-image-delete-toast__danger {
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
+  color: var(--bz-danger);
+  font-weight: 700;
+}
+
+.bz-image-delete-toast__danger:hover {
+  filter: brightness(1.08);
+}
+
+.bz-image-toast-enter-active,
+.bz-image-toast-leave-active {
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
+}
+
+.bz-image-toast-enter-from,
+.bz-image-toast-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.bz-image-toast-enter-to,
+.bz-image-toast-leave-from {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .material-symbols-outlined {
@@ -3158,18 +3451,64 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
   flex: 1;
   min-height: 0;
   width: 100%;
-  background: var(--bz-scrim-strong);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-5);
+}
+.models__deployment-install > .columns {
+  display: block;
+  margin: 0;
+}
+.models__deployment-install > .columns > .column {
+  width: 100%;
+  padding: 0 !important;
 }
 .models__activity--payouts {
-  padding: 4em;
+  padding: var(--bz-space-4);
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px);
-  border-radius: 4px !important;
+  border-radius: var(--bz-r) !important;
+  background: var(--bz-card);
+  width: 100%;
+}
+.models__activity--payouts > .columns {
+  margin: 0;
+}
+.models__activity--payouts > .columns > .column {
+  padding: 0;
 }
 .models__activity--payouts h2 {
   font-size: 48px;
   color: var(--bz-fg);
   text-align: right;
+}
+.bz-screen-header .bz-h1 {
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left;
+}
+.bz-screen-header .bz-eyebrow {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+  line-height: 1.2;
+  text-align: left;
+  box-shadow: none;
+  font-weight: 400;
+}
+.bz-screen-header .bz-title-icon {
+  color: var(--bz-purple-300);
+  font-size: 28px !important;
+}
+.bz-screen-header .bz-screen-subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: var(--bz-line-body);
+  text-align: left;
+  box-shadow: none;
+  font-weight: 400;
 }
 h1 {
   margin-top: 0 !important;
@@ -3186,32 +3525,82 @@ p {
   font-weight: 100;
 }
 div.question {
-  border: 1px solid rgba(255, 255, 255, 0);
-  padding: 2em 2em 5em;
-  margin-top: 2em !important;
-  margin-bottom: 1em !important;
+  border: 1px solid var(--bz-border);
+  padding: var(--bz-space-4);
+  margin: 0 !important;
   font-weight: 700;
-  background-color: var(--bz-border);
+  background: var(--bz-card);
   box-shadow: none;
-  border-radius: 4px;
-  backdrop-filter: blur(26px);
+  border-radius: var(--bz-r);
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+}
+
+ol.chat {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: var(--bz-space-4);
+  list-style: none;
+  padding: 0;
+  margin: var(--bz-space-5) 0;
+}
+
+ol.chat .history-item {
+  min-width: 0;
+  animation: bz-fade-rise 360ms var(--bz-ease-out) both;
 }
 .audio-container {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
-.audio-player {
-  width: 100%;
-  height: 40px;
-  border-radius: 4px;
-  /* background: var(--bz-purple-soft); */
+.audio-wave-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel-2);
+  box-shadow: var(--bz-shadow-soft);
 }
 
-.audio-player::-webkit-media-controls-panel {
-  /* background: rgba(97, 55, 142, 0.5); */
+.audio-wave-button {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color var(--bz-dur-fast) var(--bz-ease),
+    background var(--bz-dur-fast) var(--bz-ease),
+    transform var(--bz-dur-fast) var(--bz-ease);
+}
+
+.audio-wave-button:hover {
+  border-color: var(--bz-accent);
+  background: var(--bz-accent-soft);
+  transform: translateY(-1px);
+}
+
+.audio-wave-body {
+  min-width: 0;
+}
+
+.audio-player-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .song-name {
@@ -3222,17 +3611,20 @@ div.question {
   margin-top: 4px;
 }
 .audio-meta {
-  top: -12px;
-  right: 32px;
-  position: absolute;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+  min-height: 28px;
 }
 .prompt-text {
   font-size: 16px !important;
   color: var(--bz-fg-mid);
   display: flex;
   align-items: center;
+  margin: 0 !important;
+  line-height: var(--bz-line-body);
+  overflow-wrap: anywhere;
 }
 form {
   position: relative;
@@ -3243,14 +3635,14 @@ form {
     text;
 }
 hr {
-  margin: 12px 0;
+  margin: 0;
   width: 100%;
   border: none;
   height: 1px;
   background: linear-gradient(
     to right,
     transparent,
-    rgba(255, 255, 255, 1),
+    var(--bz-fg),
     transparent
   );
 }
@@ -3265,7 +3657,7 @@ hr {
   color: var(--bz-border) !important;
   opacity: 1 !important;
 }
-.button.chat.is-loading {
+.button.chat.bz-btn--running {
   position: absolute;
   width: 32px;
   height: 32px;
@@ -3290,10 +3682,9 @@ input[type="radio"] + label.is-disabled {
   cursor: not-allowed;
 }
 input[type="radio"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 
 /* Music toggle checkboxes — identical to radio selectors */
@@ -3309,10 +3700,9 @@ input.music-toggle[type="checkbox"] + label {
   transition: all 0.2s ease;
 }
 input.music-toggle[type="checkbox"]:checked + label {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 .select.is-dark select {
   background: var(--bz-border);
@@ -3394,7 +3784,7 @@ ol.chat li {
 
 /* Fade-in animation for history items */
 .history-item {
-  animation: fadeInUp 0.4s ease-out forwards;
+  animation: bz-rise 0.4s ease-out forwards;
   opacity: 0;
 }
 
@@ -3431,7 +3821,7 @@ ol.chat li {
   box-shadow: 0 4px 12px var(--bz-scrim);
   transition: all 0.2s ease;
   z-index: 100;
-  animation: fadeInUp 0.3s ease-out;
+  animation: bz-rise 0.3s ease-out;
 }
 
 .scroll-to-top-btn:hover {
@@ -3634,8 +4024,6 @@ ol.chat li {
   transform-style: preserve-3d;
 
   /* Heavy glassmorphism blur */
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
 
   /* Multi-layer 3D gradient - convex rubber pad surface */
 
@@ -3766,7 +4154,7 @@ ol.chat li {
 .dimension-tags .tag.is-warning {
   background-color: rgba(255, 195, 0, 0.55);
   border: 1px solid rgba(255, 220, 100, 0.5);
-  color: #0a0a0a;
+  color: var(--bz-canvas);
   text-shadow: 0 1px 2px var(--bz-fg-low);
   box-shadow:
     inset 3px 3px 8px rgba(255, 245, 180, 0.35),

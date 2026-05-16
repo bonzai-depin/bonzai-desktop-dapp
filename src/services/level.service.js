@@ -459,7 +459,7 @@ export const canMintContentType = (inferenceType) => {
 // CROSS-COMPONENT COMMUNICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-// BonzaiBottomBar watches this and opens the modal when it changes
+// The active App.vue shell watches this and opens the modal when it changes.
 export const requestOpenLevelModal = (levelNum) => {
   if (levelNum >= 1 && levelNum <= 6) {
     state.openLevelModalFor = levelNum;

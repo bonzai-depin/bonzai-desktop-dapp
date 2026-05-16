@@ -15,12 +15,12 @@
       <template v-else-if="!store.state.companies.length">
         <div class="welcome-header">
           <h1 class="fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined is-size-1 mr-2">storefront</span>
+            <span class="material-symbols-outlined" aria-hidden="true">storefront</span>
             Companies
           </h1>
         </div>
 
-        <div class="company-welcome models__activity--payouts">
+        <div class="company-welcome">
           <span class="material-symbols-outlined welcome-icon">storefront</span>
           <h2 class="fira-sans-condensed-black-italic">
             Zero-Human Companies
@@ -54,16 +54,16 @@
           <hr />
 
           <div class="welcome-actions">
-            <button class="button is-success is-large fira-sans-condensed-black-italic" @click="openWizard">
-              <span class="material-symbols-outlined is-size-3 mr-2">auto_awesome_motion</span>
+            <button class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic" @click="openWizard">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome_motion</span>
               Form from a template
             </button>
-            <button class="button is-medium is-outlined is-light fira-sans-condensed-black-italic ml-5" @click="openForm">
-              <span class="material-symbols-outlined is-size-3 mr-2">edit</span>
+            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="openForm">
+              <span class="material-symbols-outlined" aria-hidden="true">edit</span>
               Advanced form
             </button>
-            <button class="button is-medium is-outlined is-info fira-sans-condensed-black-italic ml-5" @click="triggerImport">
-              <span class="material-symbols-outlined is-size-3 mr-2">upload</span>
+            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="triggerImport">
+              <span class="material-symbols-outlined" aria-hidden="true">upload</span>
               Import bundle
             </button>
             <input
@@ -79,101 +79,29 @@
 
       <!-- ════════════ Active company view ════════════ -->
       <template v-else>
-        <!-- Top header: title (with mission directly underneath) + global actions -->
-        <div class="company-topbar">
-          <div class="company-topbar__title">
-            <h1 class="fira-sans-condensed-black-italic">
-              <span class="material-symbols-outlined is-size-1 mr-2">storefront</span>
-              {{ active ? active.name : 'Companies' }}
+        <div class="company-toolbar" aria-label="Company controls">
+          <div class="company-toolbar__left">
+            <div v-if="store.state.companies.length > 1" class="company-switcher">
               <button
-                v-if="active"
-                class="company-demo-pill"
-                :class="{ 'is-on': active.demoMode }"
-                @click="toggleDemoMode"
-                :title="active.demoMode
-                  ? 'Demo Mode is ON — scripted ticks, no LLM. Click to switch to real local-LLM inference.'
-                  : 'Demo Mode is OFF — real local-LLM inference. Click to enable scripted ticks.'"
+                v-for="c in store.state.companies"
+                :key="c.id"
+                class="company-switcher__chip"
+                :class="{ 'is-active': c.id === store.state.activeId }"
+                @click="store.setActive(c.id)"
               >
-                <span class="material-symbols-outlined">{{ active.demoMode ? 'auto_awesome_motion' : 'memory' }}</span>
-                <span class="company-demo-pill__label">{{ active.demoMode ? 'Demo Mode' : 'Local LLM' }}</span>
+                <span class="status-dot" :class="`status-${c.status}`"></span>
+                <span class="company-switcher__name fira-sans-condensed-black-italic">{{ c.name }}</span>
+                <span class="company-switcher__mode" :class="c.mode === 'dao' ? 'is-dao' : 'is-solo'">
+                  {{ c.mode === 'dao' ? 'DAO' : 'Solo' }}
+                </span>
               </button>
-            </h1>
-            <p v-if="active" class="company-mission">{{ active.mission }}</p>
-          </div>
-          <div class="company-topbar__actions">
-            <!-- Pause / Resume — icon only -->
-            <button
-              v-if="active"
-              class="button is-medium fira-sans-condensed-black-italic icon-only-btn"
-              :class="active.status === 'active' ? 'is-warning' : 'is-success'"
-              @click="togglePause"
-              :title="active.status === 'active' ? 'Pause the company heartbeat' : 'Resume the company heartbeat'"
-              :aria-label="active.status === 'active' ? 'Pause' : 'Resume'"
-            >
-              <span class="material-symbols-outlined is-size-3">
-                {{ active.status === 'active' ? 'pause' : 'play_arrow' }}
-              </span>
-            </button>
-            <!-- Run now — fires one CEO heartbeat immediately -->
-            <button
-              v-if="active"
-              class="button is-medium is-warning fira-sans-condensed-black-italic ml-5"
-              @click="onTickNow"
-              title="Run one CEO cycle now: reads state, generates goals, queues them to roles."
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">room_service</span>
-              Run now
-            </button>
-            <!-- New company — opens the template wizard (primary path) -->
-            <button
-              class="button is-medium is-success fira-sans-condensed-black-italic ml-5"
-              @click="openWizard"
-              title="Form a new company from a vertical template"
-            >
-              <span class="material-symbols-outlined is-size-3 mr-2">auto_awesome_motion</span>
-              New
-            </button>
-            <!-- Export — icon only, warning, between New and Dissolve -->
-            <button
-              v-if="active"
-              class="button is-medium is-warning fira-sans-condensed-black-italic ml-5 icon-only-btn"
-              @click="exportCompany"
-              title="Download a JSON bundle of this company"
-              aria-label="Export company"
-            >
-              <span class="material-symbols-outlined is-size-3">download</span>
-            </button>
-            <!-- Dissolve — icon only, danger, rightmost -->
-            <button
-              v-if="active"
-              class="button is-medium is-danger fira-sans-condensed-black-italic ml-5 icon-only-btn"
-              @click="confirmDissolve"
-              title="Permanently delete this company"
-              aria-label="Dissolve company"
-            >
-              <span class="material-symbols-outlined is-size-3">delete</span>
-            </button>
+            </div>
+            <div v-else-if="active" class="company-toolbar__current">
+              <span class="status-dot" :class="`status-${active.status}`"></span>
+              <span class="company-toolbar__name fira-sans-condensed-black-italic">{{ active.name }}</span>
+            </div>
           </div>
         </div>
-
-        <!-- Company switcher — only when there's more than one -->
-        <div v-if="store.state.companies.length > 1" class="company-switcher">
-          <button
-            v-for="c in store.state.companies"
-            :key="c.id"
-            class="company-switcher__chip"
-            :class="{ 'is-active': c.id === store.state.activeId }"
-            @click="store.setActive(c.id)"
-          >
-            <span class="status-dot" :class="`status-${c.status}`"></span>
-            <span class="company-switcher__name fira-sans-condensed-black-italic">{{ c.name }}</span>
-            <span class="tag" :class="c.mode === 'dao' ? 'is-info' : 'is-success'">
-              {{ c.mode === 'dao' ? 'DAO' : 'Solo' }}
-            </span>
-          </button>
-        </div>
-
-        <hr />
 
         <!-- Main dashboard for the active company -->
         <CompanyDashboard
@@ -181,6 +109,7 @@
           :charter="active"
           :state="store.state"
           @edit="onEdit"
+          @new-company="openWizard"
           @reload="store.refreshActive()"
         />
       </template>
@@ -231,42 +160,6 @@ export default {
     }
     function onWizardCancel() { showWizard.value = false; }
 
-    async function togglePause() {
-      if (!active.value) return;
-      if (active.value.status === "active") await store.pause(active.value.id);
-      else await store.resume(active.value.id);
-    }
-
-    /**
-     * Flip the active company's demoMode. Restarts the heartbeat under
-     * the new (fast/scripted or normal/real-LLM) cadence. Surfaces a
-     * friendly error if validation fails.
-     */
-    async function toggleDemoMode() {
-      if (!active.value) return;
-      const next = JSON.parse(JSON.stringify(active.value));
-      next.demoMode = !next.demoMode;
-      try { await store.update(next); }
-      catch (err) { alert("Could not toggle demo mode: " + (err.message || err)); }
-    }
-    async function onTickNow() { await store.tickNow(); }
-    async function exportCompany() {
-      if (!active.value) return;
-      const bundle = await store.exportActive({ includePayloads: true });
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${active.value.name.replace(/\s+/g, '_')}-export.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-    async function confirmDissolve() {
-      if (!active.value) return;
-      if (!confirm(`Permanently dissolve "${active.value.name}"?\n\nThis wipes ALL data: charter, treasury, catalog, audit log. Cannot be undone.`)) return;
-      await store.dissolve(active.value.id);
-    }
-
     function triggerImport() { importInput.value?.click(); }
     async function onImportFile(ev) {
       const file = ev.target.files?.[0];
@@ -284,7 +177,6 @@ export default {
     return {
       store, active, showForm, showWizard,
       openForm, openWizard, onFormed, onEdit, onWizardDone, onWizardCancel,
-      togglePause, toggleDemoMode, onTickNow, exportCompany, confirmDissolve,
       triggerImport, onImportFile, importInput,
     };
   },
@@ -297,7 +189,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 1), transparent);
+  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
 }
 .material-symbols-outlined {
   font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
@@ -330,13 +222,54 @@ hr {
   background: transparent;
   padding: 0 !important;
   margin: 0 !important;
-  height: calc(100vh - 80px);
+  height: calc(100vh - 32px);
+  min-height: calc(100vh - 32px);
   overflow: hidden;
 }
 .company-shell {
-  padding: 2em 3em !important;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-4) var(--bz-space-5) var(--bz-space-3) !important;
   height: 100%;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.company-toolbar {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+  flex-shrink: 0;
+}
+.company-toolbar__left {
+  min-width: 0;
+  flex: 1;
+}
+.company-toolbar__current {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-mid);
+}
+.company-toolbar__name {
+  color: var(--bz-fg);
+  font-size: 16px;
+  line-height: 1;
+}
+.company-toolbar__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+  flex-shrink: 0;
+}
+.company-shell :deep(.dash) {
+  flex: 1;
+  min-height: 0;
 }
 
 /* ───────── Top bar (title + mission stack on left, actions on right) ───────── */
@@ -354,33 +287,55 @@ hr {
   flex: 1;
   min-width: 0;
 }
+.company-topbar__identity {
+  display: flex;
+  align-items: center;
+  gap: 0.9em;
+  min-width: 0;
+}
+.company-topbar__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  border: 1px solid var(--bz-border);
+  background: var(--bz-card);
+  color: var(--bz-fg);
+  flex-shrink: 0;
+}
+.company-topbar__mark .material-symbols-outlined {
+  font-size: 28px !important;
+}
+.company-topbar__copy {
+  min-width: 0;
+}
+.company-topbar__eyebrow {
+  margin: 0 0 0.2em !important;
+  color: var(--bz-fg-low) !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left !important;
+  font-family: "Fira Sans", sans-serif;
+  font-weight: 700;
+}
 .company-topbar h1 {
   font-size: 36px !important;
   margin: 0 !important;
   color: var(--bz-fg) !important;
   text-align: left !important;
-  display: flex;
-  align-items: center;
-}
-.company-topbar h1 .material-symbols-outlined {
-  font-size: 44px !important;
-  /* keep the icon white — gradient applies only to the name text */
-  -webkit-text-fill-color: initial;
-  background: none;
-  color: var(--bz-fg);
-}
-/* Apply the brand gradient to the company name (the text node only,
-   not the icon — the wrapping <h1> would otherwise gradient-fill the
-   storefront glyph too). */
-.company-topbar h1 {
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  line-height: 0.95;
+  overflow-wrap: anywhere;
 }
 .company-topbar__actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   flex-shrink: 0;
+  gap: var(--bz-space-3);
 }
 
 /* Icon-only buttons: square footprint, centered glyph */
@@ -405,6 +360,7 @@ hr {
   text-align: left !important;
   display: flex;
   align-items: center;
+  gap: var(--bz-space-3);
 }
 .welcome-header h1 .material-symbols-outlined {
   font-size: 44px !important;
@@ -417,7 +373,7 @@ hr {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5em;
-  margin: 1em 0 0.5em;
+  margin: 0;
   overflow-x: auto;
 }
 .company-switcher__chip {
@@ -428,7 +384,6 @@ hr {
   border-radius: 4px;
   border: 1px solid var(--bz-fg-faint);
   background: transparent;
-  backdrop-filter: blur(32px);
   color: var(--bz-fg-faint);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -443,32 +398,76 @@ hr {
   color: var(--bz-fg-mid);
 }
 .company-switcher__chip.is-active {
-  color: rgba(255, 255, 255, 1) !important;
-  border: 1px solid rgba(255, 255, 255, 1) !important;
+  color: var(--bz-fg) !important;
+  border: 1px solid var(--bz-fg) !important;
   background: var(--bz-purple-soft) !important;
-  backdrop-filter: blur(64px) !important;
 }
 .company-switcher__name {
   font-style: italic;
+}
+.company-switcher__mode {
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  font-family: var(--bz-font-ui);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.company-switcher__mode.is-dao {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-300);
+}
+.company-switcher__mode.is-solo {
+  border-color: var(--bz-emerald-500);
+  background: var(--bz-success-soft);
+  color: var(--bz-emerald-500);
 }
 
 .status-dot {
   width: 8px; height: 8px; border-radius: 50%;
   display: inline-block;
 }
-.status-active { background: var(--bz-emerald-500); box-shadow: 0 0 6px var(--bz-emerald-500); }
-.status-paused { background: var(--bz-warning); box-shadow: 0 0 6px var(--bz-warning); }
-.status-dissolved { background: var(--bz-danger); box-shadow: 0 0 6px var(--bz-danger); }
+.status-active { background: var(--bz-emerald-500); }
+.status-paused { background: var(--bz-warning); }
+.status-dissolved { background: var(--bz-danger); }
 
 .company-mission {
-  color: rgba(255, 255, 255, 0.75) !important;
-  margin: 0.4em 0 0 !important;
-  margin-left: 56px !important; /* align with text after the title icon */
+  color: var(--bz-fg-mid) !important;
+  margin: 0.7em 0 0 !important;
   max-width: 70ch;
   font-size: 15px !important;
   text-align: left !important;
-  font-style: italic;
   line-height: 1.4;
+}
+.company-opsbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-top: 0.8em;
+}
+.company-opsbar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  height: 28px;
+  padding: 0 0.8em;
+  color: var(--bz-fg-mid);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
 /* ───────── Demo / Local-LLM pill in topbar ───────── */
@@ -476,11 +475,11 @@ hr {
   display: inline-flex;
   align-items: center;
   gap: 0.4em;
-  margin-left: 0.7em;
-  padding: 4px 12px;
-  border-radius: 999px;
+  height: 28px;
+  padding: 0 0.8em;
+  border-radius: 4px;
   border: 1px solid var(--bz-fg-faint);
-  background: transparent;
+  background: var(--bz-card);
   cursor: pointer;
   transition: all 0.18s ease;
   font-family: "Fira Sans", sans-serif !important;
@@ -488,7 +487,8 @@ hr {
   font-size: 11px !important;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.65) !important;
+  color: var(--bz-fg-mid) !important;
+  -webkit-text-fill-color: currentColor !important;
   background-clip: border-box !important;
   vertical-align: middle;
 }
@@ -499,21 +499,22 @@ hr {
 }
 .company-demo-pill .material-symbols-outlined {
   font-size: 14px !important;
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.65) !important;
+  color: currentColor !important;
+  -webkit-text-fill-color: currentColor !important;
   background: none !important;
 }
 .company-demo-pill:hover .material-symbols-outlined { -webkit-text-fill-color: var(--bz-fg) !important; }
 .company-demo-pill.is-on {
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) !important;
-  border-color: transparent !important;
-  -webkit-text-fill-color: #000 !important;
+  background: var(--bz-purple-soft) !important;
+  border-color: var(--bz-border-brand) !important;
+  -webkit-text-fill-color: var(--bz-fg) !important;
   background-clip: border-box !important;
 }
 .company-demo-pill.is-on .material-symbols-outlined {
-  -webkit-text-fill-color: #000 !important;
+  -webkit-text-fill-color: var(--bz-purple-300) !important;
 }
 .company-demo-pill.is-on:hover {
-  -webkit-text-fill-color: #000 !important;
+  -webkit-text-fill-color: var(--bz-fg) !important;
   filter: brightness(1.05);
 }
 .company-demo-pill__label { letter-spacing: 0.05em; }
@@ -521,12 +522,15 @@ hr {
 /* ───────── Welcome panel ───────── */
 .company-welcome {
   text-align: center;
-  padding: 4em 3em !important;
+  padding: var(--bz-space-8) var(--bz-space-7) !important;
   margin-top: 2em;
   color: var(--bz-fg);
   max-width: 760px;
   margin-left: auto;
   margin-right: auto;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
 }
 .welcome-icon {
   font-size: 96px !important;
@@ -570,15 +574,40 @@ hr {
   justify-content: center;
   align-items: center;
   flex-wrap: wrap;
+  gap: var(--bz-space-3);
   margin-top: 1em;
+}
+
+.bz-iconbtn--warning {
+  color: var(--bz-warning);
+  border-color: var(--bz-warning-soft);
+}
+.bz-iconbtn--warning:hover {
+  background: var(--bz-warning-soft);
+  color: var(--bz-warning);
+}
+.bz-iconbtn--success {
+  color: var(--bz-emerald-500);
+  border-color: var(--bz-emerald-soft);
+}
+.bz-iconbtn--success:hover {
+  background: var(--bz-emerald-soft);
+  color: var(--bz-emerald-500);
+}
+.bz-iconbtn--danger {
+  color: var(--bz-danger);
+  border-color: var(--bz-danger-soft);
+}
+.bz-iconbtn--danger:hover {
+  background: var(--bz-danger-soft);
+  color: var(--bz-danger);
 }
 
 /* ───────── Glass card (shared) ───────── */
 :deep(.models__activity--payouts) {
   padding: 4em;
   border: 1px solid var(--bz-border);
-  backdrop-filter: blur(32px) !important;
   border-radius: 4px !important;
-  background: var(--bz-scrim);
+  background: var(--bz-card);
 }
 </style>

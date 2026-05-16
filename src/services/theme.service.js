@@ -21,9 +21,15 @@ import { reactive, readonly } from "vue";
 const THEMES = [
   {
     id: "default",
-    name: "BonzAI",
-    blurb: "Brand · purple + emerald on dark canvas",
-    swatch: ["#0a0a0f", "#61378e", "#10b981"],
+    name: "Dark",
+    blurb: "BonzAI brand · dark canvas + purple + emerald",
+    swatch: ["#0a0a0f", "#8b5cf6", "#10b981"],
+  },
+  {
+    id: "light",
+    name: "Light",
+    blurb: "Professional light · Stripe-inspired clarity",
+    swatch: ["#f9fafb", "#6d28d9", "#059669"],
   },
   {
     id: "midnight",

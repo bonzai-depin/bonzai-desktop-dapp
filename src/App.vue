@@ -1,389 +1,282 @@
 <template>
-  <!-- Awaiting Signature Notification -->
-  <div
-    v-if="authState.isAwaitingSignature"
-    class="server-notification notification is-warning"
-  >
-    <p class="mb-2">
-      <span class="fira-sans-condensed-black-italic is-size-4">
-        <button
-          disabled
-          class="button is-loading is-warning is-small mr-2 p-4"
-        ></button>
-        Awaiting signature...
-      </span>
-    </p>
-    <p class="is-size-6" style="opacity: 0.8">
-      Please sign the message in your wallet to authenticate.
-    </p>
-    <progress class="progress is-small is-warning" max="100"></progress>
-  </div>
+  <Transition name="notif">
+    <div v-if="authState.isAwaitingSignature" key="auth" class="bz-notif bz-notif--warning">
+      <div class="bz-notif__body">
+        <span class="bz-notif__title">Awaiting signature</span>
+        <span class="bz-notif__desc">Please sign the message in your wallet to authenticate.</span>
+      </div>
+      <BonzaiPulse variant="dot" />
+    </div>
 
-  <!-- Autonomous Companion Away Notification -->
-  <div
-    v-else-if="skillStore.autonomousMode && skillStore.isIdle"
-    class="server-notification notification is-info companion-notification"
-    @click="goToCompanionChat"
-    style="cursor: pointer"
-  >
-    <button class="delete" @click.stop="skillStore.updateActivity()"></button>
-    <p class="mb-2">
-      <span class="fira-sans-condensed-black-italic is-size-4">
-        <span
-          class="material-symbols-outlined mr-2"
-          style="vertical-align: middle"
-        >
-          self_improvement
+    <div v-else-if="skillStore.autonomousMode && skillStore.isIdle" key="companion" class="bz-notif bz-notif--info" @click="goToCompanionChat" style="cursor:pointer">
+      <div class="bz-notif__body">
+        <span class="bz-notif__title">{{ skillStore.autonomousSession?.companion?.name || 'Companion' }} is active</span>
+        <span class="bz-notif__desc">
+          Continuing while you're away.
+          <strong v-if="skillStore.missedMessages > 0">({{ skillStore.missedMessages }} new message{{ skillStore.missedMessages > 1 ? 's' : '' }})</strong>
         </span>
-        Companion active
-      </span>
-      <span class="is-pulled-right">
-        <span
-          class="material-symbols-outlined"
-          style="vertical-align: middle; opacity: 0.7"
-        >
-          arrow_forward
-        </span>
-      </span>
-    </p>
-    <p class="is-size-6" style="opacity: 0.8">
-      {{ skillStore.autonomousSession?.companion?.name || "Your companion" }} is
-      continuing their day while you're away.
-      <span v-if="skillStore.missedMessages > 0" class="has-text-weight-bold">
-        ({{ skillStore.missedMessages }} new message{{
-          skillStore.missedMessages > 1 ? "s" : ""
-        }})
-      </span>
-    </p>
-    <progress
-      v-if="skillStore.isGeneratingAutonomous"
-      class="progress is-small is-info"
-      max="100"
-    ></progress>
-  </div>
+      </div>
+      <BzCloseButton size="sm" variant="subtle" aria-label="Dismiss" @click.stop="skillStore.updateActivity()" />
+    </div>
 
-  <!-- Server Status Notification (using standard notification pattern) -->
-  <div
-    v-else-if="serverStatus.show"
-    class="server-notification notification"
-    :class="{
-      'is-info':
-        serverStatus.type === 'restarting' || serverStatus.type === 'starting',
-      'is-success': serverStatus.type === 'ready',
-      'is-danger':
-        serverStatus.type === 'crashed' || serverStatus.type === 'error',
-      'is-warning': serverStatus.type === 'stopped',
-    }"
-  >
-    <button class="delete" @click="serverStatus.show = false"></button>
-    <p class="mb-2">
-      <span class="fira-sans-condensed-black-italic is-size-4">
-        <button
-          v-if="
-            serverStatus.type === 'restarting' ||
-            serverStatus.type === 'starting'
-          "
-          disabled
-          class="button is-loading is-info is-small mr-2 p-4"
-        ></button>
-        <span
-          v-else
-          class="material-symbols-outlined mr-2"
-          style="vertical-align: middle"
-        >
-          {{
-            serverStatus.type === "ready"
-              ? "check_circle"
-              : serverStatus.type === "crashed" || serverStatus.type === "error"
-                ? "error"
-                : "info"
-          }}
-        </span>
-        {{ serverStatus.message }}
-      </span>
-      <span v-if="serverStatus.canRetry" class="is-pulled-right">
-        <button class="button is-small is-warning" @click="handleServerRestart">
-          <span class="material-symbols-outlined mr-1" style="font-size: 16px">
-            refresh
-          </span>
+    <div v-else-if="serverStatus.show" key="server" class="bz-notif" :class="notifClass">
+      <div class="bz-notif__body">
+        <span class="bz-notif__title">{{ serverStatus.message }}</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:var(--bz-space-2)">
+        <button v-if="serverStatus.canRetry" class="bz-btn bz-btn--ghost" style="font-size:var(--bz-size-micro); padding:4px var(--bz-space-3)" @click="handleServerRestart">
+          <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
           Retry
         </button>
-      </span>
-    </p>
-    <progress
-      v-if="
-        serverStatus.type === 'restarting' || serverStatus.type === 'starting'
-      "
-      class="progress is-small"
-      :class="{
-        'is-info': serverStatus.type === 'starting',
-        'is-warning': serverStatus.type === 'restarting',
-      }"
-      max="100"
-    ></progress>
-  </div>
+        <BzCloseButton size="sm" variant="subtle" aria-label="Dismiss" @click="serverStatus.show = false" />
+      </div>
+    </div>
 
-  <!-- APP SHELL — compact 240px left-rail nav + main work area.
-       Each row keeps its branded image with a shade overlay so labels
-       stay legible. Active state shows a brand-purple bar on the
-       left edge and a tinted shade. Collapses to icon-only at
-       narrow viewports. -->
+    <span v-else key="none"></span>
+  </Transition>
+
   <div id="bonzai">
-    <nav class="bz-nav" aria-label="Primary">
-      <header class="bz-nav__brand">
-        <div class="bz-nav__logo" aria-hidden="true"></div>
-        <button
-          v-if="systemValues && systemValues.memBudget"
-          class="bz-nav__mem"
-          title="Available memory budget for AI inference (click for details)"
-          @click="openSpecsModal"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">memory</span>
-          <span class="bz-mono">
-            {{ (systemValues.memBudget / 1024 ** 3).toFixed(0) }}&nbsp;GB
-          </span>
-        </button>
-      </header>
+    <nav class="bz-sidebar" aria-label="Primary">
+      <div class="bz-sidebar__brand">
+        <span class="bz-sidebar__wordmark">BonzAI</span>
+        <div v-if="!isConnected && !isConnecting" class="bz-sidebar__auth">
+          <a href="#" class="bz-sidebar__auth-link" @click.prevent="connect">Connect</a>
+          <span class="bz-sidebar__auth-sep"> or </span>
+          <a href="#" class="bz-sidebar__auth-link" @click.prevent="openPrivyWallet">Sign in</a>
+        </div>
+        <div v-if="isConnected && walletAddress" class="bz-sidebar__wallet bz-sidebar__wallet--top">
+          <div class="bz-sidebar__wallet-info" @click="copyAddress">
+            <span v-if="upAvatarUrl" class="bz-sidebar__up-avatar"><img :src="upAvatarUrl" alt="" /></span>
+            <span class="bz-sidebar__wallet-addr">{{ upDisplayName ? '@'+upDisplayName : truncatedAddress }}</span>
+            <span class="bz-sidebar__level">{{ displayedHighestLevelKey || 'LVL0' }}</span>
+          </div>
+          <div class="bz-sidebar__balance">
+            <span class="bz-sidebar__balance-amt">{{ formatBalance(totalBalance) }}</span>
+            <span class="bz-sidebar__balance-token">BONZAI</span>
+          </div>
+          <div class="bz-sidebar__wallet-actions">
+            <button class="bz-sidebar__wallet-btn" @click="refresh" title="Refresh">
+              <span class="material-symbols-outlined" :class="{ spinning: isRefreshing }">sync</span>
+            </button>
+            <button class="bz-sidebar__wallet-btn" @click="disconnect" title="Disconnect">
+              <span class="material-symbols-outlined">logout</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
-      <ul class="bz-nav__list">
-        <li
-          v-for="t in navTabs"
-          :key="t.id"
-          class="bz-nav__item"
-          :class="[`bz-nav__item--${t.id}`, { 'is-active': modelMode === t.id }]"
-          @click="modelMode = t.id"
-          tabindex="0"
-          role="button"
-          :aria-pressed="modelMode === t.id"
-          :aria-label="t.label"
-          @keydown.enter.prevent="modelMode = t.id"
-          @keydown.space.prevent="modelMode = t.id"
-        >
-          <span class="bz-nav__shade" aria-hidden="true"></span>
-          <span class="bz-nav__icon material-symbols-outlined" aria-hidden="true">
-            {{ t.icon }}
-          </span>
-          <span class="bz-nav__label fira-sans-condensed-black-italic">
-            {{ t.label }}
-          </span>
-          <span class="bz-nav__active-bar" aria-hidden="true"></span>
-        </li>
-      </ul>
+      <div class="bz-sidebar__nav">
+        <div class="bz-sidebar__group">
+          <span class="bz-sidebar__label">Create</span>
+          <button v-for="t in createItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+            <span class="bz-sidebar__item-label">{{ t.label }}</span>
+          </button>
+        </div>
+
+        <div class="bz-sidebar__group">
+          <span class="bz-sidebar__label">Earn</span>
+          <button v-for="t in earnItems" :key="t.id" class="bz-sidebar__item" @click="handleEarnAction(t.id)">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+            <span class="bz-sidebar__item-label">{{ t.label }}</span>
+          </button>
+        </div>
+
+        <div class="bz-sidebar__group">
+          <span class="bz-sidebar__label">Automate</span>
+          <button v-for="t in automateItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+            <span class="bz-sidebar__item-label">{{ t.label }}</span>
+          </button>
+        </div>
+
+        <div class="bz-sidebar__group">
+          <span class="bz-sidebar__label">Train</span>
+          <button v-for="t in trainItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+            <span class="bz-sidebar__item-label">{{ t.label }}</span>
+          </button>
+        </div>
+
+        <div class="bz-sidebar__group">
+          <span class="bz-sidebar__label">Help</span>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'faq' }" @click="modelMode = 'faq'" :aria-pressed="modelMode === 'faq'">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">help_outline</span>
+            <span class="bz-sidebar__item-label">FAQ</span>
+          </button>
+          <button class="bz-sidebar__item" @click="showNetworkModal = true">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">device_hub</span>
+            <span class="bz-sidebar__item-label">Harness</span>
+          </button>
+        </div>
+
+        <div class="bz-sidebar__group bz-sidebar__group--settings">
+          <span class="bz-sidebar__label">Settings</span>
+          <div class="bz-sidebar__theme-picker">
+            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(-1)" title="Previous theme">
+              <span class="material-symbols-outlined">chevron_left</span>
+            </button>
+            <div class="bz-sidebar__theme-display">
+              <div class="bz-sidebar__theme-swatch">
+                <span v-for="c in currentTheme.swatch" :key="c" class="bz-sidebar__theme-dot" :style="{ background: c }"></span>
+              </div>
+              <span class="bz-sidebar__theme-name">{{ currentTheme.name }}</span>
+            </div>
+            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(1)" title="Next theme">
+              <span class="material-symbols-outlined">chevron_right</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bz-sidebar__footer">
+        <button class="bz-sidebar__footer-action bz-sidebar__serve" @click="showNetworkModal = true" :title="p2pModeLabel">
+          <span class="material-symbols-outlined bz-sidebar__serve-icon">{{ p2pModeIcon }}</span>
+          <span class="bz-sidebar__serve-label">{{ p2pModeLabel }}</span>
+        </button>
+
+        <div class="bz-sidebar__footer-action bz-sidebar__model" @click="openBrowseModels" title="Click to browse models">
+          <span class="material-symbols-outlined bz-sidebar__model-icon">neurology</span>
+          <span class="bz-sidebar__model-name">{{ currentModelName || "No Model" }}</span>
+          <span v-if="alwaysLoaded" class="bz-sidebar__model-lock material-symbols-outlined" title="Always loaded">lock</span>
+        </div>
+
+        <button v-if="systemValues?.memBudget" class="bz-sidebar__footer-action bz-sidebar__specs" @click="openSpecsModal" :title="(systemValues.memBudget / 1024**3).toFixed(0) + ' GB'">
+          <span class="material-symbols-outlined">memory</span>
+          <span>{{ (systemValues.memBudget / 1024**3).toFixed(0) }} GB</span>
+        </button>
+      </div>
     </nav>
 
     <main class="bz-main">
-      <!-- Each component carries inline access requirements; the main
-           column flexes to fill the rest of the viewport. -->
       <GenerativeText v-if="modelMode == 'chat'" key="chat" />
       <GenerativeAudio v-if="modelMode == 'music'" key="music" />
       <GenerativeImage v-if="modelMode == 'image'" key="image" />
-      <GenerativeVideo
-        v-if="modelMode == 'video'"
-        key="video"
-        :existingImageBase64="videoImageBase64"
-      />
-      <Generative3D v-if="modelMode == '3D'" key="3D" />
-      <GenerativeTraining v-if="modelMode == 'robot'" key="robot" />
+      <GenerativeVideo v-if="modelMode == 'video'" key="video" />
+      <Generative3D v-if="modelMode == 'game'" key="game" />
+      <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" />
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
       <Company v-if="modelMode == 'company'" key="company" />
+      <FAQ v-if="modelMode == 'faq'" key="faq" />
     </main>
   </div>
-  <BonzaiBottomBar />
 
-  <!-- Global LLM model picker — callable from anywhere via
-       `import modelPicker from "../services/modelPicker.service.js"`
-       then `modelPicker.show()`. Lives at App.vue level so it doesn't
-       depend on any specific tab being mounted. Uses Teleport inside
-       its own template to escape this stacking context. -->
   <LlmModelPickerModal />
-
-  <!-- Global command palette — Cmd-K / Ctrl-K from anywhere.
-       Lists tabs + tools; runtime sources can register dynamic
-       commands via `commandPalette.register({...})`. -->
   <CommandPalette />
-
-  <!-- Generation inspector — slide-in 360 px right rail. Open via
-       `inspector.show(generation)` from any Generative tab when the
-       user picks an output. Replaces inline metadata clutter. -->
   <GenerationInspector />
 
-  <!-- Hardware Specifications & Performance Modal -->
-  <div
-    v-if="showSpecsModal"
-    class="specs-modal-overlay"
-    @click.self="showSpecsModal = false"
-  >
-    <div class="specs-modal">
-      <div class="has-text-right">
-        <BzCloseButton
-          size="md"
-          aria-label="Close hardware specs"
-          @click="showSpecsModal = false"
-        />
-      </div>
+  <RewardsModal v-if="showRewardsModal" @close="showRewardsModal = false" />
 
-      <div class="specs-modal-header has-text-center">
-        <span class="material-symbols-outlined" style="font-size: 48px; color: #3e8ed0">
-          memory
-        </span>
-        <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-centered mt-2 has-text-white">
-          Hardware Specifications
-        </h2>
-      </div>
-
-      <div class="specs-modal-body mt-4 has-text-left">
-        <!-- Hardware Info -->
-        <div class="specs-section" v-if="specsData.hardware">
-          <h3 class="fira-sans-condensed-black-italic is-size-5 mb-3 has-text-white">
-            <span class="material-symbols-outlined mr-2" style="vertical-align: middle">computer</span>
-            System
-          </h3>
-          <table class="table is-fullwidth specs-table">
-            <tbody>
-              <tr>
-                <td class="specs-label">CPU</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.cpu }}</td>
-              </tr>
-              <tr>
-                <td class="specs-label">Cores / Threads</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.cpuCores }} / {{ specsData.hardware.cpuThreads }}</td>
-              </tr>
-              <tr>
-                <td class="specs-label">CPU Speed</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.cpuSpeed }} GHz</td>
-              </tr>
-              <tr>
-                <td class="specs-label">GPU</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.gpu }}</td>
-              </tr>
-              <tr>
-                <td class="specs-label">Total RAM</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ (specsData.hardware.ram / 1024 ** 3).toFixed(0) }} GB</td>
-              </tr>
-              <tr>
-                <td class="specs-label">Inference Budget</td>
-                <td class="specs-value fira-sans-condensed-black-italic" style="color: #39d582">{{ (specsData.hardware.memBudget / 1024 ** 3).toFixed(1) }} GB</td>
-              </tr>
-              <tr v-if="specsData.hardware.vram > 0">
-                <td class="specs-label">VRAM</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ (specsData.hardware.vram / 1024).toFixed(0) }} GB</td>
-              </tr>
-              <tr>
-                <td class="specs-label">OS</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.os }}</td>
-              </tr>
-              <tr>
-                <td class="specs-label">Architecture</td>
-                <td class="specs-value fira-sans-condensed-black-italic">{{ specsData.hardware.arch }}</td>
-              </tr>
-            </tbody>
-          </table>
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="showNetworkModal" class="network-modal-overlay" @click.self="showNetworkModal = false">
+        <div class="network-modal">
+          <div class="network-modal-header">
+            <div class="bz-modal-titleblock">
+              <p class="bz-eyebrow">Network</p>
+              <h1 class="bz-display">Peer-to-Peer Network</h1>
+            </div>
+            <BzCloseButton size="md" aria-label="Close network settings" @click="showNetworkModal = false" />
+          </div>
+          <div class="network-modal-body">
+            <NetworkSettings />
+          </div>
         </div>
-
-        <!-- Performance Stats -->
-        <div class="specs-section mt-5" v-if="specsData.performance">
-          <h3 class="fira-sans-condensed-black-italic is-size-5 mb-3 has-text-white">
-            <span class="material-symbols-outlined mr-2" style="vertical-align: middle">speed</span>
-            Average Performance
-          </h3>
-          <table class="table is-fullwidth specs-table">
-            <thead>
-              <tr>
-                <th class="specs-label">Content Type</th>
-                <th class="specs-label has-text-right">Metric</th>
-                <th class="specs-label has-text-right">Samples</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">chat</span>
-                  Text
-                </td>
-                <td class="has-text-right fira-sans-condensed-black-italic">
-                  <template v-if="specsData.performance.text.count > 0">
-                    {{ specsData.performance.text.avgTokPerSec.toFixed(1) }} tok/s
-                  </template>
-                  <span v-else class="has-text-grey">--</span>
-                </td>
-                <td class="has-text-right">{{ specsData.performance.text.count }}</td>
-              </tr>
-              <tr>
-                <td>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">image</span>
-                  Image
-                </td>
-                <td class="has-text-right fira-sans-condensed-black-italic">
-                  <template v-if="specsData.performance.image.count > 0">
-                    {{ specsData.performance.image.avgElapsed.toFixed(1) }}s
-                  </template>
-                  <span v-else class="has-text-grey">--</span>
-                </td>
-                <td class="has-text-right">{{ specsData.performance.image.count }}</td>
-              </tr>
-              <tr>
-                <td>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">movie</span>
-                  Video
-                </td>
-                <td class="has-text-right fira-sans-condensed-black-italic">
-                  <template v-if="specsData.performance.video.count > 0">
-                    {{ specsData.performance.video.avgElapsed.toFixed(1) }}s
-                  </template>
-                  <span v-else class="has-text-grey">--</span>
-                </td>
-                <td class="has-text-right">{{ specsData.performance.video.count }}</td>
-              </tr>
-              <tr>
-                <td>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">record_voice_over</span>
-                  Audio — TTS / Voice Cloning
-                </td>
-                <td class="has-text-right fira-sans-condensed-black-italic">
-                  <template v-if="specsData.performance.audioTts.count > 0">
-                    {{ specsData.performance.audioTts.avgElapsed.toFixed(1) }}s
-                  </template>
-                  <span v-else class="has-text-grey">--</span>
-                </td>
-                <td class="has-text-right">{{ specsData.performance.audioTts.count }}</td>
-              </tr>
-              <tr>
-                <td>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">music_note</span>
-                  Audio — Music
-                </td>
-                <td class="has-text-right fira-sans-condensed-black-italic">
-                  <template v-if="specsData.performance.audioMusic.count > 0">
-                    {{ specsData.performance.audioMusic.avgElapsed.toFixed(1) }}s
-                  </template>
-                  <span v-else class="has-text-grey">--</span>
-                </td>
-                <td class="has-text-right">{{ specsData.performance.audioMusic.count }}</td>
-              </tr>
-              <tr>
-                <td>
-                  <span class="material-symbols-outlined mr-1" style="vertical-align: middle; font-size: 18px">3d_rotation</span>
-                  3D
-                </td>
-                <td class="has-text-right fira-sans-condensed-black-italic">
-                  <template v-if="specsData.performance.object.count > 0">
-                    {{ specsData.performance.object.avgTokPerSec.toFixed(1) }} tok/s
-                  </template>
-                  <span v-else class="has-text-grey">--</span>
-                </td>
-                <td class="has-text-right">{{ specsData.performance.object.count }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
       </div>
-    </div>
-  </div>
+    </Transition>
+
+    <Transition name="fade">
+      <div v-if="showAuthModal" class="auth-modal-overlay" @click.self="showAuthModal = false">
+        <div class="auth-modal">
+          <div class="auth-modal-header">
+            <div class="bz-modal-titleblock">
+              <p class="bz-eyebrow">Session</p>
+              <h2 class="bz-h1">Session Status</h2>
+            </div>
+            <BzCloseButton size="md" aria-label="Close session status" @click="showAuthModal = false" />
+          </div>
+          <div class="auth-modal-body">
+            <div class="auth-status-banner" :class="authStatusClass">
+              <span class="status-dot-large" :class="authStatusClass"></span>
+              <span class="status-label fira-sans-condensed-black-italic">{{ authStatusText }}</span>
+            </div>
+            <div class="auth-details">
+              <div class="detail-row"><span class="label">Wallet</span><span class="value monospace">{{ truncatedAddress }}</span></div>
+              <div class="detail-row" v-if="authState.level"><span class="label">Level</span><span class="value">{{ authState.level }}</span></div>
+              <div class="detail-row"><span class="label">Session</span><span class="value" :class="{ 'value--danger': needsReauth, 'value--warning': tokenExpiringSoon }">{{ tokenExpiresIn > 0 ? formatExpiry(tokenExpiresIn) : "Expired" }}</span></div>
+              <div class="detail-row" v-if="pendingOps > 0"><span class="label">Queued</span><span class="value value--warning">{{ pendingOps }}</span></div>
+              <div class="detail-row" v-if="vaultStatus.isUnlocked"><span class="label">Vault</span><span class="value value--success">Unlocked</span></div>
+            </div>
+            <div class="auth-actions">
+              <button v-if="needsReauth" class="bz-btn bz-btn--warning auth-action-btn fira-sans-condensed-black-italic" @click="handleReauth" :disabled="isReauthing" :class="{ 'bz-btn--running': isReauthing }"><span class="material-symbols-outlined mr-2">refresh</span>Reconnect Session</button>
+              <button v-else-if="tokenExpiringSoon" class="bz-btn bz-btn--primary auth-action-btn fira-sans-condensed-black-italic" @click="handleRefreshToken" :disabled="isRefreshingToken" :class="{ 'bz-btn--running': isRefreshingToken }"><span class="material-symbols-outlined mr-2">sync</span>Refresh Token</button>
+              <p v-else class="auth-ok">Your session is active. No action needed.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <Transition name="fade">
+      <div v-if="showPrivyLogin" class="privy-modal-overlay" @click.self="closePrivyLogin">
+        <div class="privy-modal">
+          <div class="privy-modal-header">
+            <div class="bz-modal-titleblock">
+              <p class="bz-eyebrow">Account</p>
+              <h2 class="bz-h1">Sign In</h2>
+            </div>
+            <BzCloseButton size="md" aria-label="Close sign-in" @click="closePrivyLogin" />
+          </div>
+          <div class="privy-modal-body">
+            <p class="privy-subtitle">Sign in with email — no crypto wallet needed. Your wallet opens in a secure window.</p>
+            <button class="bz-btn bz-btn--success bz-btn--lg auth-action-btn fira-sans-condensed-black-italic" @click="openPrivyWallet"><span class="material-symbols-outlined mr-2">open_in_new</span>Open Wallet</button>
+            <div v-if="privyError" class="privy-error-card mt-4"><span class="material-symbols-outlined" style="font-size: 16px">error</span><span>{{ privyError }}</span></div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="showSpecsModal" class="bz-modal-overlay" @click.self="showSpecsModal = false">
+        <div class="bz-modal" role="dialog" aria-modal="true" aria-label="System specifications">
+          <div class="bz-modal__header">
+            <div><span class="bz-eyebrow">System</span><h2 class="bz-h2" style="margin:0">Hardware Specifications</h2></div>
+            <BzCloseButton size="md" aria-label="Close" @click="showSpecsModal = false" />
+          </div>
+          <div class="bz-modal__body">
+            <div v-if="specsData.hardware" class="bz-specs-grid">
+              <div class="bz-specs-item"><span class="bz-specs-item__label">CPU</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.cpu }}</span></div>
+              <div class="bz-specs-item"><span class="bz-specs-item__label">Cores / Threads</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.cpuCores }} / {{ specsData.hardware.cpuThreads }}</span></div>
+              <div class="bz-specs-item"><span class="bz-specs-item__label">CPU Speed</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.cpuSpeed }} GHz</span></div>
+              <div class="bz-specs-item"><span class="bz-specs-item__label">GPU</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.gpu }}</span></div>
+              <div class="bz-specs-item"><span class="bz-specs-item__label">Total RAM</span><span class="bz-specs-item__value bz-mono">{{ (specsData.hardware.ram / 1024**3).toFixed(0) }} GB</span></div>
+              <div class="bz-specs-item bz-specs-item--highlight"><span class="bz-specs-item__label">Inference Budget</span><span class="bz-specs-item__value bz-mono" style="color:var(--bz-emerald-500)">{{ (specsData.hardware.memBudget / 1024**3).toFixed(1) }} GB</span></div>
+              <div v-if="specsData.hardware.vram > 0" class="bz-specs-item"><span class="bz-specs-item__label">VRAM</span><span class="bz-specs-item__value bz-mono">{{ (specsData.hardware.vram / 1024).toFixed(0) }} GB</span></div>
+              <div class="bz-specs-item"><span class="bz-specs-item__label">OS</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.os }}</span></div>
+              <div class="bz-specs-item"><span class="bz-specs-item__label">Architecture</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.arch }}</span></div>
+            </div>
+            <div v-if="specsData.performance" class="bz-specs-section">
+              <h3 class="bz-h3">Average Performance</h3>
+              <div class="bz-specs-grid">
+                <div class="bz-specs-item"><span class="bz-specs-item__label">Text</span><span v-if="specsData.performance.text.count > 0" class="bz-specs-item__value bz-mono">{{ specsData.performance.text.avgTokPerSec.toFixed(1) }} tok/s</span><span v-else class="bz-specs-item__value bz-mono" style="color:var(--bz-fg-faint)">--</span></div>
+                <div class="bz-specs-item"><span class="bz-specs-item__label">Image</span><span v-if="specsData.performance.image.count > 0" class="bz-specs-item__value bz-mono">{{ specsData.performance.image.avgElapsed.toFixed(1) }}s</span><span v-else class="bz-specs-item__value bz-mono" style="color:var(--bz-fg-faint)">--</span></div>
+                <div class="bz-specs-item"><span class="bz-specs-item__label">Video</span><span v-if="specsData.performance.video.count > 0" class="bz-specs-item__value bz-mono">{{ specsData.performance.video.avgElapsed.toFixed(1) }}s</span><span v-else class="bz-specs-item__value bz-mono" style="color:var(--bz-fg-faint)">--</span></div>
+                <div class="bz-specs-item"><span class="bz-specs-item__label">Audio</span><span v-if="specsData.performance.audioTts.count > 0" class="bz-specs-item__value bz-mono">{{ specsData.performance.audioTts.avgElapsed.toFixed(1) }}s</span><span v-else class="bz-specs-item__value bz-mono" style="color:var(--bz-fg-faint)">--</span></div>
+                <div class="bz-specs-item"><span class="bz-specs-item__label">Music</span><span v-if="specsData.performance.audioMusic.count > 0" class="bz-specs-item__value bz-mono">{{ specsData.performance.audioMusic.avgElapsed.toFixed(1) }}s</span><span v-else class="bz-specs-item__value bz-mono" style="color:var(--bz-fg-faint)">--</span></div>
+                <div class="bz-specs-item"><span class="bz-specs-item__label">3D</span><span v-if="specsData.performance.object.count > 0" class="bz-specs-item__value bz-mono">{{ specsData.performance.object.avgTokPerSec.toFixed(1) }} tok/s</span><span v-else class="bz-specs-item__value bz-mono" style="color:var(--bz-fg-faint)">--</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script>
-import { ref, reactive, provide, onMounted, onUnmounted } from "vue";
+import { ref, reactive, provide, computed, onMounted, onUnmounted, watch } from "vue";
 import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
 import GenerativeVideo from "./components/GenerativeVideo.vue";
@@ -392,50 +285,101 @@ import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
 import Company from "./components/Company.vue";
 import SmartAgent from "./components/SmartAgent.vue";
-import BonzaiBottomBar from "./components/BonzaiBottomBar.vue";
+import FAQ from "./components/FAQ.vue";
+import BonzaiPulse from "./components/BonzaiPulse.vue";
+import BzCloseButton from "./components/BzCloseButton.vue";
 import LlmModelPickerModal from "./components/LlmModelPickerModal.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import GenerationInspector from "./components/GenerationInspector.vue";
-import BzCloseButton from "./components/BzCloseButton.vue";
-import { authService } from "./services/auth.service.js";
+import RewardsModal from "./components/RewardsModal.vue";
+import NetworkSettings from "./components/NetworkSettings.vue";
+import { authService, userInitiatedReAuth, refreshToken } from "./services/auth.service.js";
+import { authVault } from "./services/authVault.service.js";
 import { themeService } from "./services/theme.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
 import { modelStore } from "./stores/modelStore.js";
+import { modelPicker } from "./services/modelPicker.service.js";
 import { getPerformanceStats, getHardwareSpecs, initializeStore } from "./stores/inferenceStore.js";
+import { useBonzaiWeb3 } from "./composables/useBonzaiWeb3.js";
+import { CONFIG } from "./config/web3.config.js";
+import { levelService, checkAllLevels } from "./services/level.service.js";
 
 export default {
   name: "App",
-
   components: {
-    GenerativeText,
-    GenerativeImage,
-    GenerativeVideo,
-    GenerativeAudio,
-    Generative3D,
-    GenerativeTraining,
-    SmartAgent,
-    Company,
-    BonzaiBottomBar,
-    LlmModelPickerModal,
-    CommandPalette,
-    GenerationInspector,
-    BzCloseButton,
+    GenerativeText, GenerativeImage, GenerativeVideo, GenerativeAudio,
+    Generative3D, GenerativeTraining, SmartAgent, Company, FAQ,
+    BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
+    GenerationInspector, RewardsModal, NetworkSettings,
   },
   setup() {
     const modelMode = ref("chat");
-    // Nav tab catalog. The order here is the visual order in the rail.
-    // Adding a tab is one entry here + a `<v-if>` row in the main column.
-    const navTabs = [
-      { id: "chat",    label: "Chat",     icon: "chat" },
-      { id: "music",   label: "Audio",    icon: "headphones" },
-      { id: "image",   label: "Image",    icon: "image" },
-      { id: "video",   label: "Video",    icon: "movie" },
-      { id: "3D",      label: "Assets",   icon: "3d_rotation" },
-      { id: "robot",   label: "Training", icon: "exercise" },
+
+    const createItems = [
+      { id: "chat",  label: "Chat",  icon: "chat" },
+      { id: "image", label: "Image", icon: "image" },
+      { id: "music", label: "Audio", icon: "headphones" },
+      { id: "video", label: "Video", icon: "movie" },
+      { id: "game",  label: "Game",  icon: "sports_esports" },
+    ];
+    const earnItems = [
+      { id: "rewards",      label: "Rewards",      icon: "trophy" },
+    ];
+    const automateItems = [
       { id: "agent",   label: "Agents",   icon: "automation" },
       { id: "company", label: "Company",  icon: "storefront" },
     ];
+    const trainItems = [
+      { id: "robot-train-chat", label: "Chat", icon: "chat" },
+    ];
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "robot-train-chat", "company", "faq"]);
+
+    const handleEarnAction = (id) => {
+      if (id === "rewards") showRewardsModal.value = true;
+    };
+
+    const onSetModeEvent = (e) => {
+      const next = e?.detail;
+      if (typeof next === "string" && VALID_MODES.has(next)) modelMode.value = next;
+    };
+
+    const notifClass = computed(() => {
+      const m = {
+        ready: "bz-notif--success", starting: "bz-notif--info",
+        restarting: "bz-notif--info", crashed: "bz-notif--danger",
+        error: "bz-notif--danger", stopped: "bz-notif--warning",
+      };
+      return m[serverStatus.type] || "bz-notif--info";
+    });
+
+    const p2pMode = ref("local");
+    const p2pStatus = ref({ started: false });
+    let p2pStatusInterval = null;
+
+    const p2pModeIcon = computed(() => {
+      if (p2pMode.value === "consumer") return "cloud_download";
+      if (p2pMode.value === "provider" && p2pStatus.value.started) return "sensors";
+      if (p2pMode.value === "provider") return "cloud_upload";
+      return "wifi_off";
+    });
+
+    const p2pModeLabel = computed(() => {
+      if (p2pMode.value === "consumer") return "Consumer Mode";
+      if (p2pMode.value === "provider" && p2pStatus.value.started) return "Now Serving";
+      if (p2pMode.value === "provider") return "Provider Mode";
+      return "Private Mode";
+    });
+
+    const refreshP2PStatus = async () => {
+      try {
+        const status = await window.electronAPI.p2pStatus();
+        if (status.ok) p2pStatus.value = status;
+        const savedMode = await window.electronAPI.store.get("p2p.networkMode", "local");
+        p2pMode.value = savedMode;
+      } catch {}
+    };
+
     const systemValues = ref({});
     const videoImageBase64 = ref("");
     let sysInfoInterval = null;
@@ -447,15 +391,12 @@ export default {
       specsData.performance = getPerformanceStats();
       showSpecsModal.value = true;
     };
+
     const authState = authService.state;
     const skillStore = useSkillStore();
 
-    // Server status tracking for self-healing notifications
     const serverStatus = reactive({
-      show: false,
-      type: "info", // 'ready', 'restarting', 'crashed', 'error', 'starting', 'stopped'
-      message: "",
-      canRetry: false,
+      show: false, type: "info", message: "", canRetry: false,
     });
 
     let unsubscribeServerStatus = null;
@@ -463,10 +404,9 @@ export default {
 
     const goAnimateToVideo = (b64) => {
       videoImageBase64.value = b64 || "";
-      modelMode.value = "video"; // switch view
+      modelMode.value = "video";
     };
 
-    // Navigate directly to companion chat
     const goToCompanionChat = () => {
       skillStore.requestSkillNavigation("roleplay-companion-v1.0.0");
       skillStore.clearMissedMessages();
@@ -474,29 +414,11 @@ export default {
       modelMode.value = "agent";
     };
 
-    // Open Browse Models from bottom bar → switch to chat tab and signal GenerativeText
     const openBrowseModels = () => {
-      modelMode.value = "chat";
-      // Short delay to let GenerativeText mount if not already
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent("bonzai:show-browse-models"));
-      }, 50);
+      modelPicker.show();
+      window.dispatchEvent(new CustomEvent("bonzai:open-browse-models"));
     };
 
-    // External tab-switch via window event — used by the command
-    // palette and other global UI surfaces. The event detail is the
-    // tab key (chat / image / video / music / 3D / agent / robot /
-    // company); unknown values are ignored so a stale dispatch can't
-    // wedge the UI on a non-existent route.
-    const VALID_MODES = new Set(["chat", "image", "video", "music", "3D", "agent", "robot", "company"]);
-    const onSetModeEvent = (e) => {
-      const next = e?.detail;
-      if (typeof next === "string" && VALID_MODES.has(next)) {
-        modelMode.value = next;
-      }
-    };
-
-    // Provide goAnimateToVideo so child components can use it
     provide("goAnimateToVideo", goAnimateToVideo);
 
     const handleServerRestart = async () => {
@@ -504,17 +426,13 @@ export default {
       serverStatus.type = "restarting";
       serverStatus.message = "Manually restarting server...";
       serverStatus.canRetry = false;
-
       try {
         const result = await window.electronAPI.restartServer();
         if (result.success) {
           serverStatus.type = "ready";
           serverStatus.message = "Server restarted successfully!";
-          // Auto-hide after 3 seconds
           if (autoHideTimeout) clearTimeout(autoHideTimeout);
-          autoHideTimeout = setTimeout(() => {
-            serverStatus.show = false;
-          }, 3000);
+          autoHideTimeout = setTimeout(() => { serverStatus.show = false; }, 3000);
         } else {
           serverStatus.type = "error";
           serverStatus.message = result.error || "Failed to restart server";
@@ -527,144 +445,257 @@ export default {
       }
     };
 
-    onMounted(() => {
-      // Apply the user's persisted theme before any component paints —
-      // setting data-theme on <html> is synchronous so first render
-      // already uses the chosen palette.
-      themeService.init();
+const {
+      isConnected, isConnecting, walletAddress, truncatedAddress,
+      isUniversalProfile, universalProfileData,
+      totalBalance, levels,
+      connect: doConnect, connectWithPrivy: doConnectWithPrivy,
+      disconnect: doDisconnect, cancelConnection: doCancelConnection,
+      refresh: doRefresh, authProvider,
+    } = useBonzaiWeb3();
 
-      // Initialize unified inference store (loads persisted generation history)
+    const isRefreshing = ref(false);
+    const showRewardsModal = ref(false);
+    const showNetworkModal = ref(false);
+    const showAuthModal = ref(false);
+    const isReauthing = ref(false);
+    const isRefreshingToken = ref(false);
+    const showPrivyLogin = ref(false);
+    const privyError = ref("");
+
+    const currentModelName = computed(() => modelStore.state.current?.modelname || null);
+    const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
+
+    const currentTheme = computed(() => themeService.active());
+    const themes = themeService.list();
+
+    const cycleTheme = (dir) => {
+      const idx = themes.findIndex((t) => t.id === themeService.state.current);
+      const next = themes[(idx + dir + themes.length) % themes.length];
+      themeService.set(next.id);
+    };
+
+    const upDisplayName = computed(() => {
+      if (!isUniversalProfile.value || !universalProfileData.value) return null;
+      return universalProfileData.value.name || null;
+    });
+    const upAvatarUrl = computed(() => {
+      if (!isUniversalProfile.value || !universalProfileData.value) return null;
+      const images = universalProfileData.value.profileImage;
+      if (!images || !images.length) return null;
+      const url = images[0].url;
+      if (!url) return null;
+      if (url.startsWith("ipfs://")) return url.replace("ipfs://", "https://api.universalprofile.cloud/ipfs/");
+      return url;
+    });
+
+    const formatBalance = (val) => {
+      const n = Number(val || 0);
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+      if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+      return n.toFixed(0);
+    };
+
+    const isLevelUnlockedOrHolding = (lvl) => {
+      if (levelService.state.allLevelsUnlocked) return true;
+      const cfg = CONFIG.levels[`LVL${lvl}`];
+      const required = cfg?.holdingRequired || 0;
+      const levelKey = `LVL${lvl}`;
+      if (levels.value[levelKey]?.active) return true;
+      if (levels.value[levelKey]?.ethUnlocked) return true;
+      return totalBalance.value >= required;
+    };
+
+    const displayedHighestLevelKey = computed(() => {
+      for (let i = 6; i >= 1; i--) {
+        if (isLevelUnlockedOrHolding(i)) return `LVL${i}`;
+      }
+      return "";
+    });
+
+    const vaultStatus = computed(() => authVault.getVaultStatus());
+    const isAuthenticated = computed(() => authState.isAuthenticated && authState.accessToken);
+    const tokenExpiresIn = computed(() => {
+      if (!authState.tokenExpiry) return 0;
+      return Math.max(0, Math.round((authState.tokenExpiry - Date.now()) / 1000));
+    });
+    const tokenExpiringSoon = computed(() => tokenExpiresIn.value > 0 && tokenExpiresIn.value < 300);
+    const needsReauth = computed(() => !isAuthenticated.value || tokenExpiresIn.value <= 0);
+    const pendingOps = computed(() => vaultStatus.value.pendingOperations);
+    const authStatusClass = computed(() => {
+      if (authProvider.value === 'privy') return "is-success";
+      if (needsReauth.value) return "is-danger";
+      if (tokenExpiringSoon.value) return "is-warning";
+      return "is-success";
+    });
+    const authStatusText = computed(() => {
+      if (authProvider.value === 'privy') return "Privy";
+      if (needsReauth.value) return "Expired";
+      if (tokenExpiringSoon.value) return "Expiring";
+      return "Active";
+    });
+    const formatExpiry = (seconds) => {
+      if (seconds <= 0) return "Expired";
+      if (seconds < 60) return `${seconds}s`;
+      if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+      return `${Math.round(seconds / 3600)}h`;
+    };
+
+    const handleReauth = async () => {
+      isReauthing.value = true;
+      try {
+        if (!isConnected.value) { await doConnect(); if (!isConnected.value) return; }
+        await userInitiatedReAuth();
+        showAuthModal.value = false;
+      } catch (e) {
+        console.error("[App] Re-auth failed:", e);
+      } finally {
+        isReauthing.value = false;
+      }
+    };
+    const handleRefreshToken = async () => {
+      isRefreshingToken.value = true;
+      try { await refreshToken(); }
+      catch (e) { console.error("[App] Token refresh failed:", e); }
+      finally { isRefreshingToken.value = false; }
+    };
+
+    const connect = async () => { await doConnect(); };
+    const disconnect = async () => { await doDisconnect(); };
+    const cancelConnection = async () => { await doCancelConnection(); };
+
+    const openPrivyWallet = async () => {
+      showPrivyLogin.value = false;
+      const result = await window.electronAPI?.wallet?.open?.({ email: '' });
+      if (!result?.ok) { privyError.value = 'Failed to open wallet window'; return; }
+      doConnectWithPrivy({});
+    };
+    const closePrivyLogin = () => {
+      showPrivyLogin.value = false;
+      privyError.value = "";
+    };
+
+    const refresh = async () => {
+      isRefreshing.value = true;
+      await doRefresh();
+      await checkAllLevels();
+      setTimeout(() => (isRefreshing.value = false), 500);
+    };
+
+    const copyAddress = () => {
+      if (!walletAddress.value) return;
+      navigator.clipboard.writeText(walletAddress.value);
+    };
+
+    const handleNeedsReauth = () => { showAuthModal.value = true; };
+
+    onMounted(() => {
+      themeService.init();
       initializeStore();
 
-      // Load system info — returns instantly via os.totalmem(), no timeout needed
       const loadSystemInfo = async () => {
-        try {
-          systemValues.value = await window.electronAPI.systemInformation();
-        } catch (e) {
-          console.warn("Failed to load system info:", e.message);
-        }
+        try { systemValues.value = await window.electronAPI.systemInformation(); }
+        catch (e) { console.warn("Failed to load system info:", e.message); }
       };
       loadSystemInfo();
-      // Refresh every 30s so memBudget reflects current available memory
       sysInfoInterval = setInterval(loadSystemInfo, 30000);
 
-      // Initialize model store (query current model + start listening for changes)
       modelStore.initialize().then(() => modelStore.startListening());
 
-      // Set window title with version
-      window.electronAPI
-        .getAppVersion()
-        .then((version) => {
-          document.title = `BonzAI v${version}`;
-        })
-        .catch(() => {
-          document.title = "BonzAI";
-        });
+      window.electronAPI.getAppVersion()
+        .then((version) => { document.title = `BonzAI v${version}`; })
+        .catch(() => { document.title = "BonzAI"; });
 
-      // Initialize OpenClaw webhook handler
       initOpenClawHandler();
-
-      // Listen for bottom bar → browse models request
       window.addEventListener("bonzai:open-browse-models", openBrowseModels);
-
-      // Command palette → tab switch. The palette dispatches a
-      // `bonzai:set-mode` event with the tab key in `detail`; we map
-      // it onto the local `modelMode` ref so the same tab UI updates.
       window.addEventListener("bonzai:set-mode", onSetModeEvent);
-
-      // Command palette → hardware modal. The picker / palette
-      // owns no modal state itself; it just dispatches an event.
       window.addEventListener("bonzai:open-specs", openSpecsModal);
+      window.addEventListener("bonzai:open-network", () => { showNetworkModal.value = true; });
+      window.addEventListener("bonzai:open-rewards", () => { showRewardsModal.value = true; });
+      window.addEventListener("bonzai:open-connect", () => { showPrivyLogin.value = true; });
+      window.addEventListener("auth:needs-reauth", handleNeedsReauth);
+      window.addEventListener("auth:expired", handleNeedsReauth);
 
-      // Subscribe to server status events
+      if (isConnected.value) checkAllLevels();
+      refreshP2PStatus();
+      p2pStatusInterval = setInterval(refreshP2PStatus, 30000);
+
+      if (window.electronAPI?.onPrivyOAuthCallback) {
+        window.electronAPI.onPrivyOAuthCallback(async (_event, url) => {
+          try {
+            const parsed = new URL(url);
+            const code = parsed.searchParams.get("code");
+            const state = parsed.searchParams.get("state");
+            const provider = parsed.searchParams.get("provider") || "google";
+            if (code && state) {
+              const result = await doConnectWithPrivy({ method: "oauth_callback", authorizationCode: code, returnedStateCode: state, provider });
+              if (result.success) showPrivyLogin.value = false;
+              else privyError.value = result.error || "OAuth sign-in failed";
+            }
+          } catch (e) { privyError.value = e.message || "OAuth callback failed"; }
+        });
+      }
+
       unsubscribeServerStatus = window.electronAPI.onServerStatus((data) => {
-        console.log("[App] Server status:", data);
-
-        // Clear any pending auto-hide
-        if (autoHideTimeout) {
-          clearTimeout(autoHideTimeout);
-          autoHideTimeout = null;
-        }
-
+        if (autoHideTimeout) { clearTimeout(autoHideTimeout); autoHideTimeout = null; }
         serverStatus.show = true;
         serverStatus.type = data.status;
         serverStatus.message = data.message || "";
         serverStatus.canRetry = data.canRetry || false;
-
-        // Auto-hide success messages after 3 seconds
         if (data.status === "ready") {
-          autoHideTimeout = setTimeout(() => {
-            serverStatus.show = false;
-          }, 3000);
+          autoHideTimeout = setTimeout(() => { serverStatus.show = false; }, 3000);
         }
       });
     });
 
     onUnmounted(() => {
-      if (unsubscribeServerStatus) {
-        unsubscribeServerStatus();
-      }
-      if (autoHideTimeout) {
-        clearTimeout(autoHideTimeout);
-      }
-      if (sysInfoInterval) {
-        clearInterval(sysInfoInterval);
-      }
+      if (unsubscribeServerStatus) unsubscribeServerStatus();
+      if (autoHideTimeout) clearTimeout(autoHideTimeout);
+      if (sysInfoInterval) clearInterval(sysInfoInterval);
+      if (p2pStatusInterval) clearInterval(p2pStatusInterval);
       modelStore.stopListening();
       window.removeEventListener("bonzai:open-browse-models", openBrowseModels);
       window.removeEventListener("bonzai:set-mode", onSetModeEvent);
       window.removeEventListener("bonzai:open-specs", openSpecsModal);
+      window.removeEventListener("auth:needs-reauth", handleNeedsReauth);
+      window.removeEventListener("auth:expired", handleNeedsReauth);
+    });
+
+    watch([isConnected, walletAddress], async ([connected, addr]) => {
+      if (connected && addr) await checkAllLevels();
     });
 
     return {
-      systemValues,
-      modelMode,
-      navTabs,
-      videoImageBase64,
-      goAnimateToVideo,
-      goToCompanionChat,
-      serverStatus,
-      handleServerRestart,
-      authState,
-      skillStore,
-      showSpecsModal,
-      specsData,
-      openSpecsModal,
+      modelMode, createItems, earnItems, automateItems, trainItems,
+      handleEarnAction,
+      systemValues, videoImageBase64, goAnimateToVideo, goToCompanionChat,
+      serverStatus, notifClass, handleServerRestart,
+      authState, skillStore, showSpecsModal, specsData, openSpecsModal,
+      showRewardsModal, showNetworkModal, showAuthModal, showPrivyLogin,
+      isConnected, isConnecting, walletAddress, truncatedAddress,
+      totalBalance, formatBalance, displayedHighestLevelKey,
+      upDisplayName, upAvatarUrl, isRefreshing,
+      currentModelName, alwaysLoaded, openBrowseModels,
+      currentTheme, cycleTheme,
+      p2pMode, p2pStatus, p2pModeIcon, p2pModeLabel,
+      isReauthing, isRefreshingToken, needsReauth, tokenExpiringSoon,
+      tokenExpiresIn, pendingOps, vaultStatus, authStatusClass, authStatusText,
+      formatExpiry, handleReauth, handleRefreshToken,
+      connect, disconnect, cancelConnection,
+      openPrivyWallet, closePrivyLogin, privyError, refresh, copyAddress,
     };
   },
 };
 </script>
 
 <style>
-/* Local fonts for offline mode - bundled with the app */
 @import "./assets/fonts/fonts.css";
-
-/* Global design tokens — the single source of truth for colour,
-   typography, spacing, motion, elevation. Components consume the
-   --bz-* custom properties; new literals must be promoted here.
-   See /DESIGN.md for the system rationale and rules. */
 @import "./assets/tokens.css";
-
-/* Theme variants — each `data-theme="X"` selector overrides the
-   color tokens above. Default theme requires no attribute set.
-   See themes.css for the catalog and theme.service.js for the
-   runtime switcher. */
 @import "./assets/themes.css";
-
-/* Button + icon-button system. Global so every component reaches for
-   the same primitives — see buttons.css for the variant catalog. */
 @import "./assets/buttons.css";
-
-/* Notice / banner system — small inline state surfaces (info / success
-   / warning / danger). Replaces ad-hoc Bulma `notification` tints. */
 @import "./assets/notices.css";
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   BASE STYLES
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-html,
-body {
+html, body {
   -webkit-app-region: no-drag;
   -webkit-user-select: none;
   box-sizing: border-box !important;
@@ -673,121 +704,60 @@ body {
   margin: 0;
 }
 
-/* Suppress scrollbars on all generative views — content scrolls via .models__deployment-install */
-.models__deployment-install {
-  scrollbar-width: none; /* Firefox */
-}
-.models__deployment-install::-webkit-scrollbar {
-  display: none; /* Chrome/Safari/Electron */
-}
-
 #app {
   -moz-osx-font-smoothing: grayscale;
   -webkit-font-smoothing: antialiased;
-  color: #2c3e50;
   font-family: "Fira Sans", sans-serif;
   font-style: normal;
   font-weight: 400;
   margin: 0 !important;
   padding: 0 !important;
   position: relative;
-  text-align: center;
+  text-align: left;
   min-height: 100%;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   TYPOGRAPHY HELPERS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.fira-sans-condensed-black-italic {
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-style: italic;
-  font-weight: 900;
-}
-
-.fira-sans-condensed-thin {
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-style: normal;
-  font-weight: 100;
-}
-
-.fira-sans-regular {
-  font-family: "Fira Sans", sans-serif;
-  font-style: normal;
-  font-weight: 400;
-}
-
-.fira-sans-thin {
-  font-family: "Fira Sans", sans-serif;
-  font-style: normal;
-  font-weight: 100;
 }
 
 .material-symbols-outlined {
   border-radius: 100%;
-  font-variation-settings:
-    "FILL" 0,
-    "wght" 100,
-    "GRAD" -25,
-    "opsz" 48;
+  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   BUTTONS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.button {
-  border-radius: 6px;
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  cursor: pointer !important;
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-style: italic !important;
+.fira-sans-condensed-black-italic {
+  font-family: 'Fira Sans Condensed', sans-serif;
   font-weight: 900;
-  text-transform: none;
-  transform: translate3d(0, 0, 0);
-  transition: 200ms ease-in;
+  font-style: italic;
 }
 
-.button:hover {
-  box-shadow: 18px 18px 0 rgba(97, 55, 142, 0.66);
-  transition: 200ms ease-in;
+/* ─── TOP NOTIFICATION BANNERS ──────────────────────────────────── */
+.bz-notif {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--bz-space-3) var(--bz-space-5);
+  font-size: var(--bz-size-body);
+  line-height: 1.4;
+  border-bottom: 1px solid var(--bz-border);
+  animation: bz-rise 320ms var(--bz-ease-out) both;
 }
+.bz-notif--info    { background: var(--bz-info-soft);    color: var(--bz-info); }
+.bz-notif--success { background: var(--bz-emerald-soft); color: var(--bz-emerald-500); }
+.bz-notif--warning { background: var(--bz-warning-soft); color: var(--bz-warning); }
+.bz-notif--danger  { background: var(--bz-danger-soft);  color: var(--bz-danger); }
 
-.button.is-success {
-  background: linear-gradient(rgba(57, 213, 130, 0.66), #26b569);
-  border: 4px solid #1d8b51 !important;
-  border-width: 0px 0px 3px !important;
-  text-shadow: 1px -1px 1px #22a05d;
-}
+.bz-notif__body { display: flex; flex-direction: column; gap: 2px; }
+.bz-notif__title { font-weight: 600; color: var(--bz-fg); }
+.bz-notif__desc { font-size: var(--bz-size-meta); color: var(--bz-fg-low); }
+.bz-notif--info .bz-notif__title, .bz-notif--success .bz-notif__title,
+.bz-notif--warning .bz-notif__title, .bz-notif--danger .bz-notif__title { color: inherit; }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   SYSTEM INFO
-   ═══════════════════════════════════════════════════════════════════════════ */
+.notif-enter-active { animation: bz-rise 320ms var(--bz-ease-out) both; }
+.notif-leave-active { animation: bz-fade-in 220ms var(--bz-ease-in) both reverse; }
 
-.system {
-  position: absolute;
-  right: 0.5em;
-  top: 0.85em;
-  z-index: 777;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   NAVIGATION TABS / MENU
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ─────────────────────────────────────────────────────────────────
-   APP SHELL — left-rail nav + main work area. Editorial sidebar
-   inspired by Linear / Mistral / Stripe — fixed 240 px width on
-   desktop, with the brand tile at the top and a memory-budget pill
-   the user can click for system specs. Each tab keeps its branded
-   image (the BonzAI character) but tightens to 60 px tall with a
-   shade overlay so the text stays legible against any background.
-   ────────────────────────────────────────────────────────────── */
-
+/* ─── APP SHELL ─────────────────────────────────────────────────── */
 #bonzai {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  height: calc(100vh - 80px);
+  grid-template-columns: 220px minmax(0, 1fr);
+  height: 100vh;
   overflow: hidden;
   background: var(--bz-canvas);
 }
@@ -797,13 +767,8 @@ body {
   height: 100%;
   overflow: hidden;
   background: var(--bz-canvas);
-  display: flex;
-  flex-direction: column;
 }
 
-/* Each tab component mounts as a direct child of .bz-main.
-   Replaces the legacy Bulma column grid so content fills the
-   available width and height without overflow fights. */
 .bz-tab-shell {
   display: flex;
   flex-direction: column;
@@ -813,353 +778,616 @@ body {
   overflow: hidden;
 }
 
-.bz-nav {
+/* ─── SIDEBAR ───────────────────────────────────────────────────── */
+.bz-sidebar {
   display: flex;
   flex-direction: column;
   background: var(--bz-panel);
   border-right: 1px solid var(--bz-border);
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
-/* Brand header — logo strip + memory budget pill */
-.bz-nav__brand {
-  padding: var(--bz-space-5) var(--bz-space-4) var(--bz-space-4);
-  border-bottom: 1px solid var(--bz-border);
-  background:
-    linear-gradient(180deg, var(--bz-purple-soft) 0%, transparent 100%);
+.bz-sidebar__brand {
+  padding: var(--bz-space-5) var(--bz-space-5) var(--bz-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--bz-space-3);
-}
-.bz-nav__logo {
-  background: url("./assets/bonzai_logo-full.png") no-repeat center;
-  background-size: contain;
-  height: 40px;
-  width: 100%;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
-}
-.bz-nav__mem {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
   gap: var(--bz-space-2);
+}
+
+.bz-sidebar__wordmark {
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+  font-size: 18px;
+  color: var(--bz-purple-300);
+  letter-spacing: -0.01em;
+}
+
+/* Auth links — text-only, small, below the wordmark. */
+.bz-sidebar__auth {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.bz-sidebar__auth-link {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--bz-dur-fast);
+}
+.bz-sidebar__auth-link:hover {
+  color: var(--bz-purple-300);
+}
+.bz-sidebar__auth-sep {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+}
+
+.bz-sidebar__nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-3) var(--bz-space-3) var(--bz-space-2);
+}
+
+.bz-sidebar__group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bz-sidebar__group--settings {
+  margin-top: auto;
+}
+
+.bz-sidebar__label {
+  font-size: var(--bz-size-micro);
+  font-weight: 500;
+  color: var(--bz-fg-low);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: var(--bz-space-1) var(--bz-space-3) var(--bz-space-2);
+}
+
+.bz-sidebar__item {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  width: 100%;
+  padding: var(--bz-space-2) var(--bz-space-3);
+  border: none;
+  border-radius: var(--bz-r-sm);
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  cursor: pointer;
+  transition: background var(--bz-dur-fast) var(--bz-ease-out), color var(--bz-dur-fast) var(--bz-ease-out);
+  text-align: left;
+}
+
+.bz-sidebar__item:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.bz-sidebar__item.is-active {
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-300);
+  font-weight: 500;
+}
+
+.bz-sidebar__item-icon {
+  font-size: 18px !important;
+  flex-shrink: 0;
+}
+
+.bz-sidebar__item-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── SIDEBAR FOOTER ────────────────────────────────────────────── */
+.bz-sidebar__footer {
+  padding: var(--bz-space-2) var(--bz-space-3) var(--bz-space-3);
+  border-top: 1px solid var(--bz-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+}
+
+.bz-sidebar__footer-action {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  width: 100%;
+  min-height: 36px;
   padding: var(--bz-space-2) var(--bz-space-3);
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-pill);
-  color: var(--bz-fg-mid);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-low);
   font-size: var(--bz-size-meta);
+  font-family: var(--bz-font-body);
   cursor: pointer;
-  transition:
-    border-color var(--bz-dur-fast) var(--bz-ease-out),
-    color var(--bz-dur-fast) var(--bz-ease-out);
+  transition: border-color var(--bz-dur-fast), color var(--bz-dur-fast);
+  justify-content: flex-start;
+  text-align: left;
 }
-.bz-nav__mem:hover {
+
+.bz-sidebar__footer-action:hover {
   border-color: var(--bz-purple-300);
   color: var(--bz-fg);
 }
-.bz-nav__mem .material-symbols-outlined {
-  font-size: 16px !important;
+
+.bz-sidebar__footer-action .material-symbols-outlined {
+  font-size: 14px !important;
   color: var(--bz-purple-300);
 }
 
-/* Tab list — vertical, dense, scrolls */
-.bz-nav__list {
-  list-style: none;
-  margin: 0;
-  padding: var(--bz-space-3) var(--bz-space-2);
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.bz-sidebar__theme {
+  flex: 0;
+  padding: var(--bz-space-2) !important;
 }
 
-/* Each item — icon (left) · label (center) · brand image (background)
-   · active bar (left edge). Hover lifts the shade; active state
-   holds the lift and shows the brand-purple bar. */
-.bz-nav__item {
-  position: relative;
+/* ─── SERVE MODE INDICATOR ──────────────────────────────────────── */
+.bz-sidebar__serve {
+  border-style: solid;
+}
+
+.bz-sidebar__serve-label {
+  font-weight: 500;
+}
+
+/* ─── THEME PICKER ──────────────────────────────────────────────── */
+.bz-sidebar__theme-picker {
   display: flex;
   align-items: center;
-  gap: var(--bz-space-3);
-  padding: var(--bz-space-3) var(--bz-space-4);
-  height: 56px;
-  border-radius: var(--bz-r);
-  cursor: pointer;
-  outline: none;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  transition:
-    transform var(--bz-dur-base) var(--bz-ease-out),
-    box-shadow var(--bz-dur-base) var(--bz-ease-out);
-  overflow: hidden;
-}
-.bz-nav__shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to right,
-    rgba(0, 0, 0, 0.7) 0%,
-    rgba(0, 0, 0, 0.45) 60%,
-    rgba(0, 0, 0, 0.6) 100%
-  );
-  transition: background var(--bz-dur-base) var(--bz-ease-out);
-  pointer-events: none;
-}
-.bz-nav__icon {
-  position: relative;
-  z-index: 1;
-  font-size: 22px !important;
-  color: var(--bz-fg-mid);
-  font-variation-settings: "FILL" 0, "wght" 300, "opsz" 24;
-  transition: color var(--bz-dur-fast) var(--bz-ease-out);
-  flex-shrink: 0;
-}
-.bz-nav__label {
-  position: relative;
-  z-index: 1;
-  font-size: var(--bz-size-h3);
-  color: var(--bz-fg);
-  letter-spacing: 0.01em;
-  flex: 1;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-}
-.bz-nav__active-bar {
-  position: absolute;
-  left: 0;
-  top: 12px;
-  bottom: 12px;
-  width: 3px;
-  background: var(--bz-gradient-brand);
-  border-radius: var(--bz-r-pill);
-  opacity: 0;
-  transform: scaleY(0.6);
-  transition:
-    opacity var(--bz-dur-base) var(--bz-ease-out),
-    transform var(--bz-dur-base) var(--bz-ease-out);
+  gap: 0;
+  padding: var(--bz-space-1) var(--bz-space-2);
 }
 
-.bz-nav__item:hover .bz-nav__shade {
-  background: linear-gradient(
-    to right,
-    rgba(20, 8, 40, 0.55) 0%,
-    rgba(0, 0, 0, 0.30) 60%,
-    rgba(0, 0, 0, 0.45) 100%
-  );
-}
-.bz-nav__item:hover .bz-nav__icon {
-  color: var(--bz-purple-100);
-}
-.bz-nav__item:focus-visible {
-  box-shadow: 0 0 0 2px var(--bz-border-brand);
-}
-
-.bz-nav__item.is-active .bz-nav__shade {
-  background: linear-gradient(
-    to right,
-    rgba(97, 55, 142, 0.7) 0%,
-    rgba(97, 55, 142, 0.32) 50%,
-    rgba(0, 0, 0, 0.4) 100%
-  );
-}
-.bz-nav__item.is-active .bz-nav__icon { color: var(--bz-fg); }
-.bz-nav__item.is-active .bz-nav__label { color: var(--bz-fg); }
-.bz-nav__item.is-active .bz-nav__active-bar {
-  opacity: 1;
-  transform: scaleY(1);
-}
-
-/* Brand image per tab — kept from the previous design so each row
-   carries BonzAI's visual identity. The shade overlay above keeps
-   the label legible against any image. */
-.bz-nav__item--chat    { background-image: url("./assets/bonzai_chat.webp"); }
-.bz-nav__item--image   { background-image: url("./assets/bonzai_image.webp"); }
-.bz-nav__item--music   { background-image: url("./assets/bonzai_music.webp"); }
-.bz-nav__item--video   { background-image: url("./assets/bonzai_video.webp"); }
-.bz-nav__item--3D      { background-image: url("./assets/bonzai_3d.webp"); }
-.bz-nav__item--robot   {
-  background-image: url("./assets/bonzai_robots.webp");
-  background-position: center 33%;
-}
-.bz-nav__item--agent   {
-  background-image: url("./assets/bonzai_agent.webp");
-  background-position: center 66%;
-}
-.bz-nav__item--company {
-  background-image: url("./assets/bonzai_company.webp");
-  background-position: center 50%;
-}
-
-/* Narrow viewport — collapse to 64 px icon-only rail. Labels still
-   render but at meta scale, so the muscle memory survives. */
-@media (max-width: 1024px) {
-  #bonzai { grid-template-columns: 64px minmax(0, 1fr); }
-  .bz-nav__brand { padding: var(--bz-space-3) var(--bz-space-2); }
-  .bz-nav__logo  { height: 28px; }
-  .bz-nav__mem   { display: none; }
-  .bz-nav__item  { padding: var(--bz-space-2); justify-content: center; }
-  .bz-nav__label { display: none; }
-  .bz-nav__icon  { font-size: 24px !important; }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   CHAT MESSAGES
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-div.answer {
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-font-smoothing: antialiased;
-  backdrop-filter: blur(6px);
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 4px;
-  box-shadow: -8px 8px 0 rgba(57, 213, 130, 0.25);
-  color: #fff;
-  font-family: "Fira Sans", sans-serif;
-  font-size: 24px;
-  font-style: normal;
-  font-weight: 100;
-  margin-bottom: 2em !important;
-  padding: 1em;
-  text-align: justify;
-  transform: translate3d(0, 0, 0);
-}
-
-div.answer ol {
-  padding-left: 1em !important;
-}
-
-div.answer p {
-  margin-bottom: 0 !important;
-}
-
-div.answer strong {
-  color: rgba(57, 213, 130, 0.75);
-}
-
-div.answer table td {
-  padding-bottom: 20px !important;
-  text-align: left;
-}
-
-div.answer table thead tr th {
-  color: #fff !important;
-  font: 900;
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-style: italic;
-  text-transform: uppercase;
-}
-
-p.question {
-  backdrop-filter: blur(6px);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 4px;
-  box-shadow: 8px 8px 0 rgba(97, 55, 142, 0.66);
-  font-weight: 700;
-  margin-bottom: 1em !important;
-  margin-top: 2em !important;
-  padding: 1em;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   SERVER STATUS NOTIFICATION
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.server-notification {
-  animation: slideIn 0.3s ease-out;
-  position: fixed;
-  width: 33%;
-  top: 1em;
-  right: 1em;
-  z-index: 1;
-  opacity: 0.9;
-}
-
-.server-notification .delete {
-  position: absolute;
-  right: 0.5rem;
-  top: 0.5rem;
-}
-
-.server-notification .progress {
-  margin-top: 0.5rem;
-}
-
-.server-notification p {
-  font-size: 12px;
-  margin-bottom: 0.5rem !important;
-  text-align: left;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ANIMATIONS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Specs Modal */
-.specs-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+.bz-sidebar__theme-arrow {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-mid);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color var(--bz-dur-fast), color var(--bz-dur-fast);
 }
 
-.specs-modal {
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 16px;
-  padding: 2em;
-  width: 550px;
+.bz-sidebar__theme-arrow:hover {
+  border-color: var(--bz-purple-300);
+  color: var(--bz-fg);
+}
+
+.bz-sidebar__theme-arrow .material-symbols-outlined {
+  font-size: 14px !important;
+}
+
+.bz-sidebar__theme-display {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bz-sidebar__theme-swatch {
+  display: flex;
+  gap: 3px;
+}
+
+.bz-sidebar__theme-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.bz-sidebar__theme-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--bz-fg);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ─── SIDEBAR MODEL INDICATOR ───────────────────────────────────── */
+.bz-sidebar__model {
+  border-style: solid;
+}
+
+.bz-sidebar__model-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: inherit;
+  font-family: var(--bz-font-body);
+  font-weight: 500;
+  font-size: var(--bz-size-meta);
+}
+
+.bz-sidebar__model-lock {
+  font-size: 12px !important;
+  color: var(--bz-emerald-500);
+  flex-shrink: 0;
+}
+
+/* ─── SIDEBAR WALLET ────────────────────────────────────────────── */
+.bz-sidebar__wallet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-1);
+}
+
+.bz-sidebar__wallet--top {
+  width: 100%;
+  margin-top: var(--bz-space-2);
+}
+
+.bz-sidebar__wallet-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-1) var(--bz-space-2);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  font-family: var(--bz-font-body);
+  cursor: pointer;
+  transition: border-color var(--bz-dur-fast), color var(--bz-dur-fast);
+}
+
+.bz-sidebar__wallet-btn:hover { border-color: var(--bz-purple-300); color: var(--bz-fg); }
+.bz-sidebar__wallet-btn .material-symbols-outlined { font-size: 14px !important; }
+
+.bz-sidebar__wallet-btn--primary {
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-purple-300);
+  color: var(--bz-purple-300);
+}
+
+.bz-sidebar__wallet-info {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-1) var(--bz-space-2);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  cursor: pointer;
+  transition: border-color var(--bz-dur-fast);
+  font-size: var(--bz-size-meta);
+}
+
+.bz-sidebar__wallet-info:hover { border-color: var(--bz-purple-300); }
+
+.bz-sidebar__up-avatar { width: 16px; height: 16px; border-radius: 50%; overflow: hidden; flex-shrink: 0; }
+.bz-sidebar__up-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.bz-sidebar__wallet-addr {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--bz-fg);
+}
+
+.bz-sidebar__level {
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+  font-size: 11px;
+  color: var(--bz-purple-300);
+  flex-shrink: 0;
+}
+
+.bz-sidebar__balance {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0 var(--bz-space-2);
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+}
+
+.bz-sidebar__balance-amt { font-size: 14px; color: var(--bz-fg); }
+.bz-sidebar__balance-token { font-size: 10px; color: var(--bz-fg-low); }
+
+.bz-sidebar__wallet-actions {
+  display: flex;
+  gap: var(--bz-space-1);
+}
+
+.bz-sidebar__wallet-actions .bz-sidebar__wallet-btn { flex: 1; justify-content: center; }
+
+.spinning { animation: bz-spin 1s linear infinite; }
+
+/* ─── MODAL ─────────────────────────────────────────────────────── */
+.bz-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bz-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--bz-z-modal);
+}
+
+.bz-modal {
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-lg);
+  width: 560px;
   max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.bz-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--bz-space-5) var(--bz-space-5) var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.bz-modal__body {
+  padding: var(--bz-space-4) var(--bz-space-5) var(--bz-space-5);
   overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
-.specs-section {
-  padding: 1em;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.modal-enter-active { animation: bz-modal-in var(--bz-dur-base) var(--bz-ease-out) both; }
+.modal-leave-active { animation: bz-fade-in var(--bz-dur-fast) var(--bz-ease-in) both reverse; }
+
+/* ─── SPECS GRID ────────────────────────────────────────────────── */
+.bz-specs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
 }
 
-.specs-table {
-  background: transparent !important;
+.bz-specs-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--bz-space-2) var(--bz-space-3);
+  background: var(--bz-panel);
+  border-radius: var(--bz-r-sm);
 }
 
-.specs-table td,
-.specs-table th {
-  background: transparent !important;
-  border-color: rgba(255, 255, 255, 0.08) !important;
-  color: rgba(255, 255, 255, 0.7);
-  padding: 0.6em 0.75em;
+.bz-specs-item--highlight { background: var(--bz-emerald-soft); }
+.bz-specs-item__label { font-size: var(--bz-size-meta); color: var(--bz-fg-low); }
+.bz-specs-item__value { font-size: var(--bz-size-data); color: var(--bz-fg); }
+.bz-specs-section { margin-top: var(--bz-space-5); }
+.bz-specs-section .bz-h3 { margin: 0 0 var(--bz-space-3); }
+
+/* ─── NETWORK MODAL ─────────────────────────────────────────────── */
+.network-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bz-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
 }
 
-.specs-label {
-  color: rgba(255, 255, 255, 0.5) !important;
-  font-size: 0.85rem;
+.network-modal {
+  width: 95%;
+  max-width: 900px;
+  max-height: 90vh;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.specs-value {
-  color: #fff !important;
-  font-size: 0.95rem;
+.network-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--bz-space-5) var(--bz-space-7);
+  border-bottom: 1px solid var(--bz-border);
 }
+
+.network-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.network-modal-body :deep(.network-settings) {
+  height: auto;
+  max-height: 70vh;
+  padding: 24px;
+}
+
+.network-modal-body :deep(.panel) {
+  max-width: none;
+}
+
+/* ─── AUTH MODAL ────────────────────────────────────────────────── */
+.auth-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bz-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10002;
+}
+
+.auth-modal {
+  width: 90%;
+  max-width: 400px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-lg);
+  overflow: hidden;
+}
+
+.auth-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--bz-space-4) var(--bz-space-5);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.auth-modal-body { padding: 20px; }
+
+.auth-status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.auth-status-banner.is-success { background: var(--bz-emerald-soft); border: 1px solid var(--bz-emerald-soft); }
+.auth-status-banner.is-warning { background: rgba(255, 224, 138, 0.15); border: 1px solid var(--bz-warning-soft); }
+.auth-status-banner.is-danger { background: var(--bz-danger-soft); border: 1px solid var(--bz-danger-soft); }
+
+.status-dot-large {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+}
+
+.status-dot-large.is-success { background: var(--bz-emerald-500); box-shadow: 0 0 12px var(--bz-emerald-500); }
+.status-dot-large.is-warning { background: var(--bz-warning); box-shadow: 0 0 12px var(--bz-warning); }
+.status-dot-large.is-danger { background: var(--bz-danger); box-shadow: 0 0 12px var(--bz-danger); }
+
+.status-label { font-size: 18px; color: var(--bz-fg); }
+
+.auth-details { margin-bottom: 20px; }
+.auth-details .detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.auth-details .detail-row:last-child { border-bottom: none; }
+.auth-details .label { color: rgba(255, 255, 255, 0.6); font-size: 13px; }
+.auth-details .value { color: var(--bz-fg); font-size: 13px; font-weight: 600; }
+.auth-details .value.monospace { font-family: "JetBrains Mono", monospace; }
+.auth-details .value--danger { color: var(--bz-danger); }
+.auth-details .value--warning { color: var(--bz-warning); }
+.auth-details .value--success { color: var(--bz-emerald-500); }
+.auth-actions { padding-top: 10px; }
+.auth-action-btn {
+  width: 100%;
+  justify-content: center;
+  margin-top: 10px;
+}
+.auth-ok {
+  margin: 0;
+  color: var(--bz-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ─── PRIVY MODAL ───────────────────────────────────────────────── */
+.privy-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bz-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+}
+
+.privy-modal {
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-lg);
+  max-width: 400px;
+  width: 90vw;
+  overflow: hidden;
+}
+
+.privy-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: var(--bz-space-4) var(--bz-space-5);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.privy-modal-body { padding: 24px; }
+
+.privy-subtitle {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 13px;
+  margin-bottom: 24px;
+}
+
+.privy-error-card {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-3);
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-danger);
+  font-size: var(--bz-size-meta);
+}
+
+/* ─── BZ MODAL TITLEBLOCK ───────────────────────────────────────── */
+.bz-modal-titleblock { display: grid; gap: var(--bz-space-2); }
+.bz-modal-titleblock h1,
+.bz-modal-titleblock h2 { margin: 0; color: var(--bz-fg); }
+.bz-modal-titleblock .bz-eyebrow { margin: 0; }
+
+/* ─── TRANSITIONS ───────────────────────────────────────────────── */
+.fade-enter-active,
+.fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from,
+.fade-leave-to { opacity: 0; }
+
+/* ─── COMPACT VIEWPORT ──────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  #bonzai { grid-template-columns: 56px minmax(0, 1fr); }
+  .bz-sidebar__wordmark { display: none; }
+  .bz-sidebar__brand { padding: var(--bz-space-3); justify-content: center; }
+  .bz-sidebar__label { display: none; }
+  .bz-sidebar__item { justify-content: center; padding: var(--bz-space-2); }
+  .bz-sidebar__item-label { display: none; }
+  .bz-sidebar__footer { display: none; }
+  .bz-sidebar__nav { align-items: center; padding: var(--bz-space-3); }
+}
+
+/* ─── SUPPRESS SCROLLBARS ───────────────────────────────────────── */
+.models__deployment-install { scrollbar-width: none; }
+.models__deployment-install::-webkit-scrollbar { display: none; }
 </style>

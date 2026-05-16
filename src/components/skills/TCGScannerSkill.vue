@@ -1,43 +1,25 @@
 <template>
   <div class="tcg-skill">
-    <!-- Header -->
-    <div class="models__activity--payouts mb-4 has-text-left">
-      <h2 class="skill-name is-size-1 fira-sans-condensed-black-italic mb-2">
-        <span class="material-symbols-outlined" style="font-size: 48px">
-          style
-        </span>
-        Trading Card Game Analysis
-      </h2>
-      <p class="skill-description is-size-5">
-        {{
-          skill?.description ||
-          "AI-powered card identification, PGT condition grading, and live market pricing."
-        }}
-      </p>
-    </div>
-
     <!-- Model Download / Loading Status -->
-    <div v-if="modelLoading" class="notification is-info p-5 mb-4">
+    <div v-if="modelLoading" class="bz-notice bz-notice--info p-5 mb-4">
       <p class="mb-2">
         <span class="fira-sans-condensed-black-italic is-size-4">
-          <button disabled class="button is-loading is-info is-small mr-2 p-4"></button>
+          <button disabled class="bz-iconbtn bz-btn--running"></button>
           {{ downloadStatus || 'Preparing models...' }}
         </span>
-        <span class="fira-sans-condensed-black-italic is-pulled-right is-size-3">
+        <span class="fira-sans-condensed-black-italic skill-float-right is-size-3">
           {{ downloadProgress }}%
         </span>
       </p>
-      <progress class="progress is-success is-large" :value="downloadProgress" max="100">
-        {{ downloadProgress }}%
-      </progress>
+      <BonzaiPulse variant="bar" :progress="downloadProgress" label="Downloading card analysis models" />
     </div>
 
     <!-- Model Not Ready Warning -->
-    <div v-if="!modelLoading && !modelReady" class="notification is-warning p-4 mb-4">
-      <span class="material-symbols-outlined mr-2" style="font-size: 20px">warning</span>
+    <div v-if="!modelLoading && !modelReady" class="bz-notice bz-notice--warning p-4 mb-4">
+      <span class="material-symbols-outlined" style="font-size: 20px">warning</span>
       Models not downloaded.
-      <button class="button is-small is-warning ml-3" @click="ensureModelLoaded">
-        <span class="material-symbols-outlined mr-1" style="font-size: 16px">download</span>
+      <button class="bz-btn bz-btn--sm bz-btn--warning ml-3" @click="ensureModelLoaded">
+        <span class="material-symbols-outlined" style="font-size: 16px">download</span>
         Download Models
       </button>
     </div>
@@ -49,7 +31,7 @@
         class="status-notification fira-sans-condensed-black-italic"
         :class="'is-' + notification.type"
       >
-        <span class="material-symbols-outlined mr-2">
+        <span class="material-symbols-outlined">
           {{
             notification.type === "success"
               ? "check_circle"
@@ -62,8 +44,31 @@
       </div>
     </Transition>
 
+    <div v-if="modelReady" class="tcg-bench-status">
+      <div class="tcg-slab-preview" :class="{ 'has-card': !!frontPreview }">
+        <img v-if="frontPreview" :src="frontPreview" alt="Card preview" />
+        <span v-else class="material-symbols-outlined">style</span>
+      </div>
+      <div class="tcg-bench-cell">
+        <span>Input</span>
+        <strong>{{ selectedMode === 'camera' ? 'Camera' : 'File' }}</strong>
+      </div>
+      <div class="tcg-bench-cell">
+        <span>Collection</span>
+        <strong>{{ selectedCollectionLabel }}</strong>
+      </div>
+      <div class="tcg-bench-cell">
+        <span>Grade</span>
+        <strong>{{ scannedCard?.grading?.grade || 'Pending' }}</strong>
+      </div>
+      <div class="tcg-bench-cell">
+        <span>Market</span>
+        <strong>{{ scannedCard?.pricing?.variants?.length || 0 }}</strong>
+      </div>
+    </div>
+
     <!-- Image Source Selector (hidden after scan, gated on model ready) -->
-    <div v-if="!scannedCard && modelReady" class="mb-4">
+    <div v-if="!scannedCard && modelReady" class="tcg-input-row mb-4">
       <span class="category-selector mb-4">
         <template v-for="mode in inputModes" :key="mode.id">
           <input
@@ -74,9 +79,9 @@
             :checked="selectedMode === mode.id"
             @change="selectedMode = mode.id"
           />
-          <label :for="'input_' + mode.id" class="radio category pt-3 pb-3">
+          <label :for="'input_' + mode.id" class="radio category">
             <span
-              class="material-symbols-outlined mr-1"
+              class="material-symbols-outlined"
               style="font-size: 18px"
             >
               {{ mode.icon }}
@@ -88,7 +93,7 @@
     </div>
 
     <!-- Collection Selector (gated on model ready) -->
-    <div v-if="!scannedCard && modelReady" class="mb-4">
+    <div v-if="!scannedCard && modelReady" class="tcg-collection-row mb-4">
       <span class="category-selector collection-grid mb-4">
         <template v-for="col in collections" :key="col.id">
           <input
@@ -99,9 +104,9 @@
             :checked="selectedCollection === col.id"
             @change="selectedCollection = col.id"
           />
-          <label :for="'col_' + col.id" class="radio category pt-3 pb-3">
+          <label :for="'col_' + col.id" class="radio category">
             <span
-              class="material-symbols-outlined mr-1"
+              class="material-symbols-outlined"
               style="font-size: 18px"
             >
               {{ col.icon }}
@@ -113,13 +118,13 @@
     </div>
 
     <!-- File Selector (front only) -->
-    <div v-if="!scannedCard && modelReady && selectedMode === 'file'" class="mb-4">
+    <div v-if="!scannedCard && modelReady && selectedMode === 'file'" class="tcg-capture-bay mb-4">
       <button
-        class="button is-success is-large is-fullwidth"
+        class="bz-btn bz-btn--success bz-btn--lg skill-fullwidth"
         @click="selectImageFile('front')"
       >
         <span
-          class="material-symbols-outlined mr-2"
+          class="material-symbols-outlined"
           style="font-size: 20px"
         >
           photo_library
@@ -137,10 +142,10 @@
     </div>
 
     <!-- Camera -->
-    <div v-if="!scannedCard && modelReady && selectedMode === 'camera'" class="mb-4">
+    <div v-if="!scannedCard && modelReady && selectedMode === 'camera'" class="tcg-capture-bay mb-4">
       <div v-if="!cameraActive" class="has-text-centered">
-        <button class="button is-success is-large" @click="startCamera">
-          <span class="material-symbols-outlined mr-2" style="font-size: 20px">
+        <button class="bz-btn bz-btn--success bz-btn--lg" @click="startCamera">
+          <span class="material-symbols-outlined" style="font-size: 20px">
             photo_camera
           </span>
           Open Camera
@@ -161,20 +166,20 @@
         ></video>
         <div class="camera-controls mt-3 has-text-centered">
           <button
-            class="button is-success is-large mr-2"
+            class="bz-btn bz-btn--success bz-btn--lg mr-2"
             @click="captureFromCamera"
           >
             <span
-              class="material-symbols-outlined mr-1"
+              class="material-symbols-outlined"
               style="font-size: 18px"
             >
               camera
             </span>
             Capture
           </button>
-          <button class="button is-dark is-large" @click="stopCamera">
+          <button class="bz-btn bz-btn--ghost bz-btn--lg" @click="stopCamera">
             <span
-              class="material-symbols-outlined mr-1"
+              class="material-symbols-outlined"
               style="font-size: 18px"
             >
               close
@@ -186,7 +191,7 @@
     </div>
 
     <!-- ═══ RESULTS ═══ -->
-    <div v-if="scannedCard" class="models__activity--payouts">
+    <div v-if="scannedCard" class="tcg-grading-bench skill-panel">
       <!-- Top row: Card image + Identification -->
       <div class="columns is-variable is-4 mb-0">
         <div class="column is-5">
@@ -201,7 +206,7 @@
           </h3>
           <div v-if="scannedCard.game" class="card-game-badge mb-3">
             <span
-              class="material-symbols-outlined mr-1"
+              class="material-symbols-outlined"
               style="font-size: 14px"
             >
               playing_cards
@@ -222,7 +227,7 @@
               :key="detail.label + idx"
               class="detail-row"
               :class="{
-                'detail-sub': detail.label.startsWith('  '),
+                'detail-sub': detail.label.startsWith(' '),
                 'detail-section': /^(Attack\s?\d*|Ability|Pokémon Power|GX Attack|VSTAR Power)$/.test(detail.label.trim()),
               }"
             >
@@ -240,7 +245,7 @@
             <div class="grading-header">
               <h4 class="is-size-5 has-text-brand fira-sans-condensed-black-italic">
                 <span
-                  class="material-symbols-outlined mr-2"
+                  class="material-symbols-outlined"
                   style="font-size: 20px"
                 >
                   verified
@@ -295,7 +300,7 @@
         >
           <span class="has-text-brand">
             <span
-              class="material-symbols-outlined mr-2"
+              class="material-symbols-outlined"
               style="font-size: 24px"
             >
               payments
@@ -305,7 +310,7 @@
         </h4>
         <div v-if="scannedCard.pricing.loading" class="price-loading">
           <span
-            class="material-symbols-outlined rotating mr-2"
+            class="material-symbols-outlined rotating"
             style="font-size: 16px"
           >
             progress_activity
@@ -347,7 +352,7 @@
       <!-- OCR Raw Text (collapsible) -->
       <details class="ocr-details mt-4">
         <summary class="ocr-summary">
-          <span class="material-symbols-outlined mr-1" style="font-size: 16px">
+          <span class="material-symbols-outlined" style="font-size: 16px">
             description
           </span>
           Raw OCR Text
@@ -359,27 +364,27 @@
       <div class="actions-bar mt-4">
 
         <button
-          class="button is-success is-medium is-outlined"
+          class="bz-btn bz-btn--success bz-btn--ghost"
           @click="copyResults"
         >
-          <span class="material-symbols-outlined mr-1">
+          <span class="material-symbols-outlined">
             content_copy
           </span>
         </button>
-        <button class="button is-warning is-medium" @click="mintCard">
-          <span class="material-symbols-outlined mr-1" style="font-size: 18px">
+        <button class="bz-btn bz-btn--warning " @click="mintCard">
+          <span class="material-symbols-outlined" style="font-size: 18px">
             token
           </span>
           Mint
         </button>
-        <button class="button is-warning is-medium is-outlined" @click="rescan">
-          <span class="material-symbols-outlined mr-1" style="font-size: 18px">
+        <button class="bz-btn bz-btn--warning bz-btn--ghost" @click="rescan">
+          <span class="material-symbols-outlined" style="font-size: 18px">
             refresh
           </span>
           Re-analyze
         </button>
-        <button class="button is-danger is-medium is-pulled-right" @click="reset">
-          <span class="material-symbols-outlined mr-1" style="font-size: 18px">
+        <button class="bz-btn bz-btn--destructive skill-float-right" @click="reset">
+          <span class="material-symbols-outlined" style="font-size: 18px">
             restart_alt
           </span>
           New Card
@@ -388,12 +393,12 @@
     </div>
 
     <!-- History -->
-    <div v-if="scanHistory.length > 0" class="mt-5">
+    <div v-if="scanHistory.length > 0" class="tcg-history-strip mt-5">
       <hr class="gradient-hr" />
       <h3
         class="is-size-4 has-text-brand fira-sans-condensed-black-italic mb-3"
       >
-        <span class="material-symbols-outlined mr-2" style="font-size: 22px">
+        <span class="material-symbols-outlined" style="font-size: 22px">
           history
         </span>
         Analysis History
@@ -447,6 +452,7 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { v4 as uuid } from "uuid";
 import { getAuthHeaders } from "../../services/auth.service.js";
 import { hasPurchasedSkill, isDevMode } from "../../services/agent.service.js";
+import BonzaiPulse from "../BonzaiPulse.vue";
 import MintModal from "../MintModal.vue";
 
 const SKILL_ID = "tcg-analysis-v1.0.0";
@@ -691,7 +697,7 @@ const TCG_REFERENCE = {
 
 export default {
   name: "TCGScannerSkill",
-  components: { MintModal },
+  components: { BonzaiPulse, MintModal },
 
   props: {
     skill: { type: Object, default: null },
@@ -749,6 +755,8 @@ export default {
       { id: "onepiece", label: "One Piece", icon: "" },
       { id: "lorcana", label: "Lorcana", icon: "" },
     ];
+
+    const selectedCollectionLabel = computed(() => collections.find((c) => c.id === selectedCollection.value)?.label || selectedCollection.value);
 
     const formattedAnalysis = computed(() => {
       if (!scannedCard.value?.analysis) return "";
@@ -1165,7 +1173,7 @@ Only include keys where you can see the value. Skip keys with no visible data.`,
         const isWotc = fields.ERA && ["base_wotc", "e_card"].includes(fields.ERA);
         details.push({ label: isWotc ? "Pokémon Power" : "Ability", value: fields.ABILITY_NAME });
         if (fields.ABILITY_TEXT && fields.ABILITY_TEXT.toLowerCase() !== "none") {
-          details.push({ label: "  Effect", value: fields.ABILITY_TEXT });
+          details.push({ label: " Effect", value: fields.ABILITY_TEXT });
         }
       }
 
@@ -1175,11 +1183,11 @@ Only include keys where you can see the value. Skip keys with no visible data.`,
         if (!name) continue;
         const label = fields.ATTACK2_NAME ? `Attack ${i}` : "Attack";
         details.push({ label, value: name });
-        if (fields[`ATTACK${i}_ENERGY`]) details.push({ label: "  Energy Cost", value: fields[`ATTACK${i}_ENERGY`] });
+        if (fields[`ATTACK${i}_ENERGY`]) details.push({ label: " Energy Cost", value: fields[`ATTACK${i}_ENERGY`] });
         const dmg = fields[`ATTACK${i}_DAMAGE`];
-        if (dmg && dmg.toLowerCase() !== "none") details.push({ label: "  Damage", value: dmg });
+        if (dmg && dmg.toLowerCase() !== "none") details.push({ label: " Damage", value: dmg });
         const eff = fields[`ATTACK${i}_EFFECT`];
-        if (eff && eff.toLowerCase() !== "none") details.push({ label: "  Effect", value: eff });
+        if (eff && eff.toLowerCase() !== "none") details.push({ label: " Effect", value: eff });
       }
 
       if (fields.FLAVOR) details.push({ label: "Description", value: fields.FLAVOR });
@@ -1643,12 +1651,12 @@ Replace the example numbers with your actual scores based on what you see. Check
           `PGT Grade: ${g.grade} ${g.label} (PGT ${g.score}/1000)`,
           "Sub-Grades:",
         );
-        g.subGrades.forEach((s) => lines.push(`  ${s.name}: ${s.score}`));
+        g.subGrades.forEach((s) => lines.push(` ${s.name}: ${s.score}`));
       }
       if (c.pricing?.variants) {
         lines.push("", "Market Prices:");
         c.pricing.variants.forEach((v) =>
-          lines.push(`  ${v.type}: $${v.market?.toFixed(2) || "—"}`),
+          lines.push(` ${v.type}: $${v.market?.toFixed(2) || "—"}`),
         );
       }
       if (c.analysis) lines.push("", "Analysis:", c.analysis);
@@ -1695,6 +1703,7 @@ Replace the example numbers with your actual scores based on what you see. Check
       cameraVideo,
       selectedMode,
       selectedCollection,
+      selectedCollectionLabel,
       inputModes,
       collections,
       frontPreview,
@@ -1737,12 +1746,109 @@ Replace the example numbers with your actual scores based on what you see. Check
 </script>
 
 <style scoped>
+/* Design-system compatibility layer for migrated skill workflow surfaces. */
+.skill-panel {
+  padding: var(--bz-space-5);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r) !important;
+  color: var(--bz-fg);
+}
+.skill-panel + .skill-panel,
+.analysis-history .skill-panel + .skill-panel {
+  margin-top: var(--bz-space-5);
+}
+.skill-card {
+  padding: var(--bz-space-4);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+}
+.skill-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-4);
+}
+.skill-title-icon,
+.skill-name .material-symbols-outlined {
+  color: var(--bz-purple-300) !important;
+  font-size: 42px !important;
+  line-height: 1;
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  min-height: 24px;
+  padding: 2px var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  line-height: 1.2;
+}
+.skill-chip--brand { background: var(--bz-purple-soft); border-color: var(--bz-border-brand); color: var(--bz-fg); }
+.skill-chip--success { background: var(--bz-emerald-soft); border-color: var(--bz-emerald-500); color: var(--bz-emerald-300); }
+.skill-chip--warning { background: var(--bz-warning-soft); border-color: var(--bz-warning); color: var(--bz-warning); }
+.skill-chip--info { background: var(--bz-info-soft); border-color: var(--bz-info); color: var(--bz-info); }
+.skill-chip--danger { background: var(--bz-danger-soft); border-color: var(--bz-danger); color: var(--bz-danger); }
+.skill-input,
+.config-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-input--sm { height: 32px; }
+.skill-input:focus,
+.config-input:focus {
+  outline: none;
+  border-color: var(--bz-border-brand);
+}
+.skill-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  color: var(--bz-fg);
+  font: inherit;
+}
+.skill-unit {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+  color: var(--bz-fg-low);
+  pointer-events: none;
+}
+.skill-fullwidth { width: 100%; }
+.skill-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--bz-r-pill);
+  background: var(--bz-canvas);
+}
+.skill-progress::-webkit-progress-value { background: var(--bz-gradient-brand); }
+.bz-btn--running { opacity: 0.72; }
+
 /* ─── Shared Skill Styles ─────────────────────────────────────────── */
-.models__activity--payouts {
+.skill-panel {
   padding: 2em;
   border: 1px solid var(--bz-border);
   border-radius: 12px;
-  backdrop-filter: blur(32px);
 }
 .skill-name {
   background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51))
@@ -1759,7 +1865,7 @@ Replace the example numbers with your actual scores based on what you see. Check
   text-align: left;
 }
 .rotating {
-  animation: rotate 1s linear infinite;
+  animation: bz-spin 1s linear infinite;
 }
 @keyframes rotate {
   from {
@@ -1806,7 +1912,6 @@ Replace the example numbers with your actual scores based on what you see. Check
   cursor: pointer;
   transition: all 0.3s ease;
   white-space: nowrap;
-  backdrop-filter: blur(32px);
 }
 .category-selector input[type="radio"] + label.radio.category:hover {
   background: var(--bz-purple-soft);
@@ -1814,10 +1919,9 @@ Replace the example numbers with your actual scores based on what you see. Check
   color: var(--bz-fg-mid);
 }
 .category-selector input[type="radio"]:checked + label.radio.category {
-  color: rgba(255, 255, 255, 1);
-  border: 1px solid rgba(255, 255, 255, 1);
+  color: var(--bz-fg);
+  border: 1px solid var(--bz-fg);
   background: var(--bz-purple-soft);
-  backdrop-filter: blur(64px);
 }
 
 /* ─── Collection Selector (5-col grid) ───────────────────────────── */
@@ -1900,16 +2004,15 @@ Replace the example numbers with your actual scores based on what you see. Check
   display: flex;
   align-items: center;
   color: var(--bz-fg);
-  backdrop-filter: blur(10px);
   box-shadow: 0 4px 20px var(--bz-scrim);
 }
-.status-notification.is-info {
+.status-notification.bz-btn--primary {
   background: rgba(62, 142, 208, 0.95);
 }
-.status-notification.is-success {
+.status-notification.bz-btn--success {
   background: rgba(57, 213, 130, 0.95);
 }
-.status-notification.is-danger {
+.status-notification.bz-btn--destructive {
   background: rgba(255, 56, 96, 0.95);
 }
 
@@ -1961,7 +2064,7 @@ Replace the example numbers with your actual scores based on what you see. Check
   border-radius: 50%;
   background: rgba(255, 56, 96, 0.9);
   border: none;
-  color: white;
+  color: var(--bz-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2371,4 +2474,131 @@ details[open] .ocr-summary::before {
   color: rgba(255, 80, 80, 1);
   background: rgba(255, 80, 80, 0.1);
 }
+
+/* Agentic redesign: Grading Bench */
+.tcg-input-row,
+.tcg-collection-row,
+.tcg-capture-bay {
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+}
+.tcg-input-row .category-selector,
+.tcg-collection-row .category-selector {
+  margin-bottom: 0 !important;
+}
+.tcg-collection-row .collection-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.tcg-capture-bay {
+  display: grid;
+  place-items: center;
+  min-height: 300px;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(250, 173, 20, 0.12), transparent 34%),
+    var(--bz-canvas);
+}
+.tcg-capture-bay .skill-fullwidth {
+  max-width: 420px;
+}
+.tcg-grading-bench {
+  background: var(--bz-panel);
+}
+.tcg-grading-bench > .columns {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.75fr) minmax(0, 1.25fr);
+  gap: var(--bz-space-5);
+  margin: 0;
+}
+.tcg-grading-bench > .columns > .column {
+  width: auto;
+  padding: 0;
+}
+.card-preview-container {
+  min-height: 520px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent),
+    var(--bz-canvas);
+}
+.grading-panel-inline,
+.pricing-panel,
+.ocr-details {
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+  padding: var(--bz-space-4);
+}
+.actions-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--bz-space-2);
+  flex-wrap: wrap;
+}
+.tcg-history-strip {
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+}
+.tcg-history-strip .history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+@media (max-width: 980px) {
+  .tcg-grading-bench > .columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Signature upgrade: card grading intake instrument */
+.tcg-bench-status {
+  display: grid;
+  grid-template-columns: 92px repeat(4, minmax(120px, 1fr));
+  gap: var(--bz-space-3);
+  align-items: stretch;
+  margin-bottom: var(--bz-space-4);
+}
+.tcg-slab-preview,
+.tcg-bench-cell {
+  min-height: 92px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+}
+.tcg-slab-preview {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.tcg-slab-preview img { width: 100%; height: 100%; object-fit: cover; }
+.tcg-slab-preview .material-symbols-outlined { color: var(--bz-warning); font-size: 34px; }
+.tcg-bench-cell {
+  padding: var(--bz-space-4);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.tcg-bench-cell span {
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.tcg-bench-cell strong {
+  color: var(--bz-fg);
+  font-size: 20px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+.tcg-input-row,
+.tcg-collection-row {
+  display: grid;
+  align-items: center;
+}
+@media (max-width: 980px) {
+  .tcg-bench-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 </style>

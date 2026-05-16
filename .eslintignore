@@ -1,1 +1,4 @@
 vite.*.config.ts
+out/
+packages/
+src/contracts/cre/
