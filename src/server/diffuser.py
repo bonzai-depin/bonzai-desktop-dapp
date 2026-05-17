@@ -1673,7 +1673,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO, QWEN3_TTS_DESIGN_REPO], "single_files": []}
     if pipeline in ("music", "ace_step"):
         return {"repos_to_fetch": [ACE_STEP_REPO, ACE_STEP_XL_REPO], "single_files": [
-            _sf("qwen3.5-4b-q4_k_m.gguf", "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"),
+            _sf("qwen3.5-4b-ud-q4_k_xl.gguf", "https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf"),
         ]}
 
     # Video pipelines

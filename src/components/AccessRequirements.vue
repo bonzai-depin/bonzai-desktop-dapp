@@ -66,7 +66,7 @@
         class="bz-btn bz-btn--primary bz-access__cta"
         :disabled="isUnlocking"
         @click="unlockAllLevels"
-        :title="`Pay ${unlockPrice} ETH on Base to unlock all 6 levels permanently`"
+        :title="`Pay ${unlockPrice} ETH on Ethereum to unlock all 6 levels permanently`"
       >
         <span class="material-symbols-outlined" aria-hidden="true">
           {{ isUnlocking ? "hourglass_empty" : "lock_open" }}
@@ -157,7 +157,7 @@ const unlockAllLevels = async () => {
     const result = await unlockAllWithEth((status) => {
       switch (status) {
         case "switching_network":
-          unlockStatus.value = "Switching to Base…";
+          unlockStatus.value = "Switching to Ethereum…";
           break;
         case "awaiting_payment":
           unlockStatus.value = "Confirm in your wallet…";

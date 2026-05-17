@@ -65,6 +65,25 @@ function resolveRef(cliArgs) {
   return process.env.LLAMA_CPP_REF || "master";
 }
 
+function looksLikeSha(ref) {
+  return /^[0-9a-f]{7,40}$/i.test(ref);
+}
+
+function resolveRemoteSha(ref) {
+  if (looksLikeSha(ref)) return ref;
+  try {
+    const output = execSync(`git ls-remote "${LLAMA_CPP_REPO}" "${ref}" "refs/heads/${ref}" "refs/tags/${ref}"`, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    const first = output.split(/\r?\n/).find(Boolean);
+    return first?.split(/\s+/)[0] || null;
+  } catch (err) {
+    console.warn(`  Warning: could not resolve remote sha for '${ref}': ${err.message}`);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // cmake flags per platform
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +100,7 @@ function getCmakeFlags() {
   if (PLATFORM === "darwin") {
     flags.push("-DGGML_METAL=ON");
     flags.push("-DGGML_BLAS=OFF");  // Accelerate BLAS conflicts with RPC — Metal handles everything
+    flags.push("-DGGML_NATIVE=OFF"); // Avoid CMake run-probes hanging on Apple Silicon; Metal is the inference backend.
     // Apple Silicon: use native arch
     if (ARCH === "arm64") {
       flags.push("-DCMAKE_OSX_ARCHITECTURES=arm64");
@@ -149,9 +169,7 @@ function cloneSource(ref) {
   // commit SHA without the remote enabling uploadpack.allowReachableSHA1InWant.
   // For named refs (master, b8550, v1.2.3) --depth 1 works; for raw SHAs we
   // fall back to a full clone + checkout.
-  const looksLikeSha = /^[0-9a-f]{7,40}$/i.test(ref);
-
-  if (looksLikeSha) {
+  if (looksLikeSha(ref)) {
     run(`git clone "${LLAMA_CPP_REPO}" "${SRC_DIR}"`);
     run(`git -C "${SRC_DIR}" checkout ${ref}`);
   } else {
@@ -260,13 +278,16 @@ function verify() {
       process.exit(1);
     }
 
-    // Quick sanity check — run with --help (should exit 0 or 1 with usage text)
-    try {
-      execSync(`"${binPath}" --help`, { stdio: "pipe", timeout: 5000 });
-    } catch (e) {
-      // --help often exits with code 1, that's fine
-      if (e.status > 1) {
-        console.error(`WARNING: ${name} --help exited with code ${e.status}`);
+    const stat = fs.statSync(binPath);
+    if (stat.size === 0) {
+      console.error(`ERROR: ${binPath} is empty`);
+      process.exit(1);
+    }
+    if (PLATFORM !== "win32") {
+      const isExecutable = (stat.mode & 0o111) !== 0;
+      if (!isExecutable) {
+        console.error(`ERROR: ${binPath} is not executable`);
+        process.exit(1);
       }
     }
     console.log(`  ✓ ${name}`);
@@ -280,12 +301,14 @@ function verify() {
 const args = process.argv.slice(2);
 const shouldClean = args.includes("--clean");
 const requestedRef = resolveRef(args);
+const requestedSha = resolveRemoteSha(requestedRef);
 
 console.log("╔══════════════════════════════════════════════════════════════╗");
 console.log("║  BonzAI — Build llama.cpp RPC binaries                     ║");
 console.log("╚══════════════════════════════════════════════════════════════╝");
 console.log(`Platform: ${PLATFORM_KEY}-${ARCH}`);
 console.log(`Source:   ${LLAMA_CPP_REPO} @ ${requestedRef}`);
+if (requestedSha) console.log(`Remote:   ${requestedSha.slice(0, 12)}`);
 console.log(`Output:   ${BIN_DIR}`);
 console.log();
 
@@ -299,8 +322,10 @@ const rpcBin = path.join(BIN_DIR, `rpc-server${ext}`);
 const serverBin = path.join(BIN_DIR, `llama-server${ext}`);
 const prevMarker = readSourceMarker();
 const refMatches = prevMarker && prevMarker.ref === requestedRef;
+const shaMatches = requestedSha && prevMarker?.sha === requestedSha;
+const sourceMatches = requestedSha ? shaMatches : refMatches;
 
-if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !shouldClean && refMatches) {
+if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !shouldClean && sourceMatches) {
   console.log(`Binaries already built from ref '${requestedRef}' (${prevMarker.sha?.slice(0, 12)}).`);
   console.log("Use --clean to force a rebuild, or change --ref to bump the source.");
   console.log(`  ${rpcBin}`);
@@ -308,10 +333,11 @@ if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !shouldClean && refMatc
   process.exit(0);
 }
 
-if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !refMatches) {
+if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !sourceMatches) {
   console.log(
-    `Existing binaries were built from ref '${prevMarker?.ref ?? "unknown"}'; ` +
-    `requested '${requestedRef}'. Rebuilding.`
+    `Existing binaries were built from '${prevMarker?.ref ?? "unknown"}' ` +
+    `(${prevMarker?.sha?.slice(0, 12) ?? "unknown"}); requested '${requestedRef}'` +
+    `${requestedSha ? ` (${requestedSha.slice(0, 12)})` : ""}. Rebuilding.`
   );
 }
 

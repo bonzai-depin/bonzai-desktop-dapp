@@ -777,6 +777,13 @@ export default {
       isMoE: entry.isMoE,
       context: entry.context,
       thinking: entry.thinking,
+      isMultimodal: entry.isMultimodal || false,
+      mmproj: entry.mmproj || null,
+      draftModel: entry.draftModel || null,
+      draftUrl: entry.draftUrl || null,
+      specType: entry.specType || null,
+      specDraftNMax: entry.specDraftNMax || null,
+      mtp: entry.mtp || false,
       layers: entry.layers,
       kvHeads: entry.kvHeads,
       headDim: entry.headDim,
@@ -1181,6 +1188,11 @@ export default {
         isMoE: model.isMoE,
         isMultimodal: model.isMultimodal || false,
         mmproj: model.mmproj || null,
+        draftModel: model.draftModel || null,
+        draftUrl: model.draftUrl || null,
+        specType: model.specType || null,
+        specDraftNMax: model.specDraftNMax || null,
+        mtp: model.mtp || false,
         // Reasoning is OFF at startup. Live per-request toggle is sent
         // via `chat_template_kwargs` in chatStream — no reload needed.
       };

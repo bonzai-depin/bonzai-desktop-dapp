@@ -216,18 +216,32 @@ export const LLM_BASE_MODELS = {
   },
   qwen3_5_0_8b: {
     name: 'Qwen3.5 0.8B',
-    description: 'Ultra-compact 0.8B Qwen3.5 hybrid model with 131K context',
+    description: 'Ultra-compact Qwen3.5 MTP hybrid model with 131K context',
     parameters: 0.8e9, context: 131072,
     tiers: {
-      q4: { repo: 'unsloth/Qwen3.5-0.8B-GGUF', file: 'Qwen3.5-0.8B-Q4_K_M.gguf', size: 0.6, vram: 2 },
+      q2: { repo: 'unsloth/Qwen3.5-0.8B-MTP-GGUF', file: 'Qwen3.5-0.8B-UD-Q2_K_XL.gguf', size: 0.45, vram: 2, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 0.8B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-0.8B-MTP-GGUF', file: 'Qwen3.5-0.8B-UD-Q4_K_XL.gguf', size: 0.6, vram: 2, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 0.8B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-0.8B-MTP-GGUF', file: 'Qwen3.5-0.8B-UD-Q8_K_XL.gguf', size: 1.0, vram: 2, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 0.8B MTP Q8_K_XL' },
+    },
+  },
+  qwen3_5_2b: {
+    name: 'Qwen3.5 2B',
+    description: 'Small Qwen3.5 MTP hybrid model with 131K context',
+    parameters: 2e9, context: 131072, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Qwen3.5-2B-MTP-GGUF', file: 'Qwen3.5-2B-UD-Q2_K_XL.gguf', size: 0.9, vram: 2, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 2B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-2B-MTP-GGUF', file: 'Qwen3.5-2B-UD-Q4_K_XL.gguf', size: 1.5, vram: 3, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 2B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-2B-MTP-GGUF', file: 'Qwen3.5-2B-UD-Q8_K_XL.gguf', size: 2.6, vram: 4, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 2B MTP Q8_K_XL' },
     },
   },
   qwen3_5_4b: {
     name: 'Qwen3.5 4B',
-    description: 'Compact 4B hybrid model with Gated DeltaNet + Gated Attention, 262K context',
+    description: 'Compact Qwen3.5 MTP hybrid model with Gated DeltaNet + Gated Attention, 262K context',
     parameters: 4e9, context: 262144,
     tiers: {
-      q4: { repo: 'unsloth/Qwen3.5-4B-GGUF', file: 'Qwen3.5-4B-Q4_K_M.gguf', size: 2.8, vram: 4 },
+      q2: { repo: 'unsloth/Qwen3.5-4B-MTP-GGUF', file: 'Qwen3.5-4B-UD-Q2_K_XL.gguf', size: 1.8, vram: 3, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 4B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-4B-MTP-GGUF', file: 'Qwen3.5-4B-UD-Q4_K_XL.gguf', size: 2.8, vram: 4, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 4B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-4B-MTP-GGUF', file: 'Qwen3.5-4B-UD-Q8_K_XL.gguf', size: 5.0, vram: 7, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 4B MTP Q8_K_XL' },
     },
   },
   phi_3_mini: {
@@ -342,10 +356,12 @@ export const LLM_BASE_MODELS = {
   },
   qwen3_5_9b: {
     name: 'Qwen3.5 9B',
-    description: 'Qwen3.5 9B hybrid model with Gated DeltaNet + Gated Attention, 262K context',
+    description: 'Qwen3.5 9B MTP hybrid model with Gated DeltaNet + Gated Attention, 262K context',
     parameters: 9e9, context: 262144, thinking: true,
     tiers: {
-      q4: { repo: 'unsloth/Qwen3.5-9B-GGUF', file: 'Qwen3.5-9B-UD-Q4_K_XL.gguf', size: 5.97, vram: 8 },
+      q2: { repo: 'unsloth/Qwen3.5-9B-MTP-GGUF', file: 'Qwen3.5-9B-UD-Q2_K_XL.gguf', size: 3.8, vram: 6, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 9B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-9B-MTP-GGUF', file: 'Qwen3.5-9B-UD-Q4_K_XL.gguf', size: 5.97, vram: 8, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 9B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-9B-MTP-GGUF', file: 'Qwen3.5-9B-UD-Q8_K_XL.gguf', size: 10.5, vram: 12, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 9B MTP Q8_K_XL' },
     },
   },
   yi_coder_9b: {
@@ -402,24 +418,22 @@ export const LLM_BASE_MODELS = {
   },
   qwen3_5_27b: {
     name: 'Qwen3.5 27B',
-    description: 'Qwen3.5 27B hybrid attention model with 262K context',
+    description: 'Qwen3.5 27B MTP hybrid attention model with 262K context',
     parameters: 27e9, activeParameters: 8e9, context: 262144, thinking: true,
     tiers: {
-      q2: { repo: 'unsloth/Qwen3.5-27B-GGUF', file: 'Qwen3.5-27B-UD-Q2_K_XL.gguf', size: 11.2, vram: 14 },
-      q4: { repo: 'unsloth/Qwen3.5-27B-GGUF', file: 'Qwen3.5-27B-UD-Q4_K_XL.gguf', size: 16.7, vram: 20 },
-      q8: { repo: 'unsloth/Qwen3.5-27B-GGUF', file: 'Qwen3.5-27B-UD-Q8_K_XL.gguf', size: 32.4, vram: 36 },
+      q2: { repo: 'unsloth/Qwen3.5-27B-MTP-GGUF', file: 'Qwen3.5-27B-UD-Q2_K_XL.gguf', size: 11.2, vram: 14, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 27B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-27B-MTP-GGUF', file: 'Qwen3.5-27B-UD-Q4_K_XL.gguf', size: 16.7, vram: 20, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 27B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-27B-MTP-GGUF', file: 'Qwen3.5-27B-UD-Q8_K_XL.gguf', size: 32.4, vram: 36, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 27B MTP Q8_K_XL' },
     },
   },
   qwen_3_6_27b: {
     name: 'Qwen3.6 27B',
-    description: 'Qwen3.6 27B dense model with 262K context — 3D-gen default (better code-length budget than MoE at this size)',
+    description: 'Qwen3.6 27B dense MTP model with 262K context',
     parameters: 27e9, context: 262144, thinking: true,
-    draftKey: 'qwen3_1_7b_draft', // Speculative decoding via llama-server -md
     tiers: {
-      q2: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q2_K_XL.gguf', size: 11.0, vram: 14 },
-      q3: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q3_K_XL.gguf', size: 13.5, vram: 18 },
-      q4: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q4_K_XL.gguf', size: 16.5, vram: 20 },
-      q8: { repo: 'unsloth/Qwen3.6-27B-GGUF', file: 'Qwen3.6-27B-UD-Q8_K_XL.gguf', size: 31.8, vram: 36 },
+      q2: { repo: 'unsloth/Qwen3.6-27B-MTP-GGUF', file: 'Qwen3.6-27B-UD-Q2_K_XL.gguf', size: 11.0, vram: 14, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.6 27B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.6-27B-MTP-GGUF', file: 'Qwen3.6-27B-UD-Q4_K_XL.gguf', size: 16.5, vram: 20, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.6 27B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.6-27B-MTP-GGUF', file: 'Qwen3.6-27B-UD-Q8_K_XL.gguf', size: 31.8, vram: 36, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.6 27B MTP Q8_K_XL' },
     },
   },
   deepseek_r1_32b: {
@@ -457,14 +471,6 @@ export const LLM_BASE_MODELS = {
   },
 
   // --- MoE 30B+ ---------------------------------------------------------
-  qwen3_5_28b_a3b_reap: {
-    name: 'Qwen3.5 28B A3B REAP',
-    description: 'REAP-pruned 28B MoE with 3B active params — efficient reasoning',
-    parameters: 28.24e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
-    tiers: {
-      q4: { repo: 'barozp/Qwen-3.5-28B-A3B-REAP-GGUF', file: 'Qwen-3.5-28B-A3B-REAP-Q4_K_M.gguf', size: 17.26, vram: 18 },
-    },
-  },
   gemma_4_21b_a4b_reap: {
     name: 'Gemma 4 21B A4B REAP',
     description: 'REAP-pruned 21B MoE Gemma 4 with 4B active params',
@@ -475,36 +481,22 @@ export const LLM_BASE_MODELS = {
   },
   qwen3_5_35b_a3b: {
     name: 'Qwen3.5 35B A3B',
-    description: 'Qwen3.5 35B MoE with 3B active params, 262K context',
+    description: 'Qwen3.5 35B A3B MTP MoE with 3B active params, 262K context',
     parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
     tiers: {
-      q2: { repo: 'unsloth/Qwen3.5-35B-A3B-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf', size: 12.9, vram: 16 },
-      q4: { repo: 'unsloth/Qwen3.5-35B-A3B-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf', size: 20.6, vram: 24 },
-      q8: { repo: 'unsloth/Qwen3.5-35B-A3B-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q8_K_XL.gguf', size: 38.7, vram: 42 },
+      q2: { repo: 'unsloth/Qwen3.5-35B-A3B-MTP-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf', size: 12.9, vram: 16, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 35B A3B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-35B-A3B-MTP-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf', size: 20.6, vram: 24, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 35B A3B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-35B-A3B-MTP-GGUF', file: 'Qwen3.5-35B-A3B-UD-Q8_K_XL.gguf', size: 38.7, vram: 42, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 35B A3B MTP Q8_K_XL' },
     },
   },
   qwen_3_6_35b_a3b: {
     name: 'Qwen3.6 35B A3B',
-    description: 'Qwen3.6 35B MoE with 3B active params, 256 experts (8 routed + 1 shared), 256K native context (up to 1M with YaRN)',
+    description: 'Qwen3.6 35B A3B MTP MoE with 3B active params, 256 experts (8 routed + 1 shared), 256K native context',
     parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
-    draftKey: 'qwen3_1_7b_draft',
     tiers: {
-      q2: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf', size: 12.3, vram: 16 },
-      q3: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf', size: 16.8, vram: 20 },
-      q4: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q4_K_M.gguf', size: 22.1, vram: 24 },
-      q8: { repo: 'unsloth/Qwen3.6-35B-A3B-GGUF', file: 'Qwen3.6-35B-A3B-Q8_0.gguf', size: 36.9, vram: 42 },
-    },
-  },
-  qwen_3_6_28b_reap_a3b: {
-    name: 'Qwen3.6 28B REAP A3B',
-    description: 'Qwen3.6 35B A3B pruned via REAP (20% reduction → 28B total, 3B active). Same 256K context and hybrid thinking, faster prefill, smaller VRAM footprint than the unpruned 35B parent.',
-    parameters: 28e9, activeParameters: 3e9, isMoE: true, context: 262144, thinking: true,
-    draftKey: 'qwen3_1_7b_draft',
-    tiers: {
-      q4: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q4_k_m.gguf', size: 17.3, vram: 22 },
-      q5: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q5_k_m.gguf', size: 20.2, vram: 26 },
-      q6: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q6_k.gguf',   size: 23.2, vram: 30 },
-      q8: { repo: '0xSero/Qwen3.6-28B-REAP20-A3B-GGUF', file: 'model.q8_0.gguf',   size: 30.1, vram: 36 },
+      q2: { repo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf', size: 12.3, vram: 16, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.6 35B A3B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf', size: 22.1, vram: 24, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.6 35B A3B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF', file: 'Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf', size: 36.9, vram: 42, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.6 35B A3B MTP Q8_K_XL' },
     },
   },
   qwen3_coder_next: {
@@ -519,11 +511,12 @@ export const LLM_BASE_MODELS = {
   // --- MoE 100B+ (sharded) ----------------------------------------------
   qwen3_5_122b_a10b: {
     name: 'Qwen3.5 122B A10B',
-    description: 'Qwen3.5 122B MoE with 10B active params',
+    description: 'Qwen3.5 122B A10B MTP MoE with 10B active params',
     parameters: 122e9, activeParameters: 10e9, isMoE: true, context: 262144, thinking: true,
     tiers: {
-      q2: { repo: 'unsloth/Qwen3.5-122B-A10B-GGUF', file: 'Qwen3.5-122B-A10B-UD-Q2_K_XL.gguf', size: 46.7, vram: 52 },
-      q4: { repo: 'unsloth/Qwen3.5-122B-A10B-GGUF', file: 'Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf', size: 68.4, vram: 72, shards: 3 },
+      q2: { repo: 'unsloth/Qwen3.5-122B-A10B-MTP-GGUF', file: 'Qwen3.5-122B-A10B-UD-Q2_K_XL.gguf', size: 46.7, vram: 52, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 122B A10B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-122B-A10B-MTP-GGUF', file: 'UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf', size: 68.4, vram: 72, shards: 3, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 122B A10B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-122B-A10B-MTP-GGUF', file: 'UD-Q8_K_XL/Qwen3.5-122B-A10B-UD-Q8_K_XL-00001-of-00004.gguf', size: 127, vram: 136, shards: 4, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 122B A10B MTP Q8_K_XL' },
     },
   },
   minimax_m2_5: {
@@ -536,11 +529,12 @@ export const LLM_BASE_MODELS = {
   },
   qwen3_5_397b_a17b: {
     name: 'Qwen3.5 397B A17B',
-    description: 'Qwen3.5 397B MoE with 17B active params (frontier)',
+    description: 'Qwen3.5 397B A17B MTP MoE with 17B active params (frontier)',
     parameters: 397e9, activeParameters: 17e9, isMoE: true, context: 262144, thinking: true,
     tiers: {
-      q2: { repo: 'unsloth/Qwen3.5-397B-A17B-GGUF', file: 'Qwen3.5-397B-A17B-UD-Q2_K_XL-00001-of-00005.gguf', size: 149, vram: 160, shards: 5 },
-      q4: { repo: 'unsloth/Qwen3.5-397B-A17B-GGUF', file: 'Qwen3.5-397B-A17B-UD-Q4_K_XL-00001-of-00006.gguf', size: 219, vram: 230, shards: 6 },
+      q2: { repo: 'unsloth/Qwen3.5-397B-A17B-MTP-GGUF', file: 'UD-Q2_K_XL/Qwen3.5-397B-A17B-UD-Q2_K_XL-00001-of-00004.gguf', size: 149, vram: 160, shards: 4, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 397B A17B MTP Q2_K_XL' },
+      q4: { repo: 'unsloth/Qwen3.5-397B-A17B-MTP-GGUF', file: 'UD-Q4_K_XL/Qwen3.5-397B-A17B-UD-Q4_K_XL-00001-of-00007.gguf', size: 219, vram: 230, shards: 7, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 397B A17B MTP Q4_K_XL' },
+      q8: { repo: 'unsloth/Qwen3.5-397B-A17B-MTP-GGUF', file: 'UD-Q8_K_XL/Qwen3.5-397B-A17B-UD-Q8_K_XL-00001-of-00010.gguf', size: 410, vram: 430, shards: 10, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 397B A17B MTP Q8_K_XL' },
     },
   },
   kimi_k2_5: {
@@ -581,7 +575,7 @@ export function resolveLLM(baseKey, tier = 'q4') {
   if (!spec) return null;
 
   const url = `https://huggingface.co/${spec.repo}/resolve/main/${spec.file}`;
-  const filename = spec.file.toLowerCase();
+  const filename = spec.file.split('/').pop().toLowerCase();
   const tierLabel = LLM_TIER_LABELS[tier];
   const availableTiers = Object.keys(model.tiers);
   const hasMultipleTiers = availableTiers.length > 1;
@@ -598,7 +592,7 @@ export function resolveLLM(baseKey, tier = 'q4') {
   // filename (q4 tier of the draft base) so loadModel can pass -md directly.
   let draftModel = null;
   let draftUrl = null;
-  if (model.draftKey && LLM_BASE_MODELS[model.draftKey]?.tiers?.q4) {
+  if (!spec.mtp && spec.specType !== 'draft-mtp' && model.draftKey && LLM_BASE_MODELS[model.draftKey]?.tiers?.q4) {
     const draftSpec = LLM_BASE_MODELS[model.draftKey].tiers.q4;
     draftModel = draftSpec.file.toLowerCase();
     draftUrl = `https://huggingface.co/${draftSpec.repo}/resolve/main/${draftSpec.file}`;
@@ -609,7 +603,7 @@ export function resolveLLM(baseKey, tier = 'q4') {
     baseKey,
     tier,
     availableTiers,
-    name: hasMultipleTiers ? `${model.name} ${tierLabel}` : model.name,
+    name: spec.displayName || (hasMultipleTiers ? `${model.name} ${tierLabel}` : model.name),
     type: 'llm',
     filename,
     url,
@@ -627,6 +621,9 @@ export function resolveLLM(baseKey, tier = 'q4') {
     mmprojUrl,
     draftModel,
     draftUrl,
+    specType: spec.specType || model.specType || null,
+    specDraftNMax: spec.specDraftNMax || model.specDraftNMax || null,
+    mtp: spec.mtp || model.mtp || false,
     layers: model.layers,
     kvHeads: model.kvHeads,
     headDim: model.headDim,
@@ -749,16 +746,16 @@ export const MODEL_REQUIREMENTS = {
     size: '~4 GB fast (2B) / ~18.8 GB quality (4B XL)',
     vram: '4 GB fast / 12 GB quality',
     description: 'AI music generation — Fast mode (v1.5 turbo, 2B params) or Quality mode (v1.5 XL turbo, 4B params, float16)',
-    // The lyrics generation step in GenerativeAudio uses Qwen3.5 4B as an
+    // The lyrics generation step in GenerativeAudio uses Qwen3.5 4B MTP as an
     // on-device enhancer. It's a hard dependency for the music flow: without
     // it, the "Generate Lyrics" button stays disabled. Listing it as an
     // additional file makes the skill downloader fetch it alongside ACE-Step.
     additionalFiles: [{
-      name: 'qwen3.5-4b-q4_k_m.gguf',
-      url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
+      name: 'qwen3.5-4b-ud-q4_k_xl.gguf',
+      url: 'https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf',
       size: '~2.8 GB',
       filesizeBytes: 2.8e9,
-      description: 'Qwen3.5 4B — lyrics enhancer LLM (required for music mode)',
+      description: 'Qwen3.5 4B MTP — lyrics enhancer LLM (required for music mode)',
     }],
   },
 
@@ -773,11 +770,11 @@ export const MODEL_REQUIREMENTS = {
     vram: '4 GB',
     description: 'Fast music generation (v1.5 turbo, 2B params)',
     additionalFiles: [{
-      name: 'qwen3.5-4b-q4_k_m.gguf',
-      url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
+      name: 'qwen3.5-4b-ud-q4_k_xl.gguf',
+      url: 'https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf',
       size: '~2.8 GB',
       filesizeBytes: 2.8e9,
-      description: 'Qwen3.5 4B — lyrics enhancer LLM (required for music mode)',
+      description: 'Qwen3.5 4B MTP — lyrics enhancer LLM (required for music mode)',
     }],
   },
 

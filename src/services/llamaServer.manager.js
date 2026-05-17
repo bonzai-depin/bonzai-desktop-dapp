@@ -140,6 +140,8 @@ async function pickFreePort() {
  * @param {string} [spec.kvCacheTypeK="q8_0"]  -ctk; saves memory on long contexts
  * @param {string} [spec.kvCacheTypeV="q8_0"]  -ctv
  * @param {string} [spec.draftPath]         -md, speculative draft model
+ * @param {string} [spec.specType]          --spec-type; currently draft-mtp
+ * @param {number} [spec.specDraftNMax=2]   --spec-draft-n-max for MTP
  * @param {number} [spec.draftNgl=99]       -ngld
  * @param {number} [spec.draftCtxSize]      -cd
  * @param {number} [spec.draftMaxTokens=12] --draft-max
@@ -180,6 +182,13 @@ async function pickFreePort() {
  *                                          ignore it harmlessly.
  */
 function buildArgs(spec) {
+  const isMtpSpecDecode = spec.specType === "draft-mtp" || spec.mtp === true;
+  const requestedParallelSlots = spec.parallelSlots && spec.parallelSlots >= 1 ? spec.parallelSlots : 1;
+  const parallelSlots = isMtpSpecDecode ? 1 : requestedParallelSlots;
+  if (isMtpSpecDecode && requestedParallelSlots !== 1) {
+    console.warn("[llama-server] MTP speculative decoding requires -np 1; forcing parallelSlots=1");
+  }
+
   const args = [
     "-m", spec.modelPath,
     "--host", "127.0.0.1",
@@ -203,7 +212,7 @@ function buildArgs(spec) {
   // n_parallel=1 (or whatever the caller specifies) gives the entire
   // context window to a single in-flight request — what we want for
   // single-user generative work.
-  args.push("-np", String(spec.parallelSlots && spec.parallelSlots >= 1 ? spec.parallelSlots : 1));
+  args.push("-np", String(parallelSlots));
   if (typeof spec.mainGpu === "number") args.push("--main-gpu", String(spec.mainGpu));
   if (spec.chatTemplate) args.push("--chat-template", spec.chatTemplate);
 
@@ -223,11 +232,18 @@ function buildArgs(spec) {
   const enableThinking = spec.enableThinking === true;
   args.push("--chat-template-kwargs", JSON.stringify({ enable_thinking: enableThinking }));
 
-  if (spec.mmprojPath) {
+  if (spec.mmprojPath && !isMtpSpecDecode) {
     args.push("--mmproj", spec.mmprojPath);
+  } else if (spec.mmprojPath && isMtpSpecDecode) {
+    console.warn("[llama-server] MTP speculative decoding is not compatible with --mmproj yet; disabling mmproj");
   }
 
-  if (spec.draftPath) {
+  if (isMtpSpecDecode) {
+    args.push(
+      "--spec-type", "draft-mtp",
+      "--spec-draft-n-max", String(spec.specDraftNMax ?? 2),
+    );
+  } else if (spec.draftPath) {
     args.push(
       "-md", spec.draftPath,
       "-ngld", String(spec.draftNgl ?? 99),
@@ -295,6 +311,22 @@ export async function startModel(spec, { resourcesPath = null } = {}) {
     console.warn(`[llama-server] mmproj not found, disabling multimodal: ${spec.mmprojPath}`);
     spec = { ...spec, mmprojPath: null };
   }
+
+  const isMtpSpecDecode = spec.specType === "draft-mtp" || spec.mtp === true;
+  if (isMtpSpecDecode) {
+    if (spec.mmprojPath) {
+      console.warn("[llama-server] MTP speculative decoding is not compatible with --mmproj yet; disabling multimodal");
+      spec = { ...spec, mmprojPath: null };
+    }
+    if (spec.draftPath) {
+      console.warn("[llama-server] MTP speculative decoding uses the GGUF draft heads; ignoring external draft model");
+      spec = { ...spec, draftPath: null };
+    }
+    if (spec.parallelSlots && spec.parallelSlots !== 1) {
+      spec = { ...spec, parallelSlots: 1 };
+    }
+  }
+
   if (spec.draftPath && !fs.existsSync(spec.draftPath)) {
     console.warn(`[llama-server] draft model not found, disabling speculative decoding: ${spec.draftPath}`);
     spec = { ...spec, draftPath: null };

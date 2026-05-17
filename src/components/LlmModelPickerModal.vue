@@ -444,7 +444,14 @@ async function onLoad(model) {
       filename: model.filename,
       url: model.url,
       parameters: model.parameters,
+      activeParameters: model.activeParameters,
+      isMoE: model.isMoE,
       context: model.context,
+      mmproj: model.mmproj || null,
+      draftModel: model.draftModel || null,
+      specType: model.specType || null,
+      specDraftNMax: model.specDraftNMax || null,
+      mtp: model.mtp || false,
     });
     modelStore.setCurrent(model);
     modelPicker._resolve(model);

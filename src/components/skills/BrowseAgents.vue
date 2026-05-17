@@ -87,7 +87,7 @@
               <span v-else-if="companionWalletProvider === 'local'" class="agent-pill agent-pill--warning">Legacy</span>
             </div>
             <div v-if="companionEthBalance !== null" class="agent-wallet-row">
-              <span class="agent-wallet-row__label">Balance (Base)</span>
+              <span class="agent-wallet-row__label">Balance (Ethereum)</span>
               <span class="agent-wallet-row__value bz-mono">{{ companionEthBalance }} ETH</span>
             </div>
             <div v-if="selectedCompanionUP" class="agent-wallet-row">
@@ -107,7 +107,7 @@
                 {{ upDeployStatus || 'Attach Universal Profile' }}
               </button>
               <p class="agent-help">
-                Deploys a LUKSO Universal Profile for this companion and returns to Base.
+                Deploys a LUKSO Universal Profile for this companion and returns to Ethereum.
               </p>
             </div>
             <div v-if="selectedCompanion?.isBare && !selectedCompanionUP" class="agent-help agent-help--warning">
@@ -229,7 +229,7 @@
               </template>
               <template #cell-action="{ row }">
                 <a
-                  :href="'https://basescan.org/tx/' + row.txHash"
+                  :href="'https://etherscan.io/tx/' + row.txHash"
                   target="_blank"
                   rel="noopener"
                   class="bz-iconbtn bz-iconbtn--sm"
@@ -445,7 +445,7 @@
         <section class="agent-modal__body">
           <div class="agent-field">
             <label class="agent-label">Allowed Chains (CAIP-2)</label>
-            <input class="agent-input" v-model="newPolicyData.chains" placeholder="eip155:8453" />
+            <input class="agent-input" v-model="newPolicyData.chains" placeholder="eip155:1" />
             <p class="agent-help">Comma-separated chain IDs.</p>
           </div>
           <div class="agent-field">
@@ -669,7 +669,7 @@
               <div class="bz-notice__body">
                 <p class="bz-notice__text"><strong>This will execute multiple on-chain transactions:</strong>
                 setAgentURI, setAgentWallet, setSpendingProfile, setPersonalityHash, and setMetadataBatch.
-                Make sure you have enough ETH on Base for gas fees.</p>
+                Make sure you have enough ETH on Ethereum for gas fees.</p>
               </div>
             </div>
           </div>
@@ -749,7 +749,7 @@
       <template #cell-action="{ row }">
         <a
           v-if="row.tokenAddress"
-          :href="`https://app.uniswap.org/#/swap?outputCurrency=${row.tokenAddress}`"
+          :href="`https://app.uniswap.org/#/swap?chain=mainnet&outputCurrency=${row.tokenAddress}`"
           target="_blank"
           class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
         >
@@ -887,7 +887,7 @@ export default {
     const companionApiKeys = ref([]);
     const isMigrating = ref(false);
     const showPolicyModal = ref(false);
-    const newPolicyData = ref({ chains: 'eip155:8453', dailyLimit: '0.005', expiryDays: 365 });
+    const newPolicyData = ref({ chains: 'eip155:1', dailyLimit: '0.005', expiryDays: 365 });
     const showNewApiKeyModal = ref(false);
     const newApiKeyToken = ref(null);
 
@@ -906,7 +906,7 @@ export default {
      * Streamlined Universal Profile attachment:
      * 1. Switch to LUKSO
      * 2. Deploy UP via LSP23
-     * 3. Switch back to Base
+     * 3. Switch back to Ethereum
      */
     const attachUniversalProfile = async () => {
       if (!selectedCompanion.value || isDeployingUP.value) return;
@@ -928,13 +928,13 @@ export default {
         const result = await companionService.deployCompanionUP(companionId, selectedCompanion.value);
         selectedCompanionUP.value = result.upAddress;
 
-        // Step 3: Switch back to Base
-        upDeployStatus.value = 'Returning to Base...';
+        // Step 3: Switch back to Ethereum
+        upDeployStatus.value = 'Returning to Ethereum...';
         try {
           await switchNetwork('base');
         } catch {
           // Non-fatal — UP is deployed, user can switch manually
-          console.warn('[BrowseAgents] Could not auto-switch back to Base');
+          console.warn('[BrowseAgents] Could not auto-switch back to Ethereum');
         }
 
         upDeployStatus.value = null;
@@ -943,7 +943,7 @@ export default {
         upDeployStatus.value = null;
         alert('Universal Profile attachment failed: ' + err.message);
 
-        // Try to return to Base even on failure
+        // Try to return to Ethereum even on failure
         try { await switchNetwork('base'); } catch { /* best effort */ }
       } finally {
         isDeployingUP.value = false;
@@ -958,7 +958,7 @@ export default {
         companionWalletProvider.value = creds?.provider || 'local';
 
         // Load ETH balance
-        const balance = await walletProviderService.getAgentWalletBalance(id, 8453);
+        const balance = await walletProviderService.getAgentWalletBalance(id, 1);
         companionEthBalance.value = parseFloat(balance).toFixed(6);
       } catch (err) {
         console.warn('[BrowseAgents] Wallet info load failed:', err.message);

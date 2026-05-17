@@ -9,6 +9,7 @@ import {
   dialog,
   net,
   session,
+  clipboard,
 } from "electron";
 import Store from "electron-store";
 import os from "os";
@@ -63,6 +64,11 @@ llamaServer.onExit(({ intentional }) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("model-changed", null);
   }
+});
+
+ipcMain.handle("clipboard-copy-text", (_event, text) => {
+  clipboard.writeText(String(text ?? ""));
+  return true;
 });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1949,7 +1955,7 @@ ipcMain.handle("llama-runtime-status", async () => {
     modelName: currentLoadedModel?.filename || null,
     isMultimodal: !!currentLoadedModel?.isMultimodal,
     ctxSize: spec?.ctxSize || null,
-    hasSpecDecode: !!spec?.draftPath,
+    hasSpecDecode: !!spec?.draftPath || spec?.specType === "draft-mtp" || spec?.mtp === true,
   };
 });
 
@@ -3918,7 +3924,7 @@ ipcMain.handle("pool-configure", async (_event, opts) => {
 });
 
 ipcMain.handle("pool-register-model", async (_event, opts) => {
-  const { modelKey, filename, sizeBytes, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate } = opts || {};
+  const { modelKey, filename, sizeBytes, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate, specType, specDraftNMax, mtp } = opts || {};
   const pool = await _getPool();
   const modelPath = path.join(MODEL_DIR, filename);
   if (!fs.existsSync(modelPath)) {
@@ -3933,7 +3939,7 @@ ipcMain.handle("pool-register-model", async (_event, opts) => {
   );
   const ctxSize = Math.min(heuristicCtx || 8192, context || heuristicCtx || 8192);
   pool.registerModelPath(modelKey, modelPath, sizeBytes, {
-    ctxSize, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate,
+    ctxSize, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate, specType, specDraftNMax, mtp,
   });
   return { ok: true, ctxSize };
 });
@@ -3949,7 +3955,7 @@ ipcMain.handle("pool-chat", async (_event, opts) => {
 });
 
 ipcMain.handle("pool-ensure", async (_event, opts) => {
-  const { modelKey, filename, sizeBytes, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate } = opts || {};
+  const { modelKey, filename, sizeBytes, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate, specType, specDraftNMax, mtp } = opts || {};
   const pool = await _getPool();
   const modelPath = path.join(MODEL_DIR, filename);
   if (!fs.existsSync(modelPath)) {
@@ -3962,9 +3968,9 @@ ipcMain.handle("pool-ensure", async (_event, opts) => {
   );
   const ctxSize = Math.min(heuristicCtx || 8192, context || heuristicCtx || 8192);
   pool.registerModelPath(modelKey, modelPath, sizeBytes, {
-    ctxSize, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate,
+    ctxSize, parameters, activeParameters, isMoE, context, parallelSlots, chatTemplate, specType, specDraftNMax, mtp,
   });
-  await pool.acquire({ modelKey, modelPath, sizeBytes, ctxSize, parallelSlots, chatTemplate });
+  await pool.acquire({ modelKey, modelPath, sizeBytes, ctxSize, parallelSlots, chatTemplate, specType, specDraftNMax, mtp });
   return { ok: true, ctxSize };
 });
 
@@ -5276,9 +5282,14 @@ const MODEL_SPECS = {
   "glm-4.7-flash-ud-q8_k_xl": { parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 200000 },
   "qwen3-coder-next":        { parameters: 80e9, activeParameters: 3e9, isMoE: true, context: 131072 },
   "nanbeige4.1-3b":                 { parameters: 3e9, context: 32768 },
+  "qwen3.5-0.8b":                   { parameters: 0.8e9, context: 131072 },
+  "qwen3.5-2b":                     { parameters: 2e9, context: 131072 },
+  "qwen3.5-4b":                     { parameters: 4e9, context: 262144 },
   "qwen3.5-9b":                     { parameters: 9e9, context: 262144 },
   "qwen3.5-27b":                    { parameters: 27e9, activeParameters: 8e9, context: 262144 },
+  "qwen3.6-27b":                    { parameters: 27e9, context: 262144 },
   "qwen3.5-35b-a3b":                { parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144 },
+  "qwen3.6-35b-a3b":                { parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144 },
   "qwen3.5-122b-a10b":              { parameters: 122e9, activeParameters: 10e9, isMoE: true, context: 262144 },
   "qwen3.5-397b-a17b":              { parameters: 397e9, activeParameters: 17e9, isMoE: true, context: 262144 },
   "kimi-k2.5":                      { parameters: 1000e9, activeParameters: 32e9, isMoE: true, context: 256000 },
@@ -5310,20 +5321,28 @@ const MODEL_NAMES = {
   "glm-4.7-flash-ud-q4":           "GLM 4.7 Flash Q4",
   "glm-4.7-flash-ud-q8":           "GLM 4.7 Flash Q8",
   "qwen3-coder-next":              "Qwen 3 Coder Next 80B",
-  "qwen3.5-27b-ud-q2":             "Qwen 3.5 27B",
-  "qwen3.5-27b-ud-q4":             "Qwen 3.5 27B Q4",
-  "qwen3.5-27b-ud-q8":             "Qwen 3.5 27B Q8",
-  "qwen3.5-9b":                    "Qwen 3.5 9B Q4",
-  "qwen3.5-0.8b":                   "Qwen 3.5 0.8B",
-  "qwen3.5-4b":                    "Qwen 3.5 4B",
-  "qwen3.5-35b-a3b-ud-iq3":        "Qwen 3.5 35B A3B IQ3",
-  "qwen3.5-35b-a3b-ud-q2":         "Qwen 3.5 35B A3B",
-  "qwen3.5-35b-a3b-ud-q4":         "Qwen 3.5 35B A3B Q4",
-  "qwen3.5-35b-a3b-ud-q8":         "Qwen 3.5 35B A3B Q8",
-  "qwen3.5-122b-a10b-ud-q2":       "Qwen 3.5 122B A10B",
-  "qwen3.5-122b-a10b-ud-q4":       "Qwen 3.5 122B A10B Q4",
-  "qwen3.5-397b-a17b-ud-q2":       "Qwen 3.5 397B A17B",
-  "qwen3.5-397b-a17b-ud-q4":       "Qwen 3.5 397B A17B Q4",
+  "qwen3.5-27b-ud-q2":             "Qwen 3.5 27B MTP Q2",
+  "qwen3.5-27b-ud-q4":             "Qwen 3.5 27B MTP Q4",
+  "qwen3.5-27b-ud-q8":             "Qwen 3.5 27B MTP Q8",
+  "qwen3.6-27b-ud-q2":             "Qwen 3.6 27B MTP Q2",
+  "qwen3.6-27b-ud-q4":             "Qwen 3.6 27B MTP Q4",
+  "qwen3.6-27b-ud-q8":             "Qwen 3.6 27B MTP Q8",
+  "qwen3.5-9b":                    "Qwen 3.5 9B MTP",
+  "qwen3.5-0.8b":                  "Qwen 3.5 0.8B MTP",
+  "qwen3.5-2b":                    "Qwen 3.5 2B MTP",
+  "qwen3.5-4b":                    "Qwen 3.5 4B MTP",
+  "qwen3.5-35b-a3b-ud-q2":         "Qwen 3.5 35B A3B MTP Q2",
+  "qwen3.5-35b-a3b-ud-q4":         "Qwen 3.5 35B A3B MTP Q4",
+  "qwen3.5-35b-a3b-ud-q8":         "Qwen 3.5 35B A3B MTP Q8",
+  "qwen3.6-35b-a3b-ud-q2":         "Qwen 3.6 35B A3B MTP Q2",
+  "qwen3.6-35b-a3b-ud-q4":         "Qwen 3.6 35B A3B MTP Q4",
+  "qwen3.6-35b-a3b-ud-q8":         "Qwen 3.6 35B A3B MTP Q8",
+  "qwen3.5-122b-a10b-ud-q2":       "Qwen 3.5 122B A10B MTP Q2",
+  "qwen3.5-122b-a10b-ud-q4":       "Qwen 3.5 122B A10B MTP Q4",
+  "qwen3.5-122b-a10b-ud-q8":       "Qwen 3.5 122B A10B MTP Q8",
+  "qwen3.5-397b-a17b-ud-q2":       "Qwen 3.5 397B A17B MTP Q2",
+  "qwen3.5-397b-a17b-ud-q4":       "Qwen 3.5 397B A17B MTP Q4",
+  "qwen3.5-397b-a17b-ud-q8":       "Qwen 3.5 397B A17B MTP Q8",
   "kimi-k2.5":                     "Kimi K2.5 Q4",
   "minimax-m2.5":                  "MiniMax M2.5 Q4",
   "devstral-small-2-24b":          "Devstral 24B",
@@ -5351,7 +5370,7 @@ function resolveModelName(filename) {
  * load a model in Generative Text first.
  *
  * Accepts either:
- *   - a model key string like "llm_qwen_3_6_28b_reap_a3b_q4"
+ *   - a model key string like "llm_qwen_3_6_35b_a3b_q4"
  *   - a partial spec object { filename, parameters?, context?, mmproj? }
  *
  * Resolves keys via flagship.js's resolveLLM() to get a real filename +
@@ -5396,6 +5415,9 @@ async function ensureModel(_event, modelOrKey) {
         context: resolved.context || null,
         mmproj: resolved.mmproj || null,
         draftModel: resolved.draftModel || null,
+        specType: resolved.specType || null,
+        specDraftNMax: resolved.specDraftNMax || null,
+        mtp: resolved.mtp || false,
         flashAttention: resolved.flashAttention !== false,
         parallelSlots: resolved.parallelSlots || 1,
         enableThinking: resolved.enableThinking === true,
@@ -5475,6 +5497,26 @@ async function loadModel(_event, currentModel) {
   // Normalize string model keys to object form (e.g. from openclaw passing "llm_llama_3_1_8b")
   if (typeof currentModel === "string") {
     currentModel = { filename: currentModel };
+  }
+
+  const incomingFilename = (currentModel.filename || "").toLowerCase();
+  const isQwenMtpGguf = (
+    /^qwen3\.5-(?:0\.8b|2b|4b|9b|27b)-ud-q[248]_k_xl\.gguf$/.test(incomingFilename) ||
+    /^qwen3\.5-(?:35b-a3b|122b-a10b|397b-a17b)-ud-q[248]_k_xl(?:-\d{5}-of-\d{5})?\.gguf$/.test(incomingFilename) ||
+    /^qwen3\.6-27b-ud-q[248]_k_xl\.gguf$/.test(incomingFilename) ||
+    /^qwen3\.6-35b-a3b-ud-q[248]_k_xl\.gguf$/.test(incomingFilename)
+  );
+  if (isQwenMtpGguf && (currentModel.specType !== "draft-mtp" || currentModel.mtp !== true)) {
+    currentModel = {
+      ...currentModel,
+      specType: "draft-mtp",
+      specDraftNMax: currentModel.specDraftNMax || 2,
+      mtp: true,
+      draftModel: null,
+      isMultimodal: false,
+      mmproj: null,
+    };
+    console.log("[LLM] Qwen MTP GGUF detected from filename; enabling draft-mtp:", incomingFilename);
   }
 
   // Skip if the same model is already loaded (prevents HMR reload loops).
@@ -5573,7 +5615,8 @@ async function loadModel(_event, currentModel) {
 
   // Optional speculative draft model (Qwen3 family only by default)
   let draftPath = null;
-  if (currentModel.draftModel) {
+  const usesMtpSpecDecode = currentModel.specType === "draft-mtp" || currentModel.mtp === true;
+  if (!usesMtpSpecDecode && currentModel.draftModel) {
     const normalizedDraft = normalizeModelFilename(currentModel.draftModel);
     const candidate = path.join(MODEL_DIR, normalizedDraft);
     if (fs.existsSync(candidate)) {
@@ -5602,6 +5645,9 @@ async function loadModel(_event, currentModel) {
     flashAttention: currentModel.flashAttention !== false,
     parallelSlots: currentModel.parallelSlots || 1,
     enableThinking: currentModel.enableThinking === true,
+    specType: currentModel.specType || null,
+    specDraftNMax: currentModel.specDraftNMax || null,
+    mtp: currentModel.mtp === true,
   }, { resourcesPath });
 
   currentLoadedModel = {
@@ -5623,6 +5669,9 @@ async function loadModel(_event, currentModel) {
     context: currentModel.context,
     mmproj: currentModel.mmproj,
     draftModel: currentModel.draftModel,
+    specType: currentModel.specType,
+    specDraftNMax: currentModel.specDraftNMax,
+    mtp: currentModel.mtp,
     flashAttention: currentModel.flashAttention,
     parallelSlots: currentModel.parallelSlots,
     enableThinking: currentModel.enableThinking,

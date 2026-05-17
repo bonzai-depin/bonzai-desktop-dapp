@@ -12,10 +12,8 @@
     </div>
 
     <p class="form-intro">
-      Solo Mode: no crypto, no SaaS, no API meter. Runs on your machine,
-      sells through links you can paste anywhere, keeps its books locally.
-      Pick a CEO + at least one Producer; the rest of the org chart is
-      optional.
+      Create a company charter by hand. Pick a CEO and at least one producer;
+      every other role can be added later from the org chart.
     </p>
 
     <hr />
@@ -408,7 +406,8 @@ hr {
   max-width: 1100px;
   margin: 0 auto;
   color: var(--bz-fg);
-  padding-bottom: 4em;
+  width: 100%;
+  padding: var(--bz-space-3) 0 4em;
 }
 
 .form-header {
@@ -431,54 +430,61 @@ hr {
   font-size: 38px !important;
 }
 .form-intro {
-  font-size: 17px !important;
-  margin: 0 0 1em !important;
+  max-width: 820px;
+  font-size: 15px !important;
+  line-height: 1.55;
+  margin: 0 0 var(--bz-space-4) !important;
   color: var(--bz-fg-mid) !important;
   text-align: left !important;
 }
 
 /* ───────── Sections (glass cards) ───────── */
 .form-section {
-  margin-bottom: 1.5em;
-  padding: 2em 2.5em !important;
+  margin-bottom: var(--bz-space-4);
+  padding: var(--bz-space-4) !important;
   border: 1px solid var(--bz-border);
-  border-radius: 4px !important;
-  background: var(--bz-scrim);
+  border-radius: var(--bz-r) !important;
+  background: var(--bz-card);
+  box-shadow: none;
 }
 .section-title {
-  font-size: 24px !important;
+  font-size: 22px !important;
   color: var(--bz-fg) !important;
-  margin: 0 0 1em !important;
+  margin: 0 0 var(--bz-space-3) !important;
   text-align: left !important;
   display: flex;
   align-items: center;
   gap: 0.5em;
 }
 .section-title .material-symbols-outlined {
-  font-size: 32px;
-  color: var(--bz-emerald-500);
+  font-size: 26px;
+  color: var(--bz-accent);
 }
 .section-intro {
   font-size: 14px !important;
-  color: rgba(255, 255, 255, 0.65) !important;
-  margin: 0 0 1.5em !important;
+  color: var(--bz-fg-mid) !important;
+  margin: 0 0 var(--bz-space-4) !important;
   text-align: left !important;
   line-height: 1.5;
 }
 
 /* ───────── Form fields (glass inputs) ───────── */
 .label {
-  color: var(--bz-fg) !important;
-  font-style: italic;
+  color: var(--bz-fg-mid) !important;
+  font-style: normal;
+  font-size: var(--bz-size-meta);
+  font-weight: 700;
+  letter-spacing: 0;
 }
 .input, .textarea, .select select {
   background: var(--bz-card) !important;
-  border: 2px solid rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid var(--bz-border) !important;
+  border-radius: var(--bz-r-sm);
   color: var(--bz-fg) !important;
 }
 .input:focus, .textarea:focus, .select select:focus {
-  border-color: var(--bz-emerald-500) !important;
-  box-shadow: 0 0 0 0.125em var(--bz-emerald-soft) !important;
+  border-color: var(--bz-border-brand) !important;
+  box-shadow: 0 0 0 2px var(--bz-purple-soft) !important;
 }
 .field-row {
   display: grid;
@@ -495,15 +501,15 @@ hr {
 }
 .chip, .mode-chip {
   padding: 0.5em 1em;
-  border: 2px solid var(--bz-border-strong);
-  border-radius: 4px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
   background: var(--bz-canvas);
   cursor: pointer;
   font-size: 14px;
   color: var(--bz-fg);
   transition: all 0.15s ease;
   text-transform: capitalize;
-  font-style: italic;
+  font-style: normal;
   font-weight: 600;
 }
 .chip input, .mode-chip input { display: none; }
@@ -512,10 +518,10 @@ hr {
   border-color: var(--bz-fg-low);
 }
 .chip.is-on, .mode-chip.is-on {
-  background: var(--bz-emerald-soft);
-  border-color: var(--bz-emerald-500);
-  color: var(--bz-fg);
-  box-shadow: 0 0 8px var(--bz-emerald-soft);
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
+  box-shadow: none;
 }
 
 .hint {
@@ -550,11 +556,11 @@ hr {
   align-items: center;
   padding: 0.75em 1em;
   background: var(--bz-canvas);
-  border: 1px solid var(--bz-card);
-  border-radius: 4px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
 }
 .role-row:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--bz-raised);
 }
 .role-row--header {
   background: transparent;
@@ -562,8 +568,8 @@ hr {
   font-weight: 700;
   font-size: 0.85rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0;
+  color: var(--bz-fg-low);
   padding: 0.3em 1em;
 }
 .col-role strong {
@@ -573,7 +579,7 @@ hr {
 }
 .role-desc {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--bz-fg-low);
   margin-top: 0.25em;
 }
 
@@ -589,6 +595,20 @@ hr {
   gap: 1em;
   align-items: center;
   margin-top: 2em;
+}
+
+@media (max-width: 760px) {
+  .form-header,
+  .submit-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .role-row {
+    grid-template-columns: 1fr;
+  }
+  .role-row--header {
+    display: none;
+  }
 }
 
 /* ───────── Notification override ───────── */

@@ -115,11 +115,12 @@ async function launchToken(companion, ethAmount) {
   state.error = null;
 
   try {
-    // Ensure we're on Base network
+    // Ensure we're on Ethereum network
     const currentChainId = web3Service.state.currentChainId;
+    const targetChainId = CONFIG.companionTokenFactory?.chainId || 1;
 
-    if (currentChainId !== 8453) {
-      console.log('[CompanionToken] Switching to Base network...');
+    if (currentChainId !== targetChainId) {
+      console.log('[CompanionToken] Switching to Ethereum network...');
       await web3Service.switchNetwork('base');
     }
 

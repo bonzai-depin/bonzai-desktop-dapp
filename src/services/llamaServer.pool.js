@@ -89,6 +89,9 @@ export function configure({ memoryBudgetGB, resourcesPath } = {}) {
  *   ngl           : -ngl, default 99
  *   parallelSlots : -np, default 1
  *   chatTemplate  : optional --chat-template name
+ *   specType      : optional --spec-type, currently draft-mtp
+ *   specDraftNMax : optional --spec-draft-n-max for MTP, default 2
+ *   mtp           : true to enable in-GGUF MTP draft heads
  *   noWarmup      : optional --no-warmup
  */
 export async function acquire(spec) {
@@ -145,6 +148,9 @@ export async function chat({ modelKey, prompt, messages, temperature, maxTokens,
     ctxSize: reg.ctxSize,
     parallelSlots: reg.parallelSlots,
     chatTemplate: reg.chatTemplate,
+    specType: reg.specType,
+    specDraftNMax: reg.specDraftNMax,
+    mtp: reg.mtp,
   });
   const inst = _instances.get(modelKey);
   inst.inFlight++;
@@ -231,6 +237,8 @@ async function _spawn(spec, sizeBytes) {
   }
   const port = await _pickFreePort();
   const binary = _resolveBinary();
+  const isMtpSpecDecode = spec.specType === "draft-mtp" || spec.mtp === true;
+  const parallelSlots = isMtpSpecDecode ? 1 : (spec.parallelSlots ?? 1);
 
   const args = [
     "-m", spec.modelPath,
@@ -239,11 +247,14 @@ async function _spawn(spec, sizeBytes) {
     "-ngl", String(spec.ngl ?? 99),
     "-c", String(spec.ctxSize ?? 8192),
     "-fa", "on",
-    "-np", String(spec.parallelSlots ?? 1),
+    "-np", String(parallelSlots),
     "--reasoning-format", "none",
     "--chat-template-kwargs", JSON.stringify({ enable_thinking: false }),
   ];
   if (spec.chatTemplate) args.push("--chat-template", spec.chatTemplate);
+  if (isMtpSpecDecode) {
+    args.push("--spec-type", "draft-mtp", "--spec-draft-n-max", String(spec.specDraftNMax ?? 2));
+  }
   if (spec.noWarmup) args.push("--no-warmup");
 
   if (process.platform === "darwin") {
@@ -375,6 +386,9 @@ export function registerModelPath(modelKey, modelPath, sizeBytes, extras = {}) {
     context: extras.context || null,
     parallelSlots: extras.parallelSlots || 1,
     chatTemplate: extras.chatTemplate || null,
+    specType: extras.specType || null,
+    specDraftNMax: extras.specDraftNMax || null,
+    mtp: extras.mtp === true,
   });
 }
 function _lookupModelPath(modelKey) {

@@ -246,11 +246,37 @@ async function onCopy() {
   const text = props.content;
   if (!text) return;
   try {
-    await navigator.clipboard.writeText(text);
+    if (window.electronAPI?.copyText) {
+      await window.electronAPI.copyText(text);
+    } else if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      copyWithTextarea(text);
+    }
     copied.value = true;
     if (_resetTimer) clearTimeout(_resetTimer);
     _resetTimer = setTimeout(() => { copied.value = false; }, 1600);
-  } catch {}
+  } catch {
+    try {
+      copyWithTextarea(text);
+      copied.value = true;
+      if (_resetTimer) clearTimeout(_resetTimer);
+      _resetTimer = setTimeout(() => { copied.value = false; }, 1600);
+    } catch {}
+  }
+}
+
+function copyWithTextarea(text) {
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.setAttribute("readonly", "");
+  el.style.position = "fixed";
+  el.style.left = "-9999px";
+  el.style.top = "0";
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand("copy");
+  document.body.removeChild(el);
 }
 </script>
 

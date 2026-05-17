@@ -143,9 +143,9 @@
                           @click.prevent="generateLyrics"
                           :title="
                             !lyricsModelReady
-                              ? 'Download Qwen3.5 4B from the Chat tab first'
+                              ? 'Download Qwen3.5 4B MTP from the Chat tab first'
                               : lyricsTheme.trim()
-                                ? 'Generate lyrics using Qwen3.5 4B'
+                                ? 'Generate lyrics using Qwen3.5 4B MTP'
                                 : 'Enter a theme first'
                           "
                         >
@@ -1795,14 +1795,17 @@ export default {
     // ------------ LLM lyrics generation -----
     const lyricsError = ref("");
 
-    // Default LLM for lyrics generation — 4B is the sweet spot for creative writing
+    // Default LLM for lyrics generation — 4B MTP is the sweet spot for creative writing
     const LYRICS_LLM = {
-      modelname: "Qwen3.5 4B",
-      filename: "qwen3.5-4b-q4_k_m.gguf",
-      url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
+      modelname: "Qwen3.5 4B MTP",
+      filename: "qwen3.5-4b-ud-q4_k_xl.gguf",
+      url: "https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf",
       filesizeBytes: 2.8e9,
       parameters: 4000000000,
       context: 8192,
+      specType: "draft-mtp",
+      specDraftNMax: 2,
+      mtp: true,
     };
 
     // Check if lyrics LLM is downloaded. Also subscribe to download progress

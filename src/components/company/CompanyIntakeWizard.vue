@@ -9,8 +9,8 @@
             <span class="wiz__title-text">Form a Zero-Human Company</span>
           </h1>
           <p class="wiz__subtitle muted">
-            Five quick questions and we'll wire your charter, your roles, your humans, and the
-            tools your company needs to run.
+            A short setup that creates a real charter, staffed roles, first goals, and the
+            tools your company needs.
           </p>
         </div>
         <BzCloseButton size="md" aria-label="Close" @click="confirmCancel" />
@@ -46,8 +46,7 @@
           What does your business do?
         </h2>
         <p class="muted">
-          Pick the template closest to your business. We'll pre-fill the org chart, role library,
-          and tools list from there. You can always tweak before forming.
+          Pick the closest starting point. You can edit the charter and org chart after setup.
         </p>
         <div class="tpl-grid">
           <div
@@ -63,7 +62,7 @@
             <div class="tpl-card__title fira-sans-condensed-black-italic">{{ t.name }}</div>
             <div class="tpl-card__summary">{{ t.summary }}</div>
             <div class="tpl-card__packs">
-              <span v-for="p in t.skillPacks" :key="p" class="skill-chip is-small">{{ p }}</span>
+              <span v-for="tag in templateTags(t)" :key="tag" class="skill-chip is-small">{{ tag }}</span>
             </div>
           </div>
           <div class="tpl-card tpl-card--coming">
@@ -121,9 +120,8 @@
           Who works there today?
         </h2>
         <p class="muted">
-          List the humans on your team. Mark anyone with a physical role — companions can support
-          and coordinate them, but won't replace them. Everyone else might get fully replaced as
-          you scale into autonomy.
+          Add people who should stay visible in the operating plan. Mark hands-on roles so
+          tasks route through a coordinator instead of pretending software can do physical work.
         </p>
         <div class="roster">
           <div v-for="(h, idx) in roster" :key="idx" class="roster-row">
@@ -197,8 +195,8 @@
           Money picture &amp; first goals
         </h2>
         <p class="muted">
-          Set the safety rails on autonomous spending. The CEO companion will plan within these
-          and pause for your approval beyond them.
+          Set the money guardrails and first goals. The company plans inside these limits and
+          asks before sensitive work runs.
         </p>
         <div class="wiz-grid-2">
           <div class="wiz-field">
@@ -212,12 +210,12 @@
           <div class="wiz-field">
             <label class="wiz-field__label">Working-capital floor</label>
             <input v-model.number="treasury.reserveFloor" type="number" class="input is-medium" />
-            <p class="muted wiz-field__hint">Treasury never spends below this.</p>
+            <p class="muted wiz-field__hint">Keep this amount untouched.</p>
           </div>
           <div class="wiz-field">
             <label class="wiz-field__label">Per-tick spend cap</label>
             <input v-model.number="treasury.perHeartbeatSpendCap" type="number" class="input is-medium" />
-            <p class="muted wiz-field__hint">Above this, every spend pauses for owner approval.</p>
+            <p class="muted wiz-field__hint">Spending above this waits for approval.</p>
           </div>
           <div class="wiz-field">
             <label class="wiz-field__label">Company name</label>
@@ -232,7 +230,7 @@
           Initial goals (you can edit later)
         </h3>
         <p class="muted">
-          The CEO will pick these up on its first heartbeat. Keep, edit, or delete each one.
+          These become the first visible goals after the company is formed.
         </p>
         <div class="initial-goals">
           <div v-for="(g, idx) in initialGoals" :key="idx" class="initial-goal">
@@ -258,13 +256,11 @@
           <div class="demo-row__copy">
             <div class="demo-row__title fira-sans-condensed-black-italic">
               <span class="material-symbols-outlined mr-2">auto_awesome_motion</span>
-              Form in Demo Mode
+              Start with sample activity
             </div>
             <p class="demo-row__hint">
-              Skip every LLM call and run scripted ticks. The CEO emits goals about every 75 seconds,
-              roles fire actions about every 30 seconds, and the Live feed shows your company at work
-              the moment you click <em>Form company</em>. Toggle off later to switch to real
-              local-LLM inference. <strong>Recommended for first-time setups + pitches.</strong>
+              Populate the workspace quickly so you can see goals, tasks, approvals, and
+              deliverables before connecting every tool.
             </p>
           </div>
         </div>
@@ -317,8 +313,9 @@
 </template>
 
 <script>
-import { reactive, ref, computed, onMounted } from "vue";
+import { reactive, ref, computed } from "vue";
 import companyStore from "../../stores/companyStore.js";
+import { listTemplates as listCompanyTemplates } from "../../services/company/templates.js";
 import BzCloseButton from "../BzCloseButton.vue";
 
 /**
@@ -359,8 +356,9 @@ export default {
   emits: ["done", "cancel"],
   setup(_props, { emit }) {
     const store = companyStore;
-    const templates = ref([]);
-    const draft = reactive({ templateId: null });
+    const templates = ref(listCompanyTemplates());
+    const initialTemplate = templates.value[0] || null;
+    const draft = reactive({ templateId: initialTemplate?.id || null });
     const answers = reactive({});
     const roster = ref([{ name: "", title: "Owner", contractorStatus: "owner", isPhysical: false }]);
     const treasury = reactive({ currency: "USD", reserveFloor: 0, perHeartbeatSpendCap: 0 });
@@ -383,16 +381,12 @@ export default {
       { id: "money",    label: "Charter",    icon: "tune" },
     ];
 
-    onMounted(() => {
-      templates.value = store.listTemplates();
-    });
-
     const selectedTemplate = computed(() =>
       templates.value.find((t) => t.id === draft.templateId) || null,
     );
 
     const defaultName = computed(() =>
-      selectedTemplate.value ? `${selectedTemplate.value.name} (Draft)` : "Untitled Company",
+      selectedTemplate.value ? selectedTemplate.value.name : "Untitled Company",
     );
 
     function selectTemplate(id) {
@@ -434,6 +428,7 @@ export default {
         return store.previewTemplate(draft.templateId, answers, {
           name: companyName.value || defaultName.value,
           humanRoster: humanRosterPlain.value,
+          treasury: { ...treasury },
           mode: "solo",
           includeOptionalHumans: hasPhysicalHumans.value,
         });
@@ -457,6 +452,17 @@ export default {
       if (next.has(kind)) next.delete(kind);
       else next.add(kind);
       pickedConnectors.value = next;
+    }
+
+    function templateTags(template) {
+      const tags = [];
+      if ((template.defaultRoles || {})["Producer:image"]) tags.push("Design");
+      if ((template.defaultRoles || {})["Producer:video"]) tags.push("Video");
+      if ((template.defaultRoles || {})["Producer:text"]) tags.push("Writing");
+      if ((template.hybridRoles || []).length) tags.push("Human handoff");
+      if ((template.skillPacks || []).some((p) => /store|shop|affiliate/.test(p))) tags.push("Commerce");
+      if ((template.skillPacks || []).some((p) => /law|bookkeeping/.test(p))) tags.push("Client ops");
+      return [...new Set(tags)].slice(0, 4);
     }
 
     // ─── roster + hybrid hint ───
@@ -485,6 +491,8 @@ export default {
           isPhysical: !!h.isPhysical,
         })),
     );
+
+    if (initialTemplate) selectTemplate(initialTemplate.id);
 
     // ─── mission preview ───
     const missionPreview = computed(() => {
@@ -520,6 +528,7 @@ export default {
         const c = await store.formFromTemplate(draft.templateId, answers, {
           name: companyName.value || defaultName.value,
           humanRoster: humanRosterPlain.value,
+          treasury: { ...treasury },
           mode: "solo",
           includeOptionalHumans: hasPhysicalHumans.value,
           demoMode: demoMode.value,
@@ -553,7 +562,7 @@ export default {
       roster, addRoster, removeRoster, physicalCount, hybridRoleHint,
       pickedConnectors, requiredConnectorSet, availableConnectors, toggleConnector,
       missionPreview, canAdvance, canForm, goTo, confirmCancel, formCompany,
-      selectTemplate,
+      selectTemplate, templateTags,
     };
   },
 };
@@ -586,19 +595,19 @@ hr {
 /* ───────── Overlay shell ───────── */
 .wiz-overlay {
   position: fixed; inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--bz-scrim-strong);
   z-index: 9998;
   display: flex; align-items: center; justify-content: center;
-  padding: 2em;
+  padding: var(--bz-space-4);
   color: var(--bz-fg);
 }
 .wiz {
   width: 100%; max-width: 900px;
   max-height: calc(100vh - 4em); overflow-y: auto;
-  padding: 2em 2.5em !important;
-  background: var(--bz-scrim-strong) !important;
-  border: 1px solid rgba(255, 255, 255, 0.18) !important;
-  border-radius: 8px !important;
+  padding: var(--bz-space-5) !important;
+  background: var(--bz-panel) !important;
+  border: 1px solid var(--bz-border) !important;
+  border-radius: var(--bz-r) !important;
 }
 
 .wiz__head {
@@ -611,40 +620,40 @@ hr {
   margin-bottom: 0.25em;
 }
 .wiz__title-text {
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-fg);
 }
 .wiz__subtitle { max-width: 620px; }
 
 /* ───────── Step rail ───────── */
 .wiz__rail {
-  display: flex;
-  gap: 0.5em;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--bz-space-2);
   margin-top: 1em;
 }
 .wiz-step {
   flex: 1 1 0;
   padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
   display: flex; align-items: center; gap: 0.5em;
   font-size: 0.85em;
   cursor: default;
   transition: all 0.2s ease;
 }
 .wiz-step.is-active {
-  border-color: var(--bz-fg);
-  background: var(--bz-purple-soft);
+  border-color: var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
 }
 .wiz-step.is-done {
   cursor: pointer;
-  border-color: rgba(72, 187, 120, 0.6);
-  background: rgba(72, 187, 120, 0.12);
+  border-color: var(--bz-border-brand);
+  background: var(--bz-raised);
 }
 .wiz-step__icon .material-symbols-outlined { font-size: 18px; }
 .wiz-step__label {
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   text-transform: uppercase;
   font-size: 0.7rem;
 }
@@ -663,9 +672,9 @@ hr {
   margin-top: 1em;
 }
 .tpl-card {
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 6px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
   padding: 1.25em;
   cursor: pointer;
   transition: all 0.18s ease;
@@ -676,24 +685,22 @@ hr {
 }
 .tpl-card:hover { border-color: rgba(255, 255, 255, 0.32); transform: translateY(-2px); }
 .tpl-card.is-selected {
-  border-color: rgb(255, 153, 51) !important;
-  background: rgba(155, 109, 200, 0.18) !important;
-  box-shadow: 0 0 24px rgba(255, 153, 51, 0.25);
+  border-color: var(--bz-control-selected-border) !important;
+  background: var(--bz-control-selected-bg) !important;
+  box-shadow: none;
 }
 .tpl-card--coming { cursor: default; opacity: 0.55; }
 .tpl-card__icon .material-symbols-outlined {
   font-size: 36px;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-accent);
 }
 .tpl-card__title {
   font-size: 1.15rem;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-fg);
 }
 .tpl-card__summary {
   font-size: 0.88em;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--bz-fg-mid);
   line-height: 1.45;
 }
 .tpl-card__packs { display: flex; gap: 0.3em; flex-wrap: wrap; margin-top: 0.4em; }
@@ -775,9 +782,9 @@ hr {
 }
 .conn-tile {
   position: relative;
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 6px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
   padding: 1em 0.75em;
   cursor: pointer;
   transition: all 0.18s ease;
@@ -789,17 +796,16 @@ hr {
 }
 .conn-tile:hover { border-color: var(--bz-fg-faint); }
 .conn-tile.is-required {
-  border-color: rgba(255, 153, 51, 0.6);
-  background: rgba(255, 153, 51, 0.07);
+  border-color: var(--bz-border-brand);
+  background: var(--bz-raised);
 }
 .conn-tile.is-selected {
-  border-color: var(--bz-fg) !important;
-  background: var(--bz-purple-soft) !important;
+  border-color: var(--bz-control-selected-border) !important;
+  background: var(--bz-control-selected-bg) !important;
 }
 .conn-tile__icon .material-symbols-outlined {
   font-size: 30px;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-accent);
 }
 .conn-tile__name { font-size: 0.95em; }
 .conn-tile__kind { font-size: 0.72em; }
@@ -827,14 +833,15 @@ hr {
 .initial-goal { display: grid; grid-template-columns: 1fr auto; gap: 0.5em; align-items: center; }
 
 .mission-preview {
-  background: rgba(155, 109, 200, 0.1);
-  border-left: 3px solid rgb(255, 153, 51);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-left: 3px solid var(--bz-accent);
   padding: 1em 1.25em;
   border-radius: 0 4px 4px 0;
   font-style: italic;
   line-height: 1.6;
   white-space: pre-wrap;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--bz-fg);
 }
 
 /* ───────── Demo Mode toggle row ───────── */
@@ -843,9 +850,9 @@ hr {
   align-items: flex-start;
   gap: 1em;
   padding: 1em 1.25em;
-  background: rgba(155, 109, 200, 0.12);
-  border: 1px solid rgba(155, 109, 200, 0.4);
-  border-radius: 4px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
 }
 .demo-row__copy { flex: 1; }
 .demo-row__title {
@@ -853,12 +860,10 @@ hr {
   align-items: center;
   font-size: 1.05rem;
   margin-bottom: 0.3em;
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51)) text;
+  color: var(--bz-fg);
 }
 .demo-row__title .material-symbols-outlined {
-  -webkit-text-fill-color: rgb(255, 153, 51) !important;
-  background: none !important;
+  color: var(--bz-accent) !important;
   font-size: 22px;
 }
 .demo-row__hint {
@@ -876,6 +881,32 @@ hr {
 }
 .wiz__step-count { margin-left: auto; }
 .wiz__actions-right { display: flex; gap: 0.5em; }
+
+@media (max-width: 760px) {
+  .wiz-overlay {
+    align-items: stretch;
+    padding: var(--bz-space-2);
+  }
+  .wiz {
+    max-height: none;
+    padding: var(--bz-space-4) !important;
+  }
+  .wiz__head,
+  .wiz__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .wiz__rail,
+  .wiz-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .roster-row {
+    grid-template-columns: 1fr;
+  }
+  .wiz__step-count {
+    margin-left: 0;
+  }
+}
 
 :deep(.input), :deep(.textarea) {
   background: var(--bz-scrim) !important;

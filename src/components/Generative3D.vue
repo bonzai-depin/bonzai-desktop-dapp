@@ -137,15 +137,18 @@
                       Download Required
                     </strong>
                     <ul class="download-list">
-                      <li v-if="!isModel">
+                      <li
+                        v-for="model in missingRequiredModels"
+                        :key="model.filename"
+                      >
                         <span class="material-symbols-outlined" aria-hidden="true">
                           deployed_code
                         </span>
                         <span class="download-item-name">
-                          {{ currentModel.filename }}
+                          {{ model.role }}: {{ model.filename }}
                         </span>
                         <span class="download-item-size">
-                          {{ currentModel.filesize }}
+                          {{ model.filesize }}
                         </span>
                       </li>
                     </ul>
@@ -401,7 +404,7 @@
                       </span>
                     </span>
                     <span class="history-meta fira-sans-condensed-black-italic">
-                      {{ item.id }}
+                      {{ formatHistoryDate(item.timestamp || item.createdAt) }}
                     </span>
                   </div>
 
@@ -565,6 +568,7 @@ import GenerativeInput from "./generative/GenerativeInput.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { fetchNFT3DCode } from "../services/contentNFT.service.js";
+import { inspector as generationInspector } from "../services/generationInspector.service.js";
 import { resolveLLM } from "../skills/flagship.js";
 import { makeLibs } from "./gen3d/engine.js";
 import useClipboard from "vue-clipboard3";
@@ -1098,6 +1102,117 @@ ${indent(out, 2)}
 `;
 }
 
+function stripJSComments(code) {
+  let out = "";
+  let i = 0;
+  let inStr = null;
+  let inLine = false;
+  let inBlock = false;
+
+  while (i < code.length) {
+    const ch = code[i];
+    const next = code[i + 1];
+
+    if (inLine) {
+      if (ch === "\n") {
+        inLine = false;
+        out += ch;
+      }
+      i++;
+      continue;
+    }
+
+    if (inBlock) {
+      if (ch === "*" && next === "/") {
+        inBlock = false;
+        i += 2;
+      } else {
+        i++;
+      }
+      continue;
+    }
+
+    if (inStr) {
+      out += ch;
+      if (ch === "\\") {
+        out += next || "";
+        i += 2;
+        continue;
+      }
+      if (ch === inStr) inStr = null;
+      i++;
+      continue;
+    }
+
+    if (ch === "/" && next === "/") {
+      inLine = true;
+      i += 2;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      inBlock = true;
+      i += 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      inStr = ch;
+      out += ch;
+      i++;
+      continue;
+    }
+
+    out += ch;
+    i++;
+  }
+
+  return out;
+}
+
+function validateRenderableUserCode(userCode) {
+  const executable = stripJSComments(String(userCode || "")).trim();
+
+  if (!executable) {
+    return { ok: false, reason: "LLM produced comments/prose but no executable JavaScript" };
+  }
+
+  if (!/root\.add\s*\(/.test(executable)) {
+    return { ok: false, reason: "Generated code never adds visible objects to root" };
+  }
+
+  const createsRenderable =
+    /\bnew\s+THREE\.(?:Mesh|Group|Points|Sprite|Line|LineSegments|InstancedMesh)\b/.test(executable) ||
+    /\b(?:FLUID|FX|CELESTIAL)\./.test(executable) ||
+    /\bH\.(?:dust|bubbles|sparks|smoke|label|text|ribbon|trail)\s*\(/.test(executable);
+
+  if (!createsRenderable) {
+    return { ok: false, reason: "Generated code does not create any renderable geometry or engine object" };
+  }
+
+  return { ok: true, reason: "" };
+}
+
+function modelFromResolved(resolved, role) {
+  return {
+    role,
+    modelname: resolved.name,
+    modeldesc: resolved.description,
+    url: resolved.url,
+    filename: resolved.filename,
+    filesize: resolved.size,
+    filesizeBytes: resolved.filesizeBytes,
+    parameters: resolved.parameters,
+    activeParameters: resolved.activeParameters,
+    isMoE: resolved.isMoE,
+    context: resolved.context,
+    thinking: resolved.thinking,
+    draftModel: resolved.draftModel || null,
+    draftUrl: resolved.draftUrl || null,
+    specType: resolved.specType || null,
+    specDraftNMax: resolved.specDraftNMax || null,
+    mtp: resolved.mtp || false,
+  };
+}
+
 export default {
   name: "Generative3D",
   components: { ThreeViewer, AccessRequirements, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
@@ -1271,20 +1386,23 @@ export default {
       },
     );
     // Use shared inference store for 3D objects
-    const objectInferences = computed(
-      () => inferenceStore.state.objectInferences,
+    const objectInferences = computed(() =>
+      inferenceStore.state.objectInferences.filter((item) => item?.success !== false),
     );
     const hasCopy = reactive([]);
     const enablePhysics = ref(true);
     const currentTime = ref("day");
     const currentWeather = ref("sunny");
     const lightIntensity = ref(1.0);
-    const isModelLoaded = ref(false);
+    const loadedModelFilename = ref(null);
     const form = reactive({ prompt: "" });
     const lastGeneratedCode = ref('');
     const refinePrompt = ref('');
     const downloadProgress = ref(0);
-    const isModel = ref(false);
+    const modelAvailability = reactive({
+      planner: false,
+      codegen: false,
+    });
 
     // ═══════════════════════════════════════════════════════════════════════
     // ACCESS CONTROL
@@ -1395,7 +1513,7 @@ export default {
       // Refresh readiness when download completes
       if (wasActive && !downloads.active && downloads.status === "completed") {
         console.log("[Downloads] Download completed, refreshing readiness");
-        isModelAvailable(currentModel.value.filename);
+        refreshRequiredModelAvailability();
       }
     };
 
@@ -1470,7 +1588,7 @@ export default {
       const t = setInterval(async () => {
         if (!downloads.active && downloads.status !== "failed") {
           clearInterval(t);
-          await isModelAvailable(currentModel.value.filename);
+          await refreshRequiredModelAvailability();
         }
         if (downloads.status === "failed") clearInterval(t);
       }, 1000);
@@ -1484,8 +1602,11 @@ export default {
       try {
         const activeLLM =
           (await window.electronAPI?.getActiveDownloads?.()) || [];
-        const relevantLLM = activeLLM.filter(
-          (d) => d.filename === currentModel.value.filename,
+        const requiredFilenames = new Set(
+          requiredModels.value.map((model) => model.filename),
+        );
+        const relevantLLM = activeLLM.filter((d) =>
+          requiredFilenames.has(d.filename),
         );
 
         if (relevantLLM.length > 0) {
@@ -1506,7 +1627,7 @@ export default {
 
           // Subscribe to progress updates
           window.electronAPI.onDownloadProgress((e, data) => {
-            if (data.filename === currentModel.value.filename) {
+            if (requiredFilenames.has(data.filename)) {
               const taskId = `llm_${data.filename}`;
               if (downloads.pipeline.tasks[taskId]) {
                 downloads.pipeline.tasks[taskId].progress = Math.round(
@@ -1547,7 +1668,7 @@ export default {
         .sort((a, b) => (order[a.status] ?? 5) - (order[b.status] ?? 5));
     });
 
-    // Computed: needs download if LLM model missing
+    // Computed: needs download if either required LLM model is missing
     const needsDownload = computed(() => !isModel.value);
 
     // Download required models (LLM)
@@ -1560,19 +1681,18 @@ export default {
       downloads.total_progress = 0;
       downloads.pipeline = { tasks: {} };
 
-      const llmTaskId = "llm-gguf";
-
       try {
-        if (!isModel.value) {
+        for (const model of missingRequiredModels.value) {
+          const llmTaskId = `llm-${model.role.toLowerCase()}`;
           downloads.pipeline.tasks[llmTaskId] = {
             task_id: llmTaskId,
-            filename: currentModel.value.filename,
+            filename: model.filename,
             status: "downloading",
             progress: 0,
           };
 
           const llmProgressHandler = (e, data) => {
-            if (data.filename === currentModel.value.filename) {
+            if (data.filename === model.filename) {
               const pct = Math.round(data.percent * 100);
               downloads.pipeline.tasks[llmTaskId].progress = pct;
               updateTotalProgress();
@@ -1581,14 +1701,14 @@ export default {
           window.electronAPI.onDownloadProgress(llmProgressHandler);
 
           const success = await window.electronAPI.downloadModel(
-            currentModel.value.url,
-            currentModel.value.filename,
+            model.url,
+            model.filename,
           );
 
           if (success) {
             downloads.pipeline.tasks[llmTaskId].status = "completed";
             downloads.pipeline.tasks[llmTaskId].progress = 100;
-            isModel.value = true;
+            modelAvailability[model.role.toLowerCase()] = true;
           } else {
             downloads.pipeline.tasks[llmTaskId].status = "failed";
           }
@@ -1599,6 +1719,8 @@ export default {
           downloads.status = "completed";
           downloads.progress = 100;
           downloads.total_progress = 100;
+        } else {
+          downloads.status = "failed";
         }
       } catch (e) {
         console.error("Download error:", e);
@@ -1794,32 +1916,24 @@ export default {
     ]);
     const currentPerformance = ref("high");
 
-    // 3D default: Qwen3.6 28B REAP A3B at Q4_K_M (~17.3 GB). REAP is a
-    // structured-pruning method that drops ~20% of the parameters from
-    // the Qwen3.6 35B A3B parent while preserving the 3B active path
-    // and 256K context. Net effect for codegen: faster prefill, lower
-    // VRAM headroom, marginal quality drop. Switching to Q4 (instead
-    // of Q3 on the unpruned 35B) recovers the per-expert precision the
-    // pruning reduced, so end-to-end output quality stays close to the
-    // larger model with shorter total turnaround.
-    const _3dModel = resolveLLM("qwen_3_6_28b_reap_a3b", "q4");
-    const model = {
-        modelname: _3dModel.name,
-        modeldesc: _3dModel.description,
-        url: _3dModel.url,
-        filename: _3dModel.filename,
-        filesize: _3dModel.size,
-        filesizeBytes: _3dModel.filesizeBytes,
-        parameters: _3dModel.parameters,
-        activeParameters: _3dModel.activeParameters,
-        isMoE: _3dModel.isMoE,
-        context: _3dModel.context,
-        thinking: _3dModel.thinking,
-    };
+    // 3D model split:
+    // - Planner rewrites the prompt into a geometric blueprint.
+    // - Codegen writes the actual Three.js object.
+    const plannerModel = computed(() =>
+      modelFromResolved(resolveLLM("qwen3_5_9b", "q4"), "Planner"),
+    );
+    const codeModel = computed(() =>
+      modelFromResolved(resolveLLM("qwen3_5_9b", "q4"), "Codegen"),
+    );
+    const requiredModels = computed(() => [plannerModel.value, codeModel.value]);
 
     const reasoningEnabled = ref(false);
 
-    const currentModel = computed(() => model);
+    const currentModel = computed(() => codeModel.value);
+    const missingRequiredModels = computed(() =>
+      requiredModels.value.filter((model) => !modelAvailability[model.role.toLowerCase()]),
+    );
+    const isModel = computed(() => missingRequiredModels.value.length === 0);
 
     const examplePrompts = ref([
       {
@@ -2974,7 +3088,19 @@ OUTPUT:`;
     const captureViewerSnapshot = async (label = "Preview") => {
       await nextTick();
       await new Promise((resolve) => requestAnimationFrame(resolve));
-      return threeViewer.value?.captureSnapshot?.(label) || null;
+      return threeViewer.value?.captureSnapshot?.(label, { quality: "ultra" }) || null;
+    };
+
+    const formatHistoryDate = (value) => {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     };
 
     const removeInference = async (originalIndex) => {
@@ -3053,9 +3179,37 @@ OUTPUT:`;
       await onSubmit();
     };
 
+    const inspectInference = (item) => {
+      if (!item) return;
+      const screenshots = Array.isArray(item.screenshots) ? item.screenshots : [];
+      generationInspector.show({
+        id: item.id,
+        kind: "object",
+        mediaUrl: historyThumbnail(item),
+        prompt: item.prompt || "",
+        outputText: item.code || "",
+        model: item.model || currentModel.value?.modelname || "three-js",
+        modelId: currentModel.value?.filename || "",
+        ts: item.timestamp,
+        createdAt: item.createdAt,
+        status: item.success === false ? "Error" : "Complete",
+        errorMessage: item.success === false ? item.notes || "" : "",
+        mintState: item.nft || null,
+        extra: {
+          ...(item.mode ? { mode: item.mode } : {}),
+          ...(item.tokensPerSecond ? { tokensPerSecond: `${item.tokensPerSecond} tok/s` } : {}),
+          ...(item.blueprint ? { blueprint: item.blueprint } : {}),
+          screenshots: String(screenshots.length),
+          codeChars: String((item.code || "").length),
+          snapshotQuality: screenshots[0]?.quality || (item.thumbnail ? "ultra" : ""),
+        },
+      });
+    };
+
     const actionsFor = (item) => {
       const minted = !!item?.nft;
       return [
+        { id: "inspect", icon: "tune", label: "Inspect", variant: "default", title: "Inspect generation metadata" },
         { id: "copy", icon: hasCopy[item._originalIndex] ? "check" : "content_copy", label: hasCopy[item._originalIndex] ? "Copied" : "Reuse", variant: "default", title: "Copy prompt into composer" },
         { id: "mint", icon: minted ? "check_circle" : "token", label: minted ? "Minted" : "Mint", variant: minted ? "success" : "default", disabled: minted },
         { id: "load", icon: "visibility", label: "Load", variant: "primary", disabled: !item?.success, title: "Load this scene" },
@@ -3066,6 +3220,7 @@ OUTPUT:`;
 
     const handleAction = (id, item) => {
       switch (id) {
+        case "inspect": inspectInference(item); break;
         case "copy": copyPrompt(item.prompt, item._originalIndex); break;
         case "mint": openMint(item); break;
         case "load": applyInference(item); break;
@@ -3174,8 +3329,24 @@ OUTPUT:`;
     // ═══════════════════════════════════════════════════════════════════════
     const isModelAvailable = async (filename) => {
       const available = await window.electronAPI.checkModel(filename);
-      isModel.value = available;
+      const match = requiredModels.value.find((model) => model.filename === filename);
+      if (match) {
+        modelAvailability[match.role.toLowerCase()] = available;
+      }
       return available;
+    };
+
+    const refreshRequiredModelAvailability = async () => {
+      const results = await Promise.all(
+        requiredModels.value.map(async (model) => ({
+          role: model.role.toLowerCase(),
+          available: await window.electronAPI.checkModel(model.filename),
+        })),
+      );
+      for (const result of results) {
+        modelAvailability[result.role] = result.available;
+      }
+      return results.every((result) => result.available);
     };
 
     const downloadModel = async (url, filename) => {
@@ -3184,7 +3355,7 @@ OUTPUT:`;
       downloadProgress.value = 0;
 
       window.electronAPI.onDownloadProgress((e, data) => {
-        if (data.filename === currentModel.value.filename) {
+        if (data.filename === filename) {
           downloadProgress.value = Math.round(data.percent * 100);
         }
       });
@@ -3194,7 +3365,7 @@ OUTPUT:`;
       downloadProgress.value = 0;
 
       if (success) {
-        isModel.value = true;
+        await isModelAvailable(filename);
       }
     };
 
@@ -3203,39 +3374,49 @@ OUTPUT:`;
       const success = await window.electronAPI.deleteModel(filename);
 
       if (success) {
-        isModel.value = false;
-        isModelLoaded.value = false;
+        const match = requiredModels.value.find((model) => model.filename === filename);
+        if (match) {
+          modelAvailability[match.role.toLowerCase()] = false;
+        }
+        if (loadedModelFilename.value === filename) {
+          loadedModelFilename.value = null;
+        }
       }
     };
 
     // ═══════════════════════════════════════════════════════════════════════
     // MODEL LOADING
     // ═══════════════════════════════════════════════════════════════════════
-    const loadModelForGeneration = async () => {
-      if (isModelLoaded.value) return;
+    const loadModelForGeneration = async (targetModel = codeModel.value) => {
+      if (loadedModelFilename.value === targetModel.filename) return;
 
-      lastStatus.value = "Loading Code Model...";
+      lastStatus.value = `Loading ${targetModel.role} Model...`;
       try {
         // Cap context at 32K — 3D prompts are ~20K tokens max, and larger contexts
         // waste memory on KV cache and cause very slow prefill (100K+ = minutes of prefill)
         // forceReload ensures we get fresh context even if another tab loaded the model
         // with a different context size
         await window.electronAPI.loadModel({
-          filename: currentModel.value.filename,
-          parameters: currentModel.value.parameters,
-          activeParameters: currentModel.value.activeParameters,
-          isMoE: currentModel.value.isMoE,
+          filename: targetModel.filename,
+          parameters: targetModel.parameters,
+          activeParameters: targetModel.activeParameters,
+          isMoE: targetModel.isMoE,
           // 64K — the Qwen 3.6 35B A3B model supports 128K natively.
           // 32K was forcing the full-orrery reference to truncate
           // generated code mid-emission; 64K gives the blueprint + the
           // orrery skeleton + cheatsheets + rules ~48K of input while
           // still leaving ~16-20K for output and any thinking tokens.
           context: 65536,
-          filesizeBytes: currentModel.value.filesizeBytes,
-          flashAttention: currentModel.value.flashAttention,
+          filesizeBytes: targetModel.filesizeBytes,
+          flashAttention: targetModel.flashAttention,
+          draftModel: targetModel.draftModel || null,
+          draftUrl: targetModel.draftUrl || null,
+          specType: targetModel.specType || null,
+          specDraftNMax: targetModel.specDraftNMax || null,
+          mtp: targetModel.mtp || false,
           forceReload: true,
         });
-        isModelLoaded.value = true;
+        loadedModelFilename.value = targetModel.filename;
         lastStatus.value = "Let's go!";
       } catch (error) {
         throw new Error(`Model loading failed: ${error.message}`);
@@ -3698,7 +3879,7 @@ OUTPUT:`;
       lastStatus.value = "Preparing...";
 
       try {
-        await loadModelForGeneration();
+        await loadModelForGeneration(plannerModel.value);
         const viewer = threeViewer.value;
         if (!viewer) throw new Error("Viewer not initialized");
 
@@ -3754,6 +3935,7 @@ OUTPUT:`;
         // Phase 2: Generate Three.js code from blueprint
         // Reset chat again — the blueprint exchange is in history and the code prompt
         // is very large (Three.js reference docs), so we need maximum context available
+        await loadModelForGeneration(codeModel.value);
         await window.electronAPI.resetChat();
         lastStatus.value = "Vibe Coding...";
         const codePrompt = buildObjectPrompt(blueprint);
@@ -3818,15 +4000,16 @@ OUTPUT:`;
         //   (b) userCode exists but has badly mismatched braces, which
         //       normalizeLLMCode couldn't auto-fix. Truncated output
         //       typically ends mid-expression with many more `{` than `}`.
+        let renderCheck = validateRenderableUserCode(userCode);
         const openBraces  = (userCode.match(/\{/g) || []).length;
         const closeBraces = (userCode.match(/\}/g) || []).length;
         const truncated = userCode && (openBraces - closeBraces > 5
                                        || !/return\s+root\s*;?\s*$/.test(userCode.replace(/\s+$/, "").slice(-400))
                                           && userCode.length > 2000
                                           && openBraces > closeBraces);
-        if (!userCode || truncated) {
+        if (!userCode || truncated || !renderCheck.ok) {
           console.warn(
-            `[3D] Phase-2 ${userCode ? 'produced truncated code' : 'produced empty code'} — retrying with terse prompt.`
+            `[3D] Phase-2 ${userCode ? (truncated ? 'produced truncated code' : renderCheck.reason) : 'produced empty code'} — retrying with terse prompt.`
           );
           lastStatus.value = "Retrying...";
           _resetStream("Retrying", 8192, "First pass came back unsteady — re-rolling with a tighter prompt.");
@@ -3839,7 +4022,7 @@ Pre-declared: THREE, scene, root, MAT, TEX, SHADER, FLUID, P, H, FX, CELESTIAL, 
 For water/potion/blood: use FLUID.oceanWater / FLUID.fountainBasin / FLUID.stream / H.fillLiquid+FLUID.upgradeFill.
 For glow: FX.withGlow(mesh, color, {scale, intensity}).
 For physics: await P.init(); P.body(mesh, {...}).
-Every mesh goes on root. Keep object height 0.3-1.5. No imports. No markdown fences.
+Every mesh goes on root. The code MUST include root.add(...) calls for visible objects. Keep object height 0.3-1.5. No imports. No markdown fences.
 
 OUTPUT CODE:`;
           const retry = await callLLM(
@@ -3859,6 +4042,7 @@ OUTPUT CODE:`;
             /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
           );
           userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
+          renderCheck = validateRenderableUserCode(userCode);
         }
 
         console.log("User code:", userCode || "(empty — LLM produced no code)");
@@ -3866,6 +4050,9 @@ OUTPUT CODE:`;
           throw new Error(
             "LLM produced no usable code (thinking may have consumed all tokens). Try again.",
           );
+        }
+        if (!renderCheck.ok) {
+          throw new Error(`${renderCheck.reason}. Try again or use a larger 3D code model.`);
         }
 
         // Render
@@ -3901,11 +4088,6 @@ OUTPUT CODE:`;
       } catch (e) {
         console.error("❌ Generation error:", e);
         lastStatus.value = "❌ Failed: " + e.message;
-        await addObjectInference(form.prompt, "", {
-          success: false,
-          notes: String(e.message || "Unknown error"),
-          model: currentModel.value.modelname,
-        });
       } finally {
         _endStream();
         isLoading.value = false;
@@ -3920,7 +4102,7 @@ OUTPUT CODE:`;
       isLoading.value = true;
       lastStatus.value = "Refining...";
       try {
-        await loadModelForGeneration();
+        await loadModelForGeneration(codeModel.value);
         const viewer = threeViewer.value;
         if (!viewer) throw new Error("Viewer not initialized");
 
@@ -3955,9 +4137,12 @@ OUTPUT CODE:`;
         const userCodeMatch = code.match(
           /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
         );
-        if (!userCodeMatch?.[1]?.trim()) throw new Error("Refinement produced no code");
+        const refinedUserCode = userCodeMatch?.[1]?.trim() || "";
+        if (!refinedUserCode) throw new Error("Refinement produced no code");
+        const renderCheck = validateRenderableUserCode(refinedUserCode);
+        if (!renderCheck.ok) throw new Error(`Refinement failed: ${renderCheck.reason}`);
 
-        lastGeneratedCode.value = userCodeMatch[1].trim();
+        lastGeneratedCode.value = refinedUserCode;
         _resetStream("Rendering", 1, "Compiling shaders and casting first light.");
         stream.tokenCount = 1;
         stream.maxTokens = 1;
@@ -3988,8 +4173,8 @@ OUTPUT CODE:`;
       // Load object inferences from shared store
       await loadObjectInferences();
 
-      // Check if the model is already downloaded
-      await isModelAvailable(currentModel.value.filename);
+      // Check if the required planner and codegen models are already downloaded
+      await refreshRequiredModelAvailability();
 
       // Resume any active downloads
       resumeActiveDownloadIfAny();
@@ -4082,6 +4267,7 @@ OUTPUT CODE:`;
       setLightIntensity,
       copyPrompt,
       historyThumbnail,
+      formatHistoryDate,
       clearScene,
       handleSuccess,
       handleError,
@@ -4603,6 +4789,7 @@ p {
   line-height: var(--bz-line-body);
 }
 div.question {
+  height: 100%;
   border: 1px solid var(--bz-border);
   padding: var(--bz-space-3);
   margin: 0 !important;
@@ -4615,6 +4802,7 @@ div.question {
   overflow: hidden;
 }
 .history-header {
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 0.75em;
@@ -4864,6 +5052,8 @@ ol {
 ol.chat {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-auto-rows: 1fr;
+  align-items: stretch;
   gap: var(--bz-space-4);
   list-style: none;
   padding: 0;
@@ -4897,8 +5087,14 @@ ol.chat .history-item:not(:first-child) hr {
 
 /* Fade-in animation for history items */
 .history-item {
+  display: flex;
+  min-width: 0;
   animation: bz-rise 0.4s ease-out forwards;
   opacity: 0;
+}
+
+.history-item > .question {
+  width: 100%;
 }
 
 @keyframes fadeInUp {

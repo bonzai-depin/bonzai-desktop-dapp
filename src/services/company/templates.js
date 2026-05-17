@@ -19,7 +19,7 @@ import { VETO_MODES } from "./charter.js";
  *   id, vertical, name, summary, badgeIcon (Material Symbols)
  *   missionTemplate(answers)  — returns the mission string
  *   skillPacks                — pack ids to install on Form
- *   defaultRoles              — { roleKey: { companion, llm?, grantedSkills } }
+ *   defaultRoles              — { roleKey: { companion, llm?, grantedSkills, pipelines? } }
  *   hybridRoles               — [{ key, library, defaultGrantedSkills }]
  *   vetoOverrides             — partial vetoMode map merged onto defaults
  *   treasuryDefaults          — { reserveFloor, perHeartbeatSpendCap, currency }
@@ -28,6 +28,72 @@ import { VETO_MODES } from "./charter.js";
  *   companionPresets          — suggested companion ids per role
  */
 export const TEMPLATES = {
+  // ─── UGC social media campaign studio ────────────────────────────────
+  ugc_campaign_studio: {
+    id: "ugc_campaign_studio",
+    vertical: "ugc_campaign_studio",
+    name: "UGC Campaign Studio",
+    summary: "Client social media campaigns. Creator briefs, hooks, storyboards, draft assets, paid-media tests, and weekly reports.",
+    badgeIcon: "campaign",
+    skillPacks: ["smb_back_office", "marketing_agency"],
+
+    missionTemplate: (a) => `Run a UGC campaign studio for ${a.targetClient || "growth-stage consumer brands"}. Create short-form social concepts, creator briefs, draft assets, paid-media variants, and weekly client reporting for ${a.channels || "TikTok, Reels, and Shorts"}. Primary campaign objective: ${a.campaignObjective || "increase qualified social demand"}. Brand voice: ${a.brandVoice || "human, fast, specific, and conversion-minded"}. Keep client work organized, measurable, and ready for approval before publishing.`.trim(),
+
+    defaultRoles: {
+      CEO: { companion: "zara", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.notion_docs"] },
+      CFO: { companion: "marcus", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_checkout", "skill.stripe_subscriptions"] },
+      CPO: { companion: "kai", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.notion_docs"], pipelines: ["image", "video", "vision"] },
+      CSO: { companion: "mai", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.hubspot_lite", "skill.sendgrid_email", "skill.google_calendar", "skill.docusign"] },
+      CMO: { companion: "sofia", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.hubspot_lite", "skill.sendgrid_email"], pipelines: ["image", "video", "vision"] },
+      COO: { companion: "james", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.google_calendar", "skill.notion_docs"] },
+      GeneralCounsel: { companion: "marcus", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.docusign"] },
+      "Producer:text": { companion: "aurore", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.notion_docs"] },
+      "Producer:image": { companion: "aria", llm: "llm_qwen3_5_4b_q4", grantedSkills: [], pipelines: ["image", "vision"] },
+      "Producer:video": { companion: "zara", llm: "llm_qwen3_5_9b_q2", grantedSkills: [], pipelines: ["video", "audio"] },
+      RnDLead: { companion: "kai", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.notion_docs"], pipelines: ["vision"] },
+    },
+
+    hybridRoles: [],
+
+    vetoOverrides: {
+      "produce.text": VETO_MODES.AUTO,
+      "produce.image": VETO_MODES.AUTO,
+      "produce.video": VETO_MODES.NOTIFY,
+      publishContent: VETO_MODES.NOTIFY,
+      broadcastChannel: VETO_MODES.NOTIFY,
+      replyToInbox: VETO_MODES.AUTO,
+      "spend.under.50": VETO_MODES.AUTO,
+      "spend.under.250": VETO_MODES.NOTIFY,
+      "spend.over.250": VETO_MODES.APPROVE,
+      hire: VETO_MODES.APPROVE,
+      fire: VETO_MODES.APPROVE,
+      amendCharter: VETO_MODES.APPROVE,
+    },
+
+    treasuryDefaults: {
+      currency: "USD",
+      reserveFloor: 5000,
+      perHeartbeatSpendCap: 150,
+    },
+
+    initialGoals: [
+      "Create a 7-day UGC concept calendar for the anchor client",
+      "Write three creator briefs with hooks, shot lists, captions, and calls to action",
+      "Generate storyboard frames for the strongest campaign angle",
+      "Draft a 15-second vertical ad concept as a client-ready deliverable",
+      "Prepare a weekly client performance report template with creative learnings",
+    ],
+
+    intakeQuestions: [
+      { id: "targetClient", label: "Ideal client profile", placeholder: "e.g. skincare brands doing $1-10M ARR", type: "text", required: true },
+      { id: "channels", label: "Primary social channels", placeholder: "TikTok, Reels, Shorts, LinkedIn", type: "text", default: "TikTok, Reels, and Shorts" },
+      { id: "campaignObjective", label: "Main campaign objective", placeholder: "e.g. launch a new serum, reduce CAC, grow waitlist", type: "text", required: true },
+      { id: "brandVoice", label: "Studio brand voice in 5 words", placeholder: "specific, warm, bold, practical, sharp", type: "text" },
+      { id: "monthlyAdBudget", label: "Typical monthly client ad budget (USD)", type: "number", default: 3000 },
+      { id: "activeClients", label: "How many active clients?", type: "number", default: 1 },
+    ],
+  },
+
   // ─── HVAC residential service company ────────────────────────────────
   hvac_residential: {
     id: "hvac_residential",
@@ -232,7 +298,7 @@ export const TEMPLATES = {
     id: "marketing_agency",
     vertical: "marketing_agency",
     name: "Marketing Agency",
-    summary: "Lead-to-retainer pipeline. Multi-channel ad ops (Meta + Google), content production, weekly client reports, retainer renewals — fully autonomous account-management.",
+    summary: "Lead-to-retainer pipeline. Multi-channel ad ops, deliverable creation, weekly client reports, and retainer renewals.",
     badgeIcon: "campaign",
     skillPacks: ["smb_back_office", "marketing_agency"],
 
@@ -511,7 +577,7 @@ export const TEMPLATES = {
     id: "affiliate_operator",
     vertical: "affiliate_operator",
     name: "Affiliate Marketing Operator",
-    summary: "Multi-funnel paid-traffic operation. Continuous creative experimentation, conversion tracking, content production, audience expansion — fully autonomous.",
+    summary: "Multi-funnel paid-traffic operation with creative testing, conversion tracking, deliverable creation, and audience expansion.",
     badgeIcon: "trending_up",
     skillPacks: ["smb_back_office", "affiliate_operator"],
 
@@ -644,6 +710,9 @@ export function applyTemplate(templateId, answers = {}, ownerOverrides = {}) {
       llm: roleDef.llm || null,
       grantedSkills: (roleDef.grantedSkills || []).filter((s) => validSkillSet.has(s)),
     };
+    if (Array.isArray(roleDef.pipelines) && roleDef.pipelines.length) {
+      roles[roleKey].pipelines = [...roleDef.pipelines];
+    }
     if (roleDef.budgetPerHeartbeat) roles[roleKey].budgetPerHeartbeat = roleDef.budgetPerHeartbeat;
   }
 
@@ -672,12 +741,13 @@ export function applyTemplate(templateId, answers = {}, ownerOverrides = {}) {
   }
 
   const draft = {
-    name: ownerOverrides.name || `${t.name} (Draft)`,
+    name: ownerOverrides.name || t.name,
     mission: t.missionTemplate(answers),
     mode: ownerOverrides.mode || "solo",
     template: { id: t.id, version: "1.0", appliedAt: Date.now() },
     rules: {
       ...t.treasuryDefaults,
+      ...(ownerOverrides.treasury || {}),
       vetoOverrides: t.vetoOverrides,
     },
     roles,

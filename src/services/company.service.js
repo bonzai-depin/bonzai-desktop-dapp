@@ -471,6 +471,7 @@ export async function formFromTemplate(templateId, answers, ownerOverrides = {})
     grantedSkills: draft.grantedSkills,
     pendingConnectors: draft.pendingConnectors,
     skillPacks: draft.skillPacks,
+    initialGoals: draft.initialGoals,
     humanRoster: draft.humanRoster,
     roles: draft.roles,
     currency: draft.rules?.currency,

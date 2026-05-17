@@ -18,6 +18,14 @@ module.exports = {
     hardhat: {
       allowUnlimitedContractSize: true,
     },
+    // Ethereum Mainnet
+    ethereum: {
+      url: process.env.ETHEREUM_RPC_URL || process.env.MAINNET_RPC_URL || "https://ethereum.publicnode.com",
+      chainId: 1,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [],
+    },
     // Base Mainnet
     base: {
       url: process.env.BASE_RPC_URL || "https://base.llamarpc.com",

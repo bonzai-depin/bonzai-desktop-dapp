@@ -228,7 +228,7 @@ export async function mintContent({
       return { success: false, error: `${levelRequired} required. ${reason}`, levelBlocked: true };
     }
 
-    // ─── Pre-flight: ensure we're on Base ──────────────────────────
+    // ─── Pre-flight: ensure we're on Ethereum ─────────────────────
     onProgress('upload', 'Preparing...', 5);
     await switchNetwork('base');
 
@@ -495,16 +495,16 @@ export async function mintContent({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BASE MINTING (ERC-721)
+// ETHEREUM MINTING (ERC-721)
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenceType }) {
   const factoryAddress = CONFIG.contentNFT?.base?.factoryAddress;
   if (!factoryAddress) {
-    throw new Error('BonzaiCollectiblesFactory not deployed on Base yet. Factory address not configured.');
+    throw new Error('BonzaiCollectiblesFactory not deployed on Ethereum yet. Factory address not configured.');
   }
 
-  // Ensure we're on Base (should already be from pre-flight)
+  // Ensure we're on Ethereum (legacy "base" key is mapped to Ethereum in config)
   await switchNetwork('base');
 
   onProgress('mint', 'Preparing transaction...', 68);
@@ -546,7 +546,7 @@ async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenc
 
   const contentType = CONTENT_TYPE_MAP[inferenceType] ?? 0;
   const tx = await contract.mint(transactionId, model, tokenURI, contentType, { value: mintFee });
-  console.log('[ContentNFT] Base mint tx sent:', tx.hash);
+  console.log('[ContentNFT] Ethereum mint tx sent:', tx.hash);
 
   onProgress('mint', 'Waiting for confirmation...', 78);
   const receipt = await tx.wait();
@@ -569,7 +569,7 @@ async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenc
     tokenId,
     contractAddress: collectionAddress,
     transactionHash: receipt.hash,
-    explorerUrl: `https://basescan.org/tx/${receipt.hash}`,
+    explorerUrl: `${CONFIG.networks.base.explorer}/tx/${receipt.hash}`,
   };
 }
 
@@ -1127,11 +1127,11 @@ document.getElementById('poster').addEventListener('click',function(){
  */
 export async function fetchNFT3DCode(tokenId) {
   try {
-    // ERC-721: call tokenURI on Base
+    // ERC-721: call tokenURI on Ethereum
     const contractAddress = CONFIG.contentNFT?.base?.contractAddress;
     if (!contractAddress) throw new Error('Content NFT contract not configured');
 
-    const provider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
+    const provider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://ethereum.publicnode.com');
     const contract = new ethers.Contract(
       contractAddress,
       ['function tokenURI(uint256 tokenId) view returns (string)'],

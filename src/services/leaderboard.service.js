@@ -13,8 +13,9 @@
  * Category champions: top companion per spending category (education, finance, etc).
  *
  * Data sources:
- *   - CompanionMinted events on Base (BonzaiCompanions) → global companion set
- *   - BONZAI balance on Ethereum + Arbitrum + Base (aggregated)
+ *   - CompanionMinted events on Ethereum (BonzaiCompanions) → global companion set
+ *   - CompanionTokenFactory token launches → custom companion token showcase
+ *   - BONZAI balance on Ethereum
  *   - BonzaiSkillOwnership.CompanionRevenueShare events (historical revenue)
  *   - BonzaiSkillOwnership.unclaimedRevenueUSDC (current unclaimed)
  *   - CompanionRegistered events (skill co-ownership count)
@@ -26,6 +27,7 @@ import { skillOwnershipService } from './skillOwnership.service.js';
 import { web3Service } from './web3.service.js';
 import { CONFIG } from '../config/web3.config.js';
 import { tokenService } from './token.service.js';
+import { companionTokenService } from './companionToken.service.js';
 
 const BONZAI_TOKEN_ABI = [
   'function balanceOf(address account) view returns (uint256)',
@@ -46,7 +48,7 @@ const OWNERSHIP_ABI_EVENTS = [
 
 async function getAggregateBonzaiBalance(wallet) {
   if (!wallet) return 0n;
-  const chains = ['ethereum', 'arbitrum', 'base'];
+  const chains = ['ethereum'];
   let total = 0n;
   await Promise.all(chains.map(async (chain) => {
     try {
@@ -177,13 +179,18 @@ async function buildLeaderboardEntries() {
       if (meta?.image) image = meta.image;
     } catch { /* metadata fetch best-effort */ }
 
-    const [bonzaiBalance, unclaimedRaw] = await Promise.all([
+    const [bonzaiBalance, unclaimedRaw, tokenAddress] = await Promise.all([
       getAggregateBonzaiBalance(m.agentWallet),
       (async () => {
         if (!ownershipContract) return '0';
         try {
           return await skillOwnershipService.getUnclaimedRevenueUSDC(m.agentWallet);
         } catch { return '0'; }
+      })(),
+      (async () => {
+        try {
+          return await companionTokenService.getCompanionToken(m.tokenId);
+        } catch { return null; }
       })(),
     ]);
 
@@ -198,6 +205,8 @@ async function buildLeaderboardEntries() {
       image,
       owner: m.owner,
       agentWallet: m.agentWallet,
+      tokenAddress,
+      hasToken: !!tokenAddress,
       bonzaiBalance: bonzaiWhole,
       netWorthUSD: bonzaiWhole * bonzaiUsdPrice,
       totalRevenueUSDC,
@@ -207,7 +216,7 @@ async function buildLeaderboardEntries() {
     };
   }));
 
-  return entries;
+  return entries.filter((entry) => entry.hasToken);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -326,9 +335,9 @@ export function isUsingMockData() {
 
 function getMockLeaderboard(mode, limit) {
   const names = [
-    'Aurore Beaumont', 'Marcus Ferrara', 'Mai Tanaka', 'Jin Chen',
-    'Zara Okonkwo', 'James Whitmore', 'Priya Sharma', 'Damon Rivers',
-    'Sofia Reyes', 'ARIA-7',
+    'Nova Atlas', 'Mika Vale', 'Orion Reed', 'Sana Park',
+    'Cassian Voss', 'Lena Quill', 'Theo Marlow', 'Iris Nyx',
+    'Rafi Sol', 'Vera Kade',
   ];
   const entries = names.map((name, i) => ({
     rank: 0,
@@ -337,6 +346,8 @@ function getMockLeaderboard(mode, limit) {
     image: null,
     owner: null,
     agentWallet: null,
+    tokenAddress: `0x${String(i + 1).padStart(40, '0')}`,
+    hasToken: true,
     bonzaiBalance: 100_000_000 - i * 8_000_000,
     netWorthUSD: (100_000_000 - i * 8_000_000) * 0.01,
     totalRevenueUSDC: 4000 - i * 350,

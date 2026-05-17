@@ -1,7 +1,7 @@
 /**
  * BonzAI Companion NFT Service
  *
- * Manages companion NFTs on Base (ERC-721 + ERC-8004 Identity Registry).
+ * Manages companion NFTs on Ethereum (ERC-721 + ERC-8004 Identity Registry).
  * Flat 0.25 ETH mint price, 10K supply cap, no rarity tiers.
  */
 
@@ -29,7 +29,7 @@ const BONZAI_TOKEN_ABI = [
 // ABIs
 // ═══════════════════════════════════════════════════════════════════════════
 
-// BonzaiCompanions ABI (Base — ERC-8004 + flat ETH mint)
+// BonzaiCompanions ABI (Ethereum — ERC-8004 + flat ETH mint)
 const COMPANION_BASE_ABI = [
   // View functions
   'function totalSupply() view returns (uint256)',
@@ -147,8 +147,8 @@ function getAvailableNetworks() {
   return [
     {
       id: 'base',
-      name: 'Base',
-      chainId: 8453,
+      name: 'Ethereum',
+      chainId: CONFIG.companionNFT_BASE?.chainId || 1,
       standard: 'ERC-8004',
       currency: 'ETH',
       mintPrice: '0.25',
@@ -170,20 +170,20 @@ function isLuksoAvailable() {
 }
 
 /**
- * Mint companion on Base (primary network).
+ * Mint companion on Ethereum (primary network).
  * @param {Object} params - Minting parameters
  * @param {string} network - Must be 'base'
  */
 async function mintCompanionMultiNetwork(params, network = 'base') {
   if (network !== 'base') {
-    throw new Error(`Unsupported network: ${network}. Companion minting is Base-only.`);
+    throw new Error(`Unsupported network: ${network}. Companion minting is Ethereum-only.`);
   }
-  console.log('[CompanionService] Minting on Base with local agent wallet...');
+  console.log('[CompanionService] Minting on Ethereum with local agent wallet...');
   return await mintCompanionBase(params);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MINTING — BASE (Primary: 0.25 ETH flat)
+// MINTING — ETHEREUM (Primary: 0.25 ETH flat)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -196,7 +196,7 @@ function packSpendingProfile(habits) {
 }
 
 /**
- * Mint companion on Base with local self-custody agent wallet.
+ * Mint companion on Ethereum with local self-custody agent wallet.
  * Flat 0.25 ETH mint price.
  */
 async function mintCompanionBase(params) {
@@ -204,10 +204,10 @@ async function mintCompanionBase(params) {
     state.isLoading = true;
 
     const config = CONFIG.companionNFT_BASE;
-    const chainId = 8453;
+    const chainId = config?.chainId || 1;
 
     if (!config?.contractAddress) {
-      throw new Error('BonzaiCompanions contract not deployed on Base yet');
+      throw new Error('BonzaiCompanions contract not deployed on Ethereum yet');
     }
 
     // Generate spending profile if not provided
@@ -222,10 +222,10 @@ async function mintCompanionBase(params) {
     });
     console.log('[CompanionService] Agent wallet created:', agentWallet.address);
 
-    // Ensure wallet is on Base network
+    // Ensure wallet is on Ethereum network
     const currentChainId = web3Service.state.currentChainId;
     if (currentChainId !== chainId) {
-      console.log('[CompanionService] Switching to Base...');
+      console.log('[CompanionService] Switching to Ethereum...');
       await web3Service.switchNetwork('base');
     }
 
@@ -251,7 +251,7 @@ async function mintCompanionBase(params) {
 
     const ethBalance = await provider.getBalance(userAddress);
     if (ethBalance < ethMintPrice) {
-      throw new Error(`Insufficient ETH on Base. Need ${ethers.formatEther(ethMintPrice)} ETH`);
+      throw new Error(`Insufficient ETH on Ethereum. Need ${ethers.formatEther(ethMintPrice)} ETH`);
     }
 
     // Hash personality
@@ -263,7 +263,7 @@ async function mintCompanionBase(params) {
     const spendingProfile = packSpendingProfile(spendingHabits);
 
     // Mint with flat ETH payment
-    console.log(`[CompanionService] Minting BonzaiCompanion on Base for ${ethers.formatEther(ethMintPrice)} ETH...`);
+    console.log(`[CompanionService] Minting BonzaiCompanion on Ethereum for ${ethers.formatEther(ethMintPrice)} ETH...`);
     const tx = await contract.mintCompanion(
       agentUri,
       personalityBytes,
@@ -288,7 +288,7 @@ async function mintCompanionBase(params) {
       } catch { /* skip non-matching logs */ }
     }
 
-    console.log('[CompanionService] Base companion minted! Token ID:', tokenId);
+    console.log('[CompanionService] Ethereum companion minted! Token ID:', tokenId);
 
     // Set ERC-8004 OASF agent traits via setMetadataBatch (single transaction)
     if (tokenId) {
@@ -312,7 +312,7 @@ async function mintCompanionBase(params) {
       success: true,
       tokenId,
       txHash: receipt.hash,
-      network: 'base',
+      network: 'ethereum',
       standard: 'ERC-8004',
       agentWallet: agentWallet.address,
       agentWalletProvider: 'local',
@@ -320,7 +320,7 @@ async function mintCompanionBase(params) {
       spendingHabits,
     };
   } catch (e) {
-    console.error('[CompanionService] Base mint failed:', e);
+    console.error('[CompanionService] Ethereum mint failed:', e);
     state.error = e.message;
     return {
       success: false,
@@ -693,7 +693,7 @@ function mapMetadataToCompanion(metadata, tokenId, onChainData) {
 }
 
 /**
- * Load all companion NFTs owned by the given wallet address on Base.
+ * Load all companion NFTs owned by the given wallet address on Ethereum.
  * Returns companion objects ready for RoleplayChat.
  */
 async function loadOwnedCompanions(walletAddress) {
@@ -922,8 +922,8 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function getBonzaiTokenContract() {
-  const network = 'arbitrum'; // BONZAI is on Arbitrum
-  const provider = web3Service.getProvider(network);
+  const network = 'ethereum';
+  const provider = await web3Service.getProvider(network);
   const tokenAddress = CONFIG.tokens.BONZAI[network];
   return new ethers.Contract(tokenAddress, BONZAI_TOKEN_ABI, provider);
 }

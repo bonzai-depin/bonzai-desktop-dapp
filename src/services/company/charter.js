@@ -464,6 +464,7 @@ export function makeCharter(cfg = {}) {
      * this; it's also useful for showing a vertical badge in the UI.
      */
     template: cfg.template || null,
+    initialGoals: Array.isArray(cfg.initialGoals) ? [...cfg.initialGoals] : [],
 
     /**
      * Top-level installed skill list — the union of all granted skills

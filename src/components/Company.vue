@@ -26,8 +26,8 @@
             Zero-Human Companies
           </h2>
           <p>
-            A workforce of AI companions that runs your business while you
-            sleep. Form one in 90 seconds — no crypto, no SaaS, no API meter.
+            Turn a mission into delegated work, deliverables, approvals, and an
+            audit trail without building the operating system by hand.
           </p>
 
           <hr />
@@ -35,19 +35,19 @@
           <div class="welcome-features">
             <div class="welcome-feature">
               <span class="material-symbols-outlined">memory</span>
-              <span>Local LLM. No API meter.</span>
+              <span>Runs from an editable company charter.</span>
             </div>
             <div class="welcome-feature">
               <span class="material-symbols-outlined">schema</span>
-              <span>17 predefined roles. Hire/fire per role.</span>
+              <span>Staff roles and adjust the org chart anytime.</span>
             </div>
             <div class="welcome-feature">
               <span class="material-symbols-outlined">rule</span>
-              <span>Owner-veto governance. Three modes per action class.</span>
+              <span>Review sensitive actions before they run.</span>
             </div>
             <div class="welcome-feature">
               <span class="material-symbols-outlined">account_balance</span>
-              <span>Local treasury. Audit-logged. Portable.</span>
+              <span>Track money, work, and deliverables in one place.</span>
             </div>
           </div>
 
@@ -90,16 +90,30 @@
                 @click="store.setActive(c.id)"
               >
                 <span class="status-dot" :class="`status-${c.status}`"></span>
-                <span class="company-switcher__name fira-sans-condensed-black-italic">{{ c.name }}</span>
-                <span class="company-switcher__mode" :class="c.mode === 'dao' ? 'is-dao' : 'is-solo'">
-                  {{ c.mode === 'dao' ? 'DAO' : 'Solo' }}
-                </span>
+                <span class="company-switcher__name fira-sans-condensed-black-italic">{{ companyName(c) }}</span>
               </button>
             </div>
             <div v-else-if="active" class="company-toolbar__current">
               <span class="status-dot" :class="`status-${active.status}`"></span>
-              <span class="company-toolbar__name fira-sans-condensed-black-italic">{{ active.name }}</span>
+              <span class="company-toolbar__name fira-sans-condensed-black-italic">{{ companyName(active) }}</span>
             </div>
+          </div>
+          <div class="company-toolbar__actions">
+            <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" @click="openWizard">
+              <span class="material-symbols-outlined" aria-hidden="true">add_business</span>
+              New company
+            </button>
+            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="triggerImport">
+              <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+              Import
+            </button>
+            <input
+              ref="importInput"
+              type="file"
+              accept=".json"
+              style="display: none"
+              @change="onImportFile"
+            />
           </div>
         </div>
 
@@ -159,6 +173,9 @@ export default {
       // setActive already happened inside formFromTemplate.
     }
     function onWizardCancel() { showWizard.value = false; }
+    function companyName(company) {
+      return (company?.name || "Untitled Company").replace(/\s+\(Draft\)$/i, "");
+    }
 
     function triggerImport() { importInput.value?.click(); }
     async function onImportFile(ev) {
@@ -177,7 +194,7 @@ export default {
     return {
       store, active, showForm, showWizard,
       openForm, openWizard, onFormed, onEdit, onWizardDone, onWizardCancel,
-      triggerImport, onImportFile, importInput,
+      triggerImport, onImportFile, importInput, companyName,
     };
   },
 };
@@ -224,16 +241,15 @@ hr {
   margin: 0 !important;
   height: calc(100vh - 32px);
   min-height: calc(100vh - 32px);
-  overflow: hidden;
+  overflow: auto;
 }
 .company-shell {
   display: flex;
   flex-direction: column;
   gap: var(--bz-space-3);
   padding: var(--bz-space-4) var(--bz-space-5) var(--bz-space-3) !important;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
+  min-height: 100%;
+  overflow: visible;
 }
 
 .company-toolbar {

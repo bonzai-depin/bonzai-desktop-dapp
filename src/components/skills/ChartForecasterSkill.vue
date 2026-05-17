@@ -198,7 +198,7 @@
       <BonzaiPulse
         v-if="isGeneratingNarrative"
         variant="dot"
-        label="Generating narrative with Qwen3.5 4B"
+        label="Generating narrative with Qwen3.5 4B MTP"
       />
       <div v-else class="narrative-body">{{ narrative }}</div>
     </section>
@@ -217,16 +217,19 @@ const API_BASE =
   (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
   'http://127.0.0.1:65000';
 
-// Full Qwen3.5 4B spec — mirrors the entry in flagship.js so loadModel
+// Full Qwen3.5 4B MTP spec — mirrors the entry in flagship.js so loadModel
 // receives the context/filesize/params needed to size the KV cache
 // correctly. Without these fields the loader defaults to n_ctx=4096
 // which overflows on the narrative prompt.
 const NARRATIVE_LLM_SPEC = {
-  filename: 'qwen3.5-4b-q4_k_m.gguf',
-  url: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
+  filename: 'qwen3.5-4b-ud-q4_k_xl.gguf',
+  url: 'https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf',
   filesizeBytes: 2.8e9,
   parameters: 4e9,
   context: 32768,
+  specType: 'draft-mtp',
+  specDraftNMax: 2,
+  mtp: true,
 };
 
 const CRYPTO_ASSETS = [

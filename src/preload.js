@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Platform info (exposed synchronously from preload context)
   platform: process.platform,
   arch: process.arch,
+  copyText: (text) => ipcRenderer.invoke("clipboard-copy-text", text),
   startServer: () => ipcRenderer.invoke("start-server"),
   stopServer: () => ipcRenderer.invoke("stop-server"),
   restartServer: () => ipcRenderer.invoke("restart-server"),
@@ -60,7 +61,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * if the requested model is already running. Used by ZHC's dispatcher
    * to spawn a role's preferred model on demand.
    *
-   * Pass either a model key string ("llm_qwen_3_6_28b_reap_a3b_q4") or a
+   * Pass either a model key string ("llm_qwen_3_6_35b_a3b_q4") or a
    * partial spec object. Resolves keys via flagship.resolveLLM in main.
    *
    * Returns { ok, port?, filename?, cached?, error? }.

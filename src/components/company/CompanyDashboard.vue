@@ -4,21 +4,10 @@
       <div class="company-cockpit__identity">
         <p class="command-center__eyebrow">Operating console</p>
         <h1 class="company-cockpit__title fira-sans-condensed-black-italic">
-          {{ charter.name }}
+          {{ companyDisplayName }}
         </h1>
         <p class="company-cockpit__mission">{{ charter.mission }}</p>
         <div class="company-cockpit__chips">
-          <button
-            class="company-demo-pill"
-            :class="{ 'is-on': charter.demoMode }"
-            @click="toggleDemoMode"
-            :title="charter.demoMode
-              ? 'Demo Mode is ON: scripted ticks, no LLM. Click to switch to real local-LLM inference.'
-              : 'Demo Mode is OFF: real local-LLM inference. Click to enable scripted ticks.'"
-          >
-            <span class="material-symbols-outlined">{{ charter.demoMode ? 'auto_awesome_motion' : 'memory' }}</span>
-            <span>{{ charter.demoMode ? 'Demo mode' : 'Local LLM' }}</span>
-          </button>
           <span
             class="company-pill"
             :class="charter.status === 'active' ? 'company-pill--success' : 'company-pill--warning'"
@@ -44,30 +33,45 @@
         </div>
         <div class="company-cockpit__actions">
           <button
+            class="bz-btn fira-sans-condensed-black-italic"
+            :class="charter.demoMode ? 'bz-btn--warning' : 'bz-btn--ghost'"
+            @click="toggleDemoMode"
+            :title="charter.demoMode
+              ? 'Demo mode is on: the company uses sample activity so you can explore the workflow. Click to use real execution.'
+              : 'Demo mode is off: the company uses real execution. Click to switch back to sample activity.'"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">
+              {{ charter.demoMode ? 'auto_awesome_motion' : 'bolt' }}
+            </span>
+            Demo mode: {{ charter.demoMode ? 'On' : 'Off' }}
+          </button>
+          <button
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
             @click="toggleExecution"
-            :title="charter.status === 'active' ? 'Pause company execution' : 'Resume company execution'"
+            :title="charter.status === 'active'
+              ? 'Pause scheduled company runs. Existing work stays visible.'
+              : 'Resume scheduled company runs.'"
           >
             <span class="material-symbols-outlined" aria-hidden="true">
               {{ charter.status === 'active' ? 'pause' : 'play_arrow' }}
             </span>
-            {{ charter.status === 'active' ? 'Pause' : 'Resume' }}
+            {{ charter.status === 'active' ? 'Pause automation' : 'Resume automation' }}
           </button>
           <button
             class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
             @click="runCEO"
-            title="Run one operating cycle now: strategy, delegation, and queue creation."
+            title="Ask the CEO role to review the company goals now and queue the next tasks."
           >
             <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
-            Run now
+            Plan next work
           </button>
           <button
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
             @click="openNewGoalModal"
-            title="Create a board directive that the company decomposes into tasks."
+            title="Add a concrete goal for the company to turn into tasks."
           >
             <span class="material-symbols-outlined" aria-hidden="true">add_task</span>
-            New directive
+            Add goal
           </button>
           <button
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
@@ -77,14 +81,6 @@
           >
             <span class="material-symbols-outlined" aria-hidden="true">rule</span>
             Approvals {{ state.approvals.length ? fmtCount(state.approvals.length) : '' }}
-          </button>
-          <button
-            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-            @click="active = 'settings'"
-            title="Switch company, create a new company, export, or delete."
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">tune</span>
-            Manage company
           </button>
         </div>
       </div>
@@ -201,9 +197,9 @@
               </div>
               <button
                 class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
-                @click="active = 'production'"
+                @click="active = 'deliverables'"
               >
-                Production
+                Deliverables
               </button>
             </div>
             <article v-if="latestProduced" class="proof-card">
@@ -218,7 +214,7 @@
               </p>
             </article>
             <div v-else class="proof-card proof-card--empty">
-              No produced artifact yet. Create a board directive with a production task or run a staffed producer role.
+              No deliverable yet. Create a goal with a concrete output, then run the assigned role.
             </div>
           </div>
 
@@ -245,7 +241,7 @@
                 <strong>{{ fmtMoney(state.summary.spend || state.treasuryState?.totalOut, state.treasuryState?.currency) }}</strong>
               </div>
               <div class="money-stack__row">
-                <span>Per-cycle cap</span>
+                <span>Per run cap</span>
                 <strong>{{ fmtMoney(charter.rules?.perHeartbeatSpendCap, state.treasuryState?.currency) }}</strong>
               </div>
               <div class="money-stack__row">
@@ -259,10 +255,20 @@
 
       <!-- ─── Org Chart ─── -->
       <div v-else-if="active === 'org'" class="panel models__activity--payouts">
-        <h2 class="panel-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">schema</span>
-          Organizational Chart
-        </h2>
+        <div class="section-head">
+          <h2 class="panel-title fira-sans-condensed-black-italic">
+            <span class="material-symbols-outlined">schema</span>
+            Org chart
+          </h2>
+          <button
+            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+            @click="openRoleEdit(availableRoleOptions[0]?.key)"
+            :disabled="!availableRoleOptions.length"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">person_add</span>
+            Add role
+          </button>
+        </div>
         <div v-if="filledRoles.length" class="org-grid">
           <div
             v-for="roleKey in filledRoles"
@@ -283,7 +289,7 @@
             <div class="org-card__companion fira-sans-condensed-black-italic">
               {{ companionName(charter.roles[roleKey].companion) }}
             </div>
-            <div class="org-card__llm" v-if="charter.roles[roleKey].llm">
+            <div class="org-card__llm">
               <span class="material-symbols-outlined">memory</span>
               {{ llmLabel(charter.roles[roleKey].llm) }}
             </div>
@@ -301,6 +307,17 @@
                 :key="sid"
                 class="org-card__grant-tag"
               >{{ skillShortName(sid) }}</span>
+            </div>
+            <div
+              v-if="(charter.roles[roleKey].pipelines?.length || 0) > 0"
+              class="org-card__grants org-card__pipelines"
+            >
+              <span class="material-symbols-outlined">auto_awesome_motion</span>
+              <span
+                v-for="pipeline in charter.roles[roleKey].pipelines"
+                :key="pipeline"
+                class="org-card__grant-tag"
+              >{{ pipelineLabel(pipeline) }}</span>
             </div>
             <div
               v-if="charter.roles[roleKey].kind === 'human_supported'"
@@ -329,7 +346,7 @@
                 <button
                   class="bz-iconbtn bz-iconbtn--sm"
                   @click="openRoleEdit(roleKey)"
-                  title="Configure this role: companion, LLM, budget"
+                  title="Edit this role"
                   aria-label="Edit role"
                 >
                   <span class="material-symbols-outlined">settings</span>
@@ -347,7 +364,7 @@
           </div>
         </div>
         <div v-else class="empty">
-          No roles assigned. Click <strong>Edit charter</strong> in Settings to add.
+          No roles assigned yet. Add a role to start delegating work.
         </div>
       </div>
 
@@ -588,13 +605,16 @@
         </div>
       </div>
 
-      <!-- ─── Production / catalog ─── -->
-      <div v-else-if="active === 'production'" class="panel models__activity--payouts">
+      <!-- ─── Deliverables / catalog ─── -->
+      <div v-else-if="active === 'deliverables'" class="panel models__activity--payouts">
         <div class="section-head">
           <h2 class="panel-title fira-sans-condensed-black-italic">
             <span class="material-symbols-outlined">factory</span>
-            Production catalog
+            Deliverables
           </h2>
+          <p class="section-head__hint">
+            Finished text, media, reports, listings, and other work products created by staffed roles.
+          </p>
           <div class="section-head__actions">
             <button
               class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
@@ -621,7 +641,7 @@
           :row-key="row => row.id"
           density="compact"
           empty-title="No produced content"
-          empty-subtitle="The next CEO tick will start the assembly line."
+          empty-subtitle="Create a goal with a concrete output, then run the assigned role."
         >
           <template #cell-pipeline="{ row }">
             <span class="company-pill company-pill--info">{{ row.pipeline }}</span>
@@ -647,8 +667,8 @@
           v-else
           size="compact"
           icon="factory"
-          title="No produced content yet"
-          subtitle="The next CEO tick will start the assembly line."
+          title="No deliverables yet"
+          subtitle="Create a goal with a concrete output, then run the assigned role."
           :show-orb="false"
         />
       </div>
@@ -885,109 +905,112 @@
         />
       </div>
 
-      <!-- ─── Settings ─── -->
-      <div v-else-if="active === 'settings'" class="panel models__activity--payouts">
-        <h2 class="panel-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">settings</span>
-          Settings
-        </h2>
-        <p class="muted">Manage company switching, execution state, export, and destructive actions.</p>
-
-        <hr />
-
-        <section class="settings-block">
-          <h3 class="panel-subtitle fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined">business_center</span>
-            Company controls
-          </h3>
-          <div class="company-admin-grid">
-            <label class="company-admin-field">
-              <span>Active company</span>
-              <select
-                class="company-admin-select"
-                :value="state.activeId"
-                @change="store.setActive($event.target.value)"
-              >
-                <option
-                  v-for="company in state.companies"
-                  :key="company.id"
-                  :value="company.id"
-                >
-                  {{ company.name }} · {{ company.status }}
-                </option>
-              </select>
-            </label>
-            <button
-              class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-              @click="toggleExecution"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">
-                {{ charter.status === 'active' ? 'pause' : 'play_arrow' }}
-              </span>
-              {{ charter.status === 'active' ? 'Pause execution' : 'Resume execution' }}
-            </button>
-            <button
-              class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-              @click="$emit('new-company')"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome_motion</span>
-              New company
-            </button>
-            <button
-              class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-              @click="exportCompany"
-            >
+      <!-- ─── Charter ─── -->
+      <div v-else-if="active === 'charter'" class="panel models__activity--payouts">
+        <div class="section-head">
+          <h2 class="panel-title fira-sans-condensed-black-italic">
+            <span class="material-symbols-outlined">edit_note</span>
+            Charter
+          </h2>
+          <div class="section-head__actions">
+            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="exportCompany">
               <span class="material-symbols-outlined" aria-hidden="true">download</span>
               Export
             </button>
-            <button
-              class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic"
-              @click="dissolveCompany"
-            >
+            <button class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic" @click="dissolveCompany">
               <span class="material-symbols-outlined" aria-hidden="true">delete</span>
-              Delete company
+              Delete
             </button>
           </div>
-        </section>
-
-        <hr />
-
-        <!-- Demo Mode toggle — runtime switch for an existing company -->
-        <div class="settings-row">
-          <label class="wiz-toggle">
-            <input type="checkbox" :checked="charter.demoMode" @change="toggleDemoMode" />
-            <span class="wiz-toggle__track"></span>
-          </label>
-          <div class="settings-row__copy">
-            <div class="settings-row__title fira-sans-condensed-black-italic">
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome_motion</span>
-              Demo Mode
-              <span v-if="charter.demoMode" class="settings-row__badge">ON</span>
-            </div>
-            <p class="settings-row__hint">
-              {{ charter.demoMode
-                ? 'Scripted ticks every 8–20 seconds. No LLM required. Perfect for pitches and onboarding.'
-                : 'Real local-LLM inference. Requires a loaded model in Generative Text. Heartbeat runs at the charter cadence.' }}
-            </p>
-          </div>
         </div>
 
-        <hr />
+        <div class="charter-editor">
+          <label class="charter-field charter-field--wide">
+            <span>Company name</span>
+            <input v-model.trim="charterDraft.name" class="input is-medium" />
+          </label>
+          <label class="charter-field charter-field--wide">
+            <span>Mission</span>
+            <textarea v-model.trim="charterDraft.mission" class="textarea" rows="4"></textarea>
+          </label>
+          <label class="charter-field">
+            <span>Currency</span>
+            <select v-model="charterDraft.currency" class="company-admin-select">
+              <option v-for="c in state.currencies" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </label>
+          <label class="charter-field">
+            <span>Reserve floor</span>
+            <input v-model.number="charterDraft.reserveFloor" class="input is-medium" type="number" min="0" step="1" />
+          </label>
+          <label class="charter-field">
+            <span>Per run spend cap</span>
+            <input v-model.number="charterDraft.perHeartbeatSpendCap" class="input is-medium" type="number" min="0" step="1" />
+          </label>
+          <label class="charter-field">
+            <span>CEO cadence (min)</span>
+            <input v-model.number="charterDraft.ceoMin" class="input is-medium" type="number" min="1" step="1" />
+          </label>
+          <label class="charter-field">
+            <span>Role cadence (min)</span>
+            <input v-model.number="charterDraft.roleMin" class="input is-medium" type="number" min="1" step="1" />
+          </label>
+          <label class="charter-field">
+            <span>LLM execution</span>
+            <select v-model="charterDraft.llmMode" class="company-admin-select">
+              <option value="swap">Sequential, swap models</option>
+              <option value="sequential">Sequential, current model</option>
+              <option value="parallel">Parallel model pool</option>
+            </select>
+          </label>
+          <label class="charter-field">
+            <span>LLM parallel limit</span>
+            <input
+              v-model.number="charterDraft.llmMaxConcurrent"
+              class="input is-medium"
+              type="number"
+              min="1"
+              max="8"
+              step="1"
+              :disabled="charterDraft.llmMode !== 'parallel'"
+            />
+          </label>
+          <label class="charter-field">
+            <span>Media execution</span>
+            <select v-model="charterDraft.diffusionMode" class="company-admin-select">
+              <option value="sequential">Sequential</option>
+              <option value="parallel">Parallel</option>
+            </select>
+          </label>
+          <label class="charter-field">
+            <span>Media parallel limit</span>
+            <input
+              v-model.number="charterDraft.diffusionMaxConcurrent"
+              class="input is-medium"
+              type="number"
+              min="1"
+              max="8"
+              step="1"
+              :disabled="charterDraft.diffusionMode !== 'parallel'"
+            />
+          </label>
+        </div>
 
-        <div class="setting-actions">
-          <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" @click="$emit('edit')">
-            <span class="material-symbols-outlined" aria-hidden="true">edit</span>
-            Edit charter
+        <div class="charter-actions">
+          <button
+            class="bz-btn bz-btn--success fira-sans-condensed-black-italic"
+            :class="{ 'is-loading': charterBusy }"
+            :disabled="charterBusy || !charterDraft.name || !charterDraft.mission"
+            @click="saveCharter"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">save</span>
+            Save charter
+          </button>
+          <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="resetCharterDraft">
+            <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+            Reset
           </button>
         </div>
-
-        <hr />
-
-        <h3 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">data_object</span>
-          Charter (read-only)
-        </h3>
-        <pre class="charter-dump">{{ JSON.stringify(charter, null, 2) }}</pre>
       </div>
       </section>
     </div>
@@ -1016,8 +1039,8 @@
         <template v-else>
           <div class="llm-strip__stats">
             <div>
-              <span class="llm-rail__value fira-sans-condensed-black-italic">{{ pool.instances.length }}</span>
-              <span class="llm-rail__label">instances</span>
+              <span class="llm-rail__value fira-sans-condensed-black-italic">{{ configuredRoleModels.length || pool.instances.length }}</span>
+              <span class="llm-rail__label">models</span>
             </div>
             <div>
               <span class="llm-rail__value fira-sans-condensed-black-italic">{{ totalInFlight }}</span>
@@ -1035,8 +1058,15 @@
               <span class="llm-instance__meta">{{ fmtBytes(i.sizeBytes) }}</span>
             </div>
           </div>
+          <div v-else-if="configuredRoleModels.length" class="llm-strip__instances">
+            <div v-for="model in configuredRoleModels.slice(0, 4)" :key="model.key" class="llm-instance">
+              <span class="llm-instance__dot"></span>
+              <span class="llm-instance__name fira-sans-condensed-black-italic">{{ model.label }}</span>
+              <span class="llm-instance__meta">{{ model.roles.length }} role{{ model.roles.length === 1 ? '' : 's' }}</span>
+            </div>
+          </div>
           <div v-else class="rail-empty">
-            No model pool running. Real mode will spawn instances when roles need them.
+            No role models configured. Roles will use the current chat model until you assign one.
           </div>
         </template>
       </section>
@@ -1059,7 +1089,7 @@
         <div class="role-modal__header">
           <h2 class="fira-sans-condensed-black-italic">
             <span class="material-symbols-outlined" aria-hidden="true">settings</span>
-            <span class="role-modal__title">{{ roleDisplayName(editingRoleKey) }}</span>
+            <span class="role-modal__title">{{ charter.roles[editingRoleKey]?.companion ? roleDisplayName(editingRoleKey) : 'Add role' }}</span>
           </h2>
           <BzCloseButton size="md" aria-label="Close" @click="closeRoleEdit" />
         </div>
@@ -1071,11 +1101,22 @@
         <hr />
 
         <div class="field">
+          <label class="label fira-sans-condensed-black-italic">Role</label>
+          <div class="select is-fullwidth is-medium">
+            <select v-model="editingRoleKey">
+              <option v-for="role in rolePickerOptions" :key="role.key" :value="role.key">
+                {{ role.label }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
           <label class="label fira-sans-condensed-black-italic">Companion</label>
-          <p class="hint">Who does this work. Empty = inherit from parent role (CEO falls back to picking up unassigned roles).</p>
+          <p class="hint">Who owns this work.</p>
           <div class="select is-fullwidth is-medium">
             <select v-model="editDraft.companion">
-              <option :value="null">— inherit (unassign) —</option>
+              <option :value="null">Unassigned</option>
               <option v-for="comp in companionList" :key="comp.id" :value="comp.id">
                 {{ comp.name }}
               </option>
@@ -1085,13 +1126,10 @@
 
         <div class="field">
           <label class="label fira-sans-condensed-black-italic">Preferred LLM</label>
-          <p class="hint">
-            Smaller models for fast strategic decisions, larger models for production roles.
-            Empty = use whichever model is currently loaded by the legacy single-instance manager.
-          </p>
+          <p class="hint">The intelligence model this role uses. If empty, the role uses the currently loaded chat model.</p>
           <div class="select is-fullwidth is-medium">
             <select v-model="editDraft.llm">
-              <option :value="null">— current loaded model —</option>
+              <option :value="null">Current model</option>
               <option v-for="llm in llmOptionsList" :key="llm.key" :value="llm.key">
                 {{ llm.label }}
               </option>
@@ -1100,18 +1138,30 @@
         </div>
 
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Inference gateway</label>
-          <p class="hint">
-            How the role's LLM call is wrapped. <strong>OpenClaw</strong> is the default
-            OpenAI-compatible harness — works for every model. <strong>Hermes</strong> uses
-            ChatML markers + native function-calling JSON mode — better for Hermes-family /
-            Nous Research / function-tuned models.
-          </p>
+          <label class="label fira-sans-condensed-black-italic">Media tools</label>
+          <p class="hint">Allow this role to call BonzAI generation pipelines when a task needs creative assets.</p>
+          <div class="pipeline-checks">
+            <label
+              v-for="pipeline in mediaPipelineOptions"
+              :key="pipeline.key"
+              class="pipeline-check"
+              :class="{ 'is-on': editDraft.pipelines.includes(pipeline.key) }"
+            >
+              <input type="checkbox" :value="pipeline.key" v-model="editDraft.pipelines" />
+              <span class="material-symbols-outlined" aria-hidden="true">{{ pipeline.icon }}</span>
+              {{ pipeline.label }}
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label fira-sans-condensed-black-italic">Prompt style</label>
+          <p class="hint">Keep the default unless a role needs a different structured-output style.</p>
           <div class="select is-fullwidth is-medium">
             <select v-model="editDraft.gateway">
-              <option :value="null">— OpenClaw (default) —</option>
-              <option value="openclaw">OpenClaw</option>
-              <option value="hermes">Hermes</option>
+              <option :value="null">Default</option>
+              <option value="openclaw">General</option>
+              <option value="hermes">Structured JSON</option>
             </select>
           </div>
         </div>
@@ -1153,7 +1203,7 @@
             <button
               class="bz-btn bz-btn--success fira-sans-condensed-black-italic"
               :class="{ 'is-loading': editBusy }"
-              :disabled="editBusy"
+              :disabled="editBusy || !editDraft.companion"
               @click="saveRoleEdit"
             >
               <span class="material-symbols-outlined" aria-hidden="true">save</span>
@@ -1270,9 +1320,9 @@
 </template>
 
 <script>
-import { computed, reactive, ref, onMounted, onUnmounted } from "vue";
+import { computed, reactive, ref, watch, onMounted, onUnmounted } from "vue";
 import companyStore from "../../stores/companyStore.js";
-import { DEFAULT_COMPANIONS, LLM_BASE_MODELS } from "../../skills/flagship.js";
+import { DEFAULT_COMPANIONS, listAllLLMs } from "../../skills/flagship.js";
 import { SKILL_MANIFESTS } from "../../services/company/skillManifests.js";
 import CompanyConnectors from "./CompanyConnectors.vue";
 import CompanyLiveFeed from "./CompanyLiveFeed.vue";
@@ -1298,24 +1348,124 @@ export default {
     const catalogLimit = ref(30);
     const approvalLimit = ref(25);
     const auditLimit = ref(80);
+    const charterBusy = ref(false);
+    const charterDraft = reactive({
+      name: "",
+      mission: "",
+      currency: "USD",
+      reserveFloor: 0,
+      perHeartbeatSpendCap: 0,
+      ceoMin: 60,
+      roleMin: 30,
+      llmMode: "swap",
+      llmMaxConcurrent: 2,
+      diffusionMode: "sequential",
+      diffusionMaxConcurrent: 1,
+    });
+    const companyDisplayName = computed(() =>
+      (props.charter.name || "Untitled Company").replace(/\s+\(Draft\)$/i, ""),
+    );
+
+    function resetCharterDraft() {
+      charterDraft.name = companyDisplayName.value;
+      charterDraft.mission = props.charter.mission || "";
+      charterDraft.currency = props.charter.rules?.currency || "USD";
+      charterDraft.reserveFloor = props.charter.rules?.reserveFloor || 0;
+      charterDraft.perHeartbeatSpendCap = props.charter.rules?.perHeartbeatSpendCap || 0;
+      charterDraft.ceoMin = props.charter.heartbeat?.ceoMin || 60;
+      charterDraft.roleMin = props.charter.heartbeat?.roleMin || 30;
+      charterDraft.llmMode = props.charter.execution?.llm?.mode || "swap";
+      charterDraft.llmMaxConcurrent = props.charter.execution?.llm?.maxConcurrent || 2;
+      charterDraft.diffusionMode = props.charter.execution?.diffusion?.mode || "sequential";
+      charterDraft.diffusionMaxConcurrent = props.charter.execution?.diffusion?.maxConcurrent || 1;
+    }
+
+    watch(() => props.charter?.id, resetCharterDraft, { immediate: true });
+
+    async function saveCharter() {
+      charterBusy.value = true;
+      try {
+        const next = JSON.parse(JSON.stringify(props.charter));
+        next.name = charterDraft.name.trim();
+        next.mission = charterDraft.mission.trim();
+        next.rules = {
+          ...(next.rules || {}),
+          currency: charterDraft.currency,
+          reserveFloor: Number(charterDraft.reserveFloor) || 0,
+          perHeartbeatSpendCap: Number(charterDraft.perHeartbeatSpendCap) || 0,
+        };
+        next.treasury = {
+          ...(next.treasury || {}),
+          currency: charterDraft.currency,
+        };
+        next.heartbeat = {
+          ...(next.heartbeat || {}),
+          ceoMin: Math.max(1, Number(charterDraft.ceoMin) || 60),
+          roleMin: Math.max(1, Number(charterDraft.roleMin) || 30),
+        };
+        next.execution = {
+          ...(next.execution || {}),
+          llm: {
+            ...(next.execution?.llm || {}),
+            mode: charterDraft.llmMode || "swap",
+            maxConcurrent: Math.max(1, Math.min(8, Number(charterDraft.llmMaxConcurrent) || 1)),
+          },
+          diffusion: {
+            ...(next.execution?.diffusion || {}),
+            mode: charterDraft.diffusionMode || "sequential",
+            maxConcurrent: Math.max(1, Math.min(8, Number(charterDraft.diffusionMaxConcurrent) || 1)),
+          },
+        };
+        next.identity = {
+          ...(next.identity || {}),
+          brandName: next.name,
+        };
+        await store.update(next);
+      } catch (err) {
+        alert("Save failed: " + (err.message || err));
+      } finally {
+        charterBusy.value = false;
+      }
+    }
 
     // ─── Role-edit modal ─────────────────────────────────────────
     const editingRoleKey = ref(null);
-    const editDraft = reactive({ companion: null, llm: null, gateway: null, budget: null });
+    const mediaPipelineOptions = [
+      { key: "image", label: "Image", icon: "image" },
+      { key: "video", label: "Video", icon: "movie" },
+      { key: "audio", label: "Audio", icon: "graphic_eq" },
+      { key: "music", label: "Music", icon: "music_note" },
+      { key: "3d", label: "3D", icon: "deployed_code" },
+      { key: "vision", label: "Vision", icon: "visibility" },
+    ];
+    const editDraft = reactive({ companion: null, llm: null, gateway: null, budget: null, pipelines: [] });
     const editBusy = ref(false);
 
     const companionList = DEFAULT_COMPANIONS.map((c) => ({ id: c.id, name: c.name }));
+    const availableRoleOptions = computed(() =>
+      Object.keys(props.state.roleLibrary || {})
+        .filter((roleKey) => !props.charter.roles?.[roleKey]?.companion)
+        .map((roleKey) => ({ key: roleKey, label: roleDisplayName(roleKey) })),
+    );
+    const rolePickerOptions = computed(() => {
+      const current = editingRoleKey.value
+        ? [{ key: editingRoleKey.value, label: roleDisplayName(editingRoleKey.value) }]
+        : [];
+      const seen = new Set(current.map((role) => role.key));
+      return [
+        ...current,
+        ...availableRoleOptions.value.filter((role) => !seen.has(role.key)),
+      ];
+    });
     const llmOptionsList = computed(() =>
-      Object.keys(LLM_BASE_MODELS)
-        .map((baseKey) => {
-          const m = LLM_BASE_MODELS[baseKey];
-          return {
-            key: `llm_${baseKey}`,
-            label: `${m.name} (${m.parameters >= 1e9 ? `${(m.parameters / 1e9).toFixed(1)}B` : m.parameters})`,
-            params: m.parameters || 0,
-          };
-        })
-        .sort((a, b) => a.params - b.params),
+      listAllLLMs()
+        .filter((model) => !model.draft)
+        .map((model) => ({
+          key: model.key,
+          label: model.name,
+          params: model.parameters || 0,
+        }))
+        .sort((a, b) => a.params - b.params || a.label.localeCompare(b.label)),
     );
 
     function defaultBudgetForRole(roleKey) {
@@ -1325,11 +1475,13 @@ export default {
     }
 
     function openRoleEdit(roleKey) {
+      if (!roleKey) return;
       const cur = props.charter.roles?.[roleKey] || {};
       editDraft.companion = cur.companion || null;
       editDraft.llm = cur.llm || null;
       editDraft.gateway = cur.gateway || null;
       editDraft.budget = Number.isFinite(cur.budgetPerHeartbeat) ? cur.budgetPerHeartbeat : null;
+      editDraft.pipelines = Array.isArray(cur.pipelines) ? [...cur.pipelines] : [];
       editingRoleKey.value = roleKey;
     }
     function closeRoleEdit() {
@@ -1346,6 +1498,11 @@ export default {
         const roleKey = editingRoleKey.value;
         next.roles = next.roles || {};
         if (!editDraft.companion) {
+          if (!props.charter.roles?.[roleKey]?.companion) {
+            alert("Pick a companion before adding this role.");
+            editBusy.value = false;
+            return;
+          }
           // Unassign — drop the row entirely. Role becomes inheritable.
           delete next.roles[roleKey];
         } else {
@@ -1355,6 +1512,8 @@ export default {
           else delete next.roles[roleKey].llm;
           if (editDraft.gateway) next.roles[roleKey].gateway = editDraft.gateway;
           else delete next.roles[roleKey].gateway;
+          if (editDraft.pipelines.length) next.roles[roleKey].pipelines = [...editDraft.pipelines];
+          else delete next.roles[roleKey].pipelines;
           if (Number.isFinite(editDraft.budget) && editDraft.budget > 0) {
             next.roles[roleKey].budgetPerHeartbeat = editDraft.budget;
           } else {
@@ -1377,6 +1536,7 @@ export default {
       editDraft.llm = null;
       editDraft.gateway = null;
       editDraft.budget = null;
+      editDraft.pipelines = [];
       await saveRoleEdit();
     }
 
@@ -1569,6 +1729,22 @@ export default {
       if (!pool.budgetBytes) return 0;
       return Math.min(100, Math.round((pool.totalBytes / pool.budgetBytes) * 100));
     });
+    const configuredRoleModels = computed(() => {
+      const grouped = new Map();
+      for (const [roleKey, role] of Object.entries(props.charter.roles || {})) {
+        if (!role?.companion) continue;
+        const key = role.llm || "__current__";
+        const existing = grouped.get(key) || {
+          key,
+          label: key === "__current__" ? "Current chat model" : llmLabel(key),
+          roles: [],
+        };
+        existing.roles.push(roleDisplayName(roleKey));
+        grouped.set(key, existing);
+      }
+      return [...grouped.values()];
+    });
+
     const totalInFlight = computed(() =>
       pool.instances.reduce((acc, i) => acc + (i.inFlight || 0), 0),
     );
@@ -1578,14 +1754,14 @@ export default {
       { value: "org", label: "Org", icon: "schema" },
       { value: "issues", label: "Work", icon: "flag",
         badge: props.state.goalCounts?.active || props.state.issueCounts?.open || null },
-      { value: "production", label: "Production", icon: "factory" },
+      { value: "deliverables", label: "Deliverables", icon: "inventory_2" },
       { value: "approvals", label: "Approvals", icon: "rule",
         badge: props.state.approvals.length || null },
       { value: "treasury", label: "Treasury", icon: "account_balance" },
       { value: "connectors", label: "Connectors", icon: "cable",
         badge: (props.state.connectorHealth?.needs_auth || 0) + (props.state.connectorHealth?.broken || 0) || null },
       { value: "audit", label: "Audit", icon: "list_alt" },
-      { value: "settings", label: "Settings", icon: "settings" },
+      { value: "charter", label: "Charter", icon: "edit_note" },
     ]);
 
     const filledRoles = computed(() =>
@@ -1724,7 +1900,7 @@ export default {
     );
     const workStack = computed(() => [
       { label: "CEO-created goals", value: props.state.goals.filter((g) => g.createdBy === "ceo" && g.status === "active").length, state: "active" },
-      { label: "Board directives", value: props.state.goals.filter((g) => g.createdBy !== "ceo" && g.status === "active").length, state: "idle" },
+      { label: "Owner goals", value: props.state.goals.filter((g) => g.createdBy !== "ceo" && g.status === "active").length, state: "idle" },
       { label: "Open role tasks", value: openIssues.value.length, state: openIssues.value.length ? "active" : "idle" },
       { label: "Blocked or waiting", value: blockedIssues.value.length + props.state.approvals.length, state: blockedIssues.value.length + props.state.approvals.length ? "attention" : "idle" },
       { label: "Produced assets", value: props.state.catalog.length, state: props.state.catalog.length ? "active" : "idle" },
@@ -1748,12 +1924,12 @@ export default {
       {
         label: "Gate",
         icon: "verified_user",
-        text: "Risky actions pause in Approvals; spend is constrained by reserve floor and per-cycle caps.",
+        text: "Risky actions pause in Approvals; spend is constrained by reserve floor and per-run caps.",
       },
       {
         label: "Record",
         icon: "receipt_long",
-        text: "Finished work appears in Production, with audit entries and treasury movement when applicable.",
+        text: "Finished work appears in Deliverables, with audit entries and treasury movement when applicable.",
       },
     ]);
 
@@ -1801,10 +1977,12 @@ export default {
     }
     function llmLabel(llmKey) {
       if (!llmKey) return "current model";
-      const m = llmKey.match(/^llm_(.+)$/);
-      if (!m) return llmKey;
-      const base = LLM_BASE_MODELS[m[1]];
-      return base?.name || llmKey;
+      const model = llmOptionsList.value.find((item) => item.key === llmKey);
+      if (model) return model.label;
+      return llmKey.replace(/^llm_/, "").replace(/_/g, " ");
+    }
+    function pipelineLabel(key) {
+      return mediaPipelineOptions.find((pipeline) => pipeline.key === key)?.label || key;
     }
 
     function fmtMoney(amount, currency) {
@@ -1868,7 +2046,7 @@ export default {
     }
     async function clearCatalog() {
       if (!props.state.catalog.length) return;
-      if (!confirm("Clear the entire production catalog? Audit, goals, and treasury stay intact.")) return;
+      if (!confirm("Clear all deliverables? Audit, goals, and treasury stay intact.")) return;
       await store.clearCatalog();
     }
     async function removeContent(id) {
@@ -1921,19 +2099,20 @@ export default {
 
     return {
       store, active, subtabs, manual,
+      charterDraft, charterBusy, companyDisplayName, saveCharter, resetCharterDraft,
       goalLimit, catalogLimit, approvalLimit, auditLimit,
       filledRoles, treasuryEntries, totalSales,
       openIssues,
       visibleGoals, catalogRows, visibleCatalogRows, visibleApprovals, visibleAuditEntries,
       catalogColumns, treasuryColumns, auditColumns,
-      companionName, roleDisplayName, llmLabel, skillShortName, fmtMoney, fmtCount, fmtTime,
+      companionName, roleDisplayName, llmLabel, pipelineLabel, skillShortName, fmtMoney, fmtCount, fmtTime,
       approve, reject, approveAll, rejectAll,
       clearCatalog, removeContent,
       clearAuditConfirm,
       recordRevenue, recordSpend, copy, toggleDemoMode,
       toggleExecution, exportCompany, dissolveCompany,
       // pool
-      pool, refreshPool, fmtBytes, poolUsedPct, totalInFlight,
+      pool, refreshPool, fmtBytes, poolUsedPct, totalInFlight, configuredRoleModels,
       // issues
       issueDraft, issueFilter, issueBusy, filteredIssues,
       submitIssue, setIssueStatus, reopenIssue, removeIssue,
@@ -1950,7 +2129,7 @@ export default {
       connectorRisk, runCEO,
       // role-edit modal
       editingRoleKey, editDraft, editBusy,
-      companionList, llmOptionsList, defaultBudgetForRole,
+      companionList, llmOptionsList, mediaPipelineOptions, availableRoleOptions, rolePickerOptions, defaultBudgetForRole,
       openRoleEdit, closeRoleEdit, saveRoleEdit, fireRole,
     };
   },
@@ -2278,6 +2457,15 @@ hr {
   gap: var(--bz-space-3);
   margin-bottom: var(--bz-space-3);
 }
+.section-head__hint {
+  flex: 1;
+  min-width: min(360px, 100%);
+  margin: 0 !important;
+  color: var(--bz-fg-mid) !important;
+  font-size: 13px !important;
+  line-height: 1.45;
+  text-align: left !important;
+}
 .section-head .panel-title {
   margin-bottom: 0;
 }
@@ -2325,6 +2513,32 @@ hr {
   background: var(--bz-canvas);
   color: var(--bz-fg);
   font-family: var(--bz-font-ui);
+}
+.charter-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+.charter-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-1);
+  color: var(--bz-fg-low);
+  font-family: var(--bz-font-ui);
+  font-size: var(--bz-size-meta);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.charter-field--wide {
+  grid-column: 1 / -1;
+}
+.charter-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin-top: var(--bz-space-4);
 }
 
 /* ───────── Command center ───────── */
@@ -2656,7 +2870,8 @@ hr {
 @media (max-width: 1180px) {
   .company-cockpit,
   .company-telemetry-bar,
-  .company-admin-grid {
+  .company-admin-grid,
+  .charter-editor {
     grid-template-columns: 1fr;
   }
   .company-cockpit__metrics {
@@ -3449,6 +3664,31 @@ code {
   font-weight: 400;
   font-style: italic;
   margin-left: 0.4em;
+}
+.pipeline-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+.pipeline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.45em 0.7em;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+  color: var(--bz-fg-mid);
+  cursor: pointer;
+  font-size: var(--bz-size-meta);
+  font-weight: 700;
+}
+.pipeline-check input { display: none; }
+.pipeline-check .material-symbols-outlined { font-size: 16px !important; }
+.pipeline-check.is-on {
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
 }
 .role-modal__actions {
   display: flex;

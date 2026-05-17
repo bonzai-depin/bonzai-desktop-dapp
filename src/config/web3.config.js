@@ -4,22 +4,46 @@
  * Defines token addresses, level requirements, NFT contracts, and treasury settings
  */
 
+const env = import.meta?.env || {};
+const ETHEREUM_CHAIN_ID = 1;
+const ETHEREUM_CHAIN_ID_HEX = "0x1";
+const ETHEREUM_EXPLORER = "https://etherscan.io";
+const ETHEREUM_RPC = env.VITE_ETHEREUM_RPC_URL || "https://ethereum.publicnode.com";
+const BONZAI_ETHEREUM = "0xDdA9Ff241C7160be8295EF9Eca2e782361467666";
+const USDC_ETHEREUM = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+
+const ETHEREUM_CONTRACTS = {
+  unlock: env.VITE_BONZAI_UNLOCK_ETHEREUM_ADDRESS || null,
+  skillRegistry: env.VITE_BONZAI_SKILL_REGISTRY_ETHEREUM_ADDRESS || null,
+  skillOwnership: env.VITE_BONZAI_SKILL_OWNERSHIP_ETHEREUM_ADDRESS || null,
+  collectibles: env.VITE_BONZAI_COLLECTIBLES_ETHEREUM_ADDRESS || null,
+  collectiblesFactory: env.VITE_BONZAI_COLLECTIBLES_FACTORY_ETHEREUM_ADDRESS || null,
+  mintPool: env.VITE_BONZAI_MINT_POOL_ETHEREUM_ADDRESS || null,
+  royaltySplitter: env.VITE_BONZAI_ROYALTY_SPLITTER_ETHEREUM_ADDRESS || null,
+  fineTuneTokenFactory: env.VITE_BONZAI_FINE_TUNE_TOKEN_FACTORY_ETHEREUM_ADDRESS || null,
+  companions: env.VITE_BONZAI_COMPANIONS_ETHEREUM_ADDRESS || null,
+  providerRegistry: env.VITE_BONZAI_PROVIDER_REGISTRY_ETHEREUM_ADDRESS || null,
+  p2pPayment: env.VITE_BONZAI_P2P_PAYMENT_ETHEREUM_ADDRESS || null,
+  pipelinePayment: env.VITE_BONZAI_PIPELINE_PAYMENT_ETHEREUM_ADDRESS || null,
+  companionTokenFactory: env.VITE_BONZAI_COMPANION_TOKEN_FACTORY_ETHEREUM_ADDRESS || null,
+};
+
 export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   // NETWORK CONFIGURATION
   // ═══════════════════════════════════════════════════════════════════════════
   networks: {
     ethereum: {
-      chainId: 1,
-      chainIdHex: "0x1",
+      chainId: ETHEREUM_CHAIN_ID,
+      chainIdHex: ETHEREUM_CHAIN_ID_HEX,
       name: "Ethereum Mainnet",
-      rpc: "https://ethereum.publicnode.com",
+      rpc: ETHEREUM_RPC,
       rpcFallbacks: [
         "https://rpc.ankr.com/eth",
         "https://cloudflare-eth.com",
         "https://eth.drpc.org",
       ],
-      explorer: "https://etherscan.io",
+      explorer: ETHEREUM_EXPLORER,
       currency: { name: "Ether", symbol: "ETH", decimals: 18 },
     },
     arbitrum: {
@@ -46,19 +70,19 @@ export const CONFIG = {
       explorer: "https://explorer.lukso.network",
       currency: { name: "LYX", symbol: "LYX", decimals: 18 },
     },
+    // Legacy compatibility key. Existing services still call
+    // switchNetwork("base"), but RC Web3 operations must land on Ethereum.
     base: {
-      chainId: 8453,
-      chainIdHex: "0x2105",
-      name: "Base",
-      rpc: import.meta.env.VITE_ALCHEMY_API_KEY
-        ? `https://base-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_API_KEY}`
-        : "https://mainnet.base.org",
+      chainId: ETHEREUM_CHAIN_ID,
+      chainIdHex: ETHEREUM_CHAIN_ID_HEX,
+      name: "Ethereum Mainnet",
+      rpc: ETHEREUM_RPC,
       rpcFallbacks: [
-        "https://mainnet.base.org",
-        "https://base.llamarpc.com",
-        "https://base-rpc.publicnode.com",
+        "https://rpc.ankr.com/eth",
+        "https://cloudflare-eth.com",
+        "https://eth.drpc.org",
       ],
-      explorer: "https://basescan.org",
+      explorer: ETHEREUM_EXPLORER,
       currency: { name: "Ether", symbol: "ETH", decimals: 18 },
     },
   },
@@ -71,12 +95,12 @@ export const CONFIG = {
       // Token addresses with proper checksum format
       ethereum: "0xDdA9Ff241C7160be8295EF9Eca2e782361467666",
       arbitrum: "0x0a84edf70f30325151631ce7a61307d1f4d619a3",
-      base: "0xc4d137def384ee0f8857887f5950669ba04984ec",
+      base: BONZAI_ETHEREUM,
       decimals: 18,
       symbol: "BONZAI",
     },
     usdc: {
-      base: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      base: USDC_ETHEREUM,
     },
   },
 
@@ -139,9 +163,9 @@ export const CONFIG = {
   // LEVEL UNLOCK CONTRACT (Single 1 ETH payment unlocks ALL levels)
   // ═══════════════════════════════════════════════════════════════════════════
   levelUnlock: {
-    // BonzaiUnlock contract on Base
-    registryAddress: "0x7A33a9843C1740Ea73594fA2468Fb210a7fd7968",
-    chainId: 8453, // Base
+    // BonzaiUnlock contract on Ethereum.
+    registryAddress: ETHEREUM_CONTRACTS.unlock,
+    chainId: ETHEREUM_CHAIN_ID,
     // Fixed price: 1 ETH unlocks all 6 levels permanently
     unlockPrice: "1.0", // ETH
     // Proceeds split (configured in contract):
@@ -171,9 +195,9 @@ export const CONFIG = {
   // SKILL REGISTRY (Decentralized Claude Skills)
   // ═══════════════════════════════════════════════════════════════════════════
   skillRegistry: {
-    contractAddress: '0xeeB6B8A73B13141013416D74A327180905AFdF3F',
-    ownershipContractAddress: '0xa1f80ABCe763De90eB873990C5841F7B1770383C',
-    chainId: 8453, // Base
+    contractAddress: ETHEREUM_CONTRACTS.skillRegistry,
+    ownershipContractAddress: ETHEREUM_CONTRACTS.skillOwnership,
+    chainId: ETHEREUM_CHAIN_ID,
 
     // Revenue split (configured in contract)
     authorShareBps: 8000, // 80% to co-owners (via BonzaiSkillOwnership)
@@ -235,13 +259,13 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CONTENT NFT MINTING (Base ERC-721 + LUKSO LSP8)
+  // CONTENT NFT MINTING (Ethereum ERC-721 + optional LUKSO UP attachment)
   // ═══════════════════════════════════════════════════════════════════════════
   contentNFT: {
     base: {
-      contractAddress: '0x44f1675eBeB7f7A4Ac3E99E4A4652b34515F1F36',
-      factoryAddress: '0xCF5d739674A9daf91Da83CF84eDE1456B7f17BC2',
-      chainId: 8453,
+      contractAddress: ETHEREUM_CONTRACTS.collectibles,
+      factoryAddress: ETHEREUM_CONTRACTS.collectiblesFactory,
+      chainId: ETHEREUM_CHAIN_ID,
       standard: 'ERC-721',
       mintFee: '0.0025', // ETH
     },
@@ -278,19 +302,19 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MINT POOL & REVENUE CONTRACTS (Base)
+  // MINT POOL & REVENUE CONTRACTS (Ethereum)
   // ═══════════════════════════════════════════════════════════════════════════
   mintPool: {
-    contractAddress: '0x3a31aE7F6E03E095D5D68a4D6c7165Ba2b2E6D4c',
-    chainId: 8453,
+    contractAddress: ETHEREUM_CONTRACTS.mintPool,
+    chainId: ETHEREUM_CHAIN_ID,
   },
   royaltySplitter: {
-    contractAddress: '0x798Bcae41E3A08B216D0Df6f03Be1e4eBEED9f24',
-    chainId: 8453,
+    contractAddress: ETHEREUM_CONTRACTS.royaltySplitter,
+    chainId: ETHEREUM_CHAIN_ID,
   },
   fineTuneTokenFactory: {
-    contractAddress: '0x9bd9621b8F77e501063b0ec8CD15e6f53bDc6B34',
-    chainId: 8453,
+    contractAddress: ETHEREUM_CONTRACTS.fineTuneTokenFactory,
+    chainId: ETHEREUM_CHAIN_ID,
     totalSupply: '1000000000', // 1 billion tokens per model
     minEthLiquidity: '0.01',
     lpLocked: true,
@@ -307,12 +331,12 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // COMPANION NFT CONTRACT (BASE - ERC-8004 + Coinbase Agentic Wallet)
+  // COMPANION NFT CONTRACT (Ethereum - ERC-8004 + self-custody agent wallet)
   // ═══════════════════════════════════════════════════════════════════════════
   companionNFT_BASE: {
-    // BonzaiCompanions contract on Base
-    contractAddress: '0x0889B53F810aF1bFc83EFFD459E945a1a4D79c38',
-    chainId: 8453, // Base
+    // BonzaiCompanions contract on Ethereum
+    contractAddress: ETHEREUM_CONTRACTS.companions,
+    chainId: ETHEREUM_CHAIN_ID,
     standard: 'ERC-8004',
 
     // Flat mint price in ETH (no rarity tiers)
@@ -375,30 +399,16 @@ export const CONFIG = {
 
     // Supported chains for x402 ETH payments
     supportedChains: {
-      8453: { // Base (primary - cheap gas ~$0.001)
-        name: "Base",
-        rpc: import.meta.env.VITE_ALCHEMY_API_KEY
-          ? `https://base-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_API_KEY}`
-          : "https://mainnet.base.org",
-        explorer: "https://basescan.org",
-        enabled: true,
-      },
-      42161: { // Arbitrum
-        name: "Arbitrum",
-        rpc: "https://arb1.arbitrum.io/rpc",
-        explorer: "https://arbiscan.io",
-        enabled: true,
-      },
-      1: { // Ethereum Mainnet (expensive, but supported)
+      1: {
         name: "Ethereum",
-        rpc: "https://eth.llamarpc.com",
-        explorer: "https://etherscan.io",
-        enabled: false, // Disabled by default due to high gas
+        rpc: ETHEREUM_RPC,
+        explorer: ETHEREUM_EXPLORER,
+        enabled: true,
       },
     },
 
     // Default chain for x402 payments
-    defaultChainId: 8453, // Base
+    defaultChainId: ETHEREUM_CHAIN_ID,
 
     // EIP-712 signature parameters
     signatureValidityPeriod: 300, // 5 minutes
@@ -411,8 +421,8 @@ export const CONFIG = {
   // No CDP, no Coinbase API - full self-custody with ETH-only payments.
   agentWallet: {
     // Default network for agent wallets
-    defaultNetwork: 'base',
-    defaultChainId: 8453,
+    defaultNetwork: 'ethereum',
+    defaultChainId: ETHEREUM_CHAIN_ID,
 
     // Spending limits (ETH)
     defaultMaxTransaction: "0.001", // ~$2 per transaction
@@ -429,13 +439,13 @@ export const CONFIG = {
   // P2P DISTRIBUTED INFERENCE NETWORK
   // ═══════════════════════════════════════════════════════════════════════════
   p2pNetwork: {
-    providerRegistryAddress: '0x683d0B11a2553E9D4B338935e2D935873439e8bB',
-    paymentContractAddress: '0x438A73FC0e0DA882BFdD007aF41415769Af33F1d',
-    pipelinePaymentAddress: '0xB45D1D635192Aa223Ce28d9F3cC047A13D8850Bd',
-    chainId: 8453, // Base
+    providerRegistryAddress: ETHEREUM_CONTRACTS.providerRegistry,
+    paymentContractAddress: ETHEREUM_CONTRACTS.p2pPayment,
+    pipelinePaymentAddress: ETHEREUM_CONTRACTS.pipelinePayment,
+    chainId: ETHEREUM_CHAIN_ID,
 
-    // USDC on Base (Circle native)
-    usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    // USDC on Ethereum (Circle native)
+    usdcAddress: USDC_ETHEREUM,
 
     // Default payment token: ETH (providers can also accept USDC)
     paymentToken: "ETH",
@@ -505,7 +515,7 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   links: {
     buyBonzai:
-      "https://app.uniswap.org/swap?chain=arbitrum&outputCurrency=0x0a84edf70f30325151631ce7a61307d1f4d619a3",
+      `https://app.uniswap.org/swap?chain=mainnet&outputCurrency=${BONZAI_ETHEREUM}`,
     docs: "https://docs.bonzai.sh",
     discord: "https://discord.gg/bonzai",
     twitter: "https://twitter.com/BonzAI_AI",
@@ -533,7 +543,7 @@ export const CONFIG = {
   walletconnect: {
     projectId: (import.meta?.env?.VITE_WALLETCONNECT_PROJECT_ID || '844c2e04d27062b198ef7306820a2ff8'),
     chains: [1], // Ethereum mainnet
-    optionalChains: [42161, 8453, 42], // Arbitrum, Base, LUKSO
+    optionalChains: [42], // LUKSO is retained for Universal Profile attachment
   },
 
   // Wallet addresses reference
@@ -543,12 +553,12 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // COMPANION TOKEN FACTORY (Base - Token Issuance with Uniswap V4)
+  // COMPANION TOKEN FACTORY (Ethereum - Token Issuance)
   // ═══════════════════════════════════════════════════════════════════════════
   companionTokenFactory: {
-    // CompanionTokenFactory contract on Base
-    contractAddress: '0x0cD90Ef3a38Ab8E845D3538Dc55EB9bd9C9e0477',
-    chainId: 8453, // Base
+    // CompanionTokenFactory contract on Ethereum
+    contractAddress: ETHEREUM_CONTRACTS.companionTokenFactory,
+    chainId: ETHEREUM_CHAIN_ID,
 
     // Token settings
     totalSupply: "1000000000", // 1 billion tokens per companion

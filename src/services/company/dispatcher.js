@@ -37,6 +37,8 @@ import {
   effectiveRoleBudget,
 } from "./charter.js";
 
+const MEDIA_PIPELINES = ["image", "audio", "video", "3d", "music", "vision"];
+
 // Legacy queue storage key — kept only for migration cleanup on dissolve.
 // The unified model keeps work in goals + issues only.
 const QUEUE_KEY = (id) => `companies/${id}/queues`;
@@ -77,20 +79,21 @@ export async function tickCEO(charter) {
   const pendingApprovals = await gov.pending(companyId);
   const activeGoals = await goals.list(companyId, { status: "active" });
   const openIssuesCount = (await issues.list(companyId, { status: "open" })).length;
+  const kpiSnapshot = {
+    treasury: treasuryState,
+    catalogSize: catalog.length,
+    summary,
+    pendingApprovals: pendingApprovals.length,
+    activeGoals: activeGoals.length,
+    openIssues: openIssuesCount,
+  };
 
   // The CEO's prompt now asks for explicit mission_alignment + decomposed
   // tasks per goal, so every issue we persist has rationale baked in.
   const prompt = _ceoPrompt({
     charter,
     ceo,
-    kpi: {
-      treasury: treasuryState,
-      catalogSize: catalog.length,
-      summary,
-      pendingApprovals: pendingApprovals.length,
-      activeGoals: activeGoals.length,
-      openIssues: openIssuesCount,
-    },
+    kpi: kpiSnapshot,
     activeGoals,
   });
 
@@ -110,7 +113,7 @@ export async function tickCEO(charter) {
             kind: "ceo",
             charter,
             activeGoalTitles: activeGoals.map((g) => g.title),
-            tickCount: kpi.summary?.total || 0,
+            tickCount: kpiSnapshot.summary?.total || 0,
           }
         : null,
       // Streaming context: enables zhcChatStream so the live feed shows
@@ -128,9 +131,11 @@ export async function tickCEO(charter) {
     // Even on parse failure: capture what the model said so the user
     // can see exactly why goals didn't materialize.
     await _logLLMTrace(companyId, "CEO", "tickCEO", err.raw || "", null, err.durationMs || 0, err.message);
-    await append(companyId, {
-      kind: "system", role: "CEO", action: "tickCEO", status: "error", note: errors[0],
-    });
+    if (!_isJSONParseError(err)) {
+      await append(companyId, {
+        kind: "system", role: "CEO", action: "tickCEO", status: "error", note: errors[0],
+      });
+    }
     return { goals: [], issuesCreated: 0, errors };
   }
 
@@ -238,6 +243,7 @@ export async function tickRole(charter, roleKey) {
 
   const cap = effectiveRoleBudget(charter, resolved.roleKey);
   const builtInAllowed = ROLE_LIBRARY[resolved.roleKey].allowedActions;
+  const roleMediaPipelines = _roleMediaPipelines(charter, resolved.roleKey);
 
   // Granted skills come from the role assignment (set by the template
   // wizard or owner edits). Each granted skill exposes its action types
@@ -251,6 +257,7 @@ export async function tickRole(charter, roleKey) {
     for (const a of m.actions) skillActionTypes.add(a.type);
   }
   const allowed = [...builtInAllowed, ...skillActionTypes];
+  if (roleMediaPipelines.length && !allowed.includes("produce")) allowed.push("produce");
 
   // Hybrid roles get a different prompt framing — they coordinate a
   // human, they don't execute the work themselves.
@@ -265,6 +272,7 @@ export async function tickRole(charter, roleKey) {
     cap,
     allowed,
     pipeline: ROLE_LIBRARY[resolved.roleKey].pipeline || null,
+    mediaPipelines: roleMediaPipelines,
     skillActionLines,
     isHybrid,
     humans,
@@ -276,7 +284,7 @@ export async function tickRole(charter, roleKey) {
     const roleGateway = charter.roles?.[resolved.roleKey]?.gateway || "openclaw";
     const result = await _completeJSON(prompt, {
       temperature: 0.6,
-      maxTokens: 768,
+      maxTokens: 1536,
       llmModel: roleLLM,
       gateway: roleGateway,
       executionMode: charter.execution,
@@ -293,10 +301,12 @@ export async function tickRole(charter, roleKey) {
   } catch (err) {
     out.error++;
     await _logLLMTrace(companyId, resolved.roleKey, "tickRole", err.raw || "", null, err.durationMs || 0, err.message);
-    await append(companyId, {
-      kind: "system", role: resolved.roleKey, action: "tickRole",
-      status: "error", note: `LLM call failed: ${_friendlyError(err)}`,
-    });
+    if (!_isJSONParseError(err)) {
+      await append(companyId, {
+        kind: "system", role: resolved.roleKey, action: "tickRole",
+        status: "error", note: `LLM call failed: ${_friendlyError(err)}`,
+      });
+    }
     return out;
   }
 
@@ -651,10 +661,14 @@ ACTIVE GOALS already cover the obvious next moves, return fewer (or even
 zero) new goals. Do not include any text outside the JSON object.`;
 }
 
-function _rolePrompt({ charter, roleKey, companion, goal, cap, allowed, pipeline, skillActionLines = [], isHybrid = false, humans = [] }) {
+function _rolePrompt({ charter, roleKey, companion, goal, cap, allowed, pipeline, mediaPipelines = [], skillActionLines = [], isHybrid = false, humans = [] }) {
   const isProducer = roleKey.startsWith("Producer:");
+  const productionPipelines = [...new Set([pipeline, ...mediaPipelines].filter(Boolean))];
   const skillsBlock = skillActionLines.length
     ? `\nGRANTED SKILL ACTIONS (in addition to built-ins above — emit any of these):\n${skillActionLines.join("\n")}\n`
+    : "";
+  const mediaBlock = productionPipelines.length
+    ? `\nPRODUCTION PIPELINES THIS ROLE MAY USE: ${productionPipelines.join(", ")}\nWhen a task needs media or generated content, emit a produce action with one of those pipeline values.\n`
     : "";
   const hybridBlock = isHybrid
     ? `\nROLE TYPE: HUMAN-SUPPORTED. You coordinate real human workers — you do NOT do the physical work yourself. You brief, dispatch, follow up, invoice. The actual hands-on labor is done by:\n${
@@ -671,10 +685,10 @@ CHARTER:
 ${charter.mission}
 
 ROLE: ${roleKey}
-${isProducer ? `PIPELINE: ${pipeline}` : ""}
+${isProducer ? `PRIMARY PIPELINE: ${pipeline}` : ""}
 PER-HEARTBEAT BUDGET: ${cap} ${charter.rules?.currency || "USD"}
 ALLOWED ACTION TYPES (built-in): ${allowed.filter((a) => !a.includes(".")).join(", ")}
-${skillsBlock}${hybridBlock}
+${mediaBlock}${skillsBlock}${hybridBlock}
 
 ${goal.goalTitle ? `PARENT GOAL: "${goal.goalTitle}"${goal.goalRationale ? `\nWHY THIS MATTERS: ${goal.goalRationale}` : ""}\n` : ""}ISSUE${goal.priority ? ` [priority: ${goal.priority}]` : ""}:
 "${goal.directive}"${goal.description ? `\n\nDETAILS:\n${goal.description}` : ""}
@@ -684,7 +698,9 @@ OUTPUT (strict JSON, no commentary):
   "actions": [
     ${isProducer
       ? `{ "type": "produce", "pipeline": "${pipeline}", "prompt": "<the actual prompt for the inference engine>", "price": 0 }`
-      : `{ "type": "<action-from-allowed-list>", ...required-fields }`
+      : productionPipelines.length
+        ? `{ "type": "produce", "pipeline": "${productionPipelines[0]}", "params": { "prompt": "<the actual prompt for the inference engine>" }, "price": 0 }`
+      : `{ "type": "replyToInbox", "to": "<user-or-thread-id>", "text": "<short reply text>" }`
     }
   ]
 }
@@ -699,7 +715,9 @@ EXAMPLES per action type:
 
 CRITICAL:
 - emit between 1 and 3 actions
+- every action must be one complete JSON object with a "type" field
 - spend actions must respect the budget cap above
+- never use incomplete placeholder objects
 - do not include any text outside the JSON object`;
 }
 
@@ -709,6 +727,12 @@ function _summarize(action) {
   if (action.prompt) return action.prompt.slice(0, 200);
   if (action.amount) return `${action.amount} → ${action.recipient || "?"}`;
   return action.type;
+}
+
+function _roleMediaPipelines(charter, roleKey) {
+  const configured = charter.roles?.[roleKey]?.pipelines;
+  if (!Array.isArray(configured)) return [];
+  return configured.filter((pipeline) => MEDIA_PIPELINES.includes(pipeline));
 }
 
 function _defaultPrice(pipeline, charter) {
@@ -797,7 +821,7 @@ async function _completeJSON(prompt, opts = {}) {
         modelKey: opts.llmModel,
         prompt,
         temperature: opts.temperature ?? 0.7,
-        maxTokens: opts.maxTokens ?? 1024,
+        maxTokens: opts.maxTokens ?? 2048,
         enableThinking: opts.enableThinking ?? false,
       }), LLM_CALL_TIMEOUT_MS, `pool[${opts.llmModel}]`);
       const raw = typeof res === "string" ? res : res?.text || "";
@@ -873,7 +897,7 @@ async function _completeJSON(prompt, opts = {}) {
           streamId,
           prompt,
           temperature: opts.temperature ?? 0.7,
-          maxTokens: opts.maxTokens ?? 1024,
+          maxTokens: opts.maxTokens ?? 2048,
           enableThinking: opts.enableThinking ?? false,
         }),
         LLM_CALL_TIMEOUT_MS,
@@ -903,7 +927,7 @@ async function _completeJSON(prompt, opts = {}) {
   // Non-streaming fallback (no stream context, or IPC unavailable).
   const text = await _withTimeout(window.electronAPI.chat(prompt, {
     temperature: opts.temperature ?? 0.7,
-    maxTokens: opts.maxTokens ?? 1024,
+    maxTokens: opts.maxTokens ?? 2048,
     enableThinking: opts.enableThinking ?? false,
   }), LLM_CALL_TIMEOUT_MS, "chat");
   raw = typeof text === "string" ? text : text?.text ?? "";
@@ -1034,10 +1058,15 @@ async function _logLLMTrace(companyId, role, action, raw, parsed, durationMs, er
 function _friendlyError(err) {
   const msg = err?.message || String(err);
   if (/model not loaded/i.test(msg) || /no session/i.test(msg)) {
-    return "no model loaded — open Generative Text and select a model, or enable Demo Mode in Settings to run scripted ticks.";
+    return "no model loaded — open Generative Text and select a model, or turn on Demo mode in the company header to run sample activity.";
   }
   if (/connector .* not configured/i.test(msg)) return msg;
   return msg.slice(0, 240);
+}
+
+function _isJSONParseError(err) {
+  const msg = err?.message || String(err);
+  return /JSON parse failed|LLM did not return JSON|LLM returned empty response/i.test(msg);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

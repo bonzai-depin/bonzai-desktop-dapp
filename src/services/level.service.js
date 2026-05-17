@@ -6,7 +6,7 @@
  * IMPORTANT: All AI generation is FREE. Levels ONLY gate MINTING content as NFTs.
  *
  * A level is ACTIVE when EITHER:
- *   1. User holds >= required BONZAI tokens (across Ethereum + Base)
+ *   1. User holds >= required BONZAI tokens on Ethereum
  *   OR
  *   2. User has paid 1 ETH one-time payment to unlock ALL levels via BonzaiUnlock
  *
@@ -29,7 +29,7 @@ import { web3Service } from './web3.service.js';
 // ═══════════════════════════════════════════════════════════════════════════
 
 // BonzaiUnlock contract ABI (1 ETH one-time payment unlocks all levels)
-// Contract: 0x7A33a9843C1740Ea73594fA2468Fb210a7fd7968 on Base
+// Contract configured in web3.config.js on Ethereum
 const BONZAI_UNLOCK_ABI = [
   // View functions
   'function unlockPrice() view returns (uint256)',
@@ -263,8 +263,8 @@ export const unlockAllWithEth = async (onStatusChange) => {
   state.isUnlocking = true;
 
   try {
-    // The unlock contract is on Base - must switch to Base first
-    const targetChainId = CONFIG.levelUnlock?.chainId || 8453; // Base
+    // The unlock contract is on Ethereum.
+    const targetChainId = CONFIG.levelUnlock?.chainId || 1;
     const currentChainId = web3Service.state.currentChainId;
 
     if (currentChainId !== targetChainId) {
@@ -272,19 +272,19 @@ export const unlockAllWithEth = async (onStatusChange) => {
 
       const switchPromise = web3Service.switchNetwork('base');
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Network switch timed out. Please switch to Base manually in your wallet.')), 30000)
+        setTimeout(() => reject(new Error('Network switch timed out. Please switch to Ethereum manually in your wallet.')), 30000)
       );
 
       try {
         await Promise.race([switchPromise, timeoutPromise]);
       } catch (switchError) {
-        throw new Error(`Please switch to Base network in your wallet. ${switchError.message}`);
+        throw new Error(`Please switch to Ethereum network in your wallet. ${switchError.message}`);
       }
 
       await new Promise(resolve => setTimeout(resolve, 500));
 
       if (web3Service.state.currentChainId !== targetChainId) {
-        throw new Error('Failed to switch to Base. Please switch manually in your wallet and try again.');
+        throw new Error('Failed to switch to Ethereum. Please switch manually in your wallet and try again.');
       }
     }
 

@@ -137,7 +137,7 @@
 
         <div class="bz-sidebar__footer-action bz-sidebar__model" @click="openBrowseModels" title="Click to browse models">
           <span class="material-symbols-outlined bz-sidebar__model-icon">neurology</span>
-          <span class="bz-sidebar__model-name">{{ currentModelName || "No Model" }}</span>
+          <span class="bz-sidebar__model-name">{{ sidebarModelName || "No Model" }}</span>
           <span v-if="alwaysLoaded" class="bz-sidebar__model-lock material-symbols-outlined" title="Always loaded">lock</span>
         </div>
 
@@ -302,11 +302,13 @@ import { themeService } from "./services/theme.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
 import { modelStore } from "./stores/modelStore.js";
+import companyStore from "./stores/companyStore.js";
 import { modelPicker } from "./services/modelPicker.service.js";
 import { getPerformanceStats, getHardwareSpecs, initializeStore } from "./stores/inferenceStore.js";
 import { useBonzaiWeb3 } from "./composables/useBonzaiWeb3.js";
 import { CONFIG } from "./config/web3.config.js";
 import { levelService, checkAllLevels } from "./services/level.service.js";
+import { listAllLLMs } from "./skills/flagship.js";
 
 export default {
   name: "App",
@@ -466,7 +468,21 @@ const {
     const showPrivyLogin = ref(false);
     const privyError = ref("");
 
+    const llmNameLookup = Object.fromEntries(listAllLLMs().map((model) => [model.key, model.name]));
     const currentModelName = computed(() => modelStore.state.current?.modelname || null);
+    const companyModelSummary = computed(() => {
+      if (modelMode.value !== "company") return null;
+      const charter = companyStore.activeCompany?.value;
+      if (!charter) return null;
+      const keys = new Set();
+      for (const role of Object.values(charter.roles || {})) {
+        if (role?.llm) keys.add(role.llm);
+      }
+      if (!keys.size) return "Company: current chat model";
+      const names = [...keys].map((key) => llmNameLookup[key] || key.replace(/^llm_/, "").replace(/_/g, " "));
+      return names.length === 1 ? `Company: ${names[0]}` : `Company: ${names.length} LLMs`;
+    });
+    const sidebarModelName = computed(() => companyModelSummary.value || currentModelName.value || null);
     const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
 
     const currentTheme = computed(() => themeService.active());
@@ -678,7 +694,7 @@ const {
       isConnected, isConnecting, walletAddress, truncatedAddress,
       totalBalance, formatBalance, displayedHighestLevelKey,
       upDisplayName, upAvatarUrl, isRefreshing,
-      currentModelName, alwaysLoaded, openBrowseModels,
+      currentModelName, sidebarModelName, alwaysLoaded, openBrowseModels,
       currentTheme, cycleTheme,
       p2pMode, p2pStatus, p2pModeIcon, p2pModeLabel,
       isReauthing, isRefreshingToken, needsReauth, tokenExpiringSoon,

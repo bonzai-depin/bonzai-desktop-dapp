@@ -21,7 +21,7 @@ import { registerWeb3ServiceForLukso } from "./lukso.service.js";
 // Reown AppKit - official WalletConnect integration
 import { createAppKit } from "@reown/appkit/vue";
 import { EthersAdapter } from "@reown/appkit-adapter-ethers";
-import { mainnet, arbitrum, base, lukso } from "@reown/appkit/networks";
+import { mainnet, lukso } from "@reown/appkit/networks";
 
 
 // Universal Profile custom wallet for LUKSO network
@@ -84,7 +84,7 @@ const state = reactive({
   authLevel: null,
   authLevelValue: 0,
 
-  // Balances (aggregated across chains)
+  // Balances (Ethereum-only for RC; base key is a compatibility mirror)
   balances: {
     ethereum: 0,
     arbitrum: 0,
@@ -207,8 +207,8 @@ const initAppKit = () => {
 
   appKit = createAppKit({
     adapters: [new EthersAdapter()],
-    networks: [base, mainnet, arbitrum, lukso],
-    defaultNetwork: base,
+    networks: [mainnet, lukso],
+    defaultNetwork: mainnet,
     metadata,
     projectId,
     features: {
@@ -501,7 +501,7 @@ export const disconnectWallet = async () => {
     state.isAuthenticated = false;
     state.authLevel = null;
     state.authLevelValue = 0;
-    state.balances = { ethereum: 0, arbitrum: 0, total: 0 };
+    state.balances = { ethereum: 0, arbitrum: 0, base: 0, total: 0 };
     state.lastBalanceCheck = null;
     state.error = null;
 
@@ -556,16 +556,12 @@ export const fetchAllBalances = async () => {
 
   try {
     // Fetch balances in parallel across all chains
-    const [ethBalance, arbBalance, baseBalance] = await Promise.all([
-      fetchBalanceOnChain("ethereum"),
-      fetchBalanceOnChain("arbitrum"),
-      fetchBalanceOnChain("base"),
-    ]);
+    const ethBalance = await fetchBalanceOnChain("ethereum");
 
     state.balances.ethereum = ethBalance;
-    state.balances.arbitrum = arbBalance;
-    state.balances.base = baseBalance;
-    state.balances.total = ethBalance + arbBalance + baseBalance;
+    state.balances.arbitrum = 0;
+    state.balances.base = ethBalance;
+    state.balances.total = ethBalance;
     state.lastBalanceCheck = Date.now();
 
     return state.balances;
@@ -635,7 +631,7 @@ export const switchNetwork = async (networkKey) => {
 export const switchToArbitrum = () => switchNetwork("arbitrum");
 
 /**
- * Switch to Base (primary network for payments)
+ * Switch to Ethereum (legacy name retained for old call sites)
  */
 export const switchToBase = () => switchNetwork("base");
 
@@ -810,12 +806,12 @@ export const connectWithPrivy = async (options = {}) => {
     const privyProvider = {
       request: async ({ method, params }) => {
         if (['eth_requestAccounts', 'eth_accounts'].includes(method)) return [walletAddress];
-        if (method === 'eth_chainId') return '0x2105';
-        if (method === 'wallet_switchEthereumChain') return null; // Always on Base
+        if (method === 'eth_chainId') return '0x1';
+        if (method === 'wallet_switchEthereumChain') return null; // Always on Ethereum
         if (['eth_sendTransaction', 'eth_signTypedData_v4', 'personal_sign'].includes(method)) {
           return window.electronAPI.wallet.signRequest({ method, params });
         }
-        const rpc = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
+        const rpc = new ethers.JsonRpcProvider(CONFIG.networks?.ethereum?.rpc || 'https://ethereum.publicnode.com');
         return rpc.send(method, params || []);
       },
     };
@@ -836,7 +832,7 @@ export const connectWithPrivy = async (options = {}) => {
       const network = await browserProvider.getNetwork();
       state.currentChainId = Number(network.chainId);
     } catch {
-      state.currentChainId = 8453; // Default to Base
+      state.currentChainId = 1; // Default to Ethereum
     }
 
     // Fetch balances
@@ -887,7 +883,7 @@ export const getBrowserProvider = async () => {
 /**
  * Get RPC provider for a specific chain
  */
-export const getProvider = async (chain = "base") => {
+export const getProvider = async (chain = "ethereum") => {
   if (!rpcProviders[chain]) await initRpcProviders();
   return rpcProviders[chain];
 };

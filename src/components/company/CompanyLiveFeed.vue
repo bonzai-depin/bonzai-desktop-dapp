@@ -118,15 +118,15 @@
             <div v-if="entry.note" class="live-entry__note">{{ entry.note }}</div>
 
             <!-- LLM response: collapsible by default; pre-formatted body -->
-            <details v-if="entry.kind === 'llm' && entry.llm?.response" class="live-entry__thought" :open="entry.status === 'parse_error'">
+            <details v-if="entry.kind === 'llm' && entry.llm?.response" class="live-entry__thought">
               <summary>
                 <span class="material-symbols-outlined">psychology_alt</span>
-                <span>{{ entry.status === 'parse_error' ? 'Show what the model said' : 'Show response' }}</span>
+                <span>{{ entry.status === 'parse_error' ? 'Show model response' : 'Show response' }}</span>
                 <span v-if="entry.llm.truncated" class="live-entry__truncated">truncated</span>
               </summary>
               <pre class="live-entry__response">{{ entry.llm.response }}</pre>
               <div v-if="entry.llm.parseError" class="live-entry__parse-error">
-                <span class="material-symbols-outlined">error</span>
+                <span class="material-symbols-outlined">warning</span>
                 {{ entry.llm.parseError }}
               </div>
             </details>
@@ -190,7 +190,7 @@ export default {
       { id: "system",    label: "System" },
       { id: "issue",     label: "Issues" },
       { id: "action",    label: "Actions" },
-      { id: "production",label: "Production" },
+      { id: "production",label: "Deliverables" },
       { id: "veto",      label: "Vetoes" },
       { id: "treasury",  label: "Treasury" },
     ];
@@ -281,7 +281,7 @@ export default {
         executed: "status-pill--executed",
         vetoed: "status-pill--vetoed",
         error: "status-pill--error",
-        parse_error: "status-pill--error",
+        parse_error: "status-pill--queued",
         queued: "status-pill--queued",
         pending: "status-pill--queued",
       })[s] || "status-pill--neutral";
@@ -289,7 +289,7 @@ export default {
 
     function statusLabel(entry) {
       if (entry.kind === "llm" && entry.status === "executed") return "thought";
-      if (entry.status === "parse_error") return "parse error";
+      if (entry.status === "parse_error") return "needs retry";
       return entry.status || "executed";
     }
 
@@ -356,7 +356,7 @@ export default {
      * source. Useful for restarting a demo with a clean slate.
      */
     async function clearFeed() {
-      if (!confirm("Clear the live feed?\n\nThis wipes the audit log only — your goals, issues, treasury, and production stay intact. Useful for a fresh demo run.")) return;
+      if (!confirm("Clear the live feed?\n\nThis wipes the audit log only. Your goals, tasks, treasury, and deliverables stay intact.")) return;
       try { await store.clearAudit(); }
       catch (err) { alert("Could not clear feed: " + (err.message || err)); }
     }
