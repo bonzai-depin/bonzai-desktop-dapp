@@ -1,7 +1,7 @@
 name: Release (Windows)
 on:
   release:
-    types: [created]
+    types: [created, published]
   workflow_dispatch:
     inputs:
       tag:
@@ -54,9 +54,9 @@ jobs:
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
       # Privacy-pipeline smoke tests — see publish-linux.yml for rationale.
-      # Cross-platform AF_UNIX is supported on Win10 1803+, well within our
-      # supported floor. Catches wire-format / codec / provider-blueprint
-      # regressions before the PyInstaller step.
+      # Python on Windows may not expose socket.AF_UNIX, so the provider
+      # worker falls back to loopback TCP while preserving the same frame
+      # protocol.
       - name: Privacy-pipeline smoke tests
         shell: bash
         run: |

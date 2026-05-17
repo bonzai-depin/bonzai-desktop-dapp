@@ -460,6 +460,8 @@ export async function startProviderBridge({ flaskPort = 65000 } = {}) {
         _pendingProviderSessions.set(req.sessionId, {
           shardId:    ack.shardId,
           socketPath: ack.socketPath,
+          socketHost: ack.socketHost,
+          socketPort: ack.socketPort,
           peerId:     remotePeer,
           modelId:    req.modelId,
           blockRange: req.blockRange,
@@ -585,9 +587,12 @@ async function handleProviderTunnel(stream, remotePeer, flaskPort) {
       sessionId = begin.sessionId;
       _activeProviderSessions.set(sessionId, { remotePeer, ctx, openedAt: Date.now() });
 
-      // Open UDS to shard.py worker — connection completes async; queue
+      // Open the local shard.py worker — UDS where available, loopback
+      // TCP on Python/Windows builds without AF_UNIX. Connection
+      // completes async; queue
       // any frames that arrive before it's ready.
-      udsSocket = createConnection(ctx.socketPath, () => {
+      const workerTarget = ctx.socketPath || { host: ctx.socketHost || '127.0.0.1', port: ctx.socketPort };
+      udsSocket = createConnection(workerTarget, () => {
         const runMsg = encodeUdsMessage(UDS_TYPE_CONTROL,
           Buffer.from(JSON.stringify({ op: 'run', shardId: ctx.shardId }), 'utf8'));
         udsSocket.write(runMsg);

@@ -46,7 +46,7 @@
           What does your business do?
         </h2>
         <p class="muted">
-          Pick the closest starting point. You can edit the charter and org chart after setup.
+          Pick the closest starting point. You can edit the charter and agentic team after setup.
         </p>
         <div class="tpl-grid">
           <div

@@ -1,7 +1,7 @@
 name: Release (Linux)
 on:
   release:
-    types: [created]
+    types: [created, published]
   workflow_dispatch:
     inputs:
       tag:

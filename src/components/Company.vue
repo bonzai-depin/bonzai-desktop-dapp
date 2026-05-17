@@ -99,13 +99,13 @@
             </div>
           </div>
           <div class="company-toolbar__actions">
-            <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" @click="openWizard">
-              <span class="material-symbols-outlined" aria-hidden="true">add_business</span>
-              New company
-            </button>
             <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="triggerImport">
               <span class="material-symbols-outlined" aria-hidden="true">upload</span>
               Import
+            </button>
+            <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" @click="openWizard">
+              <span class="material-symbols-outlined" aria-hidden="true">add_business</span>
+              New company
             </button>
             <input
               ref="importInput"

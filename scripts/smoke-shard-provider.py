@@ -3,9 +3,10 @@
 Smoke test for the provider-side privacy-pipeline blueprint.
 
 Mounts shard.py against a fresh Flask app (no diffuser model loading),
-hits /shard/load via the test client, opens a real UDS connection to
-the worker socket, sends an INT8+LZ4 quantized activation frame, and
-asserts the loopback echo round-trip is byte-correct.
+hits /shard/load via the test client, opens a real worker connection
+(UDS where available, loopback TCP fallback otherwise), sends an INT8+LZ4
+quantized activation frame, and asserts the loopback echo round-trip is
+byte-correct.
 
 Run:
     bonzai/bin/python3 scripts/smoke-shard-provider.py
@@ -40,6 +41,31 @@ from pipeline_transport import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("smoke")
+
+
+def _connect_worker(ack_or_path):
+    if isinstance(ack_or_path, str):
+        host = None
+        port = None
+        path = ack_or_path
+    else:
+        host = ack_or_path.get("socketHost")
+        port = ack_or_path.get("socketPort")
+        path = ack_or_path.get("socketPath")
+
+    if host and port:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5.0)
+        s.connect((host, int(port)))
+        return s
+
+    if not hasattr(socket, "AF_UNIX"):
+        raise RuntimeError("worker did not advertise socketHost/socketPort and this Python has no AF_UNIX")
+
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(5.0)
+    s.connect(path)
+    return s
 
 
 def main() -> int:
@@ -80,9 +106,7 @@ def main() -> int:
         log.info("/shard/load → shardId=%s", shard_id)
 
         # 2. UDS handshake
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(5.0)
-        s.connect(sock_path)
+        s = _connect_worker(ack)
         s.sendall(_encode_control("run", shardId=shard_id))
         type_, body = _read_uds_message(s)
         assert type_ == UDS_TYPE_CONTROL
@@ -107,9 +131,12 @@ def main() -> int:
     r = client.post("/shard/load", json=load_body)
     ack = r.get_json()
     shard_id = ack["shardId"]
-    advertised_path = ack["socketPath"]
-    assert advertised_path == sock_path
-    log.info("/shard/load → shardId=%s socketPath=%s", shard_id, advertised_path)
+    advertised_path = ack.get("socketPath")
+    if advertised_path:
+        assert advertised_path == sock_path
+    else:
+        assert ack.get("socketHost") and ack.get("socketPort")
+    log.info("/shard/load → shardId=%s endpoint=%s", shard_id, advertised_path or f"{ack.get('socketHost')}:{ack.get('socketPort')}")
 
     # /shard/status sanity
     r = client.get("/shard/status")
@@ -117,9 +144,7 @@ def main() -> int:
     assert any(s["shardId"] == shard_id and not s["inUse"] for s in status["shards"]), status
 
     # UDS handshake
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5.0)
-    s.connect(sock_path)
+    s = _connect_worker(ack)
     s.sendall(_encode_control("run", shardId=shard_id))
     type_, body = _read_uds_message(s)
     assert type_ == UDS_TYPE_CONTROL

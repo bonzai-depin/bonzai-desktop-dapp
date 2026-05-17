@@ -6,7 +6,6 @@
         <h1 class="company-cockpit__title fira-sans-condensed-black-italic">
           {{ companyDisplayName }}
         </h1>
-        <p class="company-cockpit__mission">{{ charter.mission }}</p>
         <div class="company-cockpit__chips">
           <span
             class="company-pill"
@@ -58,14 +57,6 @@
             {{ charter.status === 'active' ? 'Pause automation' : 'Resume automation' }}
           </button>
           <button
-            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-            @click="runCEO"
-            title="Ask the CEO role to review the company goals now and queue the next tasks."
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
-            Plan next work
-          </button>
-          <button
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
             @click="openNewGoalModal"
             title="Add a concrete goal for the company to turn into tasks."
@@ -75,12 +66,19 @@
           </button>
           <button
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-            @click="active = 'approvals'"
-            :disabled="!state.approvals.length"
-            title="Review governance requests waiting for board approval."
+            @click="$emit('new-company')"
+            title="Create another company."
           >
-            <span class="material-symbols-outlined" aria-hidden="true">rule</span>
-            Approvals {{ state.approvals.length ? fmtCount(state.approvals.length) : '' }}
+            <span class="material-symbols-outlined" aria-hidden="true">add_business</span>
+            New company
+          </button>
+          <button
+            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+            @click="runCEO"
+            title="Ask the CEO role to review the company goals now and queue the next tasks."
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
+            Plan next work
           </button>
         </div>
       </div>
@@ -119,7 +117,7 @@
           <div class="ops-panel ops-panel--org">
             <div class="ops-panel__head">
               <div>
-                <p class="command-center__eyebrow">Org chart</p>
+                <p class="command-center__eyebrow">Agentic Team</p>
                 <h3 class="ops-panel__title fira-sans-condensed-black-italic">Delegation map</h3>
               </div>
               <button
@@ -253,12 +251,12 @@
         </section>
       </div>
 
-      <!-- ─── Org Chart ─── -->
+      <!-- ─── Agentic Team ─── -->
       <div v-else-if="active === 'org'" class="panel models__activity--payouts">
         <div class="section-head">
           <h2 class="panel-title fira-sans-condensed-black-italic">
             <span class="material-symbols-outlined">schema</span>
-            Org chart
+            Agentic Team
           </h2>
           <button
             class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
@@ -1751,7 +1749,7 @@ export default {
 
     const subtabs = computed(() => [
       { value: "command", label: "Command", icon: "dashboard" },
-      { value: "org", label: "Org", icon: "schema" },
+      { value: "org", label: "Team", icon: "schema" },
       { value: "issues", label: "Work", icon: "flag",
         badge: props.state.goalCounts?.active || props.state.issueCounts?.open || null },
       { value: "deliverables", label: "Deliverables", icon: "inventory_2" },
@@ -2175,14 +2173,6 @@ hr {
   color: var(--bz-fg) !important;
   font-size: 34px !important;
   line-height: 0.95;
-  text-align: left !important;
-}
-.company-cockpit__mission {
-  max-width: 72ch;
-  margin: var(--bz-space-2) 0 0 !important;
-  color: var(--bz-fg-mid) !important;
-  font-size: 14px !important;
-  line-height: 1.45;
   text-align: left !important;
 }
 .company-cockpit__chips,
@@ -2944,7 +2934,7 @@ hr {
   font-size: 16px;
 }
 
-/* ───────── Org chart cards ───────── */
+/* ───────── Agentic team cards ───────── */
 .org-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

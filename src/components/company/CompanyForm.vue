@@ -13,7 +13,7 @@
 
     <p class="form-intro">
       Create a company charter by hand. Pick a CEO and at least one producer;
-      every other role can be added later from the org chart.
+      every other role can be added later from the agentic team.
     </p>
 
     <hr />
@@ -169,11 +169,11 @@
       </div>
     </section>
 
-    <!-- ── Org chart + per-role LLM ─────────────────────────── -->
+    <!-- ── Agentic team + per-role LLM ─────────────────────────── -->
     <section class="form-section models__activity--payouts">
       <h2 class="section-title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined">schema</span>
-        Org chart
+        Agentic Team
       </h2>
       <p class="section-intro">
         Pick which companion fills each role and which LLM they prefer.

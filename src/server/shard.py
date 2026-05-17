@@ -9,8 +9,9 @@ Mounted on the diffuser Flask app only when BonzAI is running in
     POST /shard/unload     — free a slice
     GET  /shard/status     — diagnostic snapshot
 
-  UDS data plane (separate listener, this module owns it)
+  local data plane (separate listener, this module owns it)
     AF_UNIX path: <tempdir>/bonzai-shard-worker-<pid>.sock
+    or loopback TCP on Python builds without AF_UNIX
     Protocol:     same UDS framing as src/main/shardSession.js
                   (1B type + 4B BE length + body)
     First message MUST be a CONTROL with op="run" carrying a shardId
@@ -248,7 +249,7 @@ def shard_load():
         "vramMB": vram_mb,
         "supportedCodecFlags": PYTHON_SUPPORTED_FLAGS,
         "frameVersion": SHARD_FRAME_VERSION,
-        "socketPath": _worker_socket_path(),
+        **_worker_endpoint_payload(),
     })
 
 
@@ -297,13 +298,13 @@ def shard_status():
         "ok": True,
         "shards": shards,
         "loopback": all(r["modelId"] not in _SHARD_RUNNERS for r in shards),
-        "socketPath": _worker_socket_path(),
+        **_worker_endpoint_payload(),
         "frameVersion": SHARD_FRAME_VERSION,
     })
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# UDS DATA PLANE
+# LOCAL DATA PLANE
 # ─────────────────────────────────────────────────────────────────────────
 
 def _worker_socket_path() -> str:
@@ -319,6 +320,18 @@ def _worker_socket_path() -> str:
 _worker_server: Optional[socket.socket] = None
 _worker_thread: Optional[threading.Thread] = None
 _worker_stop = threading.Event()
+_worker_tcp_addr: Optional[Tuple[str, int]] = None
+
+
+def _supports_unix_sockets() -> bool:
+    return hasattr(socket, "AF_UNIX")
+
+
+def _worker_endpoint_payload() -> Dict[str, Any]:
+    if _worker_tcp_addr:
+        host, port = _worker_tcp_addr
+        return {"socketPath": None, "socketHost": host, "socketPort": port}
+    return {"socketPath": _worker_socket_path()}
 
 
 def _send_uds_control(sock: socket.socket, op: str, **fields: Any) -> None:
@@ -592,32 +605,44 @@ def _accept_loop(server: socket.socket) -> None:
 
 def start_uds_listener() -> str:
     """
-    Bind the worker UDS socket and start the accept loop. Idempotent —
-    safe to call multiple times. Returns the socket path so the
-    diffuser can log it on boot.
+    Bind the worker socket and start the accept loop. Idempotent —
+    safe to call multiple times. Uses AF_UNIX where available and
+    loopback TCP on Python builds that do not expose socket.AF_UNIX.
     """
-    global _worker_server, _worker_thread
+    global _worker_server, _worker_thread, _worker_tcp_addr
 
     if _worker_server is not None:
+        if _worker_tcp_addr:
+            return f"tcp://{_worker_tcp_addr[0]}:{_worker_tcp_addr[1]}"
         return _worker_socket_path()
 
     path = _worker_socket_path()
-    # Stale socket from a prior crash blocks bind.
-    if os.path.exists(path):
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+    if _supports_unix_sockets():
+        # Stale socket from a prior crash blocks bind.
+        if os.path.exists(path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(path)
+        endpoint = path
+    else:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        host, port = server.getsockname()
+        _worker_tcp_addr = (host, int(port))
+        endpoint = f"tcp://{host}:{port}"
 
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(path)
     server.listen(8)
     # Owner-only — main.js connects from the same UID, no LAN exposure.
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    if _supports_unix_sockets():
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
 
     _worker_server = server
     _worker_stop.clear()
@@ -627,14 +652,14 @@ def start_uds_listener() -> str:
 
     threading.Thread(target=_idle_evictor, daemon=True).start()
 
-    logger.info("[shard] UDS worker listening at %s (loopback ready, %d runners registered)",
-                path, len(_SHARD_RUNNERS))
-    return path
+    logger.info("[shard] worker listening at %s (loopback ready, %d runners registered)",
+                endpoint, len(_SHARD_RUNNERS))
+    return endpoint
 
 
 def stop_uds_listener() -> None:
     """Stop the listener — used by tests + clean shutdown."""
-    global _worker_server, _worker_thread
+    global _worker_server, _worker_thread, _worker_tcp_addr
     _worker_stop.set()
     if _worker_server is not None:
         try:
@@ -645,6 +670,7 @@ def stop_uds_listener() -> None:
     if _worker_thread is not None:
         _worker_thread.join(timeout=2.0)
         _worker_thread = None
+    _worker_tcp_addr = None
     path = _worker_socket_path()
     if os.path.exists(path):
         try:
