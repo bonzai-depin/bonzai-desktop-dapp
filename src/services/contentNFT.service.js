@@ -386,6 +386,26 @@ export async function mintContent({
       : brandedImageReceipt?.url || undefined;
 
     console.log(`[ContentNFT] Metadata name: "${title}", type: "${generation.type}"`);
+    const inspectorMetadata = {
+      prompt: prompt || generation.prompt || generation.question || '',
+      negativePrompt: generation.negativePrompt || generation.negative_prompt || '',
+      outputText: generation.outputText || generation.answer?.text || '',
+      systemPrompt: generation.systemPrompt || '',
+      model: generation.model || modelSlug,
+      pipeline: generation.pipeline || '',
+      parameters: generation.parameters || generation.params || {},
+      hardware: generation.hardware || null,
+      networkMode: generation.networkMode || null,
+      peerId: generation.peerId || null,
+      source: generation.source || null,
+      elapsed: generation.elapsed || generation.elapsedMs || null,
+      tokensUsed: generation.tokensUsed || null,
+      tokensPerSecond: generation.tokensPerSecond || generation.tokPerSec || null,
+      width: generation.width || generation.parameters?.width || null,
+      height: generation.height || generation.parameters?.height || null,
+      steps: generation.steps || generation.parameters?.steps || null,
+      seed: generation.seed || generation.parameters?.seed || null,
+    };
     const metadata = {
       name: title || `${generation.type || 'Untitled'} #${Date.now().toString(36)}`,
       description: description || `AI-generated ${generation.type || 'content'} by BonzAI`,
@@ -410,6 +430,7 @@ export async function mintContent({
           model: modelSlug,
           generationType: generation.type,
           timestamp: generation.timestamp || Date.now(),
+          inspector: inspectorMetadata,
           ...(generation.tokensPerSecond ? { tokensPerSecond: String(generation.tokensPerSecond) } : {}),
           ...(generation.elapsedMs ? { elapsedMs: generation.elapsedMs } : {}),
           ...(generation.hfRepo ? { hfRepo: generation.hfRepo } : {}),

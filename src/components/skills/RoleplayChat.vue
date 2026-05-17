@@ -2523,29 +2523,39 @@
     <!-- Chat Phase -->
     <div v-else-if="phase === 'chat'" class="chat-phase">
       <!-- Chat Header -->
-      <div class="chat-header models__activity--payouts mb-4">
+      <div class="roleplay-stage">
+      <div class="chat-header">
         <div class="columns is-vcentered is-multiline">
           <div class="column">
             <div class="companion-header has-text-left">
-              <span class="material-symbols-outlined mr-2">
-                {{
-                  getAvatarIcon(
-                    selectedCompanion?.avatar,
-                    selectedCompanion?.gender,
-                  )
-                }}
+              <span class="companion-header__portrait" :class="{ 'has-image': selectedCompanion?.image }">
+                <img
+                  v-if="selectedCompanion?.image"
+                  :src="getImageSrc(selectedCompanion.image)"
+                  :alt="selectedCompanion?.name"
+                />
+                <span v-else class="material-symbols-outlined">
+                  {{
+                    getAvatarIcon(
+                      selectedCompanion?.avatar,
+                      selectedCompanion?.gender,
+                    )
+                  }}
+                </span>
               </span>
               <div>
+                <p class="bz-eyebrow">Roleplay</p>
                 <h3
                   class="fira-sans-condensed-black-italic has-text-brand is-size-4"
                 >
-                  {{ selectedCompanion?.name }} — {{ selectedScenario?.name }}
+                  {{ selectedCompanion?.name }}
                 </h3>
+                <p class="companion-header__scene">{{ selectedScenario?.name }}</p>
               </div>
             </div>
           </div>
 
-          <div class="column is-narrow">
+          <div class="column is-narrow roleplay-session-actions">
             <!-- Autonomous Mode Toggle -->
             <label
               class="checkbox autonomous-toggle mr-5"
@@ -2577,15 +2587,15 @@
               </span>
             </label>
             <button
-              class="bz-btn bz-btn--primary is-small mr-5"
+              class="bz-iconbtn mr-5"
               @click="toggleFullscreen"
               :title="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
             >
-              <span class="material-symbols-outlined" style="font-size: 14px">
+              <span class="material-symbols-outlined">
                 {{ isFullscreen ? "fullscreen_exit" : "fullscreen" }}
               </span>
             </button>
-            <button class="bz-btn bz-btn--destructive is-small" @click="endChat">
+            <button class="bz-btn bz-btn--destructive bz-btn--sm fira-sans-condensed-black-italic" @click="endChat">
               <span
                 class="material-symbols-outlined mr-1"
                 style="font-size: 14px"
@@ -2822,7 +2832,36 @@
 
               <!-- Audio -->
               <div v-if="msg.audio" class="message-audio mt-3">
-                <audio controls :src="getAudioSrc(msg.audio)"></audio>
+                <div class="audio-wave-card">
+                  <button
+                    type="button"
+                    class="audio-wave-button"
+                    :aria-label="activeMessageAudioId === messageAudioId(msg, idx) ? 'Pause audio' : 'Play audio'"
+                    @click="toggleMessageAudio(msg, idx)"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">
+                      {{ activeMessageAudioId === messageAudioId(msg, idx) ? "pause" : "play_arrow" }}
+                    </span>
+                  </button>
+                  <div class="audio-wave-body">
+                    <BonzaiWaveform
+                      variant="player"
+                      :active="activeMessageAudioId === messageAudioId(msg, idx)"
+                      :progress="messageAudioProgress[messageAudioId(msg, idx)] || 0"
+                      :bars="64"
+                      :height="64"
+                    />
+                  </div>
+                </div>
+                <audio
+                  :ref="(el) => setMessageAudioRef(messageAudioId(msg, idx), el)"
+                  :src="getAudioSrc(msg.audio)"
+                  class="audio-player-native"
+                  preload="metadata"
+                  @timeupdate="(event) => onMessageAudioTimeUpdate(msg, idx, event)"
+                  @ended="onMessageAudioEnded(msg, idx)"
+                  @pause="onMessageAudioPaused(msg, idx)"
+                />
                 <div class="audio-actions">
                   <button
                     class="media-action-btn delete-btn"
@@ -3069,7 +3108,7 @@
       </div>
 
       <!-- Chat Input -->
-      <div class="chat-input models__activity--payouts">
+      <div class="chat-input">
         <div class="field has-addons">
           <!-- Image Upload Button -->
           <div class="control">
@@ -3209,6 +3248,7 @@
             @blur="saveUserProfile()"
           ></textarea>
         </div>
+      </div>
       </div>
     </div>
 
@@ -3414,6 +3454,7 @@ import { useSkillStore } from "../../stores/skillStore.js";
 import * as roleplayStore from "../../services/roleplayStore.service.js";
 import { moltbookService } from "../../services/moltbook.service.js";
 import BzCloseButton from "../BzCloseButton.vue";
+import BonzaiWaveform from "../BonzaiWaveform.vue";
 import { companionService, Gender } from "../../services/companion.service.js";
 import { CONFIG } from "../../config/web3.config.js";
 import { io } from "socket.io-client";
@@ -3472,6 +3513,7 @@ export default {
   name: "RoleplayChat",
   components: {
     BzCloseButton,
+    BonzaiWaveform,
   },
   props: {
     skill: {
@@ -8234,6 +8276,53 @@ export default {
       return `data:audio/wav;base64,${audio}`;
     };
 
+    const activeMessageAudioId = ref(null);
+    const messageAudioProgress = ref({});
+    const messageAudioElements = new Map();
+    const messageAudioId = (msg, idx) => `roleplay-audio-${msg?.id || msg?.timestamp || idx}`;
+    const setMessageAudioRef = (id, el) => {
+      if (el) messageAudioElements.set(id, el);
+      else messageAudioElements.delete(id);
+    };
+    const toggleMessageAudio = async (msg, idx) => {
+      const id = messageAudioId(msg, idx);
+      const audio = messageAudioElements.get(id);
+      if (!audio) return;
+      messageAudioElements.forEach((other, otherId) => {
+        if (otherId !== id && !other.paused) other.pause();
+      });
+      if (!audio.paused) {
+        audio.pause();
+        activeMessageAudioId.value = null;
+        return;
+      }
+      try {
+        activeMessageAudioId.value = id;
+        await audio.play();
+      } catch (err) {
+        activeMessageAudioId.value = null;
+        console.error("[Roleplay] Failed to play message audio:", err);
+      }
+    };
+    const onMessageAudioTimeUpdate = (msg, idx, event) => {
+      const audio = event?.target;
+      const duration = audio?.duration || 0;
+      const id = messageAudioId(msg, idx);
+      messageAudioProgress.value = {
+        ...messageAudioProgress.value,
+        [id]: duration > 0 ? Math.min(1, audio.currentTime / duration) : 0,
+      };
+    };
+    const onMessageAudioEnded = (msg, idx) => {
+      const id = messageAudioId(msg, idx);
+      if (activeMessageAudioId.value === id) activeMessageAudioId.value = null;
+      messageAudioProgress.value = { ...messageAudioProgress.value, [id]: 0 };
+    };
+    const onMessageAudioPaused = (msg, idx) => {
+      const id = messageAudioId(msg, idx);
+      if (activeMessageAudioId.value === id) activeMessageAudioId.value = null;
+    };
+
     const getVideoSrc = (video) => {
       if (!video) return "";
       if (video.startsWith("data:")) return video;
@@ -9123,6 +9212,8 @@ export default {
 
     // Cleanup on unmount - DO NOT stop autonomous mode, let it continue
     onUnmounted(() => {
+      messageAudioElements.forEach((audio) => audio.pause());
+      messageAudioElements.clear();
       // Disconnect downloads socket
       disconnectDownloadsSocket();
 
@@ -9422,6 +9513,14 @@ export default {
       getImageSrc,
       getAudioSrc,
       getVideoSrc,
+      activeMessageAudioId,
+      messageAudioProgress,
+      messageAudioId,
+      setMessageAudioRef,
+      toggleMessageAudio,
+      onMessageAudioTimeUpdate,
+      onMessageAudioEnded,
+      onMessageAudioPaused,
       sendMessage,
       isNewMessage,
       downloadImage,
@@ -10853,11 +10952,38 @@ hr {
 .companion-header {
   display: flex;
   align-items: center;
+  gap: var(--bz-space-3);
 }
 
-.companion-header .material-symbols-outlined {
-  font-size: 32px;
-  color: rgba(167, 139, 250, 1);
+.companion-header__portrait {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--bz-border-brand);
+  background: var(--bz-card);
+}
+.companion-header__portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.companion-header__portrait .material-symbols-outlined {
+  font-size: 28px;
+  color: var(--bz-purple-300);
+}
+.companion-header h3 {
+  margin: 0;
+  color: var(--bz-fg);
+  font-size: 26px;
+  line-height: 1;
+}
+.companion-header__scene {
+  margin: 4px 0 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
 }
 
 .chat-phase {
@@ -10866,15 +10992,42 @@ hr {
   height: calc(100vh - 180px);
   min-height: 400px;
 }
+.roleplay-stage {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-5);
+  border: 1px solid var(--bz-border);
+  background: var(--bz-panel);
+}
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  padding-bottom: var(--bz-space-4);
+  border-bottom: 1px solid var(--bz-border);
+}
+.chat-header .columns,
+.chat-header .column {
+  display: contents;
+}
+.roleplay-session-actions {
+  display: flex !important;
+  align-items: center;
+  gap: var(--bz-space-3);
+}
 
 /* Container for chat messages with background */
 .chat-messages-container {
   flex: 1;
   position: relative;
-  margin-bottom: 1rem;
-  border-radius: 8px;
   overflow: hidden;
   min-height: 0; /* Allow flex child to shrink */
+  border: 1px solid var(--bz-border);
+  background: var(--bz-canvas);
 }
 
 .chat-messages {
@@ -10882,9 +11035,10 @@ hr {
   z-index: 1;
   height: 100%;
   overflow-y: auto;
-  padding: 1rem;
-  background-color: var(--bz-scrim-soft);
-  border-radius: 8px;
+  padding: var(--bz-space-5);
+  background:
+    linear-gradient(180deg, var(--bz-scrim-soft), transparent 34%),
+    var(--bz-scrim-soft);
 }
 
 /* Empty chat prompt - centered pulsating message */
@@ -10903,8 +11057,8 @@ hr {
 .empty-chat-content {
   text-align: center;
   padding: 2rem;
-  background: var(--bz-scrim-strong);
-  border-radius: 16px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
 }
 
 .empty-chat-content .pulsing-icon {
@@ -10948,16 +11102,19 @@ hr {
 /* Background layer for fade transitions */
 .chat-background {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  border-radius: 8px;
   z-index: 0;
   pointer-events: none;
+  opacity: 0.28;
+}
+.chat-background::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bz-overlay);
 }
 
 /* Background fade transition */
@@ -11015,8 +11172,8 @@ hr {
 
 .chat-message {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: var(--bz-space-3);
+  margin-bottom: var(--bz-space-4);
 }
 
 /* Only animate newly added messages */
@@ -11048,10 +11205,10 @@ hr {
 }
 
 .message-avatar {
-  width: 40px;
-  height: 40px;
-  background: var(--bz-border);
-  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -11067,7 +11224,6 @@ hr {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 50%;
 }
 
 .message-avatar .material-symbols-outlined {
@@ -11078,7 +11234,7 @@ hr {
 .message-content {
   display: flex;
   flex-direction: column;
-  max-width: 50%;
+  max-width: min(680px, 72%);
 }
 
 .message-header {
@@ -11095,10 +11251,15 @@ hr {
 }
 
 .message-text {
-  background: var(--bz-border);
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  padding: var(--bz-space-3) var(--bz-space-4);
   color: var(--bz-fg);
+  line-height: 1.55;
+}
+.chat-message.user .message-text {
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-border-brand);
 }
 
 .action-text {
@@ -11210,6 +11371,41 @@ hr {
   width: 100% !important;
   animation: mediaFadeIn 0.5s ease-out forwards;
   opacity: 0;
+}
+.message-audio .audio-wave-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+  box-shadow: var(--bz-elev-1);
+}
+.message-audio .audio-wave-button {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    border-color var(--bz-dur-fast) var(--bz-ease),
+    background var(--bz-dur-fast) var(--bz-ease),
+    transform var(--bz-dur-fast) var(--bz-ease);
+}
+.message-audio .audio-wave-button:hover {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+  transform: translateY(-1px);
+}
+.message-audio .audio-wave-body {
+  min-width: 0;
 }
 
 .audio-actions {
@@ -11416,8 +11612,11 @@ hr {
 }
 
 .message-audio audio {
-  width: 100%;
-  color-scheme: dark;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Generation Progress */
@@ -11650,22 +11849,64 @@ hr {
 
 /* Suggested Responses */
 .suggested-responses {
-  padding: 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: var(--bz-space-2);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.suggested-responses .bz-btn {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 42px;
+  margin: 0 !important;
+  padding: var(--bz-space-3) !important;
+  text-align: left;
+  white-space: normal;
+  background: var(--bz-card);
+  border-color: var(--bz-border);
 }
 
 /* Chat Input */
 .chat-input {
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  background: var(--bz-card);
+}
+.chat-input .field.has-addons {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-3);
+}
+.chat-input .control {
+  min-width: 0;
+}
+.chat-input .bz-btn {
+  width: 44px;
+  height: 44px;
   padding: 0;
 }
 
 .chat-input .input.send,
 .chat-input .input.send:focus,
 .chat-input .input.send:active {
+  height: 44px;
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
   box-shadow: none;
   outline: none;
   outline-offset: 0px;
-  border: none;
-  border-bottom: 2px solid var(--bz-scrim) !important;
+  border: 1px solid var(--bz-border) !important;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-4);
+}
+.chat-input .input.send::placeholder {
+  color: var(--bz-fg-low);
+}
+.chat-input .tags {
+  gap: var(--bz-space-2);
+  flex-wrap: wrap;
 }
 
 /* Appearance editor below chat input */

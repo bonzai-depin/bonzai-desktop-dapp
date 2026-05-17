@@ -3975,8 +3975,19 @@ ipcMain.handle("pool-ensure", async (_event, opts) => {
 });
 
 ipcMain.handle("pool-inventory", async () => {
-  const pool = await _getPool();
-  return { ok: true, instances: pool.inventory(), totalBytes: pool.totalBytes(), budgetBytes: pool.budgetBytes() };
+  try {
+    const pool = await _getPool();
+    return { ok: true, instances: pool.inventory(), totalBytes: pool.totalBytes(), budgetBytes: pool.budgetBytes() };
+  } catch (err) {
+    console.error("[Pool] inventory failed:", err);
+    return {
+      ok: false,
+      instances: [],
+      totalBytes: 0,
+      budgetBytes: 0,
+      error: err?.message || "Pool inventory unavailable",
+    };
+  }
 });
 
 ipcMain.handle("pool-shutdown", async () => {

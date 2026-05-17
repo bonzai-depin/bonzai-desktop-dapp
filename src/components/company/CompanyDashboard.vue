@@ -651,11 +651,14 @@
             <span class="ellipsis" :title="row.prompt">{{ row.prompt || '—' }}</span>
           </template>
           <template #cell-share="{ row }">
-            <button class="bz-iconbtn bz-iconbtn--sm" @click="copy(row.shareLink)" title="Copy share link">
+            <button class="bz-iconbtn bz-iconbtn--sm" @click="copy(row.shareLink || outputPreview(row))" title="Copy deliverable">
               <span class="material-symbols-outlined">content_copy</span>
             </button>
           </template>
           <template #cell-actions="{ row }">
+            <button class="bz-iconbtn bz-iconbtn--sm" @click="downloadDeliverable(row)" title="Download deliverable">
+              <span class="material-symbols-outlined">download</span>
+            </button>
             <button class="bz-iconbtn bz-iconbtn--sm bz-iconbtn--danger" @click="removeContent(row.id)" title="Delete artifact">
               <span class="material-symbols-outlined">delete</span>
             </button>
@@ -1705,7 +1708,11 @@ export default {
           pool.err = res?.error || "unknown pool error";
         }
       } catch (err) {
-        pool.err = err.message;
+        pool.ready = false;
+        pool.instances = [];
+        pool.totalBytes = 0;
+        pool.budgetBytes = 0;
+        pool.err = err.message || "Pool inventory unavailable";
       }
     }
     function startPoolPolling() {
@@ -1794,7 +1801,7 @@ export default {
       { key: "sales", title: "Sales", width: "70px", mono: true },
       { key: "revenue", title: "Revenue", width: "96px", mono: true, formatter: (v, row) => fmtMoney(v, row.currency) },
       { key: "share", title: "", width: "48px", align: "center" },
-      { key: "actions", title: "", width: "48px", align: "center" },
+      { key: "actions", title: "", width: "84px", align: "center" },
     ]);
     const treasuryColumns = computed(() => [
       { key: "ts", title: "Time", width: "96px", formatter: (v) => fmtTime(v) },
@@ -2072,6 +2079,34 @@ export default {
     async function copy(text) {
       try { await navigator.clipboard.writeText(text); } catch {}
     }
+    function deliverableFilename(row) {
+      const ts = row?.createdAt ? new Date(row.createdAt).toISOString().slice(0, 19).replace(/[:T]/g, "-") : Date.now();
+      const pipeline = (row?.pipeline || "deliverable").replace(/[^a-z0-9_-]+/gi, "-").toLowerCase();
+      const ext = row?.blobExt || (typeof row?.payload === "string" ? "txt" : "json");
+      return `${pipeline}-${ts}.${ext.replace(/^\./, "")}`;
+    }
+    function deliverableBody(row) {
+      if (typeof row?.payload === "string") return row.payload;
+      return JSON.stringify({
+        id: row?.id,
+        pipeline: row?.pipeline,
+        prompt: row?.prompt,
+        payload: row?.payload ?? null,
+        shareLink: row?.shareLink ?? null,
+        blobId: row?.blobId ?? null,
+        createdAt: row?.createdAt,
+      }, null, 2);
+    }
+    function downloadDeliverable(row) {
+      const type = typeof row?.payload === "string" ? "text/plain" : "application/json";
+      const blob = new Blob([deliverableBody(row)], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = deliverableFilename(row);
+      a.click();
+      URL.revokeObjectURL(url);
+    }
     async function runCEO() {
       await store.tickNow();
     }
@@ -2105,7 +2140,7 @@ export default {
       catalogColumns, treasuryColumns, auditColumns,
       companionName, roleDisplayName, llmLabel, pipelineLabel, skillShortName, fmtMoney, fmtCount, fmtTime,
       approve, reject, approveAll, rejectAll,
-      clearCatalog, removeContent,
+      clearCatalog, removeContent, downloadDeliverable,
       clearAuditConfirm,
       recordRevenue, recordSpend, copy, toggleDemoMode,
       toggleExecution, exportCompany, dissolveCompany,

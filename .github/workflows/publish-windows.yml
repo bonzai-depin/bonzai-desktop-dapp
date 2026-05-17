@@ -1,7 +1,7 @@
 name: Release (Windows)
 on:
   release:
-    types: [created, published]
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -11,6 +11,10 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: release-windows-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish_on_windows:
@@ -53,7 +57,7 @@ jobs:
           pip install -U qwen-tts --no-deps
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
-      # Privacy-pipeline smoke tests — see publish-linux.yml for rationale.
+      # Privacy-pipeline smoke tests — see release-linux.yml for rationale.
       # Python on Windows may not expose socket.AF_UNIX, so the provider
       # worker falls back to loopback TCP while preserving the same frame
       # protocol.

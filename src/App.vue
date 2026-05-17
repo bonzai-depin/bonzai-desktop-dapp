@@ -19,9 +19,14 @@
       <BzCloseButton size="sm" variant="subtle" aria-label="Dismiss" @click.stop="skillStore.updateActivity()" />
     </div>
 
-    <div v-else-if="serverStatus.show" key="server" class="bz-notif" :class="notifClass">
+    <div v-else-if="serverStatus.show" key="server" class="bz-notif bz-notif--server" :class="notifClass">
+      <div class="bz-notif__server-icon">
+        <span class="material-symbols-outlined">{{ serverStatusIcon }}</span>
+      </div>
       <div class="bz-notif__body">
         <span class="bz-notif__title">{{ serverStatus.message }}</span>
+        <span class="bz-notif__desc">{{ serverStatusDescription }}</span>
+        <span v-if="serverStatus.type === 'starting' || serverStatus.type === 'restarting'" class="bz-notif__rail" aria-hidden="true"></span>
       </div>
       <div style="display:flex; align-items:center; gap:var(--bz-space-2)">
         <button v-if="serverStatus.canRetry" class="bz-btn bz-btn--ghost" style="font-size:var(--bz-size-micro); padding:4px var(--bz-space-3)" @click="handleServerRestart">
@@ -104,7 +109,7 @@
             <span class="bz-sidebar__item-icon material-symbols-outlined">help_outline</span>
             <span class="bz-sidebar__item-label">FAQ</span>
           </button>
-          <button class="bz-sidebar__item" @click="showNetworkModal = true">
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'harness' }" @click="modelMode = 'harness'" :aria-pressed="modelMode === 'harness'">
             <span class="bz-sidebar__item-icon material-symbols-outlined">device_hub</span>
             <span class="bz-sidebar__item-label">Harness</span>
           </button>
@@ -157,6 +162,7 @@
       <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" />
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
       <Company v-if="modelMode == 'company'" key="company" />
+      <HarnessView v-if="modelMode == 'harness'" key="harness" />
       <FAQ v-if="modelMode == 'faq'" key="faq" />
     </main>
   </div>
@@ -287,6 +293,7 @@ import GenerativeAudio from "./components/GenerativeAudio.vue";
 import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
 import Company from "./components/Company.vue";
+import HarnessView from "./components/HarnessView.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import FAQ from "./components/FAQ.vue";
 import BonzaiPulse from "./components/BonzaiPulse.vue";
@@ -314,7 +321,7 @@ export default {
   name: "App",
   components: {
     GenerativeText, GenerativeImage, GenerativeVideo, GenerativeAudio,
-    Generative3D, GenerativeTraining, SmartAgent, Company, FAQ,
+    Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView, FAQ,
     BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
     GenerationInspector, RewardsModal, NetworkSettings,
   },
@@ -338,7 +345,7 @@ export default {
     const trainItems = [
       { id: "robot-train-chat", label: "Chat", icon: "chat" },
     ];
-    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "robot-train-chat", "company", "faq"]);
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "robot-train-chat", "company", "harness", "faq"]);
 
     const handleEarnAction = (id) => {
       if (id === "rewards") showRewardsModal.value = true;
@@ -356,6 +363,19 @@ export default {
         error: "bz-notif--danger", stopped: "bz-notif--warning",
       };
       return m[serverStatus.type] || "bz-notif--info";
+    });
+    const serverStatusIcon = computed(() => {
+      if (serverStatus.type === "ready") return "check_circle";
+      if (serverStatus.type === "error" || serverStatus.type === "crashed") return "error";
+      if (serverStatus.type === "stopped") return "power_settings_new";
+      return "dns";
+    });
+    const serverStatusDescription = computed(() => {
+      if (serverStatus.type === "starting") return "Bringing local inference online: Flask media pipelines, OpenClaw API, and desktop IPC.";
+      if (serverStatus.type === "restarting") return "Restarting the local runtime and reconnecting generation routes.";
+      if (serverStatus.type === "ready") return "Local inference is available.";
+      if (serverStatus.type === "stopped") return "Generation services are paused.";
+      return "The runtime needs attention before local generation can continue.";
     });
 
     const p2pMode = ref("local");
@@ -688,7 +708,7 @@ const {
       modelMode, createItems, earnItems, automateItems, trainItems,
       handleEarnAction,
       systemValues, videoImageBase64, goAnimateToVideo, goToCompanionChat,
-      serverStatus, notifClass, handleServerRestart,
+      serverStatus, notifClass, serverStatusIcon, serverStatusDescription, handleServerRestart,
       authState, skillStore, showSpecsModal, specsData, openSpecsModal,
       showRewardsModal, showNetworkModal, showAuthModal, showPrivyLogin,
       isConnected, isConnecting, walletAddress, truncatedAddress,
@@ -768,6 +788,45 @@ html, body {
 .bz-notif__desc { font-size: var(--bz-size-meta); color: var(--bz-fg-low); }
 .bz-notif--info .bz-notif__title, .bz-notif--success .bz-notif__title,
 .bz-notif--warning .bz-notif__title, .bz-notif--danger .bz-notif__title { color: inherit; }
+.bz-notif--server {
+  padding: var(--bz-space-4) var(--bz-space-5);
+  background:
+    linear-gradient(90deg, var(--bz-purple-soft), transparent),
+    var(--bz-panel);
+  border-bottom: 1px solid var(--bz-border-brand);
+  box-shadow: var(--bz-elev-2);
+}
+.bz-notif__server-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  margin-right: var(--bz-space-3);
+  color: var(--bz-purple-300);
+  border: 1px solid var(--bz-border-brand);
+  background: var(--bz-card);
+}
+.bz-notif__rail {
+  position: relative;
+  display: block;
+  width: min(360px, 50vw);
+  height: 3px;
+  margin-top: var(--bz-space-2);
+  overflow: hidden;
+  background: var(--bz-border);
+}
+.bz-notif__rail::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  background: var(--bz-gradient-brand);
+  animation: bz-server-rail 1300ms var(--bz-ease-in-out) infinite;
+}
+@keyframes bz-server-rail {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(260%); }
+}
 
 .notif-enter-active { animation: bz-rise 320ms var(--bz-ease-out) both; }
 .notif-leave-active { animation: bz-fade-in 220ms var(--bz-ease-in) both reverse; }

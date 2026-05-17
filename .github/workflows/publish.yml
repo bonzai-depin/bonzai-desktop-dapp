@@ -1,7 +1,7 @@
 name: Release (macOS)
 on:
   release:
-    types: [created, published]
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -11,6 +11,10 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: release-macos-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish_on_mac:
@@ -88,7 +92,7 @@ jobs:
       # blueprint loopback + runner-dispatch. Independent of model
       # weights; catches wire-format / codec / runner-registry
       # regressions before the multi-GB PyInstaller pass. See
-      # publish-linux.yml for rationale.
+      # release-linux.yml for rationale.
       - name: Privacy-pipeline smoke tests
         run: |
           python src/server/pipeline_transport.py

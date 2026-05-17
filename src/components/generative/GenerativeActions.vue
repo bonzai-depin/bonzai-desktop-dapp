@@ -115,13 +115,13 @@ function isIconOnly(a) {
 
 /* Variants — lean into colour for state, never as a button */
 .bz-gen-action--primary {
-  background: var(--bz-gradient-brand);
-  border-color: transparent;
+  background: var(--bz-purple-500);
+  border-color: var(--bz-purple-500);
   color: var(--bz-on-accent);
 }
 .bz-gen-action--primary:hover:not(:disabled) {
   filter: brightness(1.08);
-  background: var(--bz-gradient-brand);
+  background: var(--bz-purple-500);
   color: var(--bz-on-accent);
 }
 .bz-gen-action--success {

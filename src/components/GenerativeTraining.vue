@@ -55,6 +55,67 @@
             </article>
           </section>
 
+          <section class="stake-train">
+            <div class="stake-train__head">
+              <div>
+                <p class="bz-eyebrow">Stake-to-train</p>
+                <h2 class="bz-h2 fira-sans-condensed-black-italic">Dataset Vault</h2>
+              </div>
+              <div class="stake-targets" role="group" aria-label="Training target">
+                <button
+                  v-for="target in trainTargets"
+                  :key="target.id"
+                  class="stake-target"
+                  :class="{ 'is-selected': stake.target === target.id }"
+                  @click="stake.target = target.id"
+                >
+                  <span class="material-symbols-outlined">{{ target.icon }}</span>
+                  {{ target.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="stake-summary">
+              <div>
+                <strong>{{ stakedItems.length }}</strong>
+                <span>staked collectibles</span>
+              </div>
+              <div>
+                <strong>{{ stakeTypeCounts.text }}</strong>
+                <span>text</span>
+              </div>
+              <div>
+                <strong>{{ stakeTypeCounts.image }}</strong>
+                <span>image</span>
+              </div>
+              <div>
+                <strong>{{ stakeTypeCounts.audio }}</strong>
+                <span>audio</span>
+              </div>
+              <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" :disabled="!stakedItems.length" @click="createDatasetFromStake">
+                <span class="material-symbols-outlined">dataset_linked</span>
+                Build dataset
+              </button>
+            </div>
+
+            <div class="stake-pool">
+              <button
+                v-for="item in stakeableCollectibles"
+                :key="item.id"
+                class="stake-item"
+                :class="{ 'is-staked': stake.selectedIds.has(item.id) }"
+                @click="toggleStake(item)"
+              >
+                <span class="material-symbols-outlined">{{ stakeIcon(item.type) }}</span>
+                <span>{{ item.question || item.prompt || item.type }}</span>
+                <small>{{ item.type }}</small>
+              </button>
+              <p v-if="!stakeableCollectibles.length" class="training-empty-note">
+                No text, image, or audio collectibles yet. Generate or mint content, then stake it into a training dataset here.
+              </p>
+            </div>
+          </section>
+
           <!-- ═══════════════════════════════════════════════════════════ -->
           <!-- DATASET TAB                                                -->
           <!-- ═══════════════════════════════════════════════════════════ -->
@@ -1091,6 +1152,7 @@ import BonzaiPulse from "./BonzaiPulse.vue";
 import BzCloseButton from "./BzCloseButton.vue";
 import ModeChipBar from "./generative/ModeChipBar.vue";
 import { fineTuneTokenService } from "../services/fineTuneToken.service.js";
+import { allInferences } from "../stores/inferenceStore.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -1109,6 +1171,15 @@ export default {
       { value: "dataset", label: "Dataset", icon: "dataset" },
       { value: "run", label: "Fine-tune", icon: "model_training" },
     ];
+    const trainTargets = [
+      { id: "qwen-0.8b", label: "Qwen 0.8B", icon: "chat" },
+      { id: "sdxl", label: "SDXL", icon: "image" },
+      { id: "ace-step", label: "ACE-Step", icon: "graphic_eq" },
+    ];
+    const stake = reactive({
+      target: "qwen-0.8b",
+      selectedIds: new Set(),
+    });
 
     // Training type selection
     const trainingType = ref("llm"); // production path: chat/LLM fine-tuning
@@ -1261,11 +1332,26 @@ export default {
     const trainingStats = computed(() => {
       const activeModels = trainedModels.value.filter((m) => m.type === "llm_lora").length;
       return [
-        { icon: "format_quote", value: String(studioTextExamples.value.length), label: "draft examples" },
+        { icon: "deployed_code", value: String(stakedItems.value.length), label: "staked items" },
         { icon: "dataset", value: String(filteredDatasets.value.length), label: "LLM datasets" },
         { icon: "model_training", value: String(activeModels), label: "fine-tunes" },
       ];
     });
+
+    const stakeableCollectibles = computed(() =>
+      allInferences.value
+        .filter((item) => ["text", "image", "audio"].includes(item.type))
+        .slice(0, 18)
+    );
+    const stakedItems = computed(() =>
+      stakeableCollectibles.value.filter((item) => stake.selectedIds.has(item.id))
+    );
+    const stakeTypeCounts = computed(() =>
+      stakedItems.value.reduce((acc, item) => {
+        acc[item.type] = (acc[item.type] || 0) + 1;
+        return acc;
+      }, { text: 0, image: 0, audio: 0 })
+    );
 
     const canStartTraining = computed(() => {
       if (!hasAccess.value) return false;
@@ -1274,6 +1360,50 @@ export default {
         return false;
       return true;
     });
+
+    function stakeIcon(type) {
+      return type === "image" ? "image" : type === "audio" ? "graphic_eq" : "article";
+    }
+
+    function toggleStake(item) {
+      if (stake.selectedIds.has(item.id)) stake.selectedIds.delete(item.id);
+      else stake.selectedIds.add(item.id);
+    }
+
+    function createDatasetFromStake() {
+      const items = stakedItems.value;
+      if (!items.length) return;
+      const name = `Staked ${stake.target} dataset ${new Date().toLocaleDateString()}`;
+      const samples = items.map((item) => ({
+        id: item.id,
+        type: item.type,
+        prompt: item.question || "",
+        answer: item.answer || null,
+        model: item.model || item.pipeline || "",
+        nft: item.nft || null,
+        metadata: {
+          createdAt: item.createdAt,
+          hardware: item.hardware || null,
+          elapsed: item.elapsed || null,
+          tokensPerSecond: item.tokensPerSecond || null,
+          source: item.source || null,
+          networkMode: item.networkMode || null,
+        },
+      }));
+      const ds = {
+        id: uuid(),
+        name,
+        type: stake.target === "qwen-0.8b" ? "text" : stake.target,
+        target_model: stake.target,
+        source: "stake-to-train",
+        num_examples: samples.length,
+        samples,
+        created_at: new Date().toISOString(),
+      };
+      datasets.value = [ds, ...datasets.value];
+      selectedDataset.value = ds;
+      activeTab.value = "run";
+    }
 
     // Socket setup
     const setupTrainingSocket = () => {
@@ -1822,6 +1952,14 @@ export default {
     return {
       activeTab,
       trainingTabs,
+      trainTargets,
+      stake,
+      stakeableCollectibles,
+      stakedItems,
+      stakeTypeCounts,
+      stakeIcon,
+      toggleStake,
+      createDatasetFromStake,
       trainingType,
       datasets,
       filteredDatasets,
@@ -2780,6 +2918,93 @@ input[type="radio"]:checked + label {
   justify-content: space-between;
   padding: 10px 0;
   border-top: 1px solid var(--bz-border);
+}
+
+.stake-train {
+  margin: var(--bz-space-5) 0;
+  padding: var(--bz-space-5);
+  border: 1px solid var(--bz-border-brand);
+  background:
+    linear-gradient(135deg, var(--bz-purple-soft), transparent 55%),
+    var(--bz-panel);
+}
+.stake-train__head,
+.stake-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+}
+.stake-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+.stake-target,
+.stake-item {
+  border: 1px solid var(--bz-border);
+  background: var(--bz-card);
+  color: var(--bz-fg-mid);
+  cursor: pointer;
+}
+.stake-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: var(--bz-size-meta);
+}
+.stake-target.is-selected,
+.stake-item.is-staked {
+  color: var(--bz-fg);
+  border-color: var(--bz-border-brand);
+  box-shadow: inset 0 0 0 1px var(--bz-border-brand);
+}
+.stake-summary {
+  margin: var(--bz-space-4) 0;
+  padding: var(--bz-space-3);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+}
+.stake-summary div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stake-summary strong {
+  color: var(--bz-purple-300);
+  font-size: 20px;
+}
+.stake-summary span {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+}
+.stake-pool {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--bz-space-3);
+}
+.stake-item {
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  grid-template-rows: 1fr auto;
+  align-items: start;
+  gap: 6px var(--bz-space-2);
+  padding: var(--bz-space-3);
+  text-align: left;
+}
+.stake-item span:not(.material-symbols-outlined) {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.stake-item small {
+  grid-column: 2;
+  color: var(--bz-fg-low);
+  text-transform: uppercase;
+  font-size: var(--bz-size-micro);
 }
 
 @keyframes move {

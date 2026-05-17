@@ -21,13 +21,13 @@ import { reactive, readonly } from "vue";
 const THEMES = [
   {
     id: "default",
-    name: "Dark",
+    name: "BonzAI Noir",
     blurb: "BonzAI brand · dark canvas + purple + emerald",
     swatch: ["#0a0a0f", "#8b5cf6", "#10b981"],
   },
   {
     id: "light",
-    name: "Light",
+    name: "Studio Light",
     blurb: "Professional light · Stripe-inspired clarity",
     swatch: ["#f9fafb", "#6d28d9", "#059669"],
   },
@@ -39,20 +39,20 @@ const THEMES = [
   },
   {
     id: "terminal",
-    name: "Terminal",
-    blurb: "Void-black · emerald-only · monospace headings",
+    name: "Operator",
+    blurb: "Void-black · emerald command surface",
     swatch: ["#000000", "#10b981", "#34d399"],
   },
   {
     id: "mistral",
-    name: "Mistral",
-    blurb: "Purple minimalism · light cream canvas",
+    name: "Provence",
+    blurb: "French minimalism · cream canvas + violet accents",
     swatch: ["#faf7f2", "#553c9a", "#805ad5"],
   },
   {
     id: "warm",
-    name: "Warm",
-    blurb: "Cream + terracotta · Claude-shaped warmth",
+    name: "Terracotta",
+    blurb: "Cream + terracotta · editorial warmth",
     swatch: ["#fbf8f4", "#b3603e", "#e8b89e"],
   },
   {
@@ -61,6 +61,12 @@ const THEMES = [
     blurb: "Pure dark · monochrome with single accent",
     swatch: ["#0c0c10", "#8a8aa0", "#d8d8e2"],
   },
+  { id: "waveform", name: "Waveform", blurb: "Cinematic audio UI · black + blue + cyan", swatch: ["#05070c", "#2563eb", "#22d3ee"] },
+  { id: "blueprint", name: "Blueprint", blurb: "Infrastructure console · navy + amber signal", swatch: ["#07111f", "#38bdf8", "#facc15"] },
+  { id: "papergrid", name: "Papergrid", blurb: "Documentation calm · paper + ink + green", swatch: ["#fbfaf7", "#111827", "#16a34a"] },
+  { id: "popcanvas", name: "Pop Canvas", blurb: "Creative tooling · white canvas + precise color", swatch: ["#ffffff", "#0ea5e9", "#ef4444"] },
+  { id: "carbon", name: "Carbon Ledger", blurb: "Dense fintech · graphite + blue trust", swatch: ["#09090b", "#3b82f6", "#22c55e"] },
+  { id: "trackline", name: "Trackline", blurb: "Performance launch · black + redline + gold", swatch: ["#050505", "#ef4444", "#f59e0b"] },
 ];
 
 const STORAGE_KEY = "bonzai.theme";

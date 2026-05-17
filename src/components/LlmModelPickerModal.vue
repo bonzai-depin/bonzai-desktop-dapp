@@ -867,13 +867,13 @@ onUnmounted(() => {
   opacity: 0.55;
 }
 .bz-btn--primary {
-  background: var(--bz-gradient-brand);
-  border-color: transparent;
+  background: var(--bz-purple-500);
+  border-color: var(--bz-purple-500);
   color: var(--bz-on-accent);
 }
 .bz-btn--primary:hover:not(:disabled) {
   filter: brightness(1.08);
-  border-color: transparent;
+  border-color: var(--bz-purple-300);
 }
 .bz-btn--ghost { background: var(--bz-canvas); }
 .bz-btn--running { padding-bottom: 4px; }

@@ -8,7 +8,7 @@
  *
  * Variants:
  *   .bz-btn              ghost-by-default, used for secondary CTAs
- *   .bz-btn--primary     brand-gradient, the one moment per turn
+ *   .bz-btn--primary     solid brand surface for the primary action
  *   .bz-btn--ghost       canvas-flat, used inside busy clusters
  *   .bz-btn--success     emerald, used for "go" / "claim" / "registered"
  *   .bz-btn--warning     amber, used for "needs auth" / "danger ahead"
@@ -59,17 +59,17 @@
   font-size: 18px !important;
 }
 
-/* PRIMARY — the brand gradient. One per surface; reach for it for the
+/* PRIMARY — solid brand surface. One per surface; reach for it for the
    *primary* action of the screen and never twice in a row. */
 .bz-btn--primary {
-  background: var(--bz-gradient-brand);
-  border-color: transparent;
+  background: var(--bz-purple-500);
+  border-color: var(--bz-purple-500);
   color: var(--bz-on-accent);
 }
 .bz-btn--primary:hover:not(:disabled) {
   filter: brightness(1.08);
-  border-color: transparent;
-  background: var(--bz-gradient-brand);
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-500);
 }
 
 /* GHOST — same shape, recessed canvas tint. Use inside busy CTA rows. */
@@ -120,8 +120,8 @@
    overriding BonzAI ghost/destructive modifiers. */
 .bz-btn.is-primary:not(.bz-btn--ghost):not(.bz-btn--destructive),
 .button.is-primary:not(.bz-btn--ghost):not(.bz-btn--destructive) {
-  background: var(--bz-gradient-brand);
-  border-color: transparent;
+  background: var(--bz-purple-500);
+  border-color: var(--bz-purple-500);
   color: var(--bz-on-accent);
 }
 .bz-btn.is-success:not(.bz-btn--ghost):not(.bz-btn--destructive),

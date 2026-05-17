@@ -1,7 +1,7 @@
 name: Release (Linux)
 on:
   release:
-    types: [created, published]
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -11,6 +11,10 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: release-linux-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish_on_linux:
