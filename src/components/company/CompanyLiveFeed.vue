@@ -20,7 +20,7 @@
           :disabled="!entries.length"
           @click="clearFeed"
           :title="charter.demoMode
-            ? 'Wipe the audit log so the next demo tick starts fresh'
+            ? 'Wipe the audit log so the next demo run starts fresh'
             : 'Clear the visible audit history (does not affect goals, issues, or treasury)'"
         >
           <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>
@@ -30,7 +30,7 @@
     </div>
 
     <p v-if="!compact" class="muted">
-      Every CEO tick, role action, skill call, and audit entry as it happens. Watch your
+      Every CEO ping, role action, skill call, and audit entry as it happens. Watch your
       company think, plan, and ship in real time.
     </p>
 
@@ -56,7 +56,7 @@
            "thinking" cards appear at the top of the feed and update as
            tokens arrive. They disappear when the stream ends; the
            completed thought lands in the audit log directly below. -->
-      <div v-if="liveStreams.length" class="live__entries live__entries--streaming">
+      <div v-if="liveStreams.length && !horizontal" class="live__entries live__entries--streaming">
         <div
           v-for="s in liveStreams"
           :key="`stream-${s.streamId}`"
@@ -72,7 +72,7 @@
                 {{ roleDisplayName(s.role) }}
               </span>
               <span class="live-entry__action">
-                {{ s.action === 'tickCEO' ? 'Planning' : 'Reasoning' }}
+                {{ s.action === 'tickCEO' ? 'Ping CEO' : 'Ping role' }}
               </span>
               <span class="live-entry__duration">
                 {{ Math.round((nowTs - s.startedAt) / 1000) }}<small>s</small>
@@ -86,13 +86,18 @@
 
       <transition-group name="live-entry" tag="div" class="live__entries">
         <div
-          v-for="entry in filtered.slice(0, entryLimit)"
+          v-for="entry in displayEntries"
           :key="entry._id"
           class="live-entry"
           :class="[
             `is-${entry.status || 'executed'}`,
             entry.kind === 'llm' ? 'live-entry--llm' : '',
           ]"
+          role="button"
+          tabindex="0"
+          @click="openDetail(entry)"
+          @keydown.enter.prevent="openDetail(entry)"
+          @keydown.space.prevent="openDetail(entry)"
         >
           <div class="live-entry__time">{{ fmtRelative(entry.ts) }}</div>
           <div class="live-entry__icon">
@@ -111,11 +116,14 @@
               >
                 {{ entry.llm.durationMs }}<small>ms</small>
               </span>
+            </div>
+            <div v-if="entry.note" class="live-entry__note">{{ sentenceCaseTask(entry.note) }}</div>
+            <div class="live-entry__footer">
+              <span class="live-entry__footer-spacer"></span>
               <span class="live-entry__status status-pill" :class="statusClass(entry.status)">
                 {{ statusLabel(entry) }}
               </span>
             </div>
-            <div v-if="entry.note" class="live-entry__note">{{ entry.note }}</div>
 
             <!-- LLM response: collapsible by default; pre-formatted body -->
             <details v-if="entry.kind === 'llm' && entry.llm?.response" class="live-entry__thought">
@@ -150,13 +158,89 @@
         <span class="material-symbols-outlined">hourglass_empty</span>
         <div>
           {{ charter.demoMode
-              ? 'Waiting for the next demo tick…'
+              ? 'Waiting for the next demo run...'
               : (charter.status === 'paused'
-                  ? 'Company is paused — resume to see activity.'
-                  : 'Waiting for the next heartbeat. Click Run now to fire one immediately.')
+                  ? 'Company is paused. Resume to see activity.'
+                  : 'Waiting for the next scheduled run. Click Ping CEO to start immediately.')
           }}
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="selectedEntry"
+      class="feed-detail-overlay"
+      @click.self="closeDetail"
+    >
+      <section class="feed-detail models__activity--payouts" aria-modal="true" role="dialog">
+        <div class="feed-detail__head">
+          <div>
+            <p class="feed-detail__eyebrow">{{ selectedEntry.kind || 'event' }}</p>
+            <h3 class="feed-detail__title fira-sans-condensed-black-italic">
+              {{ detailTitle }}
+            </h3>
+          </div>
+          <BzCloseButton size="md" aria-label="Close feed detail" @click="closeDetail" />
+        </div>
+
+        <div class="feed-detail__meta">
+          <span v-if="selectedEntry.role" class="status-pill status-pill--queued">{{ roleDisplayName(selectedEntry.role) }}</span>
+          <span class="status-pill" :class="statusClass(selectedEntry.status)">{{ statusLabel(selectedEntry) }}</span>
+          <span>{{ fmtRelative(selectedEntry.ts) }}</span>
+          <span v-if="selectedEntry.llm?.durationMs">{{ selectedEntry.llm.durationMs }}ms</span>
+        </div>
+
+        <div class="feed-detail__grid">
+          <article v-if="detailGoal" class="feed-detail__panel">
+            <h4 class="fira-sans-condensed-black-italic">Goal</h4>
+            <strong>{{ detailGoal.title }}</strong>
+            <p v-if="detailGoal.rationale || detailGoal.missionAlignment">
+              {{ detailGoal.rationale || detailGoal.missionAlignment }}
+            </p>
+            <dl>
+              <div><dt>Status</dt><dd>{{ detailGoal.status }}</dd></div>
+              <div><dt>Created</dt><dd>{{ fmtRelative(detailGoal.createdAt) }}</dd></div>
+              <div><dt>Updated</dt><dd>{{ fmtRelative(detailGoal.updatedAt || detailGoal.createdAt) }}</dd></div>
+            </dl>
+          </article>
+
+          <article v-if="detailIssue" class="feed-detail__panel">
+            <h4 class="fira-sans-condensed-black-italic">Issue</h4>
+            <strong>{{ detailIssue.title }}</strong>
+            <p v-if="detailIssue.description">{{ detailIssue.description }}</p>
+            <dl>
+              <div><dt>Status</dt><dd>{{ String(detailIssue.status || '').replace('_', ' ') }}</dd></div>
+              <div><dt>Priority</dt><dd>{{ detailIssue.priority }}</dd></div>
+              <div><dt>Assignee</dt><dd>{{ roleDisplayName(detailIssue.assigneeRole) }}</dd></div>
+              <div><dt>Attempts</dt><dd>{{ detailIssue.attempts?.length || 0 }}</dd></div>
+            </dl>
+          </article>
+
+          <article v-if="detailContent" class="feed-detail__panel feed-detail__panel--wide">
+            <h4 class="fira-sans-condensed-black-italic">Result</h4>
+            <div class="feed-detail__result-meta">
+              <span class="status-pill status-pill--queued">{{ detailContent.pipeline }}</span>
+              <span>{{ fmtRelative(detailContent.createdAt) }}</span>
+              <span v-if="detailContent.shareLink">{{ detailContent.shareLink }}</span>
+            </div>
+            <pre class="feed-detail__output">{{ contentPreview(detailContent) }}</pre>
+          </article>
+
+          <article class="feed-detail__panel feed-detail__panel--wide">
+            <h4 class="fira-sans-condensed-black-italic">Completion metadata</h4>
+            <dl>
+              <div><dt>Action</dt><dd>{{ formatLLMAction(selectedEntry) || formatAction(selectedEntry.action) }}</dd></div>
+              <div><dt>Event id</dt><dd>{{ selectedEntry.id || selectedEntry._id }}</dd></div>
+              <div v-if="selectedEntry.txOrLink"><dt>Receipt</dt><dd>{{ selectedEntry.txOrLink }}</dd></div>
+              <div v-if="selectedEntry.note"><dt>Note</dt><dd>{{ selectedEntry.note }}</dd></div>
+            </dl>
+            <details v-if="selectedEntry.llm?.response" class="feed-detail__raw">
+              <summary>Model response</summary>
+              <pre>{{ selectedEntry.llm.response }}</pre>
+            </details>
+          </article>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -164,9 +248,11 @@
 <script>
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import companyStore from "../../stores/companyStore.js";
+import BzCloseButton from "../BzCloseButton.vue";
 
 export default {
   name: "CompanyLiveFeed",
+  components: { BzCloseButton },
   props: {
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
@@ -176,13 +262,25 @@ export default {
   setup(props) {
     const store = companyStore;
     const activeFilter = ref("all");
+    const selectedEntry = ref(null);
+    const carouselIndex = ref(0);
     const now = ref(Date.now());
 
     // Tick now-ref every second so relative-time labels update without
     // touching the audit feed itself.
     let _now = null;
-    onMounted(() => { _now = setInterval(() => (now.value = Date.now()), 1000); });
-    onUnmounted(() => { if (_now) clearInterval(_now); });
+    let _carousel = null;
+    onMounted(() => {
+      _now = setInterval(() => (now.value = Date.now()), 1000);
+      _carousel = setInterval(() => {
+        if (!props.horizontal || filtered.value.length <= 3) return;
+        carouselIndex.value = (carouselIndex.value + 1) % filtered.value.length;
+      }, 4200);
+    });
+    onUnmounted(() => {
+      if (_now) clearInterval(_now);
+      if (_carousel) clearInterval(_carousel);
+    });
 
     const filters = [
       { id: "all",       label: "All" },
@@ -235,6 +333,30 @@ export default {
       return entries.value.filter((e) => e.kind === activeFilter.value);
     });
     const entryLimit = computed(() => props.horizontal ? 3 : (props.compact ? 24 : 100));
+    const displayEntries = computed(() => {
+      if (!props.horizontal) return filtered.value.slice(0, entryLimit.value);
+      const list = filtered.value;
+      if (list.length <= 3) return list;
+      return Array.from({ length: 3 }, (_, idx) => list[(carouselIndex.value + idx) % list.length]);
+    });
+    const detailIssue = computed(() => {
+      const id = selectedEntry.value?.issueId;
+      return id ? (props.state.issues || []).find((issue) => issue.id === id) || null : null;
+    });
+    const detailGoal = computed(() => {
+      const id = selectedEntry.value?.goalId || detailIssue.value?.goalId;
+      return id ? (props.state.goals || []).find((goal) => goal.id === id) || null : null;
+    });
+    const detailContent = computed(() => {
+      const id = selectedEntry.value?.contentId;
+      return id ? (props.state.catalog || []).find((row) => row.id === id) || null : null;
+    });
+    const detailTitle = computed(() => {
+      if (detailContent.value) return detailContent.value.prompt || "Produced deliverable";
+      if (detailIssue.value) return detailIssue.value.title;
+      if (detailGoal.value) return detailGoal.value.title;
+      return selectedEntry.value?.note || formatAction(selectedEntry.value?.action) || "Company event";
+    });
 
     // Events in the last 60 seconds, used for the live "rate" indicator
     const recentRate = computed(() => {
@@ -300,20 +422,22 @@ export default {
      */
     function formatLLMAction(entry) {
       if (entry.kind === "llm") {
-        if (entry.action === "tickCEO") return "Planning";
-        if (entry.action === "tickRole") return "Reasoning";
+        if (entry.action === "tickCEO") return "Ping CEO";
+        if (entry.action === "tickRole") return "Ping role";
       }
       return formatAction(entry.action);
     }
 
     function fmtRelative(ts) {
       if (!ts) return "—";
-      const delta = Math.max(0, now.value - ts);
+      const stamp = typeof ts === "number" ? ts : new Date(ts).getTime();
+      if (!Number.isFinite(stamp)) return "—";
+      const delta = Math.max(0, now.value - stamp);
       if (delta < 5_000) return "just now";
       if (delta < 60_000) return `${Math.floor(delta / 1000)}s ago`;
       if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
       if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
-      const d = new Date(ts);
+      const d = new Date(stamp);
       return d.toLocaleString();
     }
 
@@ -326,6 +450,27 @@ export default {
       }
       // CamelCase → spaced
       return a.replace(/([a-z])([A-Z])/g, "$1 $2");
+    }
+    function sentenceCaseTask(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const lowered = text
+        .split(/\s+/)
+        .map((word) => (/^[A-Z0-9]{2,}$/.test(word.replace(/[^\p{L}\p{N}]/gu, "")) ? word : word.toLocaleLowerCase()))
+        .join(" ");
+      return lowered.charAt(0).toLocaleUpperCase() + lowered.slice(1);
+    }
+    function contentPreview(row) {
+      if (!row) return "";
+      if (typeof row.payload === "string") return row.payload;
+      if (row.blobId) return `${row.pipeline || "media"} artifact saved as ${row.blobExt || "blob"} (${row.blobId})`;
+      return row.shareLink || "Artifact recorded.";
+    }
+    function openDetail(entry) {
+      selectedEntry.value = entry;
+    }
+    function closeDetail() {
+      selectedEntry.value = null;
     }
 
     function _titleCase(s) {
@@ -366,9 +511,11 @@ export default {
     }
 
     return {
-      activeFilter, filters, filtered, entries, counts, recentRate, entryLimit,
+      activeFilter, filters, filtered, entries, counts, recentRate, entryLimit, displayEntries,
+      selectedEntry, detailTitle, detailGoal, detailIssue, detailContent,
       liveStreams, nowTs,
       iconFor, statusClass, statusLabel, fmtRelative, formatAction, formatLLMAction, roleDisplayName,
+      contentPreview, sentenceCaseTask, openDetail, closeDetail,
       clearFeed, removeEntry,
     };
   },
@@ -385,7 +532,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
+  background: var(--bz-border);
 }
 .muted { color: var(--bz-fg-mid); font-size: var(--bz-size-body); }
 
@@ -404,6 +551,37 @@ hr {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.5em;
+}
+.live.is-compact {
+  padding: var(--bz-space-2) var(--bz-space-3) !important;
+}
+.live.is-horizontal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.live.is-horizontal .panel-title {
+  margin-bottom: 0 !important;
+  font-size: 1.1rem;
+}
+.live.is-horizontal .live__head {
+  min-height: 24px;
+}
+.live.is-horizontal .live__stream {
+  max-height: none;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+.live.is-horizontal .live__entries {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-2);
 }
 
 .live__pulse {
@@ -526,8 +704,71 @@ hr {
   border: 1px solid var(--bz-border);
   border-radius: 4px;
   transition: border-color 0.15s ease;
+  cursor: pointer;
 }
-.live-entry:hover { border-color: var(--bz-border-strong); }
+.live-entry__body {
+  min-width: 0;
+}
+.live.is-horizontal .live-entry {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-2) var(--bz-space-3);
+  overflow: hidden;
+}
+.live.is-horizontal .live-entry__time,
+.live.is-horizontal .live-entry__icon {
+  display: none;
+}
+.live.is-horizontal .live-entry__head {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  gap: var(--bz-space-1);
+  margin: 0;
+}
+.live.is-horizontal .live-entry__body {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--bz-space-2);
+  height: 100%;
+}
+.live.is-horizontal .live-entry__role,
+.live.is-horizontal .live-entry__action {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live.is-horizontal .live-entry__note {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  color: var(--bz-fg-mid);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.live-entry:hover,
+.live-entry:focus-visible {
+  border-color: var(--bz-border-strong);
+  outline: none;
+}
 .live-entry__delete {
   position: absolute;
   right: var(--bz-space-2);
@@ -542,8 +783,8 @@ hr {
 }
 
 .live-entry.is-vetoed       { border-left: 3px solid var(--bz-warning); }
-.live-entry.is-error        { border-left: 3px solid var(--bz-danger); }
-.live-entry.is-parse_error  { border-left: 3px solid var(--bz-danger); }
+.live-entry.is-error        { border-left: 3px solid var(--bz-warning); }
+.live-entry.is-parse_error  { border-left: 3px solid var(--bz-warning); }
 .live-entry.is-queued       { border-left: 3px solid var(--bz-info); }
 .live-entry.is-executed     { border-left: 3px solid var(--bz-emerald-500); }
 .live-entry--llm.is-executed {
@@ -585,25 +826,35 @@ hr {
   margin-bottom: 0.25em;
 }
 .live-entry__role {
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   color: var(--bz-fg);
 }
 .live-entry__action {
   font-family: "Fira Sans", sans-serif;
   font-weight: 600;
-  font-size: 0.86em;
+  font-size: 0.76em;
   color: var(--bz-fg-mid);
   letter-spacing: 0.02em;
 }
 .live-entry__status {
-  font-size: var(--bz-size-meta) !important;
+  font-size: 10px !important;
   text-transform: capitalize;
 }
+.live-entry__footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: var(--bz-space-2);
+  margin-top: auto;
+}
+.live-entry__footer-spacer {
+  flex: 1 1 auto;
+}
 .status-pill {
-  min-height: 22px;
+  min-height: 18px;
   display: inline-flex;
   align-items: center;
-  padding: 0 var(--bz-space-2);
+  padding: 0 7px;
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r-sm);
   background: var(--bz-canvas);
@@ -624,9 +875,9 @@ hr {
   color: var(--bz-warning);
 }
 .status-pill--error {
-  border-color: var(--bz-danger);
-  background: var(--bz-danger-soft);
-  color: var(--bz-danger);
+  border-color: var(--bz-warning);
+  background: var(--bz-warning-soft);
+  color: var(--bz-warning);
 }
 .status-pill--queued {
   border-color: var(--bz-purple-300);
@@ -639,8 +890,8 @@ hr {
 }
 .live-entry__note {
   color: var(--bz-fg-mid);
-  font-size: 0.88em;
-  line-height: 1.45;
+  font-size: 0.78em;
+  line-height: 1.35;
 }
 .live-entry__duration {
   font-family: "Fira Sans", sans-serif;
@@ -793,11 +1044,19 @@ hr {
 .live-entry-move {
   transition: transform 0.72s cubic-bezier(.16, 1, .3, 1);
 }
+.live.is-horizontal .live-entry-enter-active,
+.live.is-horizontal .live-entry-leave-active,
+.live.is-horizontal .live-entry-move {
+  transition:
+    opacity 0.72s cubic-bezier(.16, 1, .3, 1),
+    transform 0.72s cubic-bezier(.16, 1, .3, 1);
+}
 
 .live.is-horizontal {
   box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
-  padding: var(--bz-space-2) var(--bz-space-3) !important;
   min-height: 0;
   overflow: hidden;
 }
@@ -813,61 +1072,15 @@ hr {
 .live.is-horizontal .live__stats {
   white-space: nowrap;
 }
-.live.is-horizontal .live__stream {
-  max-height: none;
-  overflow-x: hidden;
-  overflow-y: hidden;
+.live.is-horizontal .live-entry__role,
+.live.is-horizontal .live-entry__action,
+.live.is-horizontal .live-entry__status {
+  white-space: nowrap;
 }
-.live.is-horizontal .live__entries,
-.live.is-horizontal .live__entries--streaming {
-  flex-direction: row;
-  gap: var(--bz-space-2);
-  position: relative;
-  min-height: 80px;
-  width: 100%;
-}
-.live.is-horizontal .live-entry {
-  flex: 1 1 calc((100% - (2 * var(--bz-space-2))) / 3);
-  max-width: calc((100% - (2 * var(--bz-space-2))) / 3);
-  grid-template-columns: 1fr;
-  gap: var(--bz-space-1);
-  min-height: 72px;
-  max-height: 80px;
-  overflow: hidden;
-  padding: var(--bz-space-2) var(--bz-space-3);
-}
-.live.is-horizontal .live-entry__time {
-  order: 2;
-  padding-top: 0;
-  font-size: 0.64em;
-}
-.live.is-horizontal .live-entry__icon {
+.live.is-horizontal .live-entry__delete {
   display: none;
 }
-.live.is-horizontal .live-entry__head {
-  flex-wrap: nowrap;
-  min-width: 0;
-  padding-right: 30px;
-  gap: var(--bz-space-2);
-  margin-bottom: 0;
-}
-.live.is-horizontal .live-entry__role,
-.live.is-horizontal .live-entry__status {
-  flex: 0 0 auto;
-}
-.live.is-horizontal .live-entry__action {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.live.is-horizontal .live-entry__note {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.8em;
-}
+.live.is-horizontal .live-entry__time,
 .live.is-horizontal .live-entry__duration {
   display: none;
 }
@@ -889,6 +1102,147 @@ hr {
 .live__empty .material-symbols-outlined {
   font-size: 48px;
   opacity: 0.5;
+}
+
+.feed-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--bz-space-5);
+  background: rgba(7, 7, 10, 0.72);
+}
+.feed-detail {
+  width: min(980px, calc(100vw - 48px));
+  max-height: min(780px, calc(100vh - 48px));
+  overflow: auto;
+  padding: var(--bz-space-5) !important;
+}
+.feed-detail__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+}
+.feed-detail__eyebrow {
+  margin: 0 0 var(--bz-space-1) !important;
+  color: var(--bz-fg-low) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.feed-detail__title {
+  margin: 0 !important;
+  color: var(--bz-fg) !important;
+  font-size: 28px !important;
+  line-height: 1;
+  text-align: left !important;
+}
+.feed-detail__meta,
+.feed-detail__result-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: 12px;
+}
+.feed-detail__meta {
+  margin-top: var(--bz-space-3);
+}
+.feed-detail__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-4);
+}
+.feed-detail__panel {
+  min-width: 0;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.feed-detail__panel--wide {
+  grid-column: 1 / -1;
+}
+.feed-detail__panel h4 {
+  margin: 0 0 var(--bz-space-2) !important;
+  color: var(--bz-fg) !important;
+  font-size: 16px !important;
+  text-align: left !important;
+  text-transform: uppercase;
+}
+.feed-detail__panel strong {
+  display: block;
+  color: var(--bz-fg);
+  font-size: 16px;
+  line-height: 1.3;
+}
+.feed-detail__panel p {
+  margin: var(--bz-space-2) 0 0 !important;
+  color: var(--bz-fg-mid) !important;
+  font-size: 13px !important;
+  line-height: 1.45;
+  text-align: left !important;
+}
+.feed-detail__panel dl {
+  display: grid;
+  gap: var(--bz-space-2);
+  margin: var(--bz-space-3) 0 0;
+}
+.feed-detail__panel dl div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--bz-space-3);
+}
+.feed-detail__panel dt {
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.feed-detail__panel dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--bz-fg-mid);
+  overflow-wrap: anywhere;
+}
+.feed-detail__output,
+.feed-detail__raw pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: var(--bz-space-3) 0 0;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+  color: var(--bz-fg);
+  font-family: "Fira Code", "JetBrains Mono", "SF Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.feed-detail__raw {
+  margin-top: var(--bz-space-3);
+}
+.feed-detail__raw summary {
+  cursor: pointer;
+  color: var(--bz-fg-mid);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+@media (max-width: 820px) {
+  .feed-detail__grid {
+    grid-template-columns: 1fr;
+  }
+  .feed-detail__panel--wide {
+    grid-column: auto;
+  }
 }
 
 </style>

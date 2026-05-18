@@ -81,6 +81,10 @@
       <template v-else>
         <div class="company-toolbar" aria-label="Company controls">
           <div class="company-toolbar__left">
+            <div class="company-toolbar__meta">
+              <span class="company-toolbar__eyebrow">Company workspace</span>
+              <span class="company-toolbar__hint">Build, staff, run, and export agentic work.</span>
+            </div>
             <div v-if="store.state.companies.length > 1" class="company-switcher">
               <button
                 v-for="c in store.state.companies"
@@ -103,6 +107,15 @@
               <span class="material-symbols-outlined" aria-hidden="true">upload</span>
               Import
             </button>
+            <button
+              class="bz-iconbtn bz-iconbtn--danger company-toolbar__delete"
+              :disabled="!active"
+              @click="requestDeleteCompany(active)"
+              title="Delete company"
+              aria-label="Delete company"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+            </button>
             <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" @click="openWizard">
               <span class="material-symbols-outlined" aria-hidden="true">add_business</span>
               New company
@@ -124,6 +137,7 @@
           :state="store.state"
           @edit="onEdit"
           @new-company="openWizard"
+          @delete-company="requestDeleteCompany(active)"
           @reload="store.refreshActive()"
         />
       </template>
@@ -136,6 +150,26 @@
     @done="onWizardDone"
     @cancel="onWizardCancel"
   />
+
+  <Transition name="bz-image-toast">
+    <div
+      v-if="pendingDeleteCompany"
+      class="bz-image-delete-toast company-delete-toast"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+      <span class="bz-image-delete-toast__body">
+        Delete {{ companyName(pendingDeleteCompany) }}?
+      </span>
+      <button type="button" class="bz-image-delete-toast__ghost" @click="dismissDeleteCompany">
+        Cancel
+      </button>
+      <button type="button" class="bz-image-delete-toast__danger" @click="confirmDeleteCompany">
+        Delete
+      </button>
+    </div>
+  </Transition>
 </template>
 
 <script>
@@ -153,6 +187,7 @@ export default {
     const showForm = ref(false);
     const showWizard = ref(false);
     const importInput = ref(null);
+    const pendingDeleteCompany = ref(null);
 
     const active = computed(() => store.activeCompany.value);
 
@@ -176,6 +211,22 @@ export default {
     function companyName(company) {
       return (company?.name || "Untitled Company").replace(/\s+\(Draft\)$/i, "");
     }
+    function requestDeleteCompany(company) {
+      if (!company) return;
+      pendingDeleteCompany.value = company;
+    }
+    function dismissDeleteCompany() {
+      pendingDeleteCompany.value = null;
+    }
+    async function confirmDeleteCompany() {
+      const company = pendingDeleteCompany.value;
+      if (!company?.id) return;
+      pendingDeleteCompany.value = null;
+      await store.dissolve(company.id);
+      if (!store.state.activeId && store.state.companies.length) {
+        await store.setActive(store.state.companies[0].id);
+      }
+    }
 
     function triggerImport() { importInput.value?.click(); }
     async function onImportFile(ev) {
@@ -195,6 +246,7 @@ export default {
       store, active, showForm, showWizard,
       openForm, openWizard, onFormed, onEdit, onWizardDone, onWizardCancel,
       triggerImport, onImportFile, importInput, companyName,
+      pendingDeleteCompany, requestDeleteCompany, dismissDeleteCompany, confirmDeleteCompany,
     };
   },
 };
@@ -206,7 +258,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
+  background: var(--bz-border);
 }
 .material-symbols-outlined {
   font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
@@ -219,10 +271,13 @@ hr {
   z-index: -2;
   height: 100%;
   width: 100%;
-  background: url("../assets/bonzai_company.webp") no-repeat;
+  background:
+    linear-gradient(180deg, rgba(11, 10, 14, 0.34), rgba(11, 10, 14, 0.82)),
+    url("../assets/bonzai_company.webp") no-repeat;
   background-size: cover;
   background-position: center 30%;
   overflow: hidden;
+  opacity: 0.52;
 }
 .shade {
   position: absolute;
@@ -253,16 +308,44 @@ hr {
 }
 
 .company-toolbar {
-  min-height: 42px;
+  min-height: 54px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--bz-space-3);
   flex-shrink: 0;
+  padding: var(--bz-space-2) var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: color-mix(in srgb, var(--bz-card) 86%, transparent);
+  backdrop-filter: blur(16px);
 }
 .company-toolbar__left {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
   min-width: 0;
   flex: 1;
+}
+.company-toolbar__meta {
+  min-width: 184px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.company-toolbar__eyebrow {
+  color: var(--bz-fg);
+  font-family: var(--bz-font-ui);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.company-toolbar__hint {
+  color: var(--bz-fg-low);
+  font-size: 12px;
+  line-height: 1.2;
 }
 .company-toolbar__current {
   display: inline-flex;
@@ -283,9 +366,79 @@ hr {
   gap: var(--bz-space-2);
   flex-shrink: 0;
 }
+.company-toolbar__delete {
+  flex: 0 0 auto;
+}
 .company-shell :deep(.dash) {
   flex: 1;
   min-height: 0;
+}
+
+.bz-image-delete-toast {
+  position: fixed;
+  right: max(var(--bz-space-5), env(safe-area-inset-right));
+  bottom: max(var(--bz-space-5), env(safe-area-inset-bottom));
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  max-width: min(460px, calc(100vw - 32px));
+  padding: var(--bz-space-3);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  box-shadow: var(--bz-shadow-lg);
+  color: var(--bz-fg);
+}
+.bz-image-delete-toast .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-danger);
+}
+.bz-image-delete-toast__body {
+  min-width: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bz-image-delete-toast__ghost,
+.bz-image-delete-toast__danger {
+  height: 30px;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-3);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+}
+.bz-image-delete-toast__ghost {
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+}
+.bz-image-delete-toast__ghost:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+.bz-image-delete-toast__danger {
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
+  color: var(--bz-danger);
+  font-weight: 700;
+}
+.bz-image-delete-toast__danger:hover {
+  filter: brightness(1.08);
+}
+.bz-image-toast-enter-active,
+.bz-image-toast-leave-active {
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
+}
+.bz-image-toast-enter-from,
+.bz-image-toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 /* ───────── Top bar (title + mission stack on left, actions on right) ───────── */
@@ -391,6 +544,7 @@ hr {
   gap: 0.5em;
   margin: 0;
   overflow-x: auto;
+  padding: 2px 0;
 }
 .company-switcher__chip {
   display: inline-flex;
@@ -547,6 +701,7 @@ hr {
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r);
+  backdrop-filter: blur(18px);
 }
 .welcome-icon {
   font-size: 96px !important;

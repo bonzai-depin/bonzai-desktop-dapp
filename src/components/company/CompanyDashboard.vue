@@ -32,7 +32,7 @@
         </div>
         <div class="company-cockpit__actions">
           <button
-            class="bz-btn fira-sans-condensed-black-italic"
+            class="bz-btn fira-sans-condensed-black-italic company-mode-button"
             :class="charter.demoMode ? 'bz-btn--warning' : 'bz-btn--ghost'"
             @click="toggleDemoMode"
             :title="charter.demoMode
@@ -42,7 +42,7 @@
             <span class="material-symbols-outlined" aria-hidden="true">
               {{ charter.demoMode ? 'auto_awesome_motion' : 'bolt' }}
             </span>
-            Demo mode: {{ charter.demoMode ? 'On' : 'Off' }}
+            {{ charter.demoMode ? 'Demo data' : 'Live execution' }}
           </button>
           <button
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
@@ -65,20 +65,12 @@
             Add goal
           </button>
           <button
-            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-            @click="$emit('new-company')"
-            title="Create another company."
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">add_business</span>
-            New company
-          </button>
-          <button
             class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
             @click="runCEO"
             title="Ask the CEO role to review the company goals now and queue the next tasks."
           >
-            <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
-            Plan next work
+            <span class="material-symbols-outlined" aria-hidden="true">room_service</span>
+            Ping CEO
           </button>
         </div>
       </div>
@@ -294,28 +286,26 @@
             <div class="org-card__desc">
               {{ state.roleLibrary[roleKey].description }}
             </div>
-            <!-- Granted skills + humans, when relevant -->
             <div
-              v-if="(charter.roles[roleKey].grantedSkills?.length || 0) > 0"
-              class="org-card__grants"
+              v-if="roleConnectorCount(roleKey) > 0"
+              class="org-card__capability-summary"
+            >
+              <span class="material-symbols-outlined">cable</span>
+              {{ roleConnectorCount(roleKey) }} connector{{ roleConnectorCount(roleKey) === 1 ? '' : 's' }}
+            </div>
+            <div
+              v-if="roleSkillCount(roleKey) > 0"
+              class="org-card__capability-summary"
             >
               <span class="material-symbols-outlined">extension</span>
-              <span
-                v-for="sid in charter.roles[roleKey].grantedSkills"
-                :key="sid"
-                class="org-card__grant-tag"
-              >{{ skillShortName(sid) }}</span>
+              {{ roleSkillCount(roleKey) }} agentic skill{{ roleSkillCount(roleKey) === 1 ? '' : 's' }}
             </div>
             <div
               v-if="(charter.roles[roleKey].pipelines?.length || 0) > 0"
-              class="org-card__grants org-card__pipelines"
+              class="org-card__capability-summary"
             >
               <span class="material-symbols-outlined">auto_awesome_motion</span>
-              <span
-                v-for="pipeline in charter.roles[roleKey].pipelines"
-                :key="pipeline"
-                class="org-card__grant-tag"
-              >{{ pipelineLabel(pipeline) }}</span>
+              {{ charter.roles[roleKey].pipelines.length }} media pipeline{{ charter.roles[roleKey].pipelines.length === 1 ? '' : 's' }}
             </div>
             <div
               v-if="charter.roles[roleKey].kind === 'human_supported'"
@@ -372,22 +362,29 @@
           <div>
             <h2 class="panel-title fira-sans-condensed-black-italic">
               <span class="material-symbols-outlined">flag</span>
-              Goals &amp; Issues
+              Goals and issues
             </h2>
             <p class="muted">
-              Every issue belongs to a goal that ties it to the company's mission.
-              The CEO heartbeat creates goals autonomously; you can also create
-              your own. Each goal decomposes into one or more issues that route
-              to a role by first verb.
+              Goals define outcomes. Issues are the role-owned tasks that move
+              those outcomes forward.
             </p>
           </div>
-          <button
-            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-            @click="openNewGoalModal"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">add_circle</span>
-            New goal
-          </button>
+          <div class="section-head__actions">
+            <button
+              class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
+              @click="openNewIssueModal"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+              New issue
+            </button>
+            <button
+              class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+              @click="openNewGoalModal"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">add_circle</span>
+              New goal
+            </button>
+          </div>
         </div>
 
         <hr />
@@ -429,122 +426,135 @@
           </div>
         </div>
 
-        <!-- Goal list -->
-        <div v-if="filteredGoals.length" class="goal-list">
-          <div v-for="goal in visibleGoals" :key="goal.id" class="goal-card">
-            <div class="goal-card__head">
-              <span class="company-pill" :class="goal.createdBy === 'ceo' ? 'company-pill--info' : 'company-pill--warning'">
-                <span class="material-symbols-outlined" aria-hidden="true">{{ goal.createdBy === 'ceo' ? 'smart_toy' : 'person' }}</span>
-                {{ goal.createdBy === 'ceo' ? 'CEO' : 'You' }}
-              </span>
-              <span class="company-pill" :class="goalStatusClass(goal.status)">
-                {{ goal.status }}
-              </span>
-              <span class="goal-card__time">{{ fmtTime(goal.updatedAt || goal.createdAt) }}</span>
-            </div>
-            <div class="goal-card__title fira-sans-condensed-black-italic">
-              {{ goal.title }}
-            </div>
-            <div v-if="goal.rationale || goal.missionAlignment" class="goal-card__rationale">
-              <span class="material-symbols-outlined">north_star</span>
-              {{ goal.rationale || goal.missionAlignment }}
-            </div>
-
-            <!-- Progress bar -->
-            <div class="goal-card__progress">
-              <div class="goal-progress-bar">
-                <div
-                  class="goal-progress-bar__fill"
-                  :style="{ width: goalProgress(goal).pct + '%' }"
-                ></div>
+        <div v-if="kanbanColumns.some(column => column.items.length)" class="work-kanban" aria-label="Goals and issues board">
+          <section
+            v-for="column in kanbanColumns"
+            :key="column.id"
+            class="kanban-column"
+            :class="`kanban-column--${column.id}`"
+          >
+            <div class="kanban-column__head">
+              <span class="material-symbols-outlined" aria-hidden="true">{{ column.icon }}</span>
+              <div>
+                <h3 class="fira-sans-condensed-black-italic">{{ column.label }}</h3>
+                <p>{{ column.hint }}</p>
               </div>
-              <span class="goal-card__progress-text">
-                {{ goalProgress(goal).done }}/{{ goalProgress(goal).total }} done
-              </span>
+              <strong class="kanban-column__count fira-sans-condensed-black-italic">{{ column.items.length }}</strong>
             </div>
 
-            <!-- Child issues -->
-            <div v-if="issuesForGoal(goal.id).length" class="goal-card__issues">
-              <div
-                v-for="issue in issuesForGoal(goal.id)"
-                :key="issue.id"
-                class="issue-card issue-card--nested"
+            <div class="kanban-column__lane">
+              <article
+                v-for="item in column.items"
+                :key="item.id"
+                class="kanban-card"
+                :class="{ 'kanban-card--goal': item.type === 'goal' }"
               >
-                <div class="issue-card__head">
-                  <span class="company-pill" :class="priorityClass(issue.priority)">{{ issue.priority }}</span>
-                  <span class="company-pill" :class="statusClass(issue.status)">
-                    {{ issue.status.replace('_', ' ') }}
+                <div class="kanban-card__meta">
+                  <span class="company-pill" :class="item.type === 'goal' ? goalStatusClass(item.goal.status) : priorityClass(item.issue.priority)">
+                    {{ item.type === 'goal' ? item.goal.status : item.issue.priority }}
                   </span>
-                  <span class="issue-card__role">
-                    <span class="material-symbols-outlined">person</span>
-                    {{ roleDisplayName(issue.assigneeRole) }}
+                  <span
+                    v-if="item.type === 'issue'"
+                    class="company-pill"
+                    :class="statusClass(item.issue.status)"
+                  >
+                    {{ item.issue.status.replace('_', ' ') }}
                   </span>
-                  <span class="issue-card__time">{{ fmtTime(issue.updatedAt || issue.createdAt) }}</span>
                 </div>
-                <div class="issue-card__title fira-sans-condensed-black-italic">
-                  {{ issue.title }}
+
+                <div v-if="item.goal && item.type === 'issue'" class="kanban-card__goal">
+                  <span class="material-symbols-outlined" aria-hidden="true">flag</span>
+                  {{ item.goal.title }}
                 </div>
-                <div v-if="issue.description" class="issue-card__desc">
-                  {{ issue.description }}
+
+                <h4 class="kanban-card__title fira-sans-condensed-black-italic">
+                  {{ item.type === 'goal' ? sentenceCaseTask(item.goal.title) : sentenceCaseTask(item.issue.title) }}
+                </h4>
+                <p v-if="item.type === 'goal' && (item.goal.rationale || item.goal.missionAlignment)" class="kanban-card__copy">
+                  {{ item.goal.rationale || item.goal.missionAlignment }}
+                </p>
+                <p v-else-if="item.type === 'issue' && item.issue.description" class="kanban-card__copy">
+                  {{ item.issue.description }}
+                </p>
+
+                <div class="kanban-card__foot">
+                  <span v-if="item.type === 'issue'" class="kanban-card__role">
+                    <span class="material-symbols-outlined" aria-hidden="true">person</span>
+                    {{ roleDisplayName(item.issue.assigneeRole) }}
+                  </span>
+                  <span v-else class="kanban-card__role">
+                    <span class="material-symbols-outlined" aria-hidden="true">
+                      {{ item.goal.createdBy === 'ceo' ? 'smart_toy' : 'person' }}
+                    </span>
+                    {{ item.goal.createdBy === 'ceo' ? 'CEO goal' : 'User goal' }}
+                  </span>
+                  <span>{{ fmtTime(item.type === 'goal' ? (item.goal.updatedAt || item.goal.createdAt) : (item.issue.updatedAt || item.issue.createdAt)) }}</span>
                 </div>
-                <div v-if="issue.attempts && issue.attempts.length" class="issue-card__attempts">
+
+                <div v-if="item.type === 'goal'" class="kanban-card__progress">
+                  <div class="goal-progress-bar">
+                    <div
+                      class="goal-progress-bar__fill"
+                      :style="{ width: goalProgress(item.goal).pct + '%' }"
+                    ></div>
+                  </div>
+                  <span>{{ goalProgress(item.goal).done }}/{{ goalProgress(item.goal).total }}</span>
+                </div>
+
+                <div v-if="item.type === 'issue' && item.issue.attempts && item.issue.attempts.length" class="issue-card__attempts">
                   <span class="material-symbols-outlined">history</span>
-                  {{ issue.attempts.length }} attempt{{ issue.attempts.length === 1 ? '' : 's' }}
-                  <span v-if="issue.attempts.at(-1)?.txOrLink" class="issue-card__link">
-                    · last: <code>{{ issue.attempts.at(-1).txOrLink }}</code>
+                  {{ item.issue.attempts.length }} attempt{{ item.issue.attempts.length === 1 ? '' : 's' }}
+                  <span v-if="item.issue.attempts.at(-1)?.txOrLink" class="issue-card__link">
+                    last: <code>{{ item.issue.attempts.at(-1).txOrLink }}</code>
                   </span>
                 </div>
-                <div class="issue-card__actions">
+
+                <div class="kanban-card__actions">
                   <button
-                    v-if="issue.status === 'open'"
+                    v-if="item.type === 'issue' && item.issue.status === 'open'"
                     class="bz-btn bz-btn--sm bz-btn--warning fira-sans-condensed-black-italic"
-                    @click="store.tickRoleNow(issue.assigneeRole)"
-                    title="Run the assignee's role now to pick this up"
+                    @click="store.tickRoleNow(item.issue.assigneeRole)"
+                    title="Ping the assignee now to pick this up"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">room_service</span>
-                    Run
+                    Ping
                   </button>
                   <button
-                    v-if="issue.status === 'open' || issue.status === 'in_progress' || issue.status === 'blocked'"
+                    v-if="item.type === 'issue' && ['open', 'in_progress', 'blocked'].includes(item.issue.status)"
                     class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
-                    @click="setIssueStatus(issue.id, 'cancelled')"
+                    @click="setIssueStatus(item.issue.id, 'cancelled')"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">close</span>
                     Cancel
                   </button>
                   <button
-                    v-if="issue.status === 'done' || issue.status === 'cancelled'"
+                    v-if="item.type === 'issue' && ['done', 'cancelled'].includes(item.issue.status)"
                     class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
-                    @click="reopenIssue(issue.id)"
+                    @click="reopenIssue(item.issue.id)"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
                     Reopen
                   </button>
                   <button
+                    v-if="item.type === 'goal' && item.goal.status === 'active'"
+                    class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                    @click="cancelGoal(item.goal.id)"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">cancel</span>
+                    Cancel
+                  </button>
+                  <button
+                    v-if="item.type === 'issue'"
                     class="bz-iconbtn bz-iconbtn--sm issue-card__delete"
-                    @click="removeIssue(issue.id)"
+                    @click="requestDeleteIssue(item.issue)"
                     aria-label="Delete issue"
                   >
                     <span class="material-symbols-outlined">delete</span>
                   </button>
                 </div>
-              </div>
+              </article>
             </div>
-            <div v-else class="goal-card__no-issues muted">
-              No tasks yet for this goal.
-            </div>
-
-            <!-- Goal-level actions -->
-            <div v-if="goal.status === 'active'" class="goal-card__actions">
-              <button
-                class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
-                @click="cancelGoal(goal.id)"
-              >
-                <span class="material-symbols-outlined" aria-hidden="true">cancel</span>
-                Cancel goal
-              </button>
-            </div>
-          </div>
+          </section>
           <button
             v-if="visibleGoals.length < filteredGoals.length"
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic load-more-btn"
@@ -555,64 +565,23 @@
           </button>
         </div>
         <div v-else class="empty">
-          No goals match your filters. Click <em>New goal</em> above to create
-          your first one — or wait for the next CEO tick to generate one
-          autonomously.
-        </div>
-
-        <!-- Ungrouped issues (legacy, shouldn't accumulate in the unified model) -->
-        <div v-if="ungroupedIssues.length" class="orphan-section">
-          <hr />
-          <h3 class="panel-subtitle fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined">help</span>
-            Ungrouped issues
-          </h3>
-          <p class="muted">
-            These predate the unified goals model. They still run normally;
-            attach them to a goal or cancel as you clean up.
-          </p>
-          <div class="goal-card__issues">
-            <div
-              v-for="issue in ungroupedIssues"
-              :key="issue.id"
-              class="issue-card issue-card--nested"
-            >
-              <div class="issue-card__head">
-                <span class="company-pill" :class="priorityClass(issue.priority)">{{ issue.priority }}</span>
-                <span class="company-pill" :class="statusClass(issue.status)">
-                  {{ issue.status.replace('_', ' ') }}
-                </span>
-                <span class="issue-card__role">
-                  <span class="material-symbols-outlined">person</span>
-                  {{ roleDisplayName(issue.assigneeRole) }}
-                </span>
-              </div>
-              <div class="issue-card__title fira-sans-condensed-black-italic">{{ issue.title }}</div>
-              <div v-if="issue.description" class="issue-card__desc">{{ issue.description }}</div>
-              <div class="issue-card__actions">
-                <button
-                  class="bz-iconbtn bz-iconbtn--sm issue-card__delete"
-                  @click="removeIssue(issue.id)"
-                  aria-label="Delete issue"
-                >
-                  <span class="material-symbols-outlined">delete</span>
-                </button>
-              </div>
-            </div>
-          </div>
+          No goals match your filters. Create a goal for a complete outcome,
+          or create an issue when you already know the exact task and owner.
         </div>
       </div>
 
       <!-- ─── Deliverables / catalog ─── -->
       <div v-else-if="active === 'deliverables'" class="panel models__activity--payouts">
-        <div class="section-head">
-          <h2 class="panel-title fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined">factory</span>
-            Deliverables
-          </h2>
-          <p class="section-head__hint">
-            Finished text, media, reports, listings, and other work products created by staffed roles.
-          </p>
+        <div class="section-head section-head--stack">
+          <div>
+            <h2 class="panel-title fira-sans-condensed-black-italic">
+              <span class="material-symbols-outlined">factory</span>
+              Deliverables
+            </h2>
+            <p class="section-head__hint">
+              Finished text, media, reports, listings, and other work products created by staffed roles.
+            </p>
+          </div>
           <div class="section-head__actions">
             <button
               class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
@@ -632,38 +601,46 @@
             </button>
           </div>
         </div>
-        <BonzaiDataTable
-          v-if="state.catalog.length"
-          :columns="catalogColumns"
-          :rows="visibleCatalogRows"
-          :row-key="row => row.id"
-          density="compact"
-          empty-title="No produced content"
-          empty-subtitle="Create a goal with a concrete output, then run the assigned role."
-        >
-          <template #cell-pipeline="{ row }">
-            <span class="company-pill company-pill--info">{{ row.pipeline }}</span>
-          </template>
-          <template #cell-output="{ row }">
-            <pre class="catalog-output">{{ outputPreview(row) }}</pre>
-          </template>
-          <template #cell-prompt="{ row }">
-            <span class="ellipsis" :title="row.prompt">{{ row.prompt || '—' }}</span>
-          </template>
-          <template #cell-share="{ row }">
-            <button class="bz-iconbtn bz-iconbtn--sm" @click="copy(row.shareLink || outputPreview(row))" title="Copy deliverable">
-              <span class="material-symbols-outlined">content_copy</span>
-            </button>
-          </template>
-          <template #cell-actions="{ row }">
-            <button class="bz-iconbtn bz-iconbtn--sm" @click="downloadDeliverable(row)" title="Download deliverable">
-              <span class="material-symbols-outlined">download</span>
-            </button>
-            <button class="bz-iconbtn bz-iconbtn--sm bz-iconbtn--danger" @click="removeContent(row.id)" title="Delete artifact">
-              <span class="material-symbols-outlined">delete</span>
-            </button>
-          </template>
-        </BonzaiDataTable>
+        <div v-if="state.catalog.length" class="deliverable-board">
+          <article
+            v-for="row in visibleCatalogRows"
+            :key="row.id"
+            class="deliverable-card"
+          >
+            <div class="deliverable-card__meta">
+              <span class="company-pill company-pill--info">{{ row.pipeline }}</span>
+              <span>{{ roleDisplayName(row.role) || "Company" }}</span>
+              <span>{{ fmtTime(row.createdAt) }}</span>
+            </div>
+            <div class="catalog-output catalog-output--full deliverable-markdown">
+              <VueMarkdown :source="deliverableDisplay(row)" />
+            </div>
+            <div v-if="row.prompt" class="deliverable-card__prompt">
+              <span class="material-symbols-outlined">notes</span>
+              <span>{{ row.prompt }}</span>
+            </div>
+            <div class="deliverable-card__footer">
+              <div class="deliverable-card__money">
+                <span>{{ fmtMoney(row.price, row.currency) }} price</span>
+                <span>{{ row.sales || 0 }} sales</span>
+                <span>{{ fmtMoney(row.revenue, row.currency) }} revenue</span>
+              </div>
+              <div class="deliverable-card__actions">
+                <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="copyDeliverable(row)" title="Copy deliverable output">
+                  <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
+                  Copy
+                </button>
+                <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="downloadDeliverable(row)" title="Download deliverable">
+                  <span class="material-symbols-outlined" aria-hidden="true">download</span>
+                  Download
+                </button>
+                <button class="bz-iconbtn bz-iconbtn--sm bz-iconbtn--danger" @click="requestDeleteContent(row)" title="Delete artifact">
+                  <span class="material-symbols-outlined">delete</span>
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
         <BonzaiEmptyState
           v-else
           size="compact"
@@ -771,7 +748,7 @@
             <div class="kpi-tile__value fira-sans-condensed-black-italic">
               {{ fmtMoney(charter.rules.perHeartbeatSpendCap, state.treasuryState?.currency) }}
             </div>
-            <div class="kpi-tile__label fira-sans-condensed-black-italic">Per-tick cap</div>
+            <div class="kpi-tile__label fira-sans-condensed-black-italic">Per-run cap</div>
           </div>
         </div>
 
@@ -880,6 +857,9 @@
               {{ row.status || '—' }}
             </span>
           </template>
+          <template #cell-action="{ row }">
+            <span>{{ auditActionLabel(row) }}</span>
+          </template>
           <template #cell-note="{ row }">
             <span class="ellipsis">{{ row.note || row.txOrLink || '' }}</span>
           </template>
@@ -906,95 +886,145 @@
         />
       </div>
 
-      <!-- ─── Charter ─── -->
+      <!-- ─── Company Settings ─── -->
       <div v-else-if="active === 'charter'" class="panel models__activity--payouts">
-        <div class="section-head">
-          <h2 class="panel-title fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined">edit_note</span>
-            Charter
-          </h2>
+        <div class="section-head section-head--stack">
+          <div>
+            <h2 class="panel-title fira-sans-condensed-black-italic">
+              <span class="material-symbols-outlined">edit_note</span>
+              Company Settings
+            </h2>
+            <p class="section-head__hint">
+              The operating contract for this company: identity, budget, cadence, and model execution.
+            </p>
+          </div>
           <div class="section-head__actions">
             <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="exportCompany">
               <span class="material-symbols-outlined" aria-hidden="true">download</span>
               Export
             </button>
-            <button class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic" @click="dissolveCompany">
+            <button class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic" @click="$emit('delete-company')">
               <span class="material-symbols-outlined" aria-hidden="true">delete</span>
               Delete
             </button>
           </div>
         </div>
 
-        <div class="charter-editor">
-          <label class="charter-field charter-field--wide">
-            <span>Company name</span>
-            <input v-model.trim="charterDraft.name" class="input is-medium" />
-          </label>
-          <label class="charter-field charter-field--wide">
-            <span>Mission</span>
-            <textarea v-model.trim="charterDraft.mission" class="textarea" rows="4"></textarea>
-          </label>
-          <label class="charter-field">
-            <span>Currency</span>
-            <select v-model="charterDraft.currency" class="company-admin-select">
-              <option v-for="c in state.currencies" :key="c" :value="c">{{ c }}</option>
-            </select>
-          </label>
-          <label class="charter-field">
-            <span>Reserve floor</span>
-            <input v-model.number="charterDraft.reserveFloor" class="input is-medium" type="number" min="0" step="1" />
-          </label>
-          <label class="charter-field">
-            <span>Per run spend cap</span>
-            <input v-model.number="charterDraft.perHeartbeatSpendCap" class="input is-medium" type="number" min="0" step="1" />
-          </label>
-          <label class="charter-field">
-            <span>CEO cadence (min)</span>
-            <input v-model.number="charterDraft.ceoMin" class="input is-medium" type="number" min="1" step="1" />
-          </label>
-          <label class="charter-field">
-            <span>Role cadence (min)</span>
-            <input v-model.number="charterDraft.roleMin" class="input is-medium" type="number" min="1" step="1" />
-          </label>
-          <label class="charter-field">
-            <span>LLM execution</span>
-            <select v-model="charterDraft.llmMode" class="company-admin-select">
-              <option value="swap">Sequential, swap models</option>
-              <option value="sequential">Sequential, current model</option>
-              <option value="parallel">Parallel model pool</option>
-            </select>
-          </label>
-          <label class="charter-field">
-            <span>LLM parallel limit</span>
-            <input
-              v-model.number="charterDraft.llmMaxConcurrent"
-              class="input is-medium"
-              type="number"
-              min="1"
-              max="8"
-              step="1"
-              :disabled="charterDraft.llmMode !== 'parallel'"
-            />
-          </label>
-          <label class="charter-field">
-            <span>Media execution</span>
-            <select v-model="charterDraft.diffusionMode" class="company-admin-select">
-              <option value="sequential">Sequential</option>
-              <option value="parallel">Parallel</option>
-            </select>
-          </label>
-          <label class="charter-field">
-            <span>Media parallel limit</span>
-            <input
-              v-model.number="charterDraft.diffusionMaxConcurrent"
-              class="input is-medium"
-              type="number"
-              min="1"
-              max="8"
-              step="1"
-              :disabled="charterDraft.diffusionMode !== 'parallel'"
-            />
-          </label>
+        <div class="charter-studio">
+          <section class="charter-card charter-card--identity">
+            <div class="charter-card__head">
+              <span class="material-symbols-outlined">badge</span>
+              <div>
+                <h3 class="fira-sans-condensed-black-italic">Identity</h3>
+                <p>Name and mission used by the CEO when planning work.</p>
+              </div>
+            </div>
+            <label class="charter-field charter-field--wide">
+              <span>Company name</span>
+              <input v-model.trim="charterDraft.name" class="input is-medium" />
+            </label>
+            <label class="charter-field charter-field--wide">
+              <span>Mission</span>
+              <textarea v-model.trim="charterDraft.mission" class="textarea" rows="6"></textarea>
+            </label>
+          </section>
+
+          <section class="charter-card">
+            <div class="charter-card__head">
+              <span class="material-symbols-outlined">savings</span>
+              <div>
+                <h3 class="fira-sans-condensed-black-italic">Money Guardrails</h3>
+                <p>Currency, reserve, and per-run spending constraints.</p>
+              </div>
+            </div>
+            <div class="charter-card__grid">
+              <label class="charter-field">
+                <span>Currency</span>
+                <select v-model="charterDraft.currency" class="company-admin-select">
+                  <option v-for="c in state.currencies" :key="c" :value="c">{{ c }}</option>
+                </select>
+              </label>
+              <label class="charter-field">
+                <span>Reserve floor</span>
+                <input v-model.number="charterDraft.reserveFloor" class="input is-medium" type="number" min="0" step="1" />
+              </label>
+              <label class="charter-field">
+                <span>Per run spend cap</span>
+                <input v-model.number="charterDraft.perHeartbeatSpendCap" class="input is-medium" type="number" min="0" step="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="charter-card">
+            <div class="charter-card__head">
+              <span class="material-symbols-outlined">schedule</span>
+              <div>
+                <h3 class="fira-sans-condensed-black-italic">Cadence</h3>
+                <p>How often the CEO plans and teammates process assigned issues.</p>
+              </div>
+            </div>
+            <div class="charter-card__grid">
+              <label class="charter-field">
+                <span>CEO cadence (min)</span>
+                <input v-model.number="charterDraft.ceoMin" class="input is-medium" type="number" min="1" step="1" />
+              </label>
+              <label class="charter-field">
+                <span>Role cadence (min)</span>
+                <input v-model.number="charterDraft.roleMin" class="input is-medium" type="number" min="1" step="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="charter-card charter-card--execution">
+            <div class="charter-card__head">
+              <span class="material-symbols-outlined">memory</span>
+              <div>
+                <h3 class="fira-sans-condensed-black-italic">Model Execution</h3>
+                <p>Choose sequential or parallel execution for intelligence and media work.</p>
+              </div>
+            </div>
+            <div class="charter-card__grid">
+              <label class="charter-field">
+                <span>LLM execution</span>
+                <select v-model="charterDraft.llmMode" class="company-admin-select">
+                  <option value="swap">Sequential, swap models</option>
+                  <option value="sequential">Sequential, current model</option>
+                  <option value="parallel">Parallel model pool</option>
+                </select>
+              </label>
+              <label class="charter-field">
+                <span>LLM parallel limit</span>
+                <input
+                  v-model.number="charterDraft.llmMaxConcurrent"
+                  class="input is-medium"
+                  type="number"
+                  min="1"
+                  max="8"
+                  step="1"
+                  :disabled="charterDraft.llmMode !== 'parallel'"
+                />
+              </label>
+              <label class="charter-field">
+                <span>Media execution</span>
+                <select v-model="charterDraft.diffusionMode" class="company-admin-select">
+                  <option value="sequential">Sequential</option>
+                  <option value="parallel">Parallel</option>
+                </select>
+              </label>
+              <label class="charter-field">
+                <span>Media parallel limit</span>
+                <input
+                  v-model.number="charterDraft.diffusionMaxConcurrent"
+                  class="input is-medium"
+                  type="number"
+                  min="1"
+                  max="8"
+                  step="1"
+                  :disabled="charterDraft.diffusionMode !== 'parallel'"
+                />
+              </label>
+            </div>
+          </section>
         </div>
 
         <div class="charter-actions">
@@ -1034,8 +1064,11 @@
         </div>
 
         <div v-if="pool.err" class="rail-error">
-          <span class="material-symbols-outlined">error</span>
-          {{ pool.err }}
+          <span class="material-symbols-outlined">info</span>
+          <div>
+            <strong>Pool status unavailable</strong>
+            <span>{{ pool.err }}</span>
+          </div>
         </div>
         <template v-else>
           <div class="llm-strip__stats">
@@ -1044,8 +1077,8 @@
               <span class="llm-rail__label">models</span>
             </div>
             <div>
-              <span class="llm-rail__value fira-sans-condensed-black-italic">{{ totalInFlight }}</span>
-              <span class="llm-rail__label">in flight</span>
+              <span class="llm-rail__value fira-sans-condensed-black-italic">{{ capacitySlots }}</span>
+              <span class="llm-rail__label">slots</span>
             </div>
             <div>
               <span class="llm-rail__value fira-sans-condensed-black-italic">{{ poolUsedPct }}%</span>
@@ -1067,7 +1100,7 @@
             </div>
           </div>
           <div v-else class="rail-empty">
-            No role models configured. Roles will use the current chat model until you assign one.
+            Assign models in Agentic Team to show per-role capacity here.
           </div>
         </template>
       </section>
@@ -1079,6 +1112,26 @@
         :state="state"
       />
     </section>
+
+    <Transition name="bz-image-toast">
+      <div
+        v-if="pendingDelete"
+        class="bz-image-delete-toast"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">delete</span>
+        <span class="bz-image-delete-toast__body">
+          Delete {{ pendingDelete.label }}?
+        </span>
+        <button type="button" class="bz-image-delete-toast__ghost" @click="dismissDelete">
+          Cancel
+        </button>
+        <button type="button" class="bz-image-delete-toast__danger" @click="confirmDelete">
+          Delete
+        </button>
+      </div>
+    </Transition>
 
     <!-- ════════════ Role-edit modal ════════════ -->
     <div
@@ -1139,6 +1192,62 @@
         </div>
 
         <div class="field">
+          <label class="label fira-sans-condensed-black-italic">Assigned connectors</label>
+          <p class="hint">Choose the service accounts this teammate may access. Agentic skills below decide what they can do with them.</p>
+          <div class="connector-checks">
+            <label
+              v-for="connector in roleConnectorOptions"
+              :key="connector.kind"
+              class="connector-check"
+              :class="{
+                'is-on': editDraft.connectors.includes(connector.kind),
+                'needs-auth': connector.status && connector.status !== 'active',
+              }"
+            >
+              <input
+                type="checkbox"
+                :checked="editDraft.connectors.includes(connector.kind)"
+                @change="toggleRoleConnector(connector.kind, $event.target.checked)"
+              />
+              <span class="material-symbols-outlined" aria-hidden="true">{{ connector.icon }}</span>
+              <span class="connector-check__copy">
+                <strong>{{ connector.name }}</strong>
+                <small>{{ connector.status ? connector.status.replace('_', ' ') : 'not connected' }}</small>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label fira-sans-condensed-black-italic">Agentic skills</label>
+          <p class="hint">Grant reusable action skills to this teammate. Selecting a skill also reserves any connector capability it requires.</p>
+          <div class="capability-checks capability-checks--skills">
+            <label
+              v-for="skill in roleCapabilityOptions"
+              :key="skill.id"
+              class="capability-check skill-check"
+              :class="{
+                'is-on': editDraft.grantedSkills.includes(skill.id),
+                'needs-connector': skillNeedsConnector(skill),
+              }"
+            >
+              <input
+                type="checkbox"
+                :checked="editDraft.grantedSkills.includes(skill.id)"
+                @change="toggleRoleSkill(skill, $event.target.checked)"
+              />
+              <span class="capability-check__main">
+                <strong>{{ skill.name }}</strong>
+                <small>{{ skill.category }} · {{ skill.actions?.length || 0 }} action{{ (skill.actions?.length || 0) === 1 ? '' : 's' }}</small>
+                <span class="skill-check__requires">
+                  {{ skillConnectorSummary(skill) }}
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
           <label class="label fira-sans-condensed-black-italic">Media tools</label>
           <p class="hint">Allow this role to call BonzAI generation pipelines when a task needs creative assets.</p>
           <div class="pipeline-checks">
@@ -1169,7 +1278,7 @@
 
         <div class="field">
           <label class="label fira-sans-condensed-black-italic">
-            Per-tick budget cap
+            Per-run budget cap
             <span class="hint-inline">
               (optional override; default = {{ defaultBudgetForRole(editingRoleKey) }} {{ charter.rules.currency }})
             </span>
@@ -1317,6 +1426,94 @@
         </div>
       </div>
     </div>
+
+    <!-- ─── New Issue modal ────────────────────────────────────────── -->
+    <div
+      v-if="issueModalOpen"
+      class="role-modal-overlay"
+      @click.self="closeNewIssueModal"
+    >
+      <div class="role-modal models__activity--payouts goal-modal">
+        <div class="role-modal__header">
+          <h2 class="fira-sans-condensed-black-italic">
+            <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+            <span class="role-modal__title">New issue</span>
+          </h2>
+          <BzCloseButton size="md" aria-label="Close" @click="closeNewIssueModal" />
+        </div>
+        <p class="role-modal__desc">
+          Create a specific task for one staffed role. Use a goal when the work
+          needs a larger outcome and several issues.
+        </p>
+
+        <hr />
+
+        <label class="goal-modal__label">Task</label>
+        <input
+          v-model.trim="issueDraft.title"
+          class="input is-medium"
+          placeholder="e.g. Draft three UGC hooks for Client A"
+          maxlength="200"
+        />
+
+        <label class="goal-modal__label">Details</label>
+        <textarea
+          v-model="issueDraft.description"
+          class="textarea"
+          rows="3"
+          placeholder="Constraints, source material, expected output, or acceptance criteria."
+        ></textarea>
+
+        <div class="issue-modal-grid">
+          <label class="goal-modal__field">
+            <span class="goal-modal__label">Assign to</span>
+            <select v-model="issueDraft.assigneeRole" class="company-admin-select">
+              <option value="">Select a role</option>
+              <option v-for="roleKey in filledRoles" :key="roleKey" :value="roleKey">
+                {{ roleDisplayName(roleKey) }}
+              </option>
+            </select>
+          </label>
+          <label class="goal-modal__field">
+            <span class="goal-modal__label">Priority</span>
+            <select v-model="issueDraft.priority" class="company-admin-select">
+              <option value="urgent">Urgent</option>
+              <option value="high">High</option>
+              <option value="normal">Normal</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label class="goal-modal__field">
+            <span class="goal-modal__label">Attach to goal</span>
+            <select v-model="issueDraft.goalId" class="company-admin-select">
+              <option :value="null">No goal</option>
+              <option v-for="goal in filteredGoals" :key="goal.id" :value="goal.id">
+                {{ goal.title }}
+              </option>
+            </select>
+          </label>
+        </div>
+
+        <hr />
+
+        <div class="role-modal__actions">
+          <div class="role-modal__actions-right" style="margin-left:auto;">
+            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="closeNewIssueModal">
+              Cancel
+            </button>
+            <button
+              class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+              :class="{ 'is-loading': issueBusy }"
+              :disabled="issueBusy || !issueDraft.title.trim() || !issueDraft.assigneeRole"
+              @click="submitIssue"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">add_task</span>
+              Create issue
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1331,16 +1528,17 @@ import BzCloseButton from "../BzCloseButton.vue";
 import BonzaiDataTable from "../BonzaiDataTable.vue";
 import BonzaiEmptyState from "../BonzaiEmptyState.vue";
 import ModeChipBar from "../generative/ModeChipBar.vue";
+import VueMarkdown from "vue-markdown-render";
 
 export default {
   name: "CompanyDashboard",
   components: {
-    BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyConnectors, CompanyLiveFeed, ModeChipBar },
+    BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyConnectors, CompanyLiveFeed, ModeChipBar, VueMarkdown },
   props: {
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
   },
-  emits: ["edit", "reload", "new-company"],
+  emits: ["edit", "reload", "new-company", "delete-company"],
   setup(props) {
     const store = companyStore;
     const active = ref("command");
@@ -1350,6 +1548,7 @@ export default {
     const approvalLimit = ref(25);
     const auditLimit = ref(80);
     const charterBusy = ref(false);
+    const pendingDelete = ref(null);
     const charterDraft = reactive({
       name: "",
       mission: "",
@@ -1439,7 +1638,7 @@ export default {
       { key: "3d", label: "3D", icon: "deployed_code" },
       { key: "vision", label: "Vision", icon: "visibility" },
     ];
-    const editDraft = reactive({ companion: null, llm: null, gateway: null, budget: null, pipelines: [] });
+    const editDraft = reactive({ companion: null, llm: null, gateway: null, budget: null, pipelines: [], connectors: [], grantedSkills: [] });
     const editBusy = ref(false);
 
     const companionList = DEFAULT_COMPANIONS.map((c) => ({ id: c.id, name: c.name }));
@@ -1465,9 +1664,112 @@ export default {
           key: model.key,
           label: model.name,
           params: model.parameters || 0,
+          filesizeBytes: model.filesizeBytes || 0,
         }))
         .sort((a, b) => a.params - b.params || a.label.localeCompare(b.label)),
     );
+    const roleCapabilityOptions = computed(() => {
+      const roleKey = editingRoleKey.value;
+      return Object.values(SKILL_MANIFESTS)
+        .filter((skill) => !roleKey || !skill.suggestedRoles?.length || skill.suggestedRoles.includes(roleKey))
+        .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+    });
+    const roleConnectorOptions = computed(() => {
+      const installed = new Map((props.state.connectors || []).map((conn) => [conn.kind, conn]));
+      const wanted = new Set([
+        ...(props.charter.pendingConnectors || []),
+        ...(props.state.connectors || []).map((conn) => conn.kind),
+        ...roleCapabilityOptions.value.flatMap((skill) => skill.requiredConnectors || []),
+      ]);
+      return [...wanted]
+        .filter(Boolean)
+        .sort()
+        .map((kind) => ({
+          kind,
+          name: connectorLabel(kind),
+          icon: connectorIcon(kind),
+          status: installed.get(kind)?.status || "not_connected",
+        }));
+    });
+
+    function roleConnectorCount(roleKey) {
+      const direct = props.charter.roles?.[roleKey]?.connectors;
+      if (Array.isArray(direct) && direct.length) return new Set(direct).size;
+      const skills = props.charter.roles?.[roleKey]?.grantedSkills || [];
+      const connectors = new Set();
+      for (const sid of skills) {
+        for (const kind of SKILL_MANIFESTS[sid]?.requiredConnectors || []) connectors.add(kind);
+      }
+      return connectors.size;
+    }
+    function roleSkillCount(roleKey) {
+      return new Set(props.charter.roles?.[roleKey]?.grantedSkills || []).size;
+    }
+    function connectorsForSkills(skillIds) {
+      const out = new Set();
+      for (const sid of skillIds || []) {
+        for (const kind of SKILL_MANIFESTS[sid]?.requiredConnectors || []) out.add(kind);
+      }
+      return [...out];
+    }
+    function connectorLabel(kind) {
+      return String(kind || "")
+        .split("_")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+    }
+    function connectorIcon(kind) {
+      return ({
+        twilio: "call",
+        quickbooks: "receipt_long",
+        stripe: "credit_card",
+        google_calendar: "event",
+        hubspot: "hub",
+        sendgrid: "mail",
+        shopify: "storefront",
+        printful: "local_shipping",
+        printify: "inventory",
+        optimoroute: "alt_route",
+        google_business: "storefront",
+        docusign: "draw",
+        clio: "gavel",
+        meta_ads: "ads_click",
+        google_ads: "campaign",
+        notion: "menu_book",
+        convertkit: "newspaper",
+        teachable: "school",
+        calendly: "event_available",
+        slack: "tag",
+        linear: "list_alt",
+      })[kind] || "cable";
+    }
+    function skillConnectorSummary(skill) {
+      const connectors = skill?.requiredConnectors || [];
+      if (!connectors.length) return "Local skill";
+      return `Requires ${connectors.map(connectorLabel).join(", ")}`;
+    }
+    function skillNeedsConnector(skill) {
+      const selected = new Set(editDraft.connectors || []);
+      return (skill?.requiredConnectors || []).some((kind) => !selected.has(kind));
+    }
+    function toggleRoleConnector(kind, checked) {
+      const next = new Set(editDraft.connectors || []);
+      if (checked) next.add(kind);
+      else next.delete(kind);
+      editDraft.connectors = [...next];
+    }
+    function toggleRoleSkill(skill, checked) {
+      const skills = new Set(editDraft.grantedSkills || []);
+      if (checked) {
+        skills.add(skill.id);
+        const connectors = new Set(editDraft.connectors || []);
+        for (const kind of skill.requiredConnectors || []) connectors.add(kind);
+        editDraft.connectors = [...connectors];
+      } else {
+        skills.delete(skill.id);
+      }
+      editDraft.grantedSkills = [...skills];
+    }
 
     function defaultBudgetForRole(roleKey) {
       const def = props.state.roleLibrary[roleKey];
@@ -1483,6 +1785,8 @@ export default {
       editDraft.gateway = cur.gateway || null;
       editDraft.budget = Number.isFinite(cur.budgetPerHeartbeat) ? cur.budgetPerHeartbeat : null;
       editDraft.pipelines = Array.isArray(cur.pipelines) ? [...cur.pipelines] : [];
+      editDraft.grantedSkills = Array.isArray(cur.grantedSkills) ? [...cur.grantedSkills] : [];
+      editDraft.connectors = Array.isArray(cur.connectors) ? [...cur.connectors] : connectorsForSkills(editDraft.grantedSkills);
       editingRoleKey.value = roleKey;
     }
     function closeRoleEdit() {
@@ -1515,6 +1819,12 @@ export default {
           else delete next.roles[roleKey].gateway;
           if (editDraft.pipelines.length) next.roles[roleKey].pipelines = [...editDraft.pipelines];
           else delete next.roles[roleKey].pipelines;
+          if (editDraft.connectors.length) next.roles[roleKey].connectors = [...new Set(editDraft.connectors)];
+          else delete next.roles[roleKey].connectors;
+          const mergedSkills = [...new Set(editDraft.grantedSkills)];
+          if (mergedSkills.length) next.roles[roleKey].grantedSkills = mergedSkills;
+          else delete next.roles[roleKey].grantedSkills;
+          next.grantedSkills = [...new Set([...(next.grantedSkills || []), ...mergedSkills])];
           if (Number.isFinite(editDraft.budget) && editDraft.budget > 0) {
             next.roles[roleKey].budgetPerHeartbeat = editDraft.budget;
           } else {
@@ -1538,6 +1848,8 @@ export default {
       editDraft.gateway = null;
       editDraft.budget = null;
       editDraft.pipelines = [];
+      editDraft.grantedSkills = [];
+      editDraft.connectors = [];
       await saveRoleEdit();
     }
 
@@ -1547,9 +1859,23 @@ export default {
       description: "",
       assigneeRole: "",
       priority: "normal",
+      goalId: null,
     });
+    const issueModalOpen = ref(false);
     const issueFilter = ref("open");
     const issueBusy = ref(false);
+
+    function openNewIssueModal() {
+      issueDraft.title = "";
+      issueDraft.description = "";
+      issueDraft.assigneeRole = filledRoles.value[0] || "";
+      issueDraft.priority = "normal";
+      issueDraft.goalId = filteredGoals.value[0]?.id || null;
+      issueModalOpen.value = true;
+    }
+    function closeNewIssueModal() {
+      issueModalOpen.value = false;
+    }
 
     async function submitIssue() {
       if (!issueDraft.title.trim() || !issueDraft.assigneeRole) return;
@@ -1560,10 +1886,13 @@ export default {
           description: issueDraft.description,
           assigneeRole: issueDraft.assigneeRole,
           priority: issueDraft.priority,
+          goalId: issueDraft.goalId || null,
           createdBy: "user",
         });
         issueDraft.title = "";
         issueDraft.description = "";
+        issueDraft.goalId = null;
+        issueModalOpen.value = false;
       } finally {
         issueBusy.value = false;
       }
@@ -1572,9 +1901,31 @@ export default {
       await store.updateIssue(issueId, { status });
     }
     async function reopenIssue(issueId) { await store.reopenIssue(issueId); }
-    async function removeIssue(issueId) {
-      if (!confirm("Delete this issue permanently?")) return;
-      await store.removeIssue(issueId);
+    function requestDeleteIssue(issue) {
+      if (!issue?.id) return;
+      pendingDelete.value = {
+        type: "issue",
+        id: issue.id,
+        label: `"${sentenceCaseTask(issue.title || "issue")}"`,
+      };
+    }
+    function requestDeleteContent(row) {
+      if (!row?.id) return;
+      pendingDelete.value = {
+        type: "content",
+        id: row.id,
+        label: row.pipeline ? `${row.pipeline} artifact` : "artifact",
+      };
+    }
+    function dismissDelete() {
+      pendingDelete.value = null;
+    }
+    async function confirmDelete() {
+      const target = pendingDelete.value;
+      pendingDelete.value = null;
+      if (!target?.id) return;
+      if (target.type === "issue") await store.removeIssue(target.id);
+      if (target.type === "content") await store.removeContent(target.id);
     }
     const filteredIssues = computed(() => {
       const all = props.state.issues || [];
@@ -1598,6 +1949,15 @@ export default {
         done: "company-pill--success",
         cancelled: "company-pill--neutral",
       })[s] || "company-pill--neutral";
+    }
+    function sentenceCaseTask(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const lowered = text
+        .split(/\s+/)
+        .map((word) => (/^[A-Z0-9]{2,}$/.test(word.replace(/[^\p{L}\p{N}]/gu, "")) ? word : word.toLocaleLowerCase()))
+        .join(" ");
+      return lowered.charAt(0).toLocaleUpperCase() + lowered.slice(1);
     }
 
     // ─── Goals (parent of issues) — filters + grouping ──────────────
@@ -1629,6 +1989,63 @@ export default {
     const ungroupedIssues = computed(() =>
       (props.state.issues || []).filter((i) => !i.goalId),
     );
+    const kanbanColumnDefs = [
+      { id: "open", label: "Open", hint: "Goals ready to be decomposed and tasks waiting for a teammate.", icon: "radio_button_unchecked", statuses: ["open"] },
+      { id: "in_progress", label: "In Progress", hint: "Assigned work currently being handled by a role.", icon: "pending", statuses: ["in_progress"] },
+      { id: "blocked", label: "Blocked", hint: "Tasks that need intervention before they can move.", icon: "report", statuses: ["blocked"] },
+      { id: "done", label: "Done", hint: "Completed issues and finished goals.", icon: "check_circle", statuses: ["done"] },
+      { id: "cancelled", label: "Cancelled", hint: "Work intentionally stopped or superseded.", icon: "block", statuses: ["cancelled"] },
+    ];
+    function goalOnlyColumn(goal) {
+      if (goal.status === "completed") return "done";
+      if (goal.status === "cancelled") return "cancelled";
+      return "open";
+    }
+    function issueMatchesGoalStatus(issue) {
+      if (goalStatusFilter.value === "all") return true;
+      if (goalStatusFilter.value === "completed") return issue.status === "done";
+      if (goalStatusFilter.value === "cancelled") return issue.status === "cancelled";
+      return issue.status === "open" || issue.status === "in_progress" || issue.status === "blocked";
+    }
+    const kanbanColumns = computed(() => {
+      const items = [];
+      for (const goal of visibleGoals.value) {
+        const linkedIssues = issuesForGoal(goal.id);
+        if (!linkedIssues.length) {
+          items.push({
+            id: `goal-${goal.id}`,
+            type: "goal",
+            column: goalOnlyColumn(goal),
+            goal,
+          });
+          continue;
+        }
+        for (const issue of linkedIssues) {
+          items.push({
+            id: `issue-${issue.id}`,
+            type: "issue",
+            column: issue.status || "open",
+            goal,
+            issue,
+          });
+        }
+      }
+      if (goalSourceFilter.value === "all") {
+        for (const issue of ungroupedIssues.value.filter(issueMatchesGoalStatus)) {
+          items.push({
+            id: `issue-${issue.id}`,
+            type: "issue",
+            column: issue.status || "open",
+            goal: null,
+            issue,
+          });
+        }
+      }
+      return kanbanColumnDefs.map((column) => ({
+        ...column,
+        items: items.filter((item) => column.statuses.includes(item.column)),
+      }));
+    });
 
     // ─── New goal modal ────────────────────────────────────────────
     const goalModalOpen = ref(false);
@@ -1731,8 +2148,8 @@ export default {
       return `${(b / 1024 ** 3).toFixed(2)} GB`;
     }
     const poolUsedPct = computed(() => {
-      if (!pool.budgetBytes) return 0;
-      return Math.min(100, Math.round((pool.totalBytes / pool.budgetBytes) * 100));
+      if (!effectiveBudgetBytes.value) return 0;
+      return Math.min(100, Math.round((effectivePoolBytes.value / effectiveBudgetBytes.value) * 100));
     });
     const configuredRoleModels = computed(() => {
       const grouped = new Map();
@@ -1745,6 +2162,8 @@ export default {
           roles: [],
         };
         existing.roles.push(roleDisplayName(roleKey));
+        const spec = llmOptionsList.value.find((item) => item.key === key);
+        existing.sizeBytes = spec?.filesizeBytes || existing.sizeBytes || 0;
         grouped.set(key, existing);
       }
       return [...grouped.values()];
@@ -1752,6 +2171,20 @@ export default {
 
     const totalInFlight = computed(() =>
       pool.instances.reduce((acc, i) => acc + (i.inFlight || 0), 0),
+    );
+    const maxLlmSlots = computed(() =>
+      Math.max(1, Number(props.charter.execution?.llm?.maxConcurrent) || configuredRoleModels.value.length || 1),
+    );
+    const activeLlmSlots = computed(() =>
+      Math.min(maxLlmSlots.value, Math.max(totalInFlight.value, Object.keys(props.state.activeStreams || {}).length)),
+    );
+    const capacitySlots = computed(() => `${activeLlmSlots.value}/${maxLlmSlots.value}`);
+    const configuredModelBytes = computed(() =>
+      configuredRoleModels.value.reduce((acc, model) => acc + (model.sizeBytes || 0), 0),
+    );
+    const effectivePoolBytes = computed(() => pool.totalBytes || configuredModelBytes.value);
+    const effectiveBudgetBytes = computed(() =>
+      pool.budgetBytes || (Number(props.charter.execution?.llm?.memoryBudgetGB) || 22) * 1024 ** 3,
     );
 
     const subtabs = computed(() => [
@@ -1766,7 +2199,7 @@ export default {
       { value: "connectors", label: "Connectors", icon: "cable",
         badge: (props.state.connectorHealth?.needs_auth || 0) + (props.state.connectorHealth?.broken || 0) || null },
       { value: "audit", label: "Audit", icon: "list_alt" },
-      { value: "charter", label: "Charter", icon: "edit_note" },
+      { value: "charter", label: "Company Settings", icon: "edit_note" },
     ]);
 
     const filledRoles = computed(() =>
@@ -1863,7 +2296,7 @@ export default {
         label: "Strategy",
         icon: "psychology",
         state: props.charter.status === "active" ? "active" : "idle",
-        text: "CEO reads mission, treasury, connectors, and current goals.",
+        text: "CEO reads mission, treasury, connectors, goals.",
       },
       {
         label: "Delegation",
@@ -1875,7 +2308,7 @@ export default {
         label: "Execution",
         icon: "bolt",
         state: inProgressIssues.value.length ? "active" : "idle",
-        text: inProgressIssues.value.length ? `${inProgressIssues.value.length} tasks in progress.` : "Roles wake on heartbeat or manual run.",
+        text: inProgressIssues.value.length ? `${inProgressIssues.value.length} tasks in progress.` : "Roles wake on cadence or Ping.",
       },
       {
         label: "Governance",
@@ -1887,7 +2320,7 @@ export default {
         label: "Proof",
         icon: "receipt_long",
         state: recentProof.value ? "active" : "idle",
-        text: "Every action writes an audit trail and, when relevant, a receipt.",
+        text: "Every action writes audit proof and receipts.",
       },
     ]);
     const commandRoles = computed(() =>
@@ -2016,6 +2449,13 @@ export default {
       if (row.shareLink) return row.shareLink;
       return "Artifact recorded. Payload is stored externally or was not returned by the connector.";
     }
+    function deliverableDisplay(row) {
+      if (!row) return "";
+      if (typeof row.payload === "string") return row.payload;
+      if (row.blobId) return `${row.pipeline || "media"} artifact saved as ${row.blobExt || "blob"} (${row.blobId})`;
+      if (row.shareLink) return row.shareLink;
+      return deliverableBody(row);
+    }
     function truncate(s, n) {
       if (!s) return "";
       return s.length > n ? `${s.slice(0, n - 1)}…` : s;
@@ -2054,10 +2494,7 @@ export default {
       if (!confirm("Clear all deliverables? Audit, goals, and treasury stay intact.")) return;
       await store.clearCatalog();
     }
-    async function removeContent(id) {
-      if (!confirm("Delete this produced artifact from the catalog?")) return;
-      await store.removeContent(id);
-    }
+    async function removeContent(id) { await store.removeContent(id); }
     async function clearAuditConfirm() {
       if (!props.state.audit.length) return;
       if (!confirm("Clear the audit log? Goals, catalog, and treasury stay intact.")) return;
@@ -2077,7 +2514,26 @@ export default {
       manual.amount = 0; manual.memo = "";
     }
     async function copy(text) {
-      try { await navigator.clipboard.writeText(text); } catch {}
+      const value = String(text || "");
+      if (!value) return;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+          return;
+        }
+      } catch {}
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.select();
+      try { document.execCommand("copy"); }
+      finally { document.body.removeChild(area); }
+    }
+    async function copyDeliverable(row) {
+      await copy(deliverableBody(row));
     }
     function deliverableFilename(row) {
       const ts = row?.createdAt ? new Date(row.createdAt).toISOString().slice(0, 19).replace(/[:T]/g, "-") : Date.now();
@@ -2110,6 +2566,14 @@ export default {
     async function runCEO() {
       await store.tickNow();
     }
+    function auditActionLabel(row) {
+      if (row?.action === "tickCEO") return "Ping CEO";
+      if (row?.action === "tickRole" || row?.action === "tickRoles") return "Ping role";
+      if (row?.action === "createGoal") return "Create goal";
+      if (row?.action === "createIssue") return "Create issue";
+      if (row?.action === "publishContent") return "Produce deliverable";
+      return String(row?.action || "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^issue\./, "Issue ");
+    }
     async function toggleExecution() {
       if (props.charter.status === "active") await store.pause(props.charter.id);
       else await store.resume(props.charter.id);
@@ -2125,11 +2589,6 @@ export default {
       a.click();
       URL.revokeObjectURL(url);
     }
-    async function dissolveCompany() {
-      if (!confirm(`Permanently delete "${props.charter.name}"?\n\nThis wipes its charter, treasury, catalog, and audit log.`)) return;
-      await store.dissolve(props.charter.id);
-    }
-
     return {
       store, active, subtabs, manual,
       charterDraft, charterBusy, companyDisplayName, saveCharter, resetCharterDraft,
@@ -2139,30 +2598,36 @@ export default {
       visibleGoals, catalogRows, visibleCatalogRows, visibleApprovals, visibleAuditEntries,
       catalogColumns, treasuryColumns, auditColumns,
       companionName, roleDisplayName, llmLabel, pipelineLabel, skillShortName, fmtMoney, fmtCount, fmtTime,
+      roleConnectorCount, roleSkillCount, auditActionLabel,
       approve, reject, approveAll, rejectAll,
-      clearCatalog, removeContent, downloadDeliverable,
+      clearCatalog, removeContent, requestDeleteIssue, requestDeleteContent,
+      pendingDelete, dismissDelete, confirmDelete,
+      downloadDeliverable, copyDeliverable,
       clearAuditConfirm,
       recordRevenue, recordSpend, copy, toggleDemoMode,
-      toggleExecution, exportCompany, dissolveCompany,
+      toggleExecution, exportCompany,
       // pool
-      pool, refreshPool, fmtBytes, poolUsedPct, totalInFlight, configuredRoleModels,
+      pool, refreshPool, fmtBytes, poolUsedPct, totalInFlight, capacitySlots, configuredRoleModels,
       // issues
-      issueDraft, issueFilter, issueBusy, filteredIssues,
-      submitIssue, setIssueStatus, reopenIssue, removeIssue,
+      issueDraft, issueFilter, issueBusy, issueModalOpen, filteredIssues,
+      openNewIssueModal, closeNewIssueModal,
+      submitIssue, setIssueStatus, reopenIssue,
       priorityClass, statusClass,
+      sentenceCaseTask,
       // goals
-      goalSourceFilter, goalStatusFilter, filteredGoals, ungroupedIssues,
+      goalSourceFilter, goalStatusFilter, filteredGoals, ungroupedIssues, kanbanColumns,
       issuesForGoal, goalProgress, goalStatusClass,
       goalModalOpen, goalBusy, goalDraft,
       openNewGoalModal, closeNewGoalModal, addGoalTask, removeGoalTask,
       submitNewGoal, cancelGoal,
       // command center
       operatingMetrics, operatingLoop, commandRoles, workStack, operatingModel,
-      latestProduced, outputPreview,
+      latestProduced, outputPreview, deliverableDisplay,
       connectorRisk, runCEO,
       // role-edit modal
       editingRoleKey, editDraft, editBusy,
-      companionList, llmOptionsList, mediaPipelineOptions, availableRoleOptions, rolePickerOptions, defaultBudgetForRole,
+      companionList, llmOptionsList, mediaPipelineOptions, roleConnectorOptions, roleCapabilityOptions, availableRoleOptions, rolePickerOptions, defaultBudgetForRole,
+      toggleRoleConnector, toggleRoleSkill, skillConnectorSummary, skillNeedsConnector,
       openRoleEdit, closeRoleEdit, saveRoleEdit, fireRole,
     };
   },
@@ -2175,7 +2640,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
+  background: var(--bz-border);
 }
 .material-symbols-outlined {
   font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
@@ -2187,20 +2652,21 @@ hr {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) 132px;
+  grid-template-rows: auto auto minmax(260px, 1fr) clamp(156px, 16vh, 190px);
   gap: var(--bz-space-3);
   overflow: hidden;
 }
 
 .company-cockpit {
   display: grid;
-  grid-template-columns: minmax(320px, 0.88fr) minmax(420px, 1.12fr);
+  grid-template-columns: minmax(300px, 0.72fr) minmax(460px, 1.28fr);
   gap: var(--bz-space-4);
   align-items: stretch;
   padding: var(--bz-space-4);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r);
-  background: var(--bz-card);
+  background: color-mix(in srgb, var(--bz-card) 92%, transparent);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.18);
 }
 .company-cockpit__identity { min-width: 0; }
 .company-cockpit__title {
@@ -2232,6 +2698,10 @@ hr {
 .company-cockpit__actions {
   justify-content: flex-end;
   margin-top: auto;
+}
+.company-mode-button {
+  min-width: 150px;
+  justify-content: center;
 }
 .company-demo-pill {
   display: inline-flex;
@@ -2340,7 +2810,42 @@ hr {
 }
 
 .company-subtabs {
+  width: 100%;
   margin-bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: var(--bz-space-2);
+}
+.company-subtabs :deep(.bz-mode-chip) {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  justify-content: center;
+  padding: 0 var(--bz-space-3);
+  border-radius: var(--bz-r-sm);
+  background: color-mix(in srgb, var(--bz-canvas) 86%, transparent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.company-subtabs :deep(.bz-mode-chip--compact) {
+  height: 42px;
+  font-size: 12px;
+}
+.company-subtabs :deep(.bz-mode-chip--on) {
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-purple-300);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bz-purple-300) 28%, transparent);
+}
+.company-subtabs :deep(.bz-mode-chip__label) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.company-subtabs :deep(.material-symbols-outlined) {
+  flex: 0 0 auto;
+  font-size: 19px !important;
 }
 .company-dashboard-shell {
   min-height: 0;
@@ -2367,6 +2872,72 @@ hr {
   font-size: 20px !important;
   line-height: 1;
   text-align: left !important;
+}
+.bz-image-delete-toast {
+  position: fixed;
+  right: max(var(--bz-space-5), env(safe-area-inset-right));
+  bottom: max(var(--bz-space-5), env(safe-area-inset-bottom));
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  max-width: min(460px, calc(100vw - 32px));
+  padding: var(--bz-space-3);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  box-shadow: var(--bz-shadow-lg);
+  color: var(--bz-fg);
+}
+.bz-image-delete-toast .material-symbols-outlined {
+  font-size: 18px !important;
+  color: var(--bz-danger);
+}
+.bz-image-delete-toast__body {
+  min-width: 0;
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bz-image-delete-toast__ghost,
+.bz-image-delete-toast__danger {
+  height: 30px;
+  border-radius: var(--bz-r-sm);
+  padding: 0 var(--bz-space-3);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+}
+.bz-image-delete-toast__ghost {
+  background: transparent;
+  border: 1px solid var(--bz-border);
+  color: var(--bz-fg-mid);
+}
+.bz-image-delete-toast__ghost:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+.bz-image-delete-toast__danger {
+  background: var(--bz-danger-soft);
+  border: 1px solid var(--bz-danger-soft);
+  color: var(--bz-danger);
+  font-weight: 700;
+}
+.bz-image-delete-toast__danger:hover {
+  filter: brightness(1.08);
+}
+.bz-image-toast-enter-active,
+.bz-image-toast-leave-active {
+  transition:
+    opacity var(--bz-dur-base) var(--bz-ease-out),
+    transform var(--bz-dur-base) var(--bz-ease-out);
+}
+.bz-image-toast-enter-from,
+.bz-image-toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 .llm-rail__stats,
 .llm-strip__stats {
@@ -2445,20 +3016,62 @@ hr {
 .rail-error {
   display: flex;
   gap: var(--bz-space-2);
-  color: var(--bz-danger);
+  align-items: flex-start;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-warning);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-warning-soft);
+  color: var(--bz-fg-mid);
+}
+.rail-error .material-symbols-outlined {
+  color: var(--bz-warning);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+}
+.rail-error strong,
+.rail-error span {
+  display: block;
+}
+.rail-error strong {
+  margin-bottom: 2px;
+  color: var(--bz-fg);
+  font-family: var(--bz-font-ui);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .company-telemetry-bar {
-  height: 132px;
+  height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(290px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(440px, 0.9fr) minmax(0, 1.6fr);
   gap: var(--bz-space-3);
-  overflow: hidden;
+  overflow: visible;
 }
 .llm-strip {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+.llm-strip .rail-panel__head {
+  margin-bottom: var(--bz-space-2);
+}
+.llm-strip__stats {
+  min-height: 0;
+}
+.llm-strip__stats > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.llm-strip__instances {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bz-border-strong) transparent;
 }
 
 /* ───────── Panels ───────── */
@@ -2481,6 +3094,9 @@ hr {
   justify-content: space-between;
   gap: var(--bz-space-3);
   margin-bottom: var(--bz-space-3);
+}
+.section-head--stack {
+  align-items: flex-start;
 }
 .section-head__hint {
   flex: 1;
@@ -2539,9 +3155,56 @@ hr {
   color: var(--bz-fg);
   font-family: var(--bz-font-ui);
 }
-.charter-editor {
+.charter-editor,
+.charter-studio {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+.charter-studio {
+  grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
+  align-items: start;
+}
+.charter-card {
+  min-width: 0;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.charter-card--identity {
+  grid-row: span 3;
+}
+.charter-card--execution {
+  grid-column: 2;
+}
+.charter-card__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--bz-space-3);
+  margin-bottom: var(--bz-space-4);
+}
+.charter-card__head .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+}
+.charter-card__head h3 {
+  margin: 0 !important;
+  color: var(--bz-fg) !important;
+  font-size: 20px !important;
+  line-height: 1;
+  text-align: left !important;
+}
+.charter-card__head p {
+  margin: var(--bz-space-1) 0 0 !important;
+  color: var(--bz-fg-low) !important;
+  font-size: 12px !important;
+  line-height: 1.45;
+  text-align: left !important;
+}
+.charter-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--bz-space-3);
 }
 .charter-field {
@@ -2558,6 +3221,14 @@ hr {
 }
 .charter-field--wide {
   grid-column: 1 / -1;
+}
+.charter-field .input,
+.charter-field .textarea,
+.charter-field .company-admin-select {
+  margin-top: var(--bz-space-1);
+}
+.charter-field .textarea {
+  min-height: 220px;
 }
 .charter-actions {
   display: flex;
@@ -2620,7 +3291,8 @@ hr {
 }
 .command-metric {
   min-width: 0;
-  padding: var(--bz-space-2);
+  min-height: 58px;
+  padding: var(--bz-space-3);
   background: var(--bz-canvas);
   border: 1px solid var(--bz-border);
   border-radius: 4px;
@@ -2637,7 +3309,7 @@ hr {
   display: block;
   margin: 0.15em 0;
   color: var(--bz-fg);
-  font-size: 20px;
+  font-size: 22px;
   line-height: 1.05;
   overflow-wrap: anywhere;
 }
@@ -2653,7 +3325,7 @@ hr {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.75em;
   padding: 1em;
-  background: var(--bz-card);
+  background: color-mix(in srgb, var(--bz-card) 92%, transparent);
   border: 1px solid var(--bz-border);
   border-radius: 4px;
 }
@@ -2689,8 +3361,11 @@ hr {
 .loop-step__text {
   margin-top: 0.35em;
   color: var(--bz-fg-mid);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ops-grid {
@@ -2701,7 +3376,7 @@ hr {
 .ops-panel {
   min-width: 0;
   padding: 1.25em;
-  background: var(--bz-card);
+  background: color-mix(in srgb, var(--bz-card) 92%, transparent);
   border: 1px solid var(--bz-border);
   border-radius: 4px;
 }
@@ -2875,6 +3550,119 @@ hr {
   overflow: hidden;
   padding: var(--bz-space-2);
 }
+.deliverable-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: var(--bz-space-3);
+}
+.deliverable-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.deliverable-card__meta,
+.deliverable-card__footer,
+.deliverable-card__money,
+.deliverable-card__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+.deliverable-card__meta,
+.deliverable-card__money {
+  color: var(--bz-fg-low);
+  font-size: 12px;
+}
+.catalog-output--full {
+  width: 100%;
+  min-height: 190px;
+  max-height: 360px;
+  overflow: auto;
+  padding: var(--bz-space-4);
+}
+.deliverable-markdown {
+  font-family: var(--bz-font-ui);
+  color: var(--bz-fg);
+  white-space: normal;
+}
+.deliverable-markdown :deep(p),
+.deliverable-markdown :deep(ul),
+.deliverable-markdown :deep(ol),
+.deliverable-markdown :deep(blockquote) {
+  margin: 0 0 0.85em;
+  color: var(--bz-fg-mid);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.deliverable-markdown :deep(h1),
+.deliverable-markdown :deep(h2),
+.deliverable-markdown :deep(h3),
+.deliverable-markdown :deep(h4) {
+  margin: 0 0 0.55em;
+  color: var(--bz-fg);
+  font-family: "Fira Sans Condensed", var(--bz-font-ui);
+  font-weight: 900;
+  line-height: 1.08;
+  text-transform: uppercase;
+}
+.deliverable-markdown :deep(h1) { font-size: 25px; }
+.deliverable-markdown :deep(h2) { font-size: 21px; }
+.deliverable-markdown :deep(h3) { font-size: 18px; }
+.deliverable-markdown :deep(ul),
+.deliverable-markdown :deep(ol) {
+  padding-left: 1.2em;
+}
+.deliverable-markdown :deep(li + li) {
+  margin-top: 0.35em;
+}
+.deliverable-markdown :deep(code) {
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--bz-border);
+  border-radius: 4px;
+  background: var(--bz-card);
+  color: var(--bz-fg);
+  font-family: "Fira Code", "JetBrains Mono", "SF Mono", monospace;
+  font-size: 0.88em;
+}
+.deliverable-markdown :deep(pre) {
+  overflow: auto;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+}
+.deliverable-markdown :deep(pre code) {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.deliverable-card__prompt {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-mid);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.deliverable-card__prompt .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+  font-size: 18px;
+}
+.deliverable-card__footer {
+  justify-content: space-between;
+  margin-top: auto;
+}
+.deliverable-card__actions {
+  justify-content: flex-end;
+}
 .proof-card__prompt {
   margin: var(--bz-space-3) 0 0 !important;
   color: var(--bz-fg-low) !important;
@@ -2896,8 +3684,16 @@ hr {
   .company-cockpit,
   .company-telemetry-bar,
   .company-admin-grid,
-  .charter-editor {
+  .charter-editor,
+  .charter-studio {
     grid-template-columns: 1fr;
+  }
+  .company-subtabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .company-telemetry-bar {
+    height: auto;
+    min-height: 248px;
   }
   .company-cockpit__metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2913,6 +3709,14 @@ hr {
   .command-center__metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .work-kanban {
+    grid-template-columns: repeat(5, minmax(260px, 1fr));
+    overflow-x: auto;
+    padding-bottom: var(--bz-space-2);
+  }
+  .kanban-column__lane {
+    max-height: 540px;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2925,6 +3729,12 @@ hr {
   .section-head {
     align-items: stretch;
     flex-direction: column;
+  }
+  .deliverable-board {
+    grid-template-columns: 1fr;
+  }
+  .company-subtabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -3018,17 +3828,28 @@ hr {
   -webkit-text-fill-color: var(--bz-warning) !important;
 }
 
-.org-card__grants {
+.org-card__grants,
+.org-card__capability-summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.3em;
   margin-top: 0.4em;
 }
-.org-card__grants .material-symbols-outlined {
+.org-card__grants .material-symbols-outlined,
+.org-card__capability-summary .material-symbols-outlined {
   font-size: 14px;
   color: var(--bz-purple-300);
   margin-right: 0.2em;
+  -webkit-text-fill-color: currentColor;
+  background: none;
+}
+.org-card__capability-summary {
+  color: var(--bz-fg-mid);
+  font-size: 0.78em;
+}
+.org-card__capability-dot {
+  color: var(--bz-fg-low);
 }
 .org-card__grant-tag {
   font-size: 0.7em;
@@ -3360,6 +4181,152 @@ hr {
   color: var(--bz-fg-low);
   margin-right: 0.25em;
 }
+.work-kanban {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(220px, 1fr));
+  gap: var(--bz-space-3);
+  align-items: stretch;
+}
+.kanban-column {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  overflow: hidden;
+}
+.kanban-column__head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--bz-space-2);
+  align-items: start;
+  padding: var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+  background: var(--bz-card);
+}
+.kanban-column__head .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+  font-size: 21px;
+}
+.kanban-column__head h3 {
+  margin: 0 !important;
+  color: var(--bz-fg) !important;
+  font-size: 17px !important;
+  line-height: 1;
+  text-align: left !important;
+}
+.kanban-column__head p {
+  margin: 0.35em 0 0 !important;
+  color: var(--bz-fg-low) !important;
+  font-size: 11px !important;
+  line-height: 1.35;
+  text-align: left !important;
+}
+.kanban-column__count {
+  min-width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--bz-border);
+  border-radius: 4px;
+  color: var(--bz-fg);
+  background: var(--bz-canvas);
+  font-size: 16px;
+  line-height: 1;
+}
+.kanban-column__lane {
+  min-height: 360px;
+  max-height: min(62vh, 720px);
+  overflow: auto;
+  padding: var(--bz-space-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--bz-border-strong) transparent;
+}
+.kanban-card {
+  min-width: 0;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+}
+.kanban-card + .kanban-card {
+  margin-top: var(--bz-space-2);
+}
+.kanban-card--goal {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+}
+.kanban-card__meta,
+.kanban-card__foot,
+.kanban-card__actions,
+.kanban-card__progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+.kanban-card__meta {
+  margin-bottom: var(--bz-space-2);
+}
+.kanban-card__goal {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  margin-bottom: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.kanban-card__goal .material-symbols-outlined,
+.kanban-card__role .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+  font-size: 16px;
+}
+.kanban-card__title {
+  margin: 0 !important;
+  color: var(--bz-fg) !important;
+  font-size: 18px !important;
+  line-height: 1.05;
+  text-align: left !important;
+}
+.kanban-card__copy {
+  margin: var(--bz-space-2) 0 0 !important;
+  color: var(--bz-fg-mid) !important;
+  font-size: 12px !important;
+  line-height: 1.45;
+  text-align: left !important;
+}
+.kanban-card__foot {
+  justify-content: space-between;
+  margin-top: var(--bz-space-3);
+  color: var(--bz-fg-low);
+  font-size: 11px;
+}
+.kanban-card__role {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+}
+.kanban-card__progress {
+  margin-top: var(--bz-space-3);
+  color: var(--bz-fg-low);
+  font-size: 11px;
+}
+.kanban-card__progress .goal-progress-bar {
+  min-width: 80px;
+}
+.kanban-card__actions {
+  justify-content: flex-end;
+  margin-top: var(--bz-space-3);
+}
 
 .goal-list {
   display: flex;
@@ -3477,6 +4444,19 @@ hr {
 .goal-modal__task .input { flex: 2; min-width: 0; }
 .goal-modal__task .select { flex: 1; min-width: 130px; }
 .goal-modal__task .select select { width: 100%; }
+.issue-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+}
+.goal-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+}
+.goal-modal__field .goal-modal__label {
+  margin-bottom: 0;
+}
 
 /* ───────── Issues ───────── */
 .issue-form { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 0.5em; }
@@ -3690,12 +4670,26 @@ code {
   font-style: italic;
   margin-left: 0.4em;
 }
-.pipeline-checks {
+.pipeline-checks,
+.capability-checks,
+.connector-checks {
   display: flex;
   flex-wrap: wrap;
   gap: var(--bz-space-2);
 }
-.pipeline-check {
+.connector-checks {
+  max-height: 190px;
+  overflow: auto;
+  padding-right: var(--bz-space-1);
+}
+.capability-checks {
+  max-height: 230px;
+  overflow: auto;
+  padding-right: var(--bz-space-1);
+}
+.pipeline-check,
+.capability-check,
+.connector-check {
   display: inline-flex;
   align-items: center;
   gap: 0.45em;
@@ -3708,12 +4702,77 @@ code {
   font-size: var(--bz-size-meta);
   font-weight: 700;
 }
-.pipeline-check input { display: none; }
-.pipeline-check .material-symbols-outlined { font-size: 16px !important; }
-.pipeline-check.is-on {
+.capability-check {
+  align-items: flex-start;
+  width: min(240px, 100%);
+  padding: 0.65em 0.75em;
+}
+.connector-check {
+  align-items: flex-start;
+  width: min(220px, 100%);
+  padding: 0.65em 0.75em;
+}
+.pipeline-check input,
+.capability-check input,
+.connector-check input { display: none; }
+.pipeline-check .material-symbols-outlined,
+.connector-check .material-symbols-outlined { font-size: 16px !important; }
+.pipeline-check.is-on,
+.capability-check.is-on,
+.connector-check.is-on {
   background: var(--bz-control-selected-bg);
   border-color: var(--bz-control-selected-border);
   color: var(--bz-control-selected-fg);
+}
+.connector-check.needs-auth:not(.is-on) {
+  border-color: var(--bz-warning-soft);
+}
+.skill-check.needs-connector:not(.is-on) {
+  border-color: color-mix(in srgb, var(--bz-warning) 34%, var(--bz-border));
+}
+.capability-check__main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.capability-check__main strong {
+  color: var(--bz-fg);
+  font-size: 13px;
+  line-height: 1.15;
+}
+.capability-check__main small {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.skill-check__requires {
+  color: var(--bz-fg-low);
+  font-family: "Fira Sans", sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.skill-check.is-on .skill-check__requires {
+  color: var(--bz-fg-mid);
+}
+.connector-check__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.connector-check__copy strong {
+  color: var(--bz-fg);
+  font-size: 13px;
+  line-height: 1.15;
+}
+.connector-check__copy small {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .role-modal__actions {
   display: flex;
