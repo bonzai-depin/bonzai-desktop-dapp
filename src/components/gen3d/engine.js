@@ -2786,7 +2786,18 @@ export function makeLibs({ THREE, addUpdateCallback }) {
     async init(opts = {}) {
       if (!_rapier) {
         const mod = await import('@dimforge/rapier3d-compat');
-        await mod.init();
+        const warn = console.warn;
+        console.warn = (...args) => {
+          const msg = String(args[0] || '');
+          if (!msg.includes('using deprecated parameters for the initialization function')) {
+            warn(...args);
+          }
+        };
+        try {
+          await mod.init({});
+        } finally {
+          console.warn = warn;
+        }
         _rapier = mod;
       }
       const g = opts.gravity != null

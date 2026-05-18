@@ -449,9 +449,9 @@
                           <span
                             v-for="g in genreOptions"
                             :key="g"
-                            class="skill-chip is-clickable"
+                            class="tag skill-chip is-clickable"
                             :class="
-                              selectedGenres.includes(g) ? 'bz-btn--primary' : 'is-dark'
+                              selectedGenres.includes(g) ? 'is-info' : 'is-dark'
                             "
                             @click="toggleDimension('genre', g)"
                           >
@@ -472,10 +472,10 @@
                           <span
                             v-for="m in moodOptions"
                             :key="m"
-                            class="skill-chip is-clickable"
+                            class="tag skill-chip is-clickable"
                             :class="
                               selectedMoods.includes(m)
-                                ? 'bz-btn--warning'
+                                ? 'is-warning'
                                 : 'is-dark'
                             "
                             @click="toggleDimension('mood', m)"
@@ -496,10 +496,10 @@
                           <span
                             v-for="i in instrumentOptions"
                             :key="i"
-                            class="skill-chip is-clickable"
+                            class="tag skill-chip is-clickable"
                             :class="
                               selectedInstruments.includes(i)
-                                ? 'bz-btn--success'
+                                ? 'is-success'
                                 : 'is-dark'
                             "
                             @click="toggleDimension('instrument', i)"
@@ -521,7 +521,7 @@
                           <span
                             v-for="v in vocalOptions"
                             :key="v"
-                            class="skill-chip is-clickable"
+                            class="tag skill-chip is-clickable"
                             :class="
                               selectedVocals.includes(v) ? 'is-link' : 'is-dark'
                             "
@@ -543,7 +543,7 @@
                           <span
                             v-for="p in productionOptions"
                             :key="p"
-                            class="skill-chip is-clickable"
+                            class="tag skill-chip is-clickable"
                             :class="
                               selectedProduction.includes(p)
                                 ? 'is-primary'

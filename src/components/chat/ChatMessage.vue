@@ -51,6 +51,16 @@
 
     <div class="bz-msg__actions">
       <button
+        v-if="role === 'assistant'"
+        type="button"
+        class="bz-msg__action"
+        title="Inspect"
+        aria-label="Open inspector"
+        @click="$emit('inspect')"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">info</span>
+      </button>
+      <button
         v-if="role === 'user'"
         type="button"
         class="bz-msg__action"
@@ -102,16 +112,6 @@
         <span class="material-symbols-outlined" aria-hidden="true">
           {{ copied ? 'check' : 'content_copy' }}
         </span>
-      </button>
-      <button
-        v-if="role === 'assistant'"
-        type="button"
-        class="bz-msg__action"
-        title="Inspect"
-        aria-label="Open inspector"
-        @click="$emit('inspect')"
-      >
-        <span class="material-symbols-outlined" aria-hidden="true">info</span>
       </button>
       <button
         type="button"

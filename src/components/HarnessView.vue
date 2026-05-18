@@ -3,10 +3,11 @@
     <header class="harness-hero">
       <div>
         <p class="bz-eyebrow">Harness</p>
-        <h1 class="bz-h1 fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined bz-title-icon" aria-hidden="true">device_hub</span>
-          Gateway Control
-        </h1>
+        <h1 class="bz-display">Gateway control</h1>
+        <p class="harness-hero__copy">
+          OpenClaw and Hermes expose BonzAI to messaging apps, external tools,
+          local skills, model control, minting, and peer-to-peer routing.
+        </p>
       </div>
       <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="refreshAll">
         <span class="material-symbols-outlined" :class="{ spinning: refreshing }">sync</span>
@@ -14,17 +15,21 @@
       </button>
     </header>
 
-    <section class="harness-grid">
-      <article v-for="gateway in gateways" :key="gateway.id" class="harness-card">
-        <div class="harness-card__head">
-          <span class="material-symbols-outlined">{{ gateway.icon }}</span>
+    <section class="harness-status-grid" aria-label="Gateway status">
+      <article v-for="gateway in gateways" :key="gateway.id" class="harness-gateway">
+        <div class="harness-gateway__head">
           <div>
-            <h2 class="bz-h3">{{ gateway.name }}</h2>
+            <p class="bz-eyebrow">{{ gateway.id }}</p>
+            <h2 class="bz-h2 fira-sans-condensed-black-italic">{{ gateway.name }}</h2>
             <p>{{ gateway.desc }}</p>
           </div>
           <span class="harness-status" :class="gateway.enabled ? 'is-on' : gateway.installed ? 'is-muted' : 'is-off'">
             {{ gateway.installed ? (gateway.enabled ? "Enabled" : "Installed") : "Not installed" }}
           </span>
+        </div>
+        <div class="harness-gateway__meta">
+          <span class="bz-mono">{{ gateway.port }}</span>
+          <span>{{ gateway.protocol }}</span>
         </div>
         <button
           class="bz-btn bz-btn--sm fira-sans-condensed-black-italic"
@@ -38,42 +43,40 @@
       </article>
     </section>
 
-    <section class="harness-panel">
-      <div class="section-head">
-        <h2 class="panel-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">terminal</span>
-          Commands
-        </h2>
-        <p class="section-head__hint">Commands are available from OpenClaw and Hermes messaging sessions once the integration is enabled.</p>
+    <section class="harness-runtime">
+      <div class="runtime-item">
+        <span>OpenAI-compatible API</span>
+        <strong class="bz-mono">localhost:3002</strong>
       </div>
-      <div class="command-grid">
-        <div v-for="cmd in commands" :key="cmd.name" class="command-row">
-          <code>{{ cmd.name }}</code>
-          <span>{{ cmd.desc }}</span>
-        </div>
+      <div class="runtime-item">
+        <span>Loaded LLM</span>
+        <strong>{{ llama.running ? llama.modelName || "Running" : "Not loaded" }}</strong>
+      </div>
+      <div class="runtime-item">
+        <span>P2P node</span>
+        <strong>{{ p2p.started ? `${p2p.connectedPeers || 0} peers` : "Private / offline" }}</strong>
       </div>
     </section>
 
     <section class="harness-panel">
-      <div class="section-head">
-        <h2 class="panel-title fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">route</span>
-          Runtime
-        </h2>
+      <div class="harness-section-head">
+        <div>
+          <p class="bz-eyebrow">Command surface</p>
+          <h2 class="bz-h1 fira-sans-condensed-black-italic">Messaging commands</h2>
+        </div>
+        <p>Use <code>!bonzai</code> in OpenClaw channels or <code>/bonzai</code> in Hermes.</p>
       </div>
-      <div class="runtime-grid">
-        <div class="runtime-item">
-          <span>OpenAI-compatible API</span>
-          <strong>localhost:3002</strong>
-        </div>
-        <div class="runtime-item">
-          <span>Loaded LLM</span>
-          <strong>{{ llama.running ? llama.modelName || "Running" : "Not loaded" }}</strong>
-        </div>
-        <div class="runtime-item">
-          <span>P2P node</span>
-          <strong>{{ p2p.started ? `${p2p.connectedPeers || 0} peers` : "Private / offline" }}</strong>
-        </div>
+
+      <div class="command-groups">
+        <article v-for="group in commandGroups" :key="group.title" class="command-group">
+          <h3 class="bz-h2 fira-sans-condensed-black-italic">{{ group.title }}</h3>
+          <div class="command-list">
+            <div v-for="cmd in group.items" :key="cmd.name" class="command-row">
+              <code>{{ cmd.name }}</code>
+              <span>{{ cmd.desc }}</span>
+            </div>
+          </div>
+        </article>
       </div>
     </section>
   </div>
@@ -89,17 +92,75 @@ const llama = reactive({ running: false, modelName: "", port: null });
 const p2p = reactive({ started: false, connectedPeers: 0 });
 
 const gateways = computed(() => [
-  { id: "openclaw", name: "OpenClaw", icon: "forum", desc: "WhatsApp, Telegram, Discord, and Mattermost gateway.", ...openclaw },
-  { id: "hermes", name: "Hermes", icon: "psychology", desc: "Agent command surface and local BonzAI skill bridge.", ...hermes },
+  { id: "openclaw", name: "OpenClaw", port: "18789", protocol: "Messaging webhook", desc: "WhatsApp, Telegram, Discord, and Mattermost gateway.", ...openclaw },
+  { id: "hermes", name: "Hermes", port: "/bonzai", protocol: "Structured command bridge", desc: "Agent command surface and local BonzAI skill bridge.", ...hermes },
 ]);
 
-const commands = [
-  { name: "!status", desc: "Show the current session, loaded model, and gateway state." },
-  { name: "!help", desc: "List available BonzAI commands inside the messaging client." },
-  { name: "!network status", desc: "Inspect P2P mode, node status, and provider routing." },
-  { name: "!mint status", desc: "Check collectible minting status for the current session." },
-  { name: "/v1/chat/completions", desc: "OpenAI-compatible LLM endpoint for external tools." },
-  { name: "/webhook", desc: "OpenClaw/Hermes webhook entry for multimodal companion requests." },
+const commandGroups = [
+  {
+    title: "Session",
+    items: [
+      { name: "!bonzai status", desc: "Show companion, scenario, content level, model, media toggles, and network mode." },
+      { name: "!bonzai help", desc: "List the full command menu in the current messaging client." },
+      { name: "!bonzai reset", desc: "Clear conversation history and restore the pre-roleplay model." },
+      { name: "!bonzai models", desc: "List available LLM models." },
+    ],
+  },
+  {
+    title: "Model",
+    items: [
+      { name: "!bonzai model <name>", desc: "Load a specific local LLM." },
+      { name: "!bonzai model restore", desc: "Restore the model that was loaded before companion chat." },
+      { name: "/v1/chat/completions", desc: "OpenAI-compatible endpoint for external tools." },
+      { name: "/webhook", desc: "Webhook entry for OpenClaw and Hermes requests." },
+    ],
+  },
+  {
+    title: "Roleplay",
+    items: [
+      { name: "!bonzai companion list", desc: "List available companions." },
+      { name: "!bonzai companion select <name>", desc: "Bind a companion to the current channel." },
+      { name: "!bonzai scenario list", desc: "List available scenarios." },
+      { name: "!bonzai scenario select <name>", desc: "Set the current scene." },
+      { name: "!bonzai settings <audio|images|video|music> <on|off>", desc: "Toggle multimodal generation per channel." },
+      { name: "!bonzai settings level <pg|pg13|mature|adult>", desc: "Set the content level." },
+    ],
+  },
+  {
+    title: "Generation",
+    items: [
+      { name: "!bonzai generate image <prompt>", desc: "Fast image generation with FLUX Klein." },
+      { name: "!bonzai generate image_quality <prompt>", desc: "Quality image generation with Z-Image Turbo." },
+      { name: "!bonzai generate image_standard <prompt>", desc: "Standard SDXL image generation." },
+      { name: "!bonzai generate video <prompt>", desc: "Video generation with LTX-2." },
+      { name: "!bonzai generate audio <text>", desc: "Fast TTS." },
+      { name: "!bonzai generate audio_quality <text>", desc: "Quality Qwen TTS." },
+      { name: "!bonzai generate music <prompt>", desc: "Music generation with ACE-Step." },
+      { name: "!bonzai generate vision", desc: "Analyze the attached image with Qwen3-VL." },
+    ],
+  },
+  {
+    title: "Ownership and skills",
+    items: [
+      { name: "!bonzai mint bare [gender]", desc: "Mint a bare companion NFT." },
+      { name: "!bonzai mint companion <name>", desc: "Mint a complete companion." },
+      { name: "!bonzai mint status", desc: "Check minting status and owned companions." },
+      { name: "!bonzai mint finalize <tokenId>", desc: "Finalize a bare companion." },
+      { name: "!bonzai skill list [category]", desc: "List BonzAI skills." },
+      { name: "!bonzai skill info <id>", desc: "Show skill details." },
+      { name: "!bonzai skill run <id> [inputs]", desc: "Execute a skill." },
+    ],
+  },
+  {
+    title: "Autonomy and network",
+    items: [
+      { name: "!bonzai autonomous on|off", desc: "Toggle autonomous mode." },
+      { name: "!bonzai autonomous status", desc: "Show current autonomous configuration." },
+      { name: "!bonzai autonomous config <setting> <value>", desc: "Configure idle, interval, or max behavior." },
+      { name: "!bonzai network", desc: "Show mode, providers, pipelines, and peer routing." },
+      { name: "!bonzai mode", desc: "Alias for network status." },
+    ],
+  },
 ];
 
 async function refreshAll() {
@@ -138,74 +199,174 @@ onMounted(refreshAll);
 .harness-view {
   overflow-y: auto;
   padding: var(--bz-space-6);
-  gap: var(--bz-space-5);
-}
-.harness-hero,
-.harness-card,
-.harness-panel {
-  border: 1px solid var(--bz-border);
-  background: var(--bz-panel);
+  gap: var(--bz-space-4);
 }
 .harness-hero {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: var(--bz-space-6);
   padding: var(--bz-space-6);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
 }
-.harness-grid,
-.runtime-grid {
+.harness-hero__copy {
+  max-width: 72ch;
+  margin: var(--bz-space-2) 0 0;
+  color: var(--bz-fg-mid);
+  line-height: 1.55;
+}
+.harness-status-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--bz-space-4);
 }
-.harness-card,
-.harness-panel {
+.harness-gateway,
+.harness-panel,
+.harness-runtime {
   padding: var(--bz-space-5);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
 }
-.harness-card__head {
+.harness-gateway {
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  gap: var(--bz-space-4);
+}
+.harness-gateway__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--bz-space-3);
   align-items: start;
-  margin-bottom: var(--bz-space-4);
 }
-.harness-card__head p,
-.section-head__hint,
+.harness-gateway__head h2 {
+  margin: var(--bz-space-1) 0;
+}
+.harness-gateway__head p,
+.harness-section-head p,
 .runtime-item span {
   color: var(--bz-fg-low);
   margin: 0;
+}
+.harness-gateway__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
 }
 .harness-status {
   font-size: var(--bz-size-micro);
   color: var(--bz-fg-low);
   border: 1px solid var(--bz-border);
   padding: 4px 8px;
+  border-radius: var(--bz-r-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .harness-status.is-on {
   color: var(--bz-emerald-500);
   border-color: var(--bz-emerald-500);
+  background: var(--bz-emerald-soft);
 }
 .harness-status.is-off {
   color: var(--bz-warning);
+  border-color: var(--bz-warning);
+  background: var(--bz-warning-soft);
 }
-.command-grid {
+.harness-runtime {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3);
+}
+.runtime-item {
+  min-width: 0;
+  display: grid;
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+}
+.runtime-item strong {
+  color: var(--bz-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.harness-section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--bz-space-5);
+  align-items: end;
+  padding-bottom: var(--bz-space-4);
+  border-bottom: 1px solid var(--bz-border);
+}
+.harness-section-head h2 {
+  margin: var(--bz-space-1) 0 0;
+}
+.command-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-4);
+  margin-top: var(--bz-space-4);
+}
+.command-group {
+  min-width: 0;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.command-group h3 {
+  margin: 0 0 var(--bz-space-3);
+}
+.command-list {
   display: grid;
   gap: var(--bz-space-2);
 }
-.command-row,
-.runtime-item {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--bz-space-4);
+.command-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(0, 1.1fr);
+  gap: var(--bz-space-3);
+  align-items: start;
   padding: var(--bz-space-3);
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
 }
 .command-row span {
   color: var(--bz-fg-mid);
-  text-align: right;
+  font-size: var(--bz-size-meta);
+  line-height: 1.4;
 }
 code {
   color: var(--bz-purple-300);
+  font-family: var(--bz-font-mono);
+  font-size: var(--bz-size-meta);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 980px) {
+  .harness-status-grid,
+  .harness-runtime,
+  .command-groups {
+    grid-template-columns: 1fr;
+  }
+  .harness-hero,
+  .harness-section-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+@media (max-width: 640px) {
+  .harness-view {
+    padding: var(--bz-space-4);
+  }
+  .command-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -353,15 +353,19 @@ export default {
   components: { BonzaiPulse },
   props: {
     hideUI: { type: Boolean, default: false },
-    enablePhysics: { type: Boolean, default: true }
+    enablePhysics: { type: Boolean, default: true },
+    initialTimeOfDay: { type: String, default: "day" },
+    initialWeather: { type: String, default: "sunny" },
   },
   data() {
     return {
       isGenerating: false,
-      currentTimeOfDay: "day",
-      currentWeather: "sunny",
+      isReady: false,
+      currentTimeOfDay: this.initialTimeOfDay || "day",
+      currentWeather: this.initialWeather || "sunny",
       lightIntensity: 1.0,
       _envMap: null,
+      _baseEnvMap: null,
       physics: { world: null, bodies: [], objects: [], constraints: [] },
     };
   },
@@ -608,6 +612,14 @@ export default {
   beforeUnmount() {
     this.cleanup();
   },
+  watch: {
+    initialTimeOfDay(mode) {
+      if (mode && mode !== this.currentTimeOfDay) this.setTimeOfDay(mode);
+    },
+    initialWeather(mode) {
+      if (mode && mode !== this.currentWeather) this.setWeather(mode);
+    },
+  },
   methods: {
     initPhysicsWorld() {
       const world = new CANNON.World();
@@ -696,12 +708,15 @@ export default {
         const hdrLoader = new HDRLoader();
         const hdrTexture = await hdrLoader.loadAsync(skyHdrUrl);
         hdrTexture.wrapS = hdrTexture.wrapT = THREE.ClampToEdgeWrapping;
+        hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
         const envMap = pmremGen.fromEquirectangular(hdrTexture).texture;
         this._envMap = envMap;
+        this._baseEnvMap = envMap;
+        this._hdrSkyTexture = hdrTexture;
         scene.environment = envMap;
         scene.environmentIntensity = 0.7;
+        scene.backgroundIntensity = 0.9;
         this.renderer.toneMappingExposure = 1.1;
-        hdrTexture.dispose();
       } catch (e) {
         console.warn("HDR Environment failed:", e);
       }
@@ -746,12 +761,14 @@ export default {
       }
       this.initPhysicsWorld();
       this.setupDragControls();
-      this.applyEnvironmentPreset("day");
-      this.applyWeatherPreset("sunny", { immediate: true });
+      this.applyEnvironmentPreset(this.initialTimeOfDay || this.currentTimeOfDay || "day");
+      this.applyWeatherPreset(this.initialWeather || this.currentWeather || "sunny", { immediate: true });
+      this._restoreViewerAtmosphere();
       // Apply the default render-quality preset ("high") — tunable by
       // the user via setRenderQuality("low"|"medium"|"high"|"ultra").
       this.setRenderQuality("high");
       this.startRenderLoop();
+      this.isReady = true;
     },
     setupDragControls() {
       const raycaster = new THREE.Raycaster();
@@ -2780,33 +2797,271 @@ export default {
       }
       ctx.restore();
 
+      if (!this._skyTexture) return;
       this._skyTexture.needsUpdate = true;
-      if (this.scene) this.scene.background = this._skyTexture;
+      if (this.scene) this.scene.background = this._activeSkyBackground();
     },
     _refreshSkyTexture(time) {
       this._paintSkyTexture(time);
     },
+    _activeSkyBackground() {
+      return null;
+    },
     setupSkySphere() {
-      const skyCanvas = document.createElement("canvas");
-      skyCanvas.width = 1400;
-      skyCanvas.height = 700;
-      const skyTex = new THREE.CanvasTexture(skyCanvas);
-      skyTex.colorSpace = THREE.SRGBColorSpace;
-      skyTex.wrapS = THREE.ClampToEdgeWrapping;
-      skyTex.wrapT = THREE.ClampToEdgeWrapping;
-      skyTex.minFilter = THREE.LinearFilter;
-      skyTex.magFilter = THREE.LinearFilter;
-      skyTex.generateMipmaps = false;
-      this._skyCanvas = skyCanvas;
-      this._skyCtx = skyCanvas.getContext("2d", { alpha: false });
-      this._skyTexture = skyTex;
-      this._skyMesh = null;
-      this._refreshSkyTexture(0);
-      if (this.scene) this.scene.background = skyTex;
+      const skyGeo = new THREE.SphereGeometry(1200, 64, 64);
+      const preset = this._presets[this.currentTimeOfDay || "day"] || this._presets.day;
+      const skyMat = new THREE.ShaderMaterial({
+        uniforms: {
+          topColor: { value: new THREE.Color(preset.skyTop) },
+          midColor: { value: new THREE.Color(preset.skyMid) },
+          bottomColor: { value: new THREE.Color(preset.skyBottom) },
+          horizonColor: { value: new THREE.Color(preset.horizonGlow) },
+          horizonWidth: { value: preset.horizonWidth },
+          horizonIntensity: { value: preset.horizonIntensity },
+          uWeatherDim: { value: 1.0 },
+          uWeatherTint: { value: new THREE.Color(0xc0c8d2) },
+          uWeatherMix: { value: 0.0 },
+        },
+        vertexShader: /* glsl */ `
+          varying vec3 vPos;
+          void main() {
+            vPos = (modelMatrix * vec4(position, 1.0)).xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          varying vec3 vPos;
+          uniform vec3 topColor;
+          uniform vec3 midColor;
+          uniform vec3 bottomColor;
+          uniform vec3 horizonColor;
+          uniform float horizonWidth;
+          uniform float horizonIntensity;
+          uniform float uWeatherDim;
+          uniform vec3 uWeatherTint;
+          uniform float uWeatherMix;
+
+          void main() {
+            vec3 dir = normalize(vPos);
+            float y = dir.y;
+            vec3 timeColor;
+            if (y > 0.25) {
+              timeColor = mix(midColor, topColor, smoothstep(0.25, 1.0, y));
+            } else if (y > -0.05) {
+              timeColor = mix(bottomColor, midColor, smoothstep(-0.05, 0.25, y));
+            } else {
+              timeColor = bottomColor;
+            }
+            float hGlow = exp(-pow(abs(y) / max(horizonWidth, 0.001), 1.15)) * horizonIntensity;
+            timeColor = mix(timeColor, horizonColor, clamp(hGlow, 0.0, 0.75));
+            vec3 overcastHorizon = uWeatherTint * 1.12;
+            vec3 overcastZenith = uWeatherTint * 0.78;
+            vec3 weatherColor = mix(overcastHorizon, overcastZenith, smoothstep(-0.2, 0.8, y));
+            vec3 color = mix(timeColor, weatherColor, uWeatherMix);
+            gl_FragColor = vec4(color * uWeatherDim, 1.0);
+          }
+        `,
+        side: THREE.BackSide,
+        depthWrite: true,
+      });
+      const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+      skyMesh.position.y = 200;
+      skyMesh.renderOrder = -1000;
+      skyMesh.frustumCulled = false;
+      skyMesh.userData.excludeFromBBox = true;
+      this.scene.add(skyMesh);
+      this._skyMesh = skyMesh;
+      this._skyTexture = null;
+      this._updateSkyDome(0);
     },
     setupCloudShell() {
-      this._cloudShellMat = null;
-      this._cloudShell = null;
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uDensity: { value: 0 },
+          uColor: { value: new THREE.Color(0xffffff) },
+          uShadow: { value: new THREE.Color(0x3a4050) },
+          uWindDir: { value: new THREE.Vector2(0.02, 0.013) },
+        },
+        transparent: true,
+        depthWrite: false,
+        side: THREE.BackSide,
+        blending: THREE.NormalBlending,
+        vertexShader: /* glsl */ `
+          varying vec3 vDir;
+          void main() {
+            vDir = normalize(position);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          varying vec3 vDir;
+          uniform float uTime;
+          uniform float uDensity;
+          uniform vec3 uColor;
+          uniform vec3 uShadow;
+          uniform vec2 uWindDir;
+
+          float h(vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+          }
+          float fbm(vec2 p) {
+            float s = 0.0, a = 0.5;
+            for (int i = 0; i < 5; i++) {
+              vec2 k = floor(p), f = fract(p);
+              f = f * f * (3.0 - 2.0 * f);
+              float n = mix(
+                mix(h(k), h(k + vec2(1.0, 0.0)), f.x),
+                mix(h(k + vec2(0.0, 1.0)), h(k + vec2(1.0, 1.0)), f.x),
+                f.y
+              );
+              s += a * n;
+              p *= 2.0;
+              a *= 0.5;
+            }
+            return s;
+          }
+
+          void main() {
+            if (uDensity < 0.01) discard;
+            vec2 uv = vDir.xz / max(vDir.y, 0.15);
+            uv = uv * 0.35 + uWindDir * uTime * 0.6;
+            float base = fbm(uv);
+            float detail = fbm(uv * 2.4 + vec2(12.7));
+            float cloud = base * 0.65 + detail * 0.35;
+            float thresh = mix(0.65, 0.28, uDensity);
+            float cov = smoothstep(thresh, thresh + 0.22, cloud);
+            vec3 col = mix(uColor, uShadow, cov * 0.5);
+            float horizonFade = smoothstep(0.02, 0.25, vDir.y);
+            float alpha = cov * uDensity * horizonFade;
+            gl_FragColor = vec4(col, alpha);
+          }
+        `,
+      });
+      const geom = new THREE.SphereGeometry(900, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2);
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.renderOrder = -900;
+      mesh.frustumCulled = false;
+      mesh.userData.excludeFromBBox = true;
+      this.scene.add(mesh);
+      this._cloudShellMat = mat;
+      this._cloudShell = mesh;
+    },
+    _updateSkyDome(time = this.clock?.elapsedTime || 0) {
+      if (!this._skyMesh?.material?.uniforms) return;
+      const p = this._presets[this.currentTimeOfDay || "day"] || this._presets.day;
+      const weather = this._weatherPresets[this.currentWeather || "sunny"] || this._weatherPresets.sunny || {};
+      const weatherTints = {
+        sunny: { tint: 0xbfd4e8, mix: 0.00 },
+        cloudy: { tint: 0x9aa2b0, mix: 0.45 },
+        rainy: { tint: 0x545b68, mix: 0.75 },
+        stormy: { tint: 0x4a5465, mix: 0.78 },
+        snowy: { tint: 0xb8c4d2, mix: 0.55 },
+        blizzard: { tint: 0x8a94a5, mix: 0.85 },
+        foggy: { tint: 0x9aa0ab, mix: 0.65 },
+      };
+      const target = weatherTints[this.currentWeather || "sunny"] || weatherTints.sunny;
+      const weatherDim = this.weather?.ambientDim ?? weather.ambientDim ?? 1;
+      const u = this._skyMesh.material.uniforms;
+      u.topColor?.value.set(p.skyTop);
+      u.midColor?.value.set(p.skyMid);
+      u.bottomColor?.value.set(p.skyBottom);
+      u.horizonColor?.value.set(p.horizonGlow);
+      if (u.horizonWidth) u.horizonWidth.value = p.horizonWidth ?? 0.012;
+      if (u.horizonIntensity) u.horizonIntensity.value = p.horizonIntensity ?? 0.45;
+      u.uWeatherTint?.value.set(target.tint);
+      if (u.uWeatherMix) u.uWeatherMix.value = target.mix;
+      if (u.uWeatherDim) u.uWeatherDim.value = THREE.MathUtils.clamp(weatherDim, 0.24, 1.08);
+      if (this.camera) this._skyMesh.position.copy(this.camera.position);
+    },
+    _updateCloudShell(time = this.clock?.elapsedTime || 0) {
+      if (!this._cloudShell?.material?.uniforms) return;
+      const preset = this._weatherPresets[this.currentWeather || "sunny"] || this._weatherPresets.sunny || {};
+      const clouds = Math.max(this.weather?.clouds ?? 0, preset.cloudOpacity ?? 0);
+      const wind = this.weather?.windStrength ?? preset.windStrength ?? 0.2;
+      const u = this._cloudShell.material.uniforms;
+      u.uTime.value = time;
+      u.uDensity.value = THREE.MathUtils.clamp(clouds, 0, 1);
+      const warmCloud = ["sunrise", "sunset"].includes(this.currentTimeOfDay);
+      u.uColor.value.set(warmCloud ? 0xffe0bf : (this.currentTimeOfDay === "night" ? 0xc8d6ff : 0xffffff));
+      u.uShadow.value.set(this.currentWeather === "stormy" ? 0x202633 : (this.currentTimeOfDay === "night" ? 0x25304f : 0x3a4050));
+      u.uWindDir.value.set(0.02 + wind * 0.006, 0.013 + wind * 0.004);
+      if (this.camera) this._cloudShell.position.copy(this.camera.position);
+      this._cloudShell.visible = u.uDensity.value > 0.01;
+      this._updateLegacyCloudLayers(time, u.uDensity.value, wind);
+    },
+    _updateLegacyCloudLayers(time = this.clock?.elapsedTime || 0, density = 0, wind = 0.2) {
+      const visible = density > 0.01;
+      const op = THREE.MathUtils.clamp(density, 0, 1);
+      if (this._cloudGroup && this.camera) {
+        this._cloudGroup.position.set(this.camera.position.x, 0, this.camera.position.z);
+      }
+      if (this._cloudLayer?.material) {
+        this._cloudLayer.visible = visible;
+        this._cloudLayer.material.opacity = op * 0.82;
+        this._cloudLayer.rotation.y += 0.0008 * (1 + wind);
+      }
+      if (this._cloudLayer2?.material) {
+        this._cloudLayer2.visible = visible;
+        this._cloudLayer2.material.opacity = op * 0.58;
+        this._cloudLayer2.rotation.y -= 0.0006 * (1 + wind);
+      }
+      if (this._lowCloud?.material) {
+        this._lowCloud.visible = visible;
+        this._lowCloud.material.opacity = op > 0.42 ? (op - 0.32) * 0.34 : 0;
+        this._lowCloud.rotation.z = time * 0.004 * (1 + wind);
+      }
+    },
+    _restoreViewerAtmosphere() {
+      if (!this.scene) return;
+      if (this._skyMesh && this._skyMesh.parent !== this.scene) {
+        this.scene.add(this._skyMesh);
+      }
+      if (this._skyMesh) this._skyMesh.visible = true;
+      if (this._cloudShell && this._cloudShell.parent !== this.scene) {
+        this.scene.add(this._cloudShell);
+      }
+      if (this._cloudGroup && this._cloudGroup.parent !== this.scene) {
+        this.scene.add(this._cloudGroup);
+      }
+      const ground = this._sceneObjects?.get?.("ground");
+      if (ground && ground.parent !== this.scene) this.scene.add(ground);
+      const groundTint = this._sceneObjects?.get?.("groundTint");
+      if (groundTint && groundTint.parent !== this.scene) this.scene.add(groundTint);
+      const grid = this._sceneObjects?.get?.("grid");
+      if (grid && grid.parent !== this.scene) this.scene.add(grid);
+      const celestial = this._sceneObjects?.get?.("celestial");
+      if (celestial && celestial.parent !== this.scene) this.scene.add(celestial);
+      if (this._celestialBody && this._lights?.sun && this._lights.sun.parent !== this._celestialBody.parent) {
+        this._celestialBody.parent?.add?.(this._lights.sun);
+      }
+      if (this._lights?.sun?.target && this._lights.sun.target.parent !== this.scene) {
+        this.scene.add(this._lights.sun.target);
+      }
+      for (const light of Object.values(this._lights || {})) {
+        if (light?.isLight && light.parent !== this.scene && light !== this._lights.sun) {
+          this.scene.add(light);
+        }
+        if (light?.target && light.target.parent !== this.scene) {
+          this.scene.add(light.target);
+        }
+      }
+      const envMap = this.scene.environment || this._envMap || this._baseEnvMap;
+      if (!this.scene.environment && envMap) {
+        this.scene.environment = envMap;
+      }
+      if (this.scene.environment) {
+        this._envMap = this.scene.environment;
+      }
+      if (ground?.material && this.scene.environment) {
+        ground.material.envMap = this.scene.environment;
+        ground.material.envMapIntensity = THREE.MathUtils.clamp(ground.material.envMapIntensity || 2.15, 1.8, 2.6);
+        ground.material.needsUpdate = true;
+      }
+      if (this.scene.environment && (this.scene.environmentIntensity ?? 0) < 1.25) {
+        this.scene.environmentIntensity = 1.25;
+      }
+      this.scene.background = this._activeSkyBackground();
     },
     setupStars() {
       const starCount = 2600;
@@ -2951,8 +3206,8 @@ export default {
       rayGroup.visible = false;
     },
     setupEnvironment() {
-      const radius = 55;
-      const groundGeo = new THREE.CircleGeometry(radius, 128);
+      const radius = 180;
+      const groundGeo = new THREE.CircleGeometry(radius, 256);
       // Beautiful low-opacity grid — baked into a high-res canvas so
       // there's no per-frame line rasterization or aliasing. Lines are
       // drawn with a soft shadowBlur for a glow feel and low alpha so
@@ -2963,13 +3218,13 @@ export default {
       texCanvas.width = 1024;
       texCanvas.height = 1024;
       const ctx = texCanvas.getContext("2d");
-      ctx.fillStyle = "#8a7cae";
+      ctx.fillStyle = "#3a2388";
       ctx.fillRect(0, 0, 1024, 1024);
       // Soft glowing lines — shadowBlur gives an antialiased-looking
       // edge that stays crisp even at mipmapped distances.
-      ctx.shadowColor = "rgba(255, 255, 255, 0.25)";
+      ctx.shadowColor = "rgba(196, 168, 255, 0.55)";
       ctx.shadowBlur = 2;
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
+      ctx.strokeStyle = "rgba(213, 196, 255, 0.26)";
       ctx.lineWidth = 1.2;
       for (let i = 0; i <= 1024; i += 64) {
         ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke();
@@ -2977,7 +3232,7 @@ export default {
       }
       // Accent — every 4th line slightly brighter for a major/minor look.
       ctx.shadowBlur = 3;
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+      ctx.strokeStyle = "rgba(235, 226, 255, 0.42)";
       ctx.lineWidth = 1.5;
       for (let i = 0; i <= 1024; i += 256) {
         ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke();
@@ -2987,14 +3242,16 @@ export default {
       const tex = new THREE.CanvasTexture(texCanvas);
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
       tex.anisotropy = 8;
-      tex.repeat.set(6, 6);
+      tex.repeat.set(18, 18);
       const groundMat = new THREE.MeshPhysicalMaterial({
-        color: 0x8a7cae,
+        color: 0x3a2388,
         map: tex,
-        metalness: 0.7,
-        roughness: 0.28,
-        clearcoat: 0.6,
-        envMapIntensity: 0.5,
+        envMap: this._envMap || null,
+        metalness: 0.84,
+        roughness: 0.085,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.015,
+        envMapIntensity: 2.15,
       });
       // Ground stays purple PBR for the dome but gains TWO weather
       // responses: wet shine (rain darkens color + drops roughness for
@@ -3024,7 +3281,7 @@ export default {
         shader.fragmentShader = shader.fragmentShader.replace(
           "#include <roughnessmap_fragment>",
           "#include <roughnessmap_fragment>\n"
-          + "roughnessFactor *= mix(1.0, 0.25, uGroundWet);\n"
+          + "roughnessFactor *= mix(1.0, 0.04, uGroundWet);\n"
           + "roughnessFactor = mix(roughnessFactor, 0.95, uGroundSnow);"
         );
       };
@@ -3034,10 +3291,25 @@ export default {
       this.scene.add(ground);
       this._sceneObjects.set("ground", ground);
       this._groundMat = groundMat;
-      // Line grid removed — 1-pixel WebGL line rasterization aliases
-      // badly on any movement and caused the flicker the user reported.
-      // The baked canvas tile texture on the ground already provides
-      // the visible grid structure.
+      const tint = new THREE.Mesh(
+        new THREE.CircleGeometry(radius, 256),
+        new THREE.MeshBasicMaterial({
+          color: 0x25105f,
+          transparent: true,
+          opacity: 0.22,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          blending: THREE.MultiplyBlending,
+          premultipliedAlpha: true,
+        }),
+      );
+      tint.rotation.x = -Math.PI / 2;
+      tint.position.y = 0.002;
+      tint.renderOrder = -5;
+      tint.userData.excludeFromBBox = true;
+      this.scene.add(tint);
+      this._sceneObjects.set("groundTint", tint);
+      this.setupSquareGrid(120);
       this.setupCloudLayer();
       this.setupAmbientParticles();
     },
@@ -3106,11 +3378,94 @@ export default {
       this._sceneObjects.set("grid", group);
     },
     setupCloudLayer() {
-      this._cloudLayer = null;
-      this._cloudLayer2 = null;
-      this._lowCloud = null;
-      this._cloudGroup = null;
-      this._cloudTexture = null;
+      const cloudGroup = new THREE.Group();
+      const cloudCanvas = document.createElement("canvas");
+      cloudCanvas.width = 1024;
+      cloudCanvas.height = 1024;
+      const ctx = cloudCanvas.getContext("2d");
+      ctx.clearRect(0, 0, 1024, 1024);
+      for (let i = 0; i < 320; i++) {
+        const x = Math.random() * 1024;
+        const y = 120 + Math.random() * 640;
+        const radiusX = 55 + Math.random() * 170;
+        const radiusY = 16 + Math.random() * 46;
+        const alpha = 0.08 + Math.random() * 0.20;
+        const gradient = ctx.createRadialGradient(x, y, 0, x, y, radiusX);
+        gradient.addColorStop(0, `rgba(255,255,255,${alpha})`);
+        gradient.addColorStop(0.42, `rgba(220,230,244,${alpha * 0.62})`);
+        gradient.addColorStop(1, "rgba(110,130,160,0)");
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(1, radiusY / radiusX);
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(0, 0, radiusX, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      const cloudTex = new THREE.CanvasTexture(cloudCanvas);
+      cloudTex.wrapS = cloudTex.wrapT = THREE.RepeatWrapping;
+      cloudTex.repeat.set(1.45, 0.82);
+      cloudTex.colorSpace = THREE.SRGBColorSpace;
+
+      const makeMat = (opacity = 0) => new THREE.MeshBasicMaterial({
+        map: cloudTex,
+        transparent: true,
+        opacity,
+        side: THREE.BackSide,
+        depthWrite: false,
+        depthTest: false,
+      });
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(760, 96, 32, 0, Math.PI * 2, 0, Math.PI / 2),
+        makeMat(0),
+      );
+      dome.rotation.x = Math.PI;
+      dome.position.y = 32;
+      dome.renderOrder = -850;
+      dome.frustumCulled = false;
+      dome.visible = false;
+      dome.userData.excludeFromBBox = true;
+      cloudGroup.add(dome);
+
+      const dome2 = new THREE.Mesh(
+        new THREE.SphereGeometry(690, 80, 28, 0, Math.PI * 2, 0, Math.PI / 2),
+        makeMat(0),
+      );
+      dome2.rotation.x = Math.PI;
+      dome2.rotation.y = Math.PI / 3;
+      dome2.position.y = 38;
+      dome2.renderOrder = -840;
+      dome2.frustumCulled = false;
+      dome2.visible = false;
+      dome2.userData.excludeFromBBox = true;
+      cloudGroup.add(dome2);
+
+      const lowCloud = new THREE.Mesh(
+        new THREE.PlaneGeometry(900, 900),
+        new THREE.MeshBasicMaterial({
+          map: cloudTex,
+          transparent: true,
+          opacity: 0,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          depthTest: false,
+        }),
+      );
+      lowCloud.rotation.x = -Math.PI / 2;
+      lowCloud.position.y = 34;
+      lowCloud.renderOrder = -830;
+      lowCloud.frustumCulled = false;
+      lowCloud.visible = false;
+      lowCloud.userData.excludeFromBBox = true;
+      cloudGroup.add(lowCloud);
+
+      this.scene.add(cloudGroup);
+      this._cloudLayer = dome;
+      this._cloudLayer2 = dome2;
+      this._lowCloud = lowCloud;
+      this._cloudGroup = cloudGroup;
+      this._cloudTexture = cloudTex;
     },
     setupAmbientParticles() {
       const count = 280;
@@ -3810,12 +4165,14 @@ export default {
         envMap = this._proceduralEnvMap("softbox");
       }
       if (!envMap) return null;
-      if (this._envMap && this._envMap.dispose) this._envMap.dispose();
+      if (this._envMap && this._envMap !== envMap && this._envMap !== this._baseEnvMap && this._envMap.dispose) {
+        this._envMap.dispose();
+      }
       this._envMap = envMap;
-      this.scene.environment = envMap;
-      this.scene.background = this._skyTexture || null;
+      this.scene.environment = this._envMap;
+      this.scene.background = this._activeSkyBackground();
       if (opts.intensity !== undefined) this.scene.environmentIntensity = opts.intensity;
-      return envMap;
+      return this._envMap;
     },
     _proceduralEnvMap(preset) {
       // Render a minimal scene (colored gradient sphere or dome) into
@@ -3931,9 +4288,10 @@ export default {
       const p = this._presets[presetName];
       if (!p) return;
       this.currentTimeOfDay = presetName;
-      if (this.scene && this._skyTexture) this.scene.background = this._skyTexture;
+      if (this.scene) this.scene.background = this._activeSkyBackground();
       if (this.renderer) this.renderer.setClearColor(p.skyMid ?? p.skyTop, 1);
-      this._refreshSkyTexture();
+      this._updateSkyDome();
+      this._updateCloudShell();
       this._celestialBody.material.color.set(p.celestialColor);
       this._celestialGlow.material.color.set(p.celestialColor);
       const showCelestial =
@@ -4466,9 +4824,18 @@ export default {
         const size = heroBox.getSize(new THREE.Vector3());
         const heroR = Math.max(size.x, size.y, size.z) * 0.5;
 
-        // 2. Starfield backdrop — if the scene has no celestial element
-        //    and is being lit in night/studio mode, add a subtle one.
-        if (!hasStarfield && CELESTIAL?.starfield) {
+        // 2. Starfield backdrop — only auto-add for clear night/studio
+        //    lighting. Cloudy/rainy/storm/snow presets own the sky, and
+        //    a generated star dome can render over the volumetric cloud
+        //    shell after refresh.
+        const weatherPreset = this._weatherPresets?.[this.currentWeather] || {};
+        const cloudCover = Math.max(
+          this.weather?.clouds ?? 0,
+          weatherPreset.cloudOpacity ?? 0,
+        );
+        const canAddBackdropStars =
+          cloudCover < 0.12 && ["night", "studio"].includes(this.currentTimeOfDay);
+        if (!hasStarfield && canAddBackdropStars && CELESTIAL?.starfield) {
           const stars = CELESTIAL.starfield({
             count: 900, radius: Math.max(8, heroR * 15),
             size: 28, twinkle: 0.6,
@@ -4648,7 +5015,8 @@ export default {
       });
     },
     _syncSkyWeatherUniforms() {
-      this._refreshSkyTexture();
+      this._updateSkyDome();
+      this._updateCloudShell();
     },
     applyWeatherPreset(mode, opts = {}) {
       const p = this._weatherPresets[mode];
@@ -4864,9 +5232,9 @@ export default {
         if (this.weather) this.weather.update(dt);
         if (this._rainLines) this._rainLines.update(dt, t, this.camera, this.weather);
         if (this._lightningBolt) this._lightningBolt.update(dt);
-        if (this._skyTexture && (++this._skyFrame % 8 === 0 || this.currentWeather !== "sunny")) {
-          this._refreshSkyTexture(t);
-        }
+        this._updateSkyDome(t);
+        this._updateCloudShell(t);
+        this._restoreViewerAtmosphere();
         // Ground wet/snow shader uniforms track WeatherSystem values
         // each frame so the ground reacts smoothly as weather tweens.
         if (this._groundMat?.userData?.weatherUniforms && this.weather) {
@@ -4903,7 +5271,8 @@ export default {
         this._updateLensFlareSun();
         this._updateUnderwater();
         this._updateDoF();
-        if (this.scene && this._skyTexture) this.scene.background = this._skyTexture;
+        if (this.scene) this.scene.background = this._activeSkyBackground();
+        this._restoreViewerAtmosphere();
         const clearPreset = this._presets[this.currentTimeOfDay] || this._presets.day;
         if (this.renderer && clearPreset) this.renderer.setClearColor(clearPreset.skyMid ?? clearPreset.skyTop, 1);
         if (this.composer) this.composer.render();
@@ -4975,7 +5344,8 @@ export default {
           }
           if (this._lastHeroMetrics) this._frameHeroObject(this._lastHeroMetrics);
         }
-        if (this.scene && this._skyTexture) this.scene.background = this._skyTexture;
+        if (this.scene) this.scene.background = this._activeSkyBackground();
+        this._restoreViewerAtmosphere();
         const clearPreset = this._presets[this.currentTimeOfDay] || this._presets.day;
         if (this.renderer && clearPreset) this.renderer.setClearColor(clearPreset.skyMid ?? clearPreset.skyTop, 1);
         if (this.composer) this.composer.render();
@@ -5070,6 +5440,7 @@ export default {
         });
         this.scene.remove(obj);
       }
+      this._restoreViewerAtmosphere();
       this.resetCamera();
     },
     _getHeroBounds(root) {
@@ -5287,7 +5658,11 @@ export default {
       this.controls.target.copy(target);
       this.camera.position.copy(pos);
       this.camera.near = Math.max(0.03, dist / 120);
-      this.camera.far = Math.max(80, dist * 80);
+      // Keep the environment shells inside the frustum after hero framing.
+      // The sky dome is radius 1200 and the cloud/weather shells sit at
+      // ~690-900; shrinking far to 80-200 for small generated objects
+      // clipped clouds/sky only after an object was loaded.
+      this.camera.far = Math.max(2500, dist * 80);
       this.camera.updateProjectionMatrix();
       this.controls.minDistance = Math.max(0.35, metrics.radius * 0.55);
       this.controls.maxDistance = Math.max(12, metrics.radius * 12);
@@ -5466,10 +5841,9 @@ export default {
       }
       this._upgradeWeakMaterials(obj, THREE);
 
-      // Keep the procedural sky visible. Transmission/reflection materials
-      // use scene.environment; assigning scene.background to the HDR env
-      // hides the generated sky background.
-      this.scene.background = this._skyTexture || null;
+      // Keep HDR in scene.environment for reflections only; the visible sky
+      // is the time-of-day skydome mesh.
+      this.scene.background = this._activeSkyBackground();
     },
     async applyModuleCode(code, mode = "replace") {
       this.isGenerating = true;
@@ -5701,6 +6075,7 @@ export default {
       if (this.controls) this.controls.dispose?.();
       if (this.composer) this.composer.dispose?.();
       if (this._skyTexture) this._skyTexture.dispose?.();
+      if (this._hdrSkyTexture) this._hdrSkyTexture.dispose?.();
       if (this._cloudTexture) this._cloudTexture.dispose?.();
       try {
         this.renderer?.dispose();

@@ -2152,10 +2152,10 @@ Usage:
 
 Available models:
 - \`llama_3_1_8b\` - Llama 3.1 8B
-- \`mistral_7b\` - Mistral 7B
-- \`deepseek_r1_7b\` - DeepSeek R1 7B
+- \`qwen3_5_9b_deepseek_v4_flash\` - Qwen3.5 9B DeepSeek V4 Flash
+- \`mistral_small_3_2_24b\` - Mistral Small 3.2 24B
 - \`nemomix_12b_heretic\` - NemoMix Unleashed 12B Heretic (roleplay)
-- \`qwen_coder_32b\` - Qwen Coder 32B
+- \`devstral_small_2_24b\` - Devstral Small 2 24B
 
 Use \`!bonzai models\` for full list.`,
         };

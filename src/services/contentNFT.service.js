@@ -626,9 +626,9 @@ function estimateContentSize(content, contentType) {
 
 /**
  * Convert a model display name to a URL-safe slug.
- * "Codestral 22B" → "codestral-22b"
- * "DeepSeek R1 1.5B" → "deepseek-r1-1.5b"
- * "Qwen 2.5 Coder 7B" → "qwen-2.5-coder-7b"
+ * "Qwen3.5 9B DeepSeek V4 Flash" → "qwen3.5-9b-deepseek-v4-flash"
+ * "Mistral Small 3.2 24B" → "mistral-small-3.2-24b"
+ * "GPT-OSS 120B" → "gpt-oss-120b"
  */
 function toModelSlug(name) {
   if (!name) return 'unknown';

@@ -193,12 +193,12 @@
                   class="generated__image"
                   :src="imageDataUrl(entry.inference)"
                   alt="Generated image"
-                  title="Open inspector"
+                  title="Open full screen preview"
                   :loading="entry.displayIndex < 6 ? 'eager' : 'lazy'"
                   decoding="async"
                   :fetchpriority="entry.displayIndex < 3 ? 'high' : 'auto'"
                   :style="imageAspectStyle(entry.inference)"
-                  @click="openInspector(entry.inference)"
+                  @click="openImageFullscreen(entry.inference)"
                 />
                 <div
                   v-if="entry.inference.networkMode && entry.inference.networkMode !== 'local'"
@@ -265,6 +265,22 @@
     @close="mintTarget = null"
     @minted="onMinted"
   />
+
+  <Teleport to="body">
+    <Transition name="bz-image-lightbox">
+      <div
+        v-if="fullscreenImage"
+        class="bz-image-lightbox"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Generated image preview"
+        @click.self="closeImageFullscreen"
+      >
+        <BzCloseButton class="bz-image-lightbox__close" size="md" aria-label="Close preview" @click="closeImageFullscreen" />
+        <img :src="imageDataUrl(fullscreenImage)" alt="Generated image full screen preview" />
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script>
@@ -324,6 +340,7 @@ import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import BonzaiPulse from "./BonzaiPulse.vue";
 import BonzaiEmptyState from "./BonzaiEmptyState.vue";
+import BzCloseButton from "./BzCloseButton.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
 import GenerativeWorkspace from "./generative/GenerativeWorkspace.vue";
@@ -347,6 +364,7 @@ export default {
     MintModal,
     BonzaiPulse,
     BonzaiEmptyState,
+    BzCloseButton,
     GenerativeActions,
     GenerativeInput,
     GenerativeWorkspace,
@@ -357,12 +375,19 @@ export default {
 
     // ------------ injected from App -------
     const goAnimateToVideo = inject("goAnimateToVideo", () => {});
+    const fullscreenImage = ref(null);
 
     // Animate an inference image by switching to video tab
     const animate = (inference) => {
       const img = inference?.answer?.data?.image;
       if (!img) return;
       goAnimateToVideo(img);
+    };
+    const openImageFullscreen = (inference) => {
+      if (imageDataUrl(inference)) fullscreenImage.value = inference;
+    };
+    const closeImageFullscreen = () => {
+      fullscreenImage.value = null;
     };
 
     // ------------ NFT Minting ---------
@@ -1767,6 +1792,8 @@ export default {
       const hasImage = !!inference?.answer?.data?.image;
       const minted = !!inference?.nft;
       return [
+        { id: "inspect",  icon: "info",       label: "Inspect",   variant: "default",
+          title: "Open inspector" },
         { id: "download", icon: "save",          label: "Download",  variant: "primary",     disabled: !hasImage },
         { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",
           label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
@@ -1785,6 +1812,9 @@ export default {
 
     const handleAction = (id, inference) => {
       switch (id) {
+        case "inspect":
+          openInspector(inference);
+          break;
         case "download":
           downloadImage(inference._originalIndex);
           break;
@@ -1823,6 +1853,9 @@ export default {
       hasCopy,
       // inspector
       openInspector,
+      fullscreenImage,
+      openImageFullscreen,
+      closeImageFullscreen,
       // unified action cluster
       actionsFor,
       handleAction,
@@ -1892,6 +1925,38 @@ export default {
 };
 </script>
 <style scoped>
+.bz-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: var(--bz-space-6);
+  background: var(--bz-scrim-deep);
+}
+.bz-image-lightbox img {
+  max-width: min(96vw, 1600px);
+  max-height: 92vh;
+  object-fit: contain;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-content-radius);
+  background: var(--bz-canvas);
+  box-shadow: var(--bz-elev-3);
+}
+.bz-image-lightbox__close {
+  position: fixed;
+  top: var(--bz-space-5);
+  right: var(--bz-space-5);
+  z-index: 1;
+}
+.bz-image-lightbox-enter-active,
+.bz-image-lightbox-leave-active {
+  transition: opacity var(--bz-dur-base) var(--bz-ease-out);
+}
+.bz-image-lightbox-enter-from,
+.bz-image-lightbox-leave-to {
+  opacity: 0;
+}
 .material-symbols-outlined {
   font-variation-settings:
     "FILL" 0,

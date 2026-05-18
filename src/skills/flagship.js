@@ -190,14 +190,6 @@ export function sanitizeCompanionAge(companion) {
 
 export const LLM_BASE_MODELS = {
   // --- Compact models (dense, <=4B) --------------------------------------
-  deepseek_r1_1_5b: {
-    name: 'DeepSeek R1 Distill 1.5B',
-    description: 'Lightweight reasoning model with chain-of-thought',
-    parameters: 1.5e9, context: 32768, thinking: true,
-    tiers: {
-      q4: { repo: 'unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF', file: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', size: 1.12, vram: 2 },
-    },
-  },
   gemma_3_1b: {
     name: 'Gemma 3 1B',
     description: 'Ultra-lightweight Google Gemma',
@@ -244,20 +236,24 @@ export const LLM_BASE_MODELS = {
       q8: { repo: 'unsloth/Qwen3.5-4B-MTP-GGUF', file: 'Qwen3.5-4B-UD-Q8_K_XL.gguf', size: 5.0, vram: 7, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 4B MTP Q8_K_XL' },
     },
   },
-  phi_3_mini: {
-    name: 'Phi-3 Mini 4K',
-    description: 'Microsoft Phi-3 compact model',
-    parameters: 3.8e9, context: 4096,
-    tiers: {
-      q4: { repo: 'microsoft/Phi-3-mini-4k-instruct-gguf', file: 'Phi-3-mini-4k-instruct-q4.gguf', size: 2.39, vram: 4 },
-    },
-  },
   phi_4_mini: {
     name: 'Phi-4 Mini',
-    description: 'Microsoft Phi-4 latest compact model with 128K context',
+    description: 'Microsoft Phi-4 Mini Instruct compact language model tuned for low-latency reasoning, coding, and tool use with 128K context',
     parameters: 3.8e9, context: 128000,
     tiers: {
-      q4: { repo: 'unsloth/Phi-4-mini-instruct-GGUF', file: 'Phi-4-mini-instruct-Q4_K_M.gguf', size: 2.49, vram: 4 },
+      q2: { repo: 'unsloth/Phi-4-mini-instruct-GGUF', file: 'Phi-4-mini-instruct-Q2_K.gguf', size: 1.35, vram: 2, displayName: 'Phi-4 Mini Q2_K' },
+      q4: { repo: 'unsloth/Phi-4-mini-instruct-GGUF', file: 'Phi-4-mini-instruct-Q4_K_M.gguf', size: 2.49, vram: 4, displayName: 'Phi-4 Mini Q4_K_M' },
+      q8: { repo: 'unsloth/Phi-4-mini-instruct-GGUF', file: 'Phi-4-mini-instruct.Q8_0.gguf', size: 4.1, vram: 6, displayName: 'Phi-4 Mini Q8_0' },
+    },
+  },
+  nemotron_3_nano_4b: {
+    name: 'Nemotron 3 Nano 4B',
+    description: 'NVIDIA Nemotron 3 Nano compact 4B model optimized for efficient instruction following, reasoning, and agentic workloads',
+    parameters: 4e9, context: 131072, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF', file: 'NVIDIA-Nemotron-3-Nano-4B-UD-Q2_K_XL.gguf', size: 1.8, vram: 3, displayName: 'Nemotron 3 Nano 4B Q2_K_XL' },
+      q4: { repo: 'unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF', file: 'NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf', size: 2.8, vram: 4, displayName: 'Nemotron 3 Nano 4B Q4_K_XL' },
+      q8: { repo: 'unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF', file: 'NVIDIA-Nemotron-3-Nano-4B-UD-Q8_K_XL.gguf', size: 5.0, vram: 7, displayName: 'Nemotron 3 Nano 4B Q8_K_XL' },
     },
   },
   nanbeige_4_1_3b: {
@@ -269,11 +265,12 @@ export const LLM_BASE_MODELS = {
     },
   },
   ministral_3b: {
-    name: 'Ministral 3B',
-    description: 'Mistral Ministral 3B compact model with 256K context',
+    name: 'Ministral 3 3B',
+    description: 'Official Mistral Ministral 3 3B Instruct model for fast local assistants, structured generation, and multimodal use via mmproj',
     parameters: 3e9, context: 256000,
     tiers: {
-      q4: { repo: 'unsloth/Ministral-3-3B-Instruct-2512-GGUF', file: 'Ministral-3-3B-Instruct-2512-UD-Q4_K_XL.gguf', size: 2.19, vram: 4 },
+      q4: { repo: 'mistralai/Ministral-3-3B-Instruct-2512-GGUF', file: 'Ministral-3-3B-Instruct-2512-Q4_K_M.gguf', size: 2.19, vram: 4, displayName: 'Ministral 3 3B Q4_K_M' },
+      q8: { repo: 'mistralai/Ministral-3-3B-Instruct-2512-GGUF', file: 'Ministral-3-3B-Instruct-2512-Q8_0.gguf', size: 4.1, vram: 6, displayName: 'Ministral 3 3B Q8_0' },
     },
   },
 
@@ -314,36 +311,12 @@ export const LLM_BASE_MODELS = {
   },
 
   // --- Medium models (7-14B) ---------------------------------------------
-  deepseek_r1_7b: {
-    name: 'DeepSeek R1 Distill 7B',
-    description: 'Balanced reasoning model with chain-of-thought',
-    parameters: 7e9, context: 32768, thinking: true,
-    tiers: {
-      q4: { repo: 'unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF', file: 'DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf', size: 4.68, vram: 6 },
-    },
-  },
-  llama_2_7b: {
-    name: 'LLaMA 2 7B Chat',
-    description: 'Meta LLaMA 2 chat model',
-    parameters: 7e9, context: 4096,
-    tiers: {
-      q4: { repo: 'TheBloke/Llama-2-7B-Chat-GGUF', file: 'llama-2-7b-chat.Q4_K_M.gguf', size: 4.08, vram: 6 },
-    },
-  },
   llama_3_1_8b: {
     name: 'LLaMA 3.1 8B',
     description: 'Meta LLaMA 3.1 instruct with 128K context',
     parameters: 8e9, context: 131072,
     tiers: {
       q4: { repo: 'lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF', file: 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf', size: 4.92, vram: 6 },
-    },
-  },
-  mistral_7b: {
-    name: 'Mistral 7B Instruct',
-    description: 'Mistral 7B instruction-tuned model',
-    parameters: 7e9, context: 32768,
-    tiers: {
-      q4: { repo: 'TheBloke/Mistral-7B-Instruct-v0.2-GGUF', file: 'mistral-7b-instruct-v0.2.Q4_K_M.gguf', size: 4.37, vram: 6 },
     },
   },
   ministral_8b: {
@@ -364,12 +337,14 @@ export const LLM_BASE_MODELS = {
       q8: { repo: 'unsloth/Qwen3.5-9B-MTP-GGUF', file: 'Qwen3.5-9B-UD-Q8_K_XL.gguf', size: 10.5, vram: 12, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.5 9B MTP Q8_K_XL' },
     },
   },
-  yi_coder_9b: {
-    name: 'Yi Coder 9B',
-    description: 'Yi code-specialized 9B model',
-    parameters: 9e9, context: 131072,
+  qwen3_5_9b_deepseek_v4_flash: {
+    name: 'Qwen3.5 9B DeepSeek V4 Flash',
+    description: 'Qwen3.5 9B fine-tune shaped for DeepSeek V4 Flash-style reasoning, coding, and fast local planning/code generation',
+    parameters: 9e9, context: 131072, thinking: true,
     tiers: {
-      q4: { repo: 'bartowski/Yi-Coder-9B-Chat-GGUF', file: 'Yi-Coder-9B-Chat-Q5_K_M.gguf', size: 6.26, vram: 8 },
+      q2: { repo: 'Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF', file: 'Qwen3.5-9B-DeepSeek-V4-Flash-Q2_K.gguf', size: 3.4, vram: 5, displayName: 'Qwen3.5 9B DeepSeek V4 Flash Q2_K' },
+      q4: { repo: 'Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF', file: 'Qwen3.5-9B-DeepSeek-V4-Flash-Q4_K_M.gguf', size: 5.6, vram: 7, displayName: 'Qwen3.5 9B DeepSeek V4 Flash Q4_K_M' },
+      q8: { repo: 'Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF', file: 'Qwen3.5-9B-DeepSeek-V4-Flash-Q8_0.gguf', size: 9.5, vram: 11, displayName: 'Qwen3.5 9B DeepSeek V4 Flash Q8_0' },
     },
   },
   nemomix_12b_heretic: {
@@ -388,6 +363,15 @@ export const LLM_BASE_MODELS = {
       q4: { repo: 'bartowski/NousResearch_Hermes-4-14B-GGUF', file: 'NousResearch_Hermes-4-14B-Q4_K_M.gguf', size: 8.99, vram: 10 },
     },
   },
+  ministral_14b_reasoning: {
+    name: 'Ministral 3 14B Reasoning',
+    description: 'Official Mistral Ministral 3 14B reasoning model for deeper planning, analysis, and structured problem solving with 256K context',
+    parameters: 14e9, context: 256000, thinking: true,
+    tiers: {
+      q4: { repo: 'mistralai/Ministral-3-14B-Reasoning-2512-GGUF', file: 'Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf', size: 8.5, vram: 10, displayName: 'Ministral 3 14B Reasoning Q4_K_M' },
+      q8: { repo: 'mistralai/Ministral-3-14B-Reasoning-2512-GGUF', file: 'Ministral-3-14B-Reasoning-2512-Q8_0.gguf', size: 15.0, vram: 18, displayName: 'Ministral 3 14B Reasoning Q8_0' },
+    },
+  },
 
   // --- Large dense models (20-32B) ---------------------------------------
   gpt_oss_20b: {
@@ -398,22 +382,24 @@ export const LLM_BASE_MODELS = {
       q4: { repo: 'unsloth/gpt-oss-20b-GGUF', file: 'gpt-oss-20b-Q4_K_M.gguf', size: 11.6, vram: 14 },
     },
   },
-  codestral_22b: {
-    name: 'Codestral 22B',
-    description: 'Mistral code-specialized 22B',
-    parameters: 22e9, context: 32768,
+  mistral_small_3_2_24b: {
+    name: 'Mistral Small 3.2 24B',
+    description: 'Mistral Small 3.2 24B Instruct model for general assistants, tool use, coding, and image-aware workflows via mmproj',
+    parameters: 24e9, context: 131072,
     tiers: {
-      q4: { repo: 'bartowski/Codestral-22B-v0.1-GGUF', file: 'Codestral-22B-v0.1-Q4_K_M.gguf', size: 13.3, vram: 16 },
+      q2: { repo: 'unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF', file: 'Mistral-Small-3.2-24B-Instruct-2506-UD-Q2_K_XL.gguf', size: 9.2, vram: 12, displayName: 'Mistral Small 3.2 24B Q2_K_XL' },
+      q4: { repo: 'unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF', file: 'Mistral-Small-3.2-24B-Instruct-2506-UD-Q4_K_XL.gguf', size: 14.5, vram: 18, displayName: 'Mistral Small 3.2 24B Q4_K_XL' },
+      q8: { repo: 'unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF', file: 'Mistral-Small-3.2-24B-Instruct-2506-UD-Q8_K_XL.gguf', size: 26.0, vram: 30, displayName: 'Mistral Small 3.2 24B Q8_K_XL' },
     },
   },
-  devstral_24b: {
-    name: 'Devstral 24B',
-    description: 'Mistral Devstral 24B dense coding model with 256K context',
+  devstral_small_2_24b: {
+    name: 'Devstral Small 2 24B',
+    description: 'Mistral Devstral Small 2 24B Instruct coding and agentic software engineering model with 256K context',
     parameters: 24e9, context: 256000,
     tiers: {
-      q2: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q2_K_XL.gguf', size: 9.29, vram: 12 },
-      q4: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf', size: 14.5, vram: 18 },
-      q8: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q8_K_XL.gguf', size: 29, vram: 32 },
+      q2: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q2_K_XL.gguf', size: 9.29, vram: 12, displayName: 'Devstral Small 2 24B Q2_K_XL' },
+      q4: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf', size: 14.5, vram: 18, displayName: 'Devstral Small 2 24B Q4_K_XL' },
+      q8: { repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF', file: 'Devstral-Small-2-24B-Instruct-2512-UD-Q8_K_XL.gguf', size: 29, vram: 32, displayName: 'Devstral Small 2 24B Q8_K_XL' },
     },
   },
   qwen3_5_27b: {
@@ -436,15 +422,6 @@ export const LLM_BASE_MODELS = {
       q8: { repo: 'unsloth/Qwen3.6-27B-MTP-GGUF', file: 'Qwen3.6-27B-UD-Q8_K_XL.gguf', size: 31.8, vram: 36, specType: 'draft-mtp', specDraftNMax: 2, mtp: true, displayName: 'Qwen3.6 27B MTP Q8_K_XL' },
     },
   },
-  deepseek_r1_32b: {
-    name: 'DeepSeek R1 Distill 32B',
-    description: 'Large reasoning model with advanced chain-of-thought',
-    parameters: 32e9, context: 32768, thinking: true,
-    tiers: {
-      q4: { repo: 'unsloth/DeepSeek-R1-Distill-Qwen-32B-GGUF', file: 'DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf', size: 19.85, vram: 24 },
-    },
-  },
-
   // --- Dense 30B+ --------------------------------------------------------
   gemma_4_31b_it: {
     name: 'Gemma 4 31B IT',
@@ -467,6 +444,16 @@ export const LLM_BASE_MODELS = {
       q2: { repo: 'unsloth/GLM-4.7-Flash-GGUF', file: 'GLM-4.7-Flash-UD-Q2_K_XL.gguf', size: 11.9, vram: 14 },
       q4: { repo: 'unsloth/GLM-4.7-Flash-GGUF', file: 'GLM-4.7-Flash-UD-Q4_K_XL.gguf', size: 17.5, vram: 20 },
       q8: { repo: 'unsloth/GLM-4.7-Flash-GGUF', file: 'GLM-4.7-Flash-UD-Q8_K_XL.gguf', size: 35.6, vram: 38 },
+    },
+  },
+  nemotron_3_nano_30b_a3b: {
+    name: 'Nemotron 3 Nano 30B A3B',
+    description: 'NVIDIA Nemotron 3 Nano 30B-A3B MoE model with 3B active parameters for efficient reasoning, coding, and agentic work',
+    parameters: 30e9, activeParameters: 3e9, isMoE: true, context: 131072, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Nemotron-3-Nano-30B-A3B-GGUF', file: 'Nemotron-3-Nano-30B-A3B-UD-Q2_K_XL.gguf', size: 12.0, vram: 14, displayName: 'Nemotron 3 Nano 30B A3B Q2_K_XL' },
+      q4: { repo: 'unsloth/Nemotron-3-Nano-30B-A3B-GGUF', file: 'Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf', size: 18.0, vram: 22, displayName: 'Nemotron 3 Nano 30B A3B Q4_K_XL' },
+      q8: { repo: 'unsloth/Nemotron-3-Nano-30B-A3B-GGUF', file: 'Nemotron-3-Nano-30B-A3B-UD-Q8_K_XL.gguf', size: 34.0, vram: 38, displayName: 'Nemotron 3 Nano 30B A3B Q8_K_XL' },
     },
   },
 
@@ -507,8 +494,38 @@ export const LLM_BASE_MODELS = {
       q4: { repo: 'unsloth/Qwen3-Coder-Next-GGUF', file: 'Qwen3-Coder-Next-Q4_K_M.gguf', size: 48.5, vram: 52 },
     },
   },
+  glm_5_1: {
+    name: 'GLM 5.1',
+    description: 'Z.ai GLM-5.1 flagship MoE model for advanced reasoning, coding, agentic tool use, and long-context generation',
+    parameters: 355e9, activeParameters: 32e9, isMoE: true, context: 131072, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/GLM-5.1-GGUF', file: 'UD-Q2_K_XL/GLM-5.1-UD-Q2_K_XL-00001-of-00007.gguf', size: 150, vram: 160, shards: 7, displayName: 'GLM 5.1 Q2_K_XL' },
+      q4: { repo: 'unsloth/GLM-5.1-GGUF', file: 'UD-Q4_K_XL/GLM-5.1-UD-Q4_K_XL-00001-of-00011.gguf', size: 260, vram: 280, shards: 11, displayName: 'GLM 5.1 Q4_K_XL' },
+      q8: { repo: 'unsloth/GLM-5.1-GGUF', file: 'UD-Q8_K_XL/GLM-5.1-UD-Q8_K_XL-00001-of-00018.gguf', size: 520, vram: 540, shards: 18, displayName: 'GLM 5.1 Q8_K_XL' },
+    },
+  },
 
   // --- MoE 100B+ (sharded) ----------------------------------------------
+  gpt_oss_120b: {
+    name: 'GPT-OSS 120B',
+    description: 'OpenAI GPT-OSS 120B open-weight MoE reasoning model with roughly 5B active parameters and 131K context',
+    parameters: 120e9, activeParameters: 5.1e9, isMoE: true, context: 131072, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/gpt-oss-120b-GGUF', file: 'Q2_K/gpt-oss-120b-Q2_K-00001-of-00002.gguf', size: 37, vram: 44, shards: 2, displayName: 'GPT-OSS 120B Q2_K' },
+      q4: { repo: 'unsloth/gpt-oss-120b-GGUF', file: 'UD-Q4_K_XL/gpt-oss-120b-UD-Q4_K_XL-00001-of-00002.gguf', size: 68, vram: 72, shards: 2, displayName: 'GPT-OSS 120B Q4_K_XL' },
+      q8: { repo: 'unsloth/gpt-oss-120b-GGUF', file: 'UD-Q8_K_XL/gpt-oss-120b-UD-Q8_K_XL-00001-of-00002.gguf', size: 128, vram: 136, shards: 2, displayName: 'GPT-OSS 120B Q8_K_XL' },
+    },
+  },
+  llama_4_scout_17b_16e: {
+    name: 'Llama 4 Scout 17B 16E',
+    description: 'Meta Llama 4 Scout multimodal MoE model with 17B active parameters, 16 experts, image support, and very long context',
+    parameters: 109e9, activeParameters: 17e9, isMoE: true, context: 10000000,
+    tiers: {
+      q2: { repo: 'unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF', file: 'Llama-4-Scout-17B-16E-Instruct-UD-Q2_K_XL.gguf', size: 35, vram: 44, displayName: 'Llama 4 Scout Q2_K_XL' },
+      q4: { repo: 'unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF', file: 'UD-Q4_K_XL/Llama-4-Scout-17B-16E-Instruct-UD-Q4_K_XL-00001-of-00002.gguf', size: 64, vram: 72, shards: 2, displayName: 'Llama 4 Scout Q4_K_XL' },
+      q8: { repo: 'unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF', file: 'UD-Q8_K_XL/Llama-4-Scout-17B-16E-Instruct-UD-Q8_K_XL-00001-of-00003.gguf', size: 120, vram: 132, shards: 3, displayName: 'Llama 4 Scout Q8_K_XL' },
+    },
+  },
   qwen3_5_122b_a10b: {
     name: 'Qwen3.5 122B A10B',
     description: 'Qwen3.5 122B A10B MTP MoE with 10B active params',
@@ -527,6 +544,26 @@ export const LLM_BASE_MODELS = {
       q4: { repo: 'unsloth/MiniMax-M2.5-GGUF', file: 'MiniMax-M2.5-UD-Q4_K_XL-00001-of-00004.gguf', size: 131, vram: 140, shards: 4 },
     },
   },
+  minimax_m2_7: {
+    name: 'MiniMax M2.7',
+    description: 'MiniMax M2.7 MoE model with 229B total and 10B active parameters for long-context reasoning, agents, and coding',
+    parameters: 229e9, activeParameters: 10e9, isMoE: true, context: 205000, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/MiniMax-M2.7-GGUF', file: 'UD-Q2_K_XL/MiniMax-M2.7-UD-Q2_K_XL-00001-of-00003.gguf', size: 70, vram: 80, shards: 3, displayName: 'MiniMax M2.7 Q2_K_XL' },
+      q4: { repo: 'unsloth/MiniMax-M2.7-GGUF', file: 'UD-Q4_K_XL/MiniMax-M2.7-UD-Q4_K_XL-00001-of-00004.gguf', size: 131, vram: 140, shards: 4, displayName: 'MiniMax M2.7 Q4_K_XL' },
+      q8: { repo: 'unsloth/MiniMax-M2.7-GGUF', file: 'UD-Q8_K_XL/MiniMax-M2.7-UD-Q8_K_XL-00001-of-00006.gguf', size: 245, vram: 260, shards: 6, displayName: 'MiniMax M2.7 Q8_K_XL' },
+    },
+  },
+  llama_4_maverick_17b_128e: {
+    name: 'Llama 4 Maverick 17B 128E',
+    description: 'Meta Llama 4 Maverick multimodal MoE model with 17B active parameters, 128 experts, image support, and 1M context',
+    parameters: 400e9, activeParameters: 17e9, isMoE: true, context: 1000000,
+    tiers: {
+      q2: { repo: 'unsloth/Llama-4-Maverick-17B-128E-Instruct-GGUF', file: 'UD-Q2_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q2_K_XL-00001-of-00004.gguf', size: 135, vram: 150, shards: 4, displayName: 'Llama 4 Maverick Q2_K_XL' },
+      q4: { repo: 'unsloth/Llama-4-Maverick-17B-128E-Instruct-GGUF', file: 'UD-Q4_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q4_K_XL-00001-of-00005.gguf', size: 240, vram: 260, shards: 5, displayName: 'Llama 4 Maverick Q4_K_XL' },
+      q8: { repo: 'unsloth/Llama-4-Maverick-17B-128E-Instruct-GGUF', file: 'UD-Q8_K_XL/Llama-4-Maverick-17B-128E-Instruct-UD-Q8_K_XL-00001-of-00010.gguf', size: 460, vram: 480, shards: 10, displayName: 'Llama 4 Maverick Q8_K_XL' },
+    },
+  },
   qwen3_5_397b_a17b: {
     name: 'Qwen3.5 397B A17B',
     description: 'Qwen3.5 397B A17B MTP MoE with 17B active params (frontier)',
@@ -543,6 +580,16 @@ export const LLM_BASE_MODELS = {
     parameters: 1e12, activeParameters: 32e9, isMoE: true, context: 256000, thinking: true,
     tiers: {
       q4: { repo: 'unsloth/Kimi-K2.5-GGUF', file: 'Kimi-K2.5-UD-Q4_K_XL-00001-of-00013.gguf', size: 622, vram: 640, shards: 13 },
+    },
+  },
+  kimi_k2_6: {
+    name: 'Kimi K2.6',
+    description: 'Moonshot Kimi K2.6 1T-parameter MoE model with 32B active parameters for frontier long-context reasoning, coding, and agents',
+    parameters: 1e12, activeParameters: 32e9, isMoE: true, context: 256000, thinking: true,
+    tiers: {
+      q2: { repo: 'unsloth/Kimi-K2.6-GGUF', file: 'UD-Q2_K_XL/Kimi-K2.6-UD-Q2_K_XL-00001-of-00008.gguf', size: 270, vram: 300, shards: 8, displayName: 'Kimi K2.6 Q2_K_XL' },
+      q4: { repo: 'unsloth/Kimi-K2.6-GGUF', file: 'UD-Q4_K_XL/Kimi-K2.6-UD-Q4_K_XL-00001-of-00014.gguf', size: 640, vram: 660, shards: 14, displayName: 'Kimi K2.6 Q4_K_XL' },
+      q8: { repo: 'unsloth/Kimi-K2.6-GGUF', file: 'UD-Q8_K_XL/Kimi-K2.6-UD-Q8_K_XL-00001-of-00014.gguf', size: 900, vram: 940, shards: 14, displayName: 'Kimi K2.6 Q8_K_XL' },
     },
   },
 };

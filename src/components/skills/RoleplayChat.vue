@@ -8370,6 +8370,7 @@ export default {
           reader.onload = () => {
             sessionStorage.setItem("pendingI2VImage", reader.result);
             // Navigate to GenerativeVideo tab
+            window.dispatchEvent(new CustomEvent("bonzai:set-mode", { detail: "video" }));
             window.dispatchEvent(
               new CustomEvent("navigate-to-tab", { detail: { tab: "video" } }),
             );
@@ -8378,6 +8379,7 @@ export default {
           return;
         }
         // Navigate to GenerativeVideo tab
+        window.dispatchEvent(new CustomEvent("bonzai:set-mode", { detail: "video" }));
         window.dispatchEvent(
           new CustomEvent("navigate-to-tab", { detail: { tab: "video" } }),
         );
@@ -11035,7 +11037,7 @@ hr {
   z-index: 1;
   height: 100%;
   overflow-y: auto;
-  padding: var(--bz-space-5);
+  padding: var(--bz-space-5) var(--bz-space-6);
   background:
     linear-gradient(180deg, var(--bz-scrim-soft), transparent 34%),
     var(--bz-scrim-soft);
@@ -11173,7 +11175,8 @@ hr {
 .chat-message {
   display: flex;
   gap: var(--bz-space-3);
-  margin-bottom: var(--bz-space-4);
+  margin-bottom: var(--bz-space-5);
+  align-items: flex-end;
 }
 
 /* Only animate newly added messages */
@@ -11205,10 +11208,11 @@ hr {
 }
 
 .message-avatar {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -11234,32 +11238,43 @@ hr {
 .message-content {
   display: flex;
   flex-direction: column;
-  max-width: min(680px, 72%);
+  max-width: min(720px, 76%);
+  min-width: 0;
 }
 
 .message-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.25rem;
-  border-radius: 12px;
+  margin-bottom: var(--bz-space-1);
 }
 
 .message-sender {
-  color: var(--bz-fg-mid);
-  font-size: 0.85rem;
+  color: var(--bz-fg-low);
+  font-family: var(--bz-font-body) !important;
+  font-size: var(--bz-size-micro);
+  font-style: normal !important;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .message-text {
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
+  border-radius: 18px 18px 18px 6px;
   padding: var(--bz-space-3) var(--bz-space-4);
   color: var(--bz-fg);
   line-height: 1.55;
+  box-shadow: var(--bz-elev-1);
+}
+.message-text p {
+  margin: 0;
 }
 .chat-message.user .message-text {
   background: var(--bz-purple-soft);
   border-color: var(--bz-border-brand);
+  border-radius: 18px 18px 6px 18px;
 }
 
 .action-text {
@@ -11272,41 +11287,58 @@ hr {
 .message-image {
   width: 100%;
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--bz-content-radius);
   overflow: hidden;
   animation: mediaFadeIn 0.5s ease-out forwards;
   opacity: 0;
   position: relative;
+  border: 1px solid var(--bz-border);
+  background: var(--bz-canvas);
 }
 
 .message-image .image-actions {
   position: absolute;
-  bottom: 8px;
-  right: 8px;
+  right: var(--bz-space-2);
+  bottom: var(--bz-space-2);
   display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.2s ease;
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-1);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-scrim-deep);
+  box-shadow: var(--bz-elev-2);
+  opacity: 0.96;
+  transition:
+    opacity var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out);
 }
 
 .message-image:hover .image-actions {
   opacity: 1;
+  border-color: var(--bz-border-brand);
 }
 
 .image-action-btn {
-  background: var(--bz-scrim-deep);
-  border: none;
-  border-radius: 4px;
-  padding: 6px;
+  width: 34px;
+  height: 34px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg);
+  padding: 0;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s ease;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    color var(--bz-dur-fast) var(--bz-ease-out);
 }
 
 .image-action-btn:hover {
-  background: var(--bz-control-selected-bg);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-border-brand);
   color: var(--bz-control-selected-fg);
 }
 
@@ -11334,7 +11366,9 @@ hr {
 /* Delete button red tint on hover */
 .image-action-btn.delete-btn:hover,
 .media-action-btn.delete-btn:hover {
-  background: rgba(200, 50, 50, 0.9);
+  background: var(--bz-danger-soft);
+  border-color: var(--bz-danger);
+  color: var(--bz-danger);
 }
 
 /* Generate media button for messages without images */
@@ -11410,13 +11444,12 @@ hr {
 
 .audio-actions {
   position: absolute;
-  top: 50%;
-  right: 8px;
-  transform: translateY(-50%);
+  top: var(--bz-space-2);
+  right: var(--bz-space-2);
   display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.2s ease;
+  gap: var(--bz-space-1);
+  opacity: 0.96;
+  transition: opacity var(--bz-dur-fast) var(--bz-ease-out);
 }
 
 .message-audio:hover .audio-actions {
@@ -11432,12 +11465,12 @@ hr {
 
 .video-actions {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: var(--bz-space-2);
+  right: var(--bz-space-2);
   display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.2s ease;
+  gap: var(--bz-space-1);
+  opacity: 0.96;
+  transition: opacity var(--bz-dur-fast) var(--bz-ease-out);
 }
 
 .message-video:hover .video-actions {
@@ -11554,19 +11587,26 @@ hr {
 
 /* Shared media action button */
 .media-action-btn {
-  background: var(--bz-scrim-deep);
-  border: none;
-  border-radius: 4px;
-  padding: 6px;
+  width: 34px;
+  height: 34px;
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg);
+  padding: 0;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s ease;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out),
+    color var(--bz-dur-fast) var(--bz-ease-out);
 }
 
 .media-action-btn:hover {
-  background: var(--bz-control-selected-bg);
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-border-brand);
   color: var(--bz-control-selected-fg);
 }
 

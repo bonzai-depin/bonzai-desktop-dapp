@@ -157,7 +157,7 @@
       <GenerativeText v-if="modelMode == 'chat'" key="chat" />
       <GenerativeAudio v-if="modelMode == 'music'" key="music" />
       <GenerativeImage v-if="modelMode == 'image'" key="image" />
-      <GenerativeVideo v-if="modelMode == 'video'" key="video" />
+      <GenerativeVideo v-if="modelMode == 'video'" key="video" :existing-image-base64="videoImageBase64" />
       <Generative3D v-if="modelMode == 'game'" key="game" />
       <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" />
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
@@ -355,6 +355,10 @@ export default {
       const next = e?.detail;
       if (typeof next === "string" && VALID_MODES.has(next)) modelMode.value = next;
     };
+    const onNavigateToTab = (e) => {
+      const tab = e?.detail?.tab || e?.detail;
+      if (typeof tab === "string" && VALID_MODES.has(tab)) modelMode.value = tab;
+    };
 
     const notifClass = computed(() => {
       const m = {
@@ -427,8 +431,14 @@ export default {
     let unsubscribeServerStatus = null;
     let autoHideTimeout = null;
 
+    const normalizeImageForVideo = (image) => {
+      const raw = String(image || "");
+      const match = raw.match(/^data:image\/[^;]+;base64,(.+)$/i);
+      return match ? match[1] : raw;
+    };
+
     const goAnimateToVideo = (b64) => {
-      videoImageBase64.value = b64 || "";
+      videoImageBase64.value = normalizeImageForVideo(b64);
       modelMode.value = "video";
     };
 
@@ -439,8 +449,12 @@ export default {
       modelMode.value = "agent";
     };
 
-    const openBrowseModels = () => {
+    const showBrowseModels = () => {
       modelPicker.show();
+    };
+
+    const openBrowseModels = () => {
+      showBrowseModels();
       window.dispatchEvent(new CustomEvent("bonzai:open-browse-models"));
     };
 
@@ -646,8 +660,9 @@ const {
         .catch(() => { document.title = "BonzAI"; });
 
       initOpenClawHandler();
-      window.addEventListener("bonzai:open-browse-models", openBrowseModels);
+      window.addEventListener("bonzai:open-browse-models", showBrowseModels);
       window.addEventListener("bonzai:set-mode", onSetModeEvent);
+      window.addEventListener("navigate-to-tab", onNavigateToTab);
       window.addEventListener("bonzai:open-specs", openSpecsModal);
       window.addEventListener("bonzai:open-network", () => { showNetworkModal.value = true; });
       window.addEventListener("bonzai:open-rewards", () => { showRewardsModal.value = true; });
@@ -693,8 +708,9 @@ const {
       if (sysInfoInterval) clearInterval(sysInfoInterval);
       if (p2pStatusInterval) clearInterval(p2pStatusInterval);
       modelStore.stopListening();
-      window.removeEventListener("bonzai:open-browse-models", openBrowseModels);
+      window.removeEventListener("bonzai:open-browse-models", showBrowseModels);
       window.removeEventListener("bonzai:set-mode", onSetModeEvent);
+      window.removeEventListener("navigate-to-tab", onNavigateToTab);
       window.removeEventListener("bonzai:open-specs", openSpecsModal);
       window.removeEventListener("auth:needs-reauth", handleNeedsReauth);
       window.removeEventListener("auth:expired", handleNeedsReauth);

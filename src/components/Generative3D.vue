@@ -325,6 +325,8 @@
               <ThreeViewer
                 ref="threeViewer"
                 :enablePhysics="enablePhysics"
+                :initial-time-of-day="currentTime"
+                :initial-weather="currentWeather"
                 @generation-success="handleSuccess"
                 @generation-error="handleError"
               />
@@ -620,7 +622,7 @@ function indent(text, spaces = 4) {
 function normalizeLLMCode(code) {
   let out = String(code);
 
-  // STEP 0: Strip reasoning/thinking tags (Qwen 3.5, DeepSeek R1, Nanbeige, etc.)
+  // STEP 0: Strip reasoning/thinking tags (Qwen 3.5, GLM, Nanbeige, etc.)
   out = out.replace(/<think>[\s\S]*?<\/think>\s*/gi, "");
   out = out.replace(/<\|thinking\|>[\s\S]*?<\|\/thinking\|>\s*/gi, "");
   out = out.replace(/<think>[\s\S]*$/gi, ""); // unclosed <think> tag
@@ -1191,6 +1193,15 @@ function validateRenderableUserCode(userCode) {
   return { ok: true, reason: "" };
 }
 
+function stripThinkBlocks(text) {
+  let out = String(text || "");
+  out = out.replace(/<think>[\s\S]*?<\/think>\s*/gi, "");
+  out = out.replace(/<\|thinking\|>[\s\S]*?<\|\/thinking\|>\s*/gi, "");
+  out = out.replace(/<think>[\s\S]*$/gi, "");
+  out = out.replace(/<\|thinking\|>[\s\S]*$/gi, "");
+  return out.trim();
+}
+
 function modelFromResolved(resolved, role) {
   return {
     role,
@@ -1391,8 +1402,8 @@ export default {
     );
     const hasCopy = reactive([]);
     const enablePhysics = ref(true);
-    const currentTime = ref("day");
-    const currentWeather = ref("sunny");
+    const currentTime = ref(localStorage.getItem("bonzai-3d-time") || "day");
+    const currentWeather = ref(localStorage.getItem("bonzai-3d-weather") || "sunny");
     const lightIntensity = ref(1.0);
     const loadedModelFilename = ref(null);
     const form = reactive({ prompt: "" });
@@ -1603,7 +1614,7 @@ export default {
         const activeLLM =
           (await window.electronAPI?.getActiveDownloads?.()) || [];
         const requiredFilenames = new Set(
-          requiredModels.value.map((model) => model.filename),
+          requiredModelFiles.value.map((model) => model.filename),
         );
         const relevantLLM = activeLLM.filter((d) =>
           requiredFilenames.has(d.filename),
@@ -1683,10 +1694,11 @@ export default {
 
       try {
         for (const model of missingRequiredModels.value) {
-          const llmTaskId = `llm-${model.role.toLowerCase()}`;
+          const llmTaskId = `llm-${model.filename}`;
           downloads.pipeline.tasks[llmTaskId] = {
             task_id: llmTaskId,
             filename: model.filename,
+            label: model.role,
             status: "downloading",
             progress: 0,
           };
@@ -1708,7 +1720,9 @@ export default {
           if (success) {
             downloads.pipeline.tasks[llmTaskId].status = "completed";
             downloads.pipeline.tasks[llmTaskId].progress = 100;
-            modelAvailability[model.role.toLowerCase()] = true;
+            for (const role of model.roles || [model.role]) {
+              modelAvailability[role.toLowerCase()] = true;
+            }
           } else {
             downloads.pipeline.tasks[llmTaskId].status = "failed";
           }
@@ -1920,18 +1934,33 @@ export default {
     // - Planner rewrites the prompt into a geometric blueprint.
     // - Codegen writes the actual Three.js object.
     const plannerModel = computed(() =>
-      modelFromResolved(resolveLLM("qwen3_5_9b", "q4"), "Planner"),
+      modelFromResolved(resolveLLM("qwen3_5_9b_deepseek_v4_flash", "q4"), "Planner"),
     );
     const codeModel = computed(() =>
-      modelFromResolved(resolveLLM("qwen3_5_9b", "q4"), "Codegen"),
+      modelFromResolved(resolveLLM("qwen3_5_9b_deepseek_v4_flash", "q4"), "Codegen"),
     );
     const requiredModels = computed(() => [plannerModel.value, codeModel.value]);
+    const requiredModelFiles = computed(() => {
+      const byFilename = new Map();
+      for (const model of requiredModels.value) {
+        const existing = byFilename.get(model.filename);
+        if (existing) {
+          existing.roles.push(model.role);
+          existing.role = existing.roles.join(" + ");
+        } else {
+          byFilename.set(model.filename, { ...model, roles: [model.role] });
+        }
+      }
+      return [...byFilename.values()];
+    });
 
     const reasoningEnabled = ref(false);
 
     const currentModel = computed(() => codeModel.value);
     const missingRequiredModels = computed(() =>
-      requiredModels.value.filter((model) => !modelAvailability[model.role.toLowerCase()]),
+      requiredModelFiles.value.filter((model) =>
+        model.roles.some((role) => !modelAvailability[role.toLowerCase()]),
+      ),
     );
     const isModel = computed(() => missingRequiredModels.value.length === 0);
 
@@ -2016,23 +2045,12 @@ export default {
     // PROMPT ENHANCER — decompose vague descriptions into geometric blueprints
     // ═══════════════════════════════════════════════════════════════════════
     const buildEnhancePrompt = (userText) => {
-      return `You are a AAA 3D artist designing a single object for rendering. Decompose the user's description into a detailed ASSEMBLY BLUEPRINT — a structured list of every sub-part with its exact look, position, and spatial relationship to the other parts.
+      return `/no_think
+You are a 3D production designer. Return a compact ASSEMBLY BLUEPRINT for the exact object below. Do not reason. Do not write a thinking process.
 
 OBJECT: "${userText}"
 
-For EACH sub-part of the object, specify ALL of:
-- SHAPE: geometry type, profile, proportions (e.g. "LatheGeometry ovoid profile 0.4 wide × 0.5 tall", "CylinderGeometry radius 0.1, height 0.06")
-- MATERIAL: surface finish, color with hex code, transparency, metalness, roughness (emissive glow ONLY for energy/magic effects — NEVER for liquids)
-- POSITION: where it sits relative to the main body in Y coordinates (e.g. "sits flush on top of the vial opening at the rim's Y", "centered at the base at y=0")
-- SIZE: dimensions relative to the main body (e.g. "cork diameter matches the neck inner radius", "blade is 3× the handle length")
-- FUNCTION: what this part does visually (seals the top, holds liquid, decorative accent)
-
-SPATIAL RULES you MUST follow:
-- Pick a single ground-level origin (y=0) and describe every part's Y range from there
-- Parts that sit ON TOP of other parts must start at the top edge of the part below
-- Parts INSIDE a container (liquid, objects) must be within the container's interior bounds
-- Lids/caps/corks go at the OPENING of the container (its highest point), not in the middle
-- Total object height should be 0.3–1.5 units
+For every visible sub-part, include: SHAPE, MATERIAL with hex color for solids, Y range, size/proportion, and function. Use y=0 as the ground origin. Total height must be 0.3-1.5 units. Parts on top must start at the exact top Y of the part below. Liquids inside containers must remain inside the container.
 
 ARCHETYPE TAGS (optional, recommended) — when the scene is one of the
 recognized archetypes below, OPEN the blueprint with the matching tag on its
@@ -2052,7 +2070,7 @@ fits.
   [ARCHETYPE: STREAM, from=<part>, to=<part>]
       Pouring / falling water column.
 
-LIQUID RULE — read carefully. Whenever a sub-part is water, potion, blood,
+LIQUID RULE. Whenever a sub-part is water, potion, blood,
 acid, oil, lava, mercury, or any other liquid, describe ONLY:
   - Which container or footprint holds it
   - The semantic type (water | lava | potion | blood | oil | mercury | acid)
@@ -2062,15 +2080,13 @@ for a liquid. The engine has dedicated shaders per liquid type and will pick
 the correct optics; spec'ing material parameters yourself produces a flat
 dull disc when the codegen translates it literally.
 
-FORMAT: Write a single dense paragraph. Open with the archetype tag(s) on
-their own line, then describe each sub-part inline with its shape, material,
-color hex, and Y-position. End with one signature detail.
+FORMAT: One or two archetype tag lines if useful, then ONE dense paragraph of 120-220 words. No bullets. No markdown. No code. No <think>.
 
 RULES:
 - Stay EXACTLY faithful to the user's intent — do not change the subject or add unrelated elements
 - DO add structural sub-parts the object would realistically have (a bottle needs a cork, a sword needs a pommel)
 - Every color must have a hex code (except liquids — see LIQUID RULE). If user didn't specify, pick vivid realistic ones
-- Output ONLY the enriched description paragraph. No code. No markdown. No bullet points. No explanation.`;
+- Output ONLY the blueprint.`;
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2113,9 +2129,9 @@ RULES:
       const selectedSkills = scored.slice(0, 3).map(s => s.content);
       const skillsContext = selectedSkills.join("\n\n---\n\n");
 
-      return `${detectArchetypeHint(userText)}You are an expert Three.js developer building scenes that
-must match the Arcane Orrery reference (shown at the bottom of this
-prompt) for visual richness and engine-feature coverage.
+      return `${detectArchetypeHint(userText)}You are an expert Three.js developer building a bespoke scene
+from the task below. Match the app's AAA quality bar, but do not copy
+the default scene.
 
 CRITICAL: Output ONLY raw JavaScript code. No thinking, no reasoning,
 no <think> tags, no explanation, no markdown fences. Start with
@@ -2281,8 +2297,7 @@ specific helpers.
      userData tag.
 
 ═══ MANDATORY AAA CHECKLIST — apply to EVERY scene, not just templates ═══
-Every generation must pass these requirements. The default orrery scene
-demonstrates all of them — treat it as the quality bar.
+Every generation must pass these requirements. Treat them as the quality bar.
 
   [1] LIQUIDS: any water/potion/blood/acid/lava surface MUST use FLUID.*
       - Flat pool / lake / moat / basin top     → FLUID.oceanWater(geom, opts)
@@ -2651,13 +2666,12 @@ Aim for every generated piece to hit at least 4 of these:
   Reusing engine presets is fine — \`MAT.brass\`, \`MAT.gold\`,
   \`TEX.stone(...)\` are just READS, they don't declare anything.
 
-═══ QUALITY REFERENCE — full Arcane Orrery source ═══
-This is the default scene that sets the quality bar. Your output must
-match its coverage: MAT presets + TEX procedurals + SHADER calls +
-FX.withGlow + FX.godRayCone + FX.batch + CELESTIAL backdrop + Rapier
-physics + setLensFlare + multiple animation callbacks.
-
-${defaultCode}
+═══ QUALITY REFERENCE — do not copy the default scene ═══
+The default scene is an Arcane Orrery. It is ONLY a quality benchmark:
+layered geometry, material presets, procedural textures, shader accents,
+volumetric-looking FX, weather-aware lighting, and animation callbacks.
+Your subject, silhouette, parts, title, and description MUST come from
+TASK, not from the orrery.
 
 ═══ SCENE ENVIRONMENT — DO NOT TOUCH ═══
 The viewer provides the visual ground (grid, sky, stars, weather).
@@ -3040,6 +3054,7 @@ OUTPUT:`;
     // ═══════════════════════════════════════════════════════════════════════
     const setTimeOfDay = (time) => {
       currentTime.value = time;
+      localStorage.setItem("bonzai-3d-time", time);
       threeViewer.value?.setTimeOfDay(time);
     };
 
@@ -3049,12 +3064,39 @@ OUTPUT:`;
     };
     const setWeather = (weather) => {
       currentWeather.value = weather;
+      localStorage.setItem("bonzai-3d-weather", weather);
       threeViewer.value?.setWeather(weather);
     };
 
     const setLightIntensity = (intensity) => {
       lightIntensity.value = intensity;
       threeViewer.value?.setLightIntensity(intensity);
+    };
+
+    const restoreViewerEnvironmentControls = () => {
+      const viewer = threeViewer.value;
+      if (!viewer) return;
+      viewer.setTimeOfDay(currentTime.value);
+      viewer.setWeather(currentWeather.value);
+      viewer.setRenderQuality(currentPerformance.value);
+      viewer.setLightIntensity(lightIntensity.value);
+    };
+
+    const waitForViewerReady = async (timeoutMs = 5000) => {
+      const start = performance.now();
+      while (performance.now() - start < timeoutMs) {
+        const viewer = threeViewer.value;
+        if (
+          viewer?.isReady &&
+          viewer?.scene &&
+          viewer?.renderer &&
+          viewer?._sceneObjects?.get?.("ground")
+        ) {
+          return viewer;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return threeViewer.value;
     };
 
     const clearScene = () => {
@@ -3161,6 +3203,7 @@ OUTPUT:`;
       if (!item.code || !threeViewer.value) return;
       try {
         await threeViewer.value.applyModuleCode(item.code, "replace");
+        restoreViewerEnvironmentControls();
         // Store for refinement
         const userCodeMatch = item.code.match(
           /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
@@ -3209,7 +3252,7 @@ OUTPUT:`;
     const actionsFor = (item) => {
       const minted = !!item?.nft;
       return [
-        { id: "inspect", icon: "tune", label: "Inspect", variant: "default", title: "Inspect generation metadata" },
+        { id: "inspect", icon: "info", label: "Inspect", variant: "default", title: "Inspect generation metadata" },
         { id: "copy", icon: hasCopy[item._originalIndex] ? "check" : "content_copy", label: hasCopy[item._originalIndex] ? "Copied" : "Reuse", variant: "default", title: "Copy prompt into composer" },
         { id: "mint", icon: minted ? "check_circle" : "token", label: minted ? "Minted" : "Mint", variant: minted ? "success" : "default", disabled: minted },
         { id: "load", icon: "visibility", label: "Load", variant: "primary", disabled: !item?.success, title: "Load this scene" },
@@ -3310,6 +3353,7 @@ OUTPUT:`;
         // Load into viewer
         if (threeViewer.value && result.code) {
           await threeViewer.value.applyModuleCode(result.code, "replace");
+          restoreViewerEnvironmentControls();
           const userCodeMatch = result.code.match(
             /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
           );
@@ -3329,8 +3373,8 @@ OUTPUT:`;
     // ═══════════════════════════════════════════════════════════════════════
     const isModelAvailable = async (filename) => {
       const available = await window.electronAPI.checkModel(filename);
-      const match = requiredModels.value.find((model) => model.filename === filename);
-      if (match) {
+      const matches = requiredModels.value.filter((model) => model.filename === filename);
+      for (const match of matches) {
         modelAvailability[match.role.toLowerCase()] = available;
       }
       return available;
@@ -3345,6 +3389,12 @@ OUTPUT:`;
       );
       for (const result of results) {
         modelAvailability[result.role] = result.available;
+      }
+      for (const model of requiredModelFiles.value) {
+        const available = await window.electronAPI.checkModel(model.filename);
+        for (const role of model.roles) {
+          modelAvailability[role.toLowerCase()] = available;
+        }
       }
       return results.every((result) => result.available);
     };
@@ -3374,8 +3424,8 @@ OUTPUT:`;
       const success = await window.electronAPI.deleteModel(filename);
 
       if (success) {
-        const match = requiredModels.value.find((model) => model.filename === filename);
-        if (match) {
+        const matches = requiredModels.value.filter((model) => model.filename === filename);
+        for (const match of matches) {
           modelAvailability[match.role.toLowerCase()] = false;
         }
         if (loadedModelFilename.value === filename) {
@@ -3424,9 +3474,8 @@ OUTPUT:`;
     };
 
           const defaultCode = `export default async function generate(params) {
-  const { THREE, scene, helpers: H, setObjectInfo, addUpdateCallback,
-          setFilmGrain, setChromatic, setDoF, setColorGrade, setLensFlare,
-          setUnderwater, setAO, setBloom, setEnvironment } = params;
+  const { THREE, helpers: H, setObjectInfo, addUpdateCallback,
+          setColorGrade, setLensFlare, setAO, setBloom } = params;
   const { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX } = params._engine;
   const root = new THREE.Group();
   root.name = "ArcaneOrrery";
@@ -3436,20 +3485,15 @@ OUTPUT:`;
     description: "A breathing mechanical cosmos — armillary rings carry blue-marble planets veined with gold around a nebula core, over a mirrored moat and rune-carved dais, lit against a cold deep-space IBL."
   });
 
-  // ── Scene-specific post overrides (baseline already covers grain,
-  // subtle chromatic, color grade, AO and bloom). We bump AO because
-  // this scene is all contact surfaces, push bloom selectively for
-  // the emissive nebula hero, and swap IBL to the night preset so
-  // brass/gold/silver catch cool reflections.
+  // ── Scene-specific object lookdev. The viewer owns time-of-day,
+  // weather, sky, clouds, and HDR environment, so this default object
+  // does not call setEnvironment().
   setAO({ radius: 0.9, intensity: 4.0, falloff: 0.3, quality: "Ultra" });
   setBloom({ intensity: 1.0, threshold: 0.75, smoothing: 0.2, radius: 0.7 });
   setColorGrade({ saturation: 1.12, contrast: 1.05 });
-  await setEnvironment("night", { intensity: 0.55 });
 
   // ── Physics world (Rapier) ─────────────────────────────────────────
-  // P.init() now auto-creates an infinite ground collider at y=0 — no
-  // invisible BoxGeometry floor needed. The old pattern produced a
-  // transmission-buffer artifact under the moat's water reflection.
+  // P.init() auto-creates an infinite physics ground collider at y=0.
   await P.init({ gravity: -4.5 });
 
   // ── Stone dais ──────────────────────────────────────────────────────
@@ -3484,12 +3528,7 @@ OUTPUT:`;
 
   // ── Water moat — AAA reflector-based water (THREE.Water under the
   // hood). The pool renders a real reflection of the scene into an RT
-  // each frame, then samples a ripple normalmap to distort it. This is
-  // the exact technique used at water-simulation.vercel.app.
-  //
-  // Ring geometry works as the water plane — reflector handles its own
-  // RT internally, perturbs UVs via the animated normalmap, and Fresnel-
-  // mixes the reflection with the clear blue water color.
+  // each frame, then samples a ripple normalmap to distort it.
   const moatGeo = new THREE.RingGeometry(0.50, 1.10, 128, 4);
   const moat = FLUID.oceanWater(moatGeo, {
     color: 0x0a86c8,              // clear blue
@@ -3797,21 +3836,19 @@ OUTPUT:`;
   });
 
   // ── Atmosphere: starfield + half-dome nebula + magic aura ─────────
-  // Starfield shell far out, past the orrery and the camera. Auto-scale
-  // is ~0.85× on a ~1.76m scene, so native distances should be ~6-10m
-  // to read as a distant sky.
+  // Decorative object backdrop. The actual viewer sky, clouds, weather,
+  // and HDR environment remain controlled by ThreeViewer.
   const stars = CELESTIAL.starfield({ count: 1400, radius: 9, size: 36, twinkle: 0.75 });
   stars.position.y = coreY;
   root.add(stars);
 
-  // DOME NEBULA — BonzAI purple/pink inner, green/violet outer.
   const nebulaInner = CELESTIAL.nebulaCloud({
     dome: true,
     count: 420,
     bounds: { x: 6.0, y: 4.5, z: 6.0 },
     innerRadius: 4.2,
-    colorA: 0x8b5cf6,              // BonzAI purple
-    colorB: 0xfe2d6e,              // BonzAI pink
+    colorA: 0x8b5cf6,
+    colorB: 0xfe2d6e,
     brightness: 1.0,
     size: 58,
   });
@@ -3823,8 +3860,8 @@ OUTPUT:`;
     count: 260,
     bounds: { x: 9.0, y: 7.0, z: 9.0 },
     innerRadius: 6.5,
-    colorA: 0x10b981,              // BonzAI green
-    colorB: 0xa855f7,              // BonzAI violet
+    colorA: 0x10b981,
+    colorB: 0xa855f7,
     brightness: 0.6,
     size: 80,
   });
@@ -3853,12 +3890,13 @@ OUTPUT:`;
     // DEFAULT OBJECT
     // ═══════════════════════════════════════════════════════════════════════
     const loadDefaultObject = async () => {
-      const viewer = threeViewer.value;
+      const viewer = await waitForViewerReady();
       if (!viewer) return;
 
 
       try {
         await viewer.applyModuleCode(defaultCode, "replace");
+        restoreViewerEnvironmentControls();
       } catch (err) {
         console.error("Failed to load default object:", err);
       }
@@ -3892,17 +3930,19 @@ OUTPUT:`;
 
         // Phase 1: Enhance prompt — decompose into explicit geometric blueprint
         lastStatus.value = "Designing blueprint...";
-        // Blueprint budget bumped to 2048: a complex multi-part scene
-        // (3-tier fountain, moss accents, gold inlays, central pillar,
-        // streams, signature detail) routinely runs 800-1500 tokens.
-        // The previous 512 cap hard-clipped the blueprint mid-sentence,
-        // so the codegen LLM received an incomplete spec and built
-        // disconnected fragments (visible as the "potion blob" output).
-        const BLUEPRINT_MAX_TOKENS = 2048;
+        // Keep the planner terse. Thinking-capable models can otherwise
+        // spend the whole budget on <think> text and never reach the actual
+        // blueprint, so request-level thinking is explicitly disabled below.
+        const BLUEPRINT_MAX_TOKENS = 768;
         _resetStream("Designing Blueprint", BLUEPRINT_MAX_TOKENS, "Drafting the world before we render it.");
         const blueprintResult = await callLLM(
           buildEnhancePrompt(form.prompt),
-          { maxTokens: BLUEPRINT_MAX_TOKENS, temperature: 0.9, thoughtTokens: 0 },
+          {
+            maxTokens: BLUEPRINT_MAX_TOKENS,
+            temperature: 0.35,
+            thoughtTokens: 0,
+            enableThinking: false,
+          },
           ({ text, tokenCount, elapsedMs }) => {
             const visible = _stripThinkForPreview(text);
             stream.tokenCount = tokenCount;
@@ -3912,7 +3952,8 @@ OUTPUT:`;
             stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
           },
         );
-        const blueprint = blueprintResult.text.trim() || form.prompt;
+        const blueprint = stripThinkBlocks(blueprintResult.text) ||
+          `${detectArchetypeHint(form.prompt)}${form.prompt}`;
         const blueprintTokS = blueprintResult.elapsedMs > 0
           ? ((blueprintResult.tokenCount / blueprintResult.elapsedMs) * 1000).toFixed(1)
           : null;
@@ -3941,17 +3982,17 @@ OUTPUT:`;
         const codePrompt = buildObjectPrompt(blueprint);
         // 16K output budget — the orrery reference is ~270 lines and
         // our quality bar expects new scenes to match that volume. The
-        // 35B MoE model with 32K context + ~5K prefill leaves room for
-        // a 16K code emission. Thinking tokens stay off for codegen;
-        // reasoning mode adds 4K when enabled.
-        const codeMaxTokens = reasoningEnabled.value ? 20480 : 16384;
+        // Keep thinking disabled for 3D codegen. Hybrid reasoning models
+        // can otherwise burn output budget before emitting executable JS.
+        const codeMaxTokens = 16384;
         _resetStream("Vibe Coding", codeMaxTokens, "Hand-stitching three.js geometry, frame by frame.");
         const codeResult = await callLLM(
           codePrompt,
           {
             maxTokens: codeMaxTokens,
             temperature: 0.7,
-            thoughtTokens: reasoningEnabled.value ? undefined : 0,
+            thoughtTokens: 0,
+            enableThinking: false,
           },
           ({ text, tokenCount, elapsedMs, prefillMs, genMs }) => {
             const visible = _stripThinkForPreview(text);
@@ -4027,7 +4068,7 @@ Every mesh goes on root. The code MUST include root.add(...) calls for visible o
 OUTPUT CODE:`;
           const retry = await callLLM(
             tersePrompt,
-            { maxTokens: 8192, temperature: 0.6, thoughtTokens: 0 },
+            { maxTokens: 8192, temperature: 0.6, thoughtTokens: 0, enableThinking: false },
             ({ text, tokenCount, elapsedMs }) => {
               const visible = _stripThinkForPreview(text);
               stream.tokenCount = tokenCount;
@@ -4064,6 +4105,7 @@ OUTPUT CODE:`;
         stream.tokenCount = 1;
         stream.maxTokens = 1;
         await viewer.applyModuleCode(code, "replace");
+        restoreViewerEnvironmentControls();
 
         // Store for refinement
         lastGeneratedCode.value = userCode;
@@ -4110,14 +4152,15 @@ OUTPUT CODE:`;
         await window.electronAPI.resetChat();
 
         const prompt = buildRefinePrompt(lastGeneratedCode.value, refinePrompt.value);
-        const refineMaxTokens = reasoningEnabled.value ? 10240 : 8192;
+        const refineMaxTokens = 8192;
         _resetStream("Refining", refineMaxTokens, "Sculpting on top of the existing scene.");
         const result = await callLLM(
           prompt,
           {
             maxTokens: refineMaxTokens,
             temperature: 0.7,
-            thoughtTokens: reasoningEnabled.value ? undefined : 0,
+            thoughtTokens: 0,
+            enableThinking: false,
           },
           ({ text, tokenCount, elapsedMs, prefillMs, genMs }) => {
             const visible = _stripThinkForPreview(text);
@@ -4147,6 +4190,7 @@ OUTPUT CODE:`;
         stream.tokenCount = 1;
         stream.maxTokens = 1;
         await viewer.applyModuleCode(code, "replace");
+        restoreViewerEnvironmentControls();
         lastStatus.value = `Refined! (${tokensPerSecond || '?'} tok/s)`;
         const snapshot = await captureViewerSnapshot("Preview");
         await addObjectInference(`[Refine] ${refinePrompt.value}`, code, {
@@ -4180,7 +4224,10 @@ OUTPUT CODE:`;
       resumeActiveDownloadIfAny();
 
       await nextTick();
-      setTimeout(() => loadDefaultObject(), 500);
+      waitForViewerReady().then(() => {
+        restoreViewerEnvironmentControls();
+        return loadDefaultObject();
+      });
       // Setup scroll observer after DOM is rendered
       setTimeout(setupScrollObserver, 100);
       // Attach scroll listener for scroll-to-top button
@@ -4296,6 +4343,7 @@ OUTPUT CODE:`;
       // Model management
       reasoningEnabled,
       currentModel,
+      missingRequiredModels,
       downloadProgress,
       isModel,
       isModelAvailable,
