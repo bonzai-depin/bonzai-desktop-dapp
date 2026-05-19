@@ -3252,7 +3252,7 @@ OUTPUT:`;
     const actionsFor = (item) => {
       const minted = !!item?.nft;
       return [
-        { id: "inspect", icon: "info", label: "Inspect", variant: "default", title: "Inspect generation metadata" },
+        { id: "inspect", icon: "info", label: "", variant: "default", title: "Inspect generation metadata" },
         { id: "copy", icon: hasCopy[item._originalIndex] ? "check" : "content_copy", label: hasCopy[item._originalIndex] ? "Copied" : "Reuse", variant: "default", title: "Copy prompt into composer" },
         { id: "mint", icon: minted ? "check_circle" : "token", label: minted ? "Minted" : "Mint", variant: minted ? "success" : "default", disabled: minted },
         { id: "load", icon: "visibility", label: "Load", variant: "primary", disabled: !item?.success, title: "Load this scene" },

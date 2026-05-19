@@ -1792,7 +1792,7 @@ export default {
       const hasImage = !!inference?.answer?.data?.image;
       const minted = !!inference?.nft;
       return [
-        { id: "inspect",  icon: "info",       label: "Inspect",   variant: "default",
+        { id: "inspect",  icon: "info",       label: "",   variant: "default",
           title: "Open inspector" },
         { id: "download", icon: "save",          label: "Download",  variant: "primary",     disabled: !hasImage },
         { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",

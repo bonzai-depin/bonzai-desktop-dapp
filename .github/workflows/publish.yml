@@ -92,7 +92,7 @@ jobs:
       # blueprint loopback + runner-dispatch. Independent of model
       # weights; catches wire-format / codec / runner-registry
       # regressions before the multi-GB PyInstaller pass. See
-      # release-linux.yml for rationale.
+      # linux-release.yml for rationale.
       - name: Privacy-pipeline smoke tests
         run: |
           python src/server/pipeline_transport.py

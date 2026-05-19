@@ -47,7 +47,7 @@ function actionClass(a) {
 }
 
 function isIconOnly(a) {
-  return props.iconOnly || a.iconOnly || ["copy", "restore", "delete"].includes(a.id);
+  return props.iconOnly || a.iconOnly || ["copy", "restore", "delete", "inspect"].includes(a.id);
 }
 </script>
 

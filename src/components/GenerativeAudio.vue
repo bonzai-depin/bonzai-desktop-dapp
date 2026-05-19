@@ -2960,7 +2960,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       const hasAudio = !!inference?.answer?.data?.audio_path;
       const minted = !!inference?.nft;
       return [
-        { id: "inspect", icon: "info", label: "Inspect", variant: "default", title: "Open inspector" },
+        { id: "inspect", icon: "info", label: "", variant: "default", title: "Open inspector" },
         { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasAudio },
         { id: "restore",  icon: "content_copy", label: "Reuse",
           title: "Restore all parameters from this generation", variant: "default" },

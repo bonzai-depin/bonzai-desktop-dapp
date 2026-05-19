@@ -57,7 +57,7 @@ jobs:
           pip install -U qwen-tts --no-deps
           pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
 
-      # Privacy-pipeline smoke tests — see release-linux.yml for rationale.
+      # Privacy-pipeline smoke tests — see linux-release.yml for rationale.
       # Python on Windows may not expose socket.AF_UNIX, so the provider
       # worker falls back to loopback TCP while preserving the same frame
       # protocol.

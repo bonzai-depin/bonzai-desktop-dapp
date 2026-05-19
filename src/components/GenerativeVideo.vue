@@ -39,19 +39,11 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <!-- MODEL SELECTOR — Quality (Wan2.2) option removed;
-                     Fast (LTX-2) is the only available video model now.
-                     Kept videoModel = "fast" reactive default so all
-                     downstream branching still works unchanged. -->
-                <!-- <div class="control mb-3 has-text-left">
-                  <input v-model="videoModel" value="fast" id="vm_fast" type="radio" name="video_model" checked />
-                  <label for="vm_fast" class="radio mr-2">
-                    <span class="material-symbols-outlined" style="font-size: 32px !important">bolt</span>
-                    Fast
-                  </label>
-                </div> -->
-
                 <div class="video-control-stack">
+                  <div class="video-control-row">
+                    <span class="bz-eyebrow">Quality</span>
+                    <ModeChipBar v-model="videoModel" :items="videoModelItems" compact />
+                  </div>
                   <div v-if="videoModel === 'fast'" class="video-control-row">
                     <span class="bz-eyebrow">Mode</span>
                     <ModeChipBar v-model="mode" :items="videoModeItems" compact />
@@ -188,9 +180,9 @@
                 </div>
 
                 <!-- IMAGE PICKER (only for I2V mode) -->
-                <div v-if="mode === 'i2v'" class="bz-card-shell preview">
-                  <div class="file is-fullwidth is-medium">
-                    <label class="file-label">
+                <div v-if="mode === 'i2v' || videoModel === 'quality'" class="video-image-picker">
+                  <div class="video-image-picker__input file is-fullwidth is-medium">
+                    <label class="file-label video-image-picker__label">
                       <input
                         class="file-input"
                         type="file"
@@ -201,17 +193,18 @@
                         <span class="file-icon">
                           <span class="material-symbols-outlined">image</span>
                         </span>
-                        <span class="file-label">Browse...</span>
+                        <span class="file-label">
+                          {{ pickedImageName || 'Browse image' }}
+                        </span>
                       </span>
                     </label>
                   </div>
 
-                  <div class="mt-4" v-if="imagePreviewUrl">
+                  <div class="video-image-picker__preview" v-if="imagePreviewUrl">
                     <img
                       :src="imagePreviewUrl"
-                      class="preview"
+                      class="video-image-picker__image"
                       alt="preview"
-                      style="width: 100%; border-radius: 4px"
                     />
                   </div>
                 </div>
@@ -510,6 +503,10 @@ export default {
     // Auto-enhance: chain /video/enhance (Real-ESRGAN x4 + RIFE 4x) after
     // /video/quality completes. Default off — adds 2-4 min per generation.
     const autoEnhance = ref(false);
+    const videoModelItems = [
+      { value: "fast", label: "Turbo", icon: "bolt" },
+      { value: "quality", label: "Quality", icon: "auto_awesome" },
+    ];
     const videoModeItems = [
       { value: "t2v", label: "From Prompt", icon: "text_fields" },
       { value: "i2v", label: "From Image", icon: "image" },
@@ -547,13 +544,11 @@ export default {
       { value: "1080p", label: "1080p" },
     ];
     const qualityQualityItems = [
-      { value: "240p", label: "240px" },
       { value: "320x240", label: "320x240" },
-      { value: "480p", label: "320x512" },
-      { value: "540p", label: "384x672" },
+      { value: "512x320", label: "512x320" },
       { value: "640x480", label: "640x480" },
-      { value: "720p", label: "480x832" },
-      { value: "1080p", label: "576x1024" },
+      { value: "832x640", label: "832x640" },
+      { value: "1024x576", label: "1024x576" },
     ];
     const durationItems = computed(() =>
       videoModel.value === "quality" ? qualityDurationItems : fastDurationItems,
@@ -1512,21 +1507,11 @@ export default {
         "1080p": [1088, 1920],
       };
       const wanSizeMaps = {
-        // 640×480 (4:3 landscape) — default working resolution. Stored
-        // as [h, w] like the other entries.
-        "640x480": [480, 640],
-        // 320×240 (4:3 landscape) — small-bracket preview between draft
-        // and full 640×480.
         "320x240": [240, 320],
-        // 240p draft preset: square 240×240 matches the M3 Max
-        // benchmark in the published Wan workflow (~150-180s end-to-end
-        // for 81 frames). Use this to iterate on prompt / negative /
-        // framing before committing to a higher-res render.
-        "240p":  [240, 240],
-        "480p":  [320, 512],
-        "540p":  [384, 672],
-        "720p":  [480, 832],
-        "1080p": [576, 1024],
+        "512x320": [320, 512],
+        "640x480": [480, 640],
+        "832x640": [640, 832],
+        "1024x576": [576, 1024],
       };
 
       const activeMaps = isQuality ? wanSizeMaps : ltxSizeMaps;
@@ -1539,7 +1524,9 @@ export default {
       }
 
       const frameRate = isQuality ? wanFps.value : fps.value;
-      const frames = isQuality ? (duration.value * wanFps.value + 1) : (frameRate * duration.value + 1);
+      const frames = isQuality
+        ? (duration.value * wanFps.value + 1)
+        : normalizeFramesForLTX2(frameRate * duration.value + 1);
 
       const payload = isQuality
         ? {
@@ -1985,10 +1972,10 @@ export default {
     const actionsFor = (inference) => {
       const hasVideo = !!getVideoUrl(inference);
       const enhanced = !!inference?.answer?.data?.enhanced;
-      const enhancing = !!enhancingIds[inference.id];
+      const enhancing = !!enhancingIds.value[inference.id];
       const minted = !!inference?.nft;
       return [
-        { id: "inspect", icon: "info", label: "Inspect", variant: "default", title: "Open inspector" },
+        { id: "inspect", icon: "info", label: "", variant: "default", title: "Open inspector" },
         { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasVideo, title: "Save video" },
         { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",
           label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
@@ -2035,6 +2022,7 @@ export default {
       fps,
       wanFps,
       autoEnhance,
+      videoModelItems,
       videoModeItems,
       durationItems,
       fpsItems,
@@ -2221,8 +2209,51 @@ h2.bz-h2 {
 .notification {
   padding: 1.25rem 1.5rem 1.25rem 1.5rem;
 }
-.preview {
-  box-shadow: 8px 8px 0 var(--bz-purple-glow);
+.video-image-picker {
+  display: grid;
+  gap: var(--bz-space-3);
+  margin-bottom: var(--bz-space-5);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+}
+
+.video-image-picker__label,
+.video-image-picker__input :deep(.file-cta) {
+  width: 100%;
+  box-shadow: none !important;
+}
+
+.video-image-picker__input :deep(.file-cta) {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+  color: var(--bz-fg-mid);
+}
+
+.video-image-picker__input :deep(.file-cta:hover) {
+  border-color: var(--bz-border-brand);
+  color: var(--bz-fg);
+  background: var(--bz-raised);
+}
+
+.video-image-picker__preview {
+  overflow: hidden;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+
+.video-image-picker__image {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  box-shadow: none !important;
 }
 .material-symbols-outlined {
   font-variation-settings:

@@ -3904,9 +3904,9 @@ async function generateVideo(imageBase64OrNull, prompt, options = {}) {
       prompt,
       negative_prompt: options.negativePrompt || VIDEO_NEG_DEFAULT,
       image_base64: resolvedImage,
-      height: options.height || 448,
-      width: options.width || 640,
-      num_frames: options.frames || 81,
+      height: options.height || 320,
+      width: options.width || 512,
+      num_frames: options.frames || 49,
       fps: options.frameRate || 16,
       // QuantStack Q5_K_M GGUF + Lightning Seko V1 LoRA on top.
       // Locked to the distillation point: 4 steps + CFG 1.0.
@@ -6831,7 +6831,7 @@ NOTE: This is an explicit adult scene. Both characters MUST appear together in p
             : `CHARACTER: ${companion.name}
 APPEARANCE: ${companion.appearance}`;
 
-          const videoPromptInstruction = `You are a cinematographer writing a shot description for a 5-second video clip.
+          const videoPromptInstruction = `You are a cinematographer writing a shot description for a 3-second video clip.
 
 ${videoCharacterBlock}
 CURRENT EMOTION: ${response.emotion || 'neutral'}
@@ -6840,7 +6840,7 @@ SCENE CONTEXT: ${response.response?.substring(0, 300) || 'A quiet moment'}
 IMAGE PROMPT (starting frame): ${response.imagePrompt || 'character portrait'}
 SETTING: ${currentLocation || scenario?.setting || 'indoor scene'}
 
-Write a single flowing paragraph describing what happens in this 5-second video clip. Follow this structure:
+Write a single flowing paragraph describing what happens in this 3-second video clip. Follow this structure:
 1. Start with the main action in one sentence${isAdultVideo ? ' — describe both people interacting physically' : ''}
 2. Add specific details about movements and gestures
 3. Describe ${isAdultVideo ? 'both characters\' appearances' : 'the character\'s appearance'} precisely (hair, skin, clothing, expression)
@@ -6895,11 +6895,9 @@ Write ONLY the video description paragraph, nothing else:`;
           // Q5_K_M GGUF + Lightning Seko V1 LoRA loaded on top. Locked
           // to the distillation point: 4 steps + CFG 1.0.
           //
-          // Generate small at 320×240 then auto-enhance via /video/enhance
-          // (Real-ESRGAN x4 + RIFE 4x). Final delivered video is 1280×960
-          // at 64fps from a much faster base generation than rendering
-          // 640×480 directly. Also dodges the chroma-confetti regression
-          // we saw at 640×480 native.
+          // Roleplay defaults to a short 512×320 Wan clip. It keeps the
+          // interaction responsive while preserving enough detail for
+          // inline playback and optional enhancement.
           // Defensive: response.image is fresh raw base64 on the live
           // turn, but resolveImageBase64 also handles bonzai-blob:// /
           // data: prefixes for any future call site that reuses this
@@ -6916,9 +6914,9 @@ Write ONLY the video description paragraph, nothing else:`;
               // conditioning — audio_base64 is kept here so the call
               // stays forward-compatible if Wan adds audio sync later.
               audio_base64: audioBase64ForVideo,
-              height: 240,
-              width: 320,
-              num_frames: 81,           // 16 fps × ~5s
+              height: 320,
+              width: 512,
+              num_frames: 49,           // 16 fps × ~3s
               fps: 16,
               num_inference_steps: 4,
               guidance_scale: 1.0,
@@ -6934,7 +6932,7 @@ Write ONLY the video description paragraph, nothing else:`;
               // Auto-enhance: x4 spatial + 4x temporal. /video/enhance
               // returns 202 the first time when ESRGAN weights still need
               // to download — wait and retry. Skip silently on hard
-              // failure (fall back to raw 320×240).
+              // failure (fall back to raw 512×320).
               if (finalVideoPath) {
                 try {
                   const enhBody = JSON.stringify({
@@ -6958,7 +6956,7 @@ Write ONLY the video description paragraph, nothing else:`;
                     if (enhResp.ok) {
                       enhDone = await enhResp.json();
                     } else {
-                      console.warn(`[Roleplay] Enhance failed (${enhResp.status}); using raw 320×240`);
+                      console.warn(`[Roleplay] Enhance failed (${enhResp.status}); using raw 512×320`);
                     }
                     break;
                   }

@@ -1702,19 +1702,15 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             ],
         }
     if pipeline in ("video_quality", "wan_i2v"):
-        # Wan2.2 I2V 14B with dasiwa pre-merged GGUF transformers
-        # (Lightning + animation LoRAs baked in). The full WAN_REPO
-        # download is still required for VAE, text_encoder, tokenizer,
-        # scheduler, image_processor, config.
-        #
-        # NOTE: dasiwa GGUFs are user-provided locally in MODEL_DIR for
-        # now; not in the manifest single_files because the R2 upload
-        # hasn't happened yet. Endpoint guards on path.exists() and
-        # returns 503 if missing. Add `_sf(WAN_GGUF_HIGH, WAN_GGUF_HIGH_URL)`
-        # and `_sf(WAN_GGUF_LOW, WAN_GGUF_LOW_URL)` here once uploaded.
+        # Wan2.2 I2V 14B with pre-merged GGUF transformers. The full
+        # WAN_REPO download is still required for VAE, text_encoder,
+        # tokenizer, scheduler, image_processor, and config.
         return {
             "repos_to_fetch": [WAN_REPO],
-            "single_files": [],
+            "single_files": [
+                _sf(WAN_GGUF_HIGH, WAN_GGUF_HIGH_URL),
+                _sf(WAN_GGUF_LOW, WAN_GGUF_LOW_URL),
+            ],
         }
 
     # Vision pipeline (Qwen3.5-0.8B 4-bit MLX — Apple Silicon)

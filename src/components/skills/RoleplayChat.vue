@@ -1543,9 +1543,9 @@
                   class="media-option"
                   :class="{
                     'is-selected': settings.enableVideo,
-                    'is-unavailable': !isModelAvailable('video_fast'),
+                    'is-unavailable': !isModelAvailable('video_quality'),
                   }"
-                  @click="toggleMediaOption('enableVideo', 'video_fast')"
+                  @click="toggleMediaOption('enableVideo', 'video_quality')"
                 >
                   <span class="material-symbols-outlined media-icon">
                     movie
@@ -1556,15 +1556,15 @@
                   </div>
                   <span
                     v-if="
-                      !isModelAvailable('video_fast') &&
-                      downloadingPipelineKey !== 'video_fast'
+                      !isModelAvailable('video_quality') &&
+                      downloadingPipelineKey !== 'video_quality'
                     "
                     class="skill-chip skill-chip--warning"
                   >
                     Download
                   </span>
                   <span
-                    v-if="downloadingPipelineKey === 'video_fast'"
+                    v-if="downloadingPipelineKey === 'video_quality'"
                     class="skill-chip skill-chip--info"
                   >
                     {{ downloadProgress }}%
@@ -3762,6 +3762,7 @@ export default {
       image_quality: "image_quality",
       audio_quality: "audio_quality_persona",
       video_fast: "video_fast",
+      video_quality: "video_quality",
       vision: "qwen3_vision",
     };
 
@@ -3786,7 +3787,7 @@ export default {
     const optionalSelectedModels = computed(() => {
       const optional = [];
       if (settings.value.enableAudio) optional.push("audio_quality");
-      if (settings.value.enableVideo) optional.push("video_fast");
+      if (settings.value.enableVideo) optional.push("video_quality");
       if (settings.value.enableVision) optional.push("vision");
       return optional;
     });
@@ -7913,7 +7914,7 @@ export default {
       // Auto-disable optional media if the model isn't available
       if (!isModelAvailable("audio_quality"))
         settings.value.enableAudio = false;
-      if (!isModelAvailable("video_fast")) settings.value.enableVideo = false;
+      if (!isModelAvailable("video_quality")) settings.value.enableVideo = false;
       if (!isModelAvailable("vision")) settings.value.enableVision = false;
 
       // Check if there's an existing session with same params
