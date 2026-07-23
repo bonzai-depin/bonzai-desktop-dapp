@@ -86,8 +86,8 @@
      Replace every `rgba(255,255,255,0.7)` you see with --bz-fg-mid. */
   --bz-fg:            #f0f0f5;   /* primary text */
   --bz-fg-mid:        #c2c2cc;   /* secondary — labels, captions */
-  --bz-fg-low:        #74748a;   /* tertiary — metadata, helper text */
-  --bz-fg-faint:      #4a4a55;   /* placeholder, disabled, divider hint */
+  --bz-fg-low:        #9a9aac;   /* tertiary — metadata, helper text */
+  --bz-fg-faint:      #6b6b7b;   /* placeholder, disabled, divider hint */
 
   /* ─── 5. STATUS · semantic, never decorative ──────────────────── */
   --bz-danger:        #e25555;
@@ -149,6 +149,7 @@
      to 3 surfaces per screen — hero, primary CTA, brand moment. */
   --bz-font-display: 'Fira Sans', system-ui, sans-serif;
   --bz-font-body:    'Fira Sans', system-ui, sans-serif;
+  --bz-font-ui:      'Fira Sans', system-ui, sans-serif;
   --bz-font-mono:    ui-monospace, 'SF Mono', 'Menlo', 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 
   /* Sizes — restrained scale (1.25 ratio).

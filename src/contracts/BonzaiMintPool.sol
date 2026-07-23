@@ -10,6 +10,15 @@ interface IBonzaiUnlock {
     function hasUnlocked(address user) external view returns (bool);
 }
 
+interface IBonzaiStakePositions {
+    function positions(address user) external view returns (
+        uint256 amount,
+        uint256 lockedUntil,
+        uint256 updatedAt,
+        uint32 contributionScore
+    );
+}
+
 /**
  * @title BonzaiMintPool (Arbitrum)
  * @notice Epoch-based revenue pools for BONZAI LVL holders + P2P providers.
@@ -39,6 +48,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     IERC20 public bonzaiToken;
     address public treasury;
     IBonzaiUnlock public unlockContract;
+    IBonzaiStakePositions public stakingVault;
 
     /// @notice BonzaiServiceTime contract — exclusive withdrawer for provider side.
     address public serviceTimeContract;
@@ -139,6 +149,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     event PoolThresholdUpdated(uint8 indexed poolIndex, uint256 oldThreshold, uint256 newThreshold);
     event SharesUpdated(uint16 oldHolderBps, uint16 oldProviderBps, uint16 newHolderBps, uint16 newProviderBps);
     event UnlockContractUpdated(address indexed oldUnlock, address indexed newUnlock);
+    event StakingVaultUpdated(address indexed oldVault, address indexed newVault);
     event CompanionContractUpdated(address indexed oldCompanion, address indexed newCompanion);
     event UnclaimedSwept(uint256 indexed epochId, uint256 amount);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
@@ -209,7 +220,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 epochId = currentEpoch();
         require(registeredBalances[epochId][msg.sender] == 0, "Already registered");
 
-        uint256 balance = bonzaiToken.balanceOf(msg.sender);
+        uint256 balance = _eligibleStake(msg.sender);
 
         if (!epochThresholdSnapshotted[epochId]) {
             for (uint8 i = 0; i < NUM_POOLS; ) {
@@ -220,8 +231,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
             emit EpochThresholdsSnapshotted(epochId);
         }
 
-        bool isUnlocked = _isUnlocked(msg.sender);
-        require(isUnlocked || balance >= epochThresholds[epochId][0], "Below LVL1 threshold");
+        require(balance >= epochThresholds[epochId][0], "Below LVL1 threshold");
 
         registeredBalances[epochId][msg.sender] = balance;
         registeredAt[epochId][msg.sender] = block.timestamp;
@@ -256,7 +266,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 registeredBal = registeredBalances[epochId][msg.sender];
         require(registeredBal > 0, "Not registered for this epoch");
 
-        uint256 currentBalance = bonzaiToken.balanceOf(msg.sender);
+        uint256 currentBalance = _eligibleStake(msg.sender);
         require(currentBalance >= registeredBal, "Balance dropped since registration");
 
         claimConfirmedBlock[epochId][msg.sender] = block.number;
@@ -325,12 +335,10 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
 
-        if (!_isUnlocked(msg.sender)) {
-            uint256 threshold = epochThresholdSnapshotted[epochId]
-                ? epochThresholds[epochId][poolIndex]
-                : poolThresholds[poolIndex];
-            require(balance >= threshold, "Below pool threshold");
-        }
+        uint256 threshold = epochThresholdSnapshotted[epochId]
+            ? epochThresholds[epochId][poolIndex]
+            : poolThresholds[poolIndex];
+        require(balance >= threshold, "Below pool threshold");
 
         // Activity gate: must have minted at least one collectible of this
         // content type during the claim epoch.
@@ -376,20 +384,16 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         uint256 userWeight = _weightedBalance(epochId, balance, registeredAt[epochId][msg.sender]);
 
-        bool isUnlocked = _isUnlocked(msg.sender);
         uint256 totalAmount = 0;
 
         for (uint256 i = 0; i < poolIndices.length; ) {
             uint8 poolIndex = poolIndices[i];
             require(poolIndex < NUM_POOLS, "Invalid pool index");
 
-            bool meetsThreshold = isUnlocked;
-            if (!isUnlocked) {
-                uint256 threshold = epochThresholdSnapshotted[epochId]
-                    ? epochThresholds[epochId][poolIndex]
-                    : poolThresholds[poolIndex];
-                meetsThreshold = balance >= threshold;
-            }
+            uint256 threshold = epochThresholdSnapshotted[epochId]
+                ? epochThresholds[epochId][poolIndex]
+                : poolThresholds[poolIndex];
+            bool meetsThreshold = balance >= threshold;
 
             bool hasMintedInCategory = epochMints[epochId][poolIndex][msg.sender] > 0;
 
@@ -496,7 +500,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 threshold = epochThresholdSnapshotted[epochId]
             ? epochThresholds[epochId][poolIndex]
             : poolThresholds[poolIndex];
-        if (!_isUnlocked(user) && balance < threshold) return 0;
+        if (balance < threshold) return 0;
         if (epochMints[epochId][poolIndex][user] == 0) return 0;
 
         uint256 totalWeight = totalWeightedRegistered[epochId];
@@ -534,7 +538,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 threshold = epochThresholdSnapshotted[epochId]
             ? epochThresholds[epochId][poolIndex]
             : poolThresholds[poolIndex];
-        aboveThreshold = _isUnlocked(user) || balance >= threshold;
+        aboveThreshold = balance >= threshold;
         registrationTs = registeredAt[epochId][user];
         userWeight = isRegisteredFlag
             ? _weightedBalance(epochId, balance, registrationTs)
@@ -622,6 +626,13 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         address old = address(unlockContract);
         unlockContract = IBonzaiUnlock(_unlock);
         emit UnlockContractUpdated(old, _unlock);
+    }
+
+    function setStakingVault(address _vault) external onlyOwner {
+        require(_vault != address(0), "Invalid staking vault");
+        address old = address(stakingVault);
+        stakingVault = IBonzaiStakePositions(_vault);
+        emit StakingVaultUpdated(old, _vault);
     }
 
     function setCompanionContract(address _companion) external onlyOwner {
@@ -746,5 +757,13 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         } catch {
             return false;
         }
+    }
+
+    function _eligibleStake(address user) internal view returns (uint256) {
+        if (address(stakingVault) == address(0)) {
+            return bonzaiToken.balanceOf(user);
+        }
+        (uint256 amount,,,) = stakingVault.positions(user);
+        return amount;
     }
 }

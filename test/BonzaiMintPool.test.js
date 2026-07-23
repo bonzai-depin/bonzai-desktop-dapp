@@ -190,6 +190,22 @@ describe("BonzaiMintPool", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("Registration", function () {
+    it("uses the configured staking position instead of the liquid token balance", async function () {
+      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+      const BonzaiStakingVault = await ethers.getContractFactory("BonzaiStakingVault");
+      const stakingVault = await BonzaiStakingVault.deploy(
+        await token.getAddress(),
+        POOL_THRESHOLDS_WEI,
+      );
+      await mintPool.setStakingVault(await stakingVault.getAddress());
+      await token.mint(user1.address, ethers.parseEther("5000"));
+      await expect(registerUser(mintPool, user1)).to.be.revertedWith("Below LVL1 threshold");
+      await token.connect(user1).approve(await stakingVault.getAddress(), ethers.MaxUint256);
+      await stakingVault.connect(user1).stake(ethers.parseEther("5000"), 0);
+      await registerUser(mintPool, user1);
+      expect(await mintPool.registeredBalances(0, user1.address)).to.equal(ethers.parseEther("5000"));
+    });
+
     it("registers a user with sufficient BONZAI balance", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("5000"));

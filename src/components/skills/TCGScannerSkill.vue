@@ -18,7 +18,7 @@
     <div v-if="!modelLoading && !modelReady" class="bz-notice bz-notice--warning p-4 mb-4">
       <span class="material-symbols-outlined" style="font-size: 20px">warning</span>
       Models not downloaded.
-      <button class="bz-btn bz-btn--sm bz-btn--warning ml-3" @click="ensureModelLoaded">
+      <button class="bz-btn bz-btn--sm bz-btn--agent-cta ml-3" @click="ensureModelLoaded">
         <span class="material-symbols-outlined" style="font-size: 16px">download</span>
         Download Models
       </button>
@@ -120,7 +120,7 @@
     <!-- File Selector (front only) -->
     <div v-if="!scannedCard && modelReady && selectedMode === 'file'" class="tcg-capture-bay mb-4">
       <button
-        class="bz-btn bz-btn--success bz-btn--lg skill-fullwidth"
+        class="bz-btn bz-btn--agent-cta bz-btn--lg skill-fullwidth"
         @click="selectImageFile('front')"
       >
         <span
@@ -144,7 +144,7 @@
     <!-- Camera -->
     <div v-if="!scannedCard && modelReady && selectedMode === 'camera'" class="tcg-capture-bay mb-4">
       <div v-if="!cameraActive" class="has-text-centered">
-        <button class="bz-btn bz-btn--success bz-btn--lg" @click="startCamera">
+        <button class="bz-btn bz-btn--agent-cta bz-btn--lg" @click="startCamera">
           <span class="material-symbols-outlined" style="font-size: 20px">
             photo_camera
           </span>
@@ -166,7 +166,7 @@
         ></video>
         <div class="camera-controls mt-3 has-text-centered">
           <button
-            class="bz-btn bz-btn--success bz-btn--lg mr-2"
+            class="bz-btn bz-btn--agent-cta bz-btn--lg mr-2"
             @click="captureFromCamera"
           >
             <span
@@ -364,20 +364,20 @@
       <div class="actions-bar mt-4">
 
         <button
-          class="bz-btn bz-btn--success bz-btn--ghost"
+          class="bz-btn bz-btn--ghost"
           @click="copyResults"
         >
           <span class="material-symbols-outlined">
             content_copy
           </span>
         </button>
-        <button class="bz-btn bz-btn--warning " @click="mintCard">
+        <button class="bz-btn bz-btn--agent-cta" @click="mintCard">
           <span class="material-symbols-outlined" style="font-size: 18px">
             token
           </span>
           Mint
         </button>
-        <button class="bz-btn bz-btn--warning bz-btn--ghost" @click="rescan">
+        <button class="bz-btn bz-btn--ghost" @click="rescan">
           <span class="material-symbols-outlined" style="font-size: 18px">
             refresh
           </span>
@@ -451,7 +451,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { v4 as uuid } from "uuid";
 import { getAuthHeaders } from "../../services/auth.service.js";
-import { hasPurchasedSkill, isDevMode } from "../../services/agent.service.js";
+import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 import BonzaiPulse from "../BonzaiPulse.vue";
 import MintModal from "../MintModal.vue";
 
@@ -1273,7 +1273,7 @@ Only include keys where you can see the value. Skip keys with no visible data.`,
     // ─── Main Analysis Pipeline ───────────────────────────────────────
     async function analyzeCard() {
       if (!frontBase64.value || isScanning.value || !modelReady.value) return;
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         console.warn("[TCGScanner] Skill not purchased — execution blocked.");
         return;
       }
@@ -2006,13 +2006,13 @@ Replace the example numbers with your actual scores based on what you see. Check
   color: var(--bz-fg);
   box-shadow: 0 4px 20px var(--bz-scrim);
 }
-.status-notification.bz-btn--primary {
+.status-notification.is-info {
   background: rgba(62, 142, 208, 0.95);
 }
-.status-notification.bz-btn--success {
+.status-notification.is-success {
   background: rgba(57, 213, 130, 0.95);
 }
-.status-notification.bz-btn--destructive {
+.status-notification.is-danger {
   background: rgba(255, 56, 96, 0.95);
 }
 

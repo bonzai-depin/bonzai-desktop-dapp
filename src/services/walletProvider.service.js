@@ -8,6 +8,7 @@ import { privyService } from './privy.service.js';
 import { owsService } from './ows.service.js';
 import { OWSEthersSigner } from './owsSigner.adapter.js';
 import { owsMigrationService } from './owsMigration.service.js';
+import { CONFIG } from '../config/web3.config.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTH PROVIDER DETECTION
@@ -153,7 +154,7 @@ async function getAgentWalletAddress(companionId) {
 }
 
 /** Primary integration point for x402Executor and purchaseExecutor. Priority: OWS then Privy. */
-async function getAgentWalletSigner(companionId, chainId = 8453) {
+async function getAgentWalletSigner(companionId, chainId = CONFIG.agentWallet.defaultChainId) {
   const owsMapping = await window.electronAPI?.store?.get(`ows-wallet-${companionId}`);
   if (owsMapping) {
     const passphrase = await window.electronAPI?.store?.get(`ows-passphrase-${companionId}`)
@@ -175,7 +176,7 @@ async function getAgentWalletSigner(companionId, chainId = 8453) {
   throw new Error(`No agent wallet found for companion ${companionId}. Only OWS and Privy wallets are supported.`);
 }
 
-async function getAgentWalletBalance(companionId, chainId = 8453) {
+async function getAgentWalletBalance(companionId, chainId = CONFIG.agentWallet.defaultChainId) {
   const owsMapping = await window.electronAPI?.store?.get(`ows-wallet-${companionId}`);
   if (owsMapping?.address) {
     const { ethers } = await import('ethers');

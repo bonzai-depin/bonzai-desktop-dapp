@@ -7,6 +7,10 @@
       class="bkwf__canvas"
       :width="pixelWidth"
       :height="pixelHeight"
+      @pointerdown="handleSeek"
+      @pointermove="handleDragSeek"
+      @pointerup="stopDragSeek"
+      @pointercancel="stopDragSeek"
     />
 
     <!-- Center playhead / progress indicator for interactive variants -->
@@ -64,10 +68,12 @@ const props = defineProps({
   gap: { type: Number, default: 0.25 },
   label: { type: String, default: "" },
 });
+const emit = defineEmits(["seek"]);
 
 const canvasRef = ref(null);
 const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 const animFrame = ref(0);
+const isSeeking = ref(false);
 
 /* Canvas display sizes */
 const displayWidth = ref(400);
@@ -258,6 +264,31 @@ function renderOnce() {
   }
 }
 
+function seekFromEvent(event) {
+  if (props.variant !== "player") return;
+  const rect = canvasRef.value?.getBoundingClientRect();
+  if (!rect?.width) return;
+  const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+  emit("seek", x / rect.width);
+}
+
+function handleSeek(event) {
+  if (props.variant !== "player") return;
+  isSeeking.value = event.type === "pointerdown";
+  canvasRef.value?.setPointerCapture?.(event.pointerId);
+  seekFromEvent(event);
+}
+
+function handleDragSeek(event) {
+  if (!isSeeking.value) return;
+  seekFromEvent(event);
+}
+
+function stopDragSeek(event) {
+  isSeeking.value = false;
+  canvasRef.value?.releasePointerCapture?.(event.pointerId);
+}
+
 function measureWidth() {
   const el = canvasRef.value?.parentElement;
   if (el) {
@@ -328,6 +359,11 @@ onBeforeUnmount(() => {
   display: block;
   width: 100%;
   height: 100%;
+  touch-action: none;
+}
+
+.bkwf--player .bkwf__canvas {
+  cursor: pointer;
 }
 
 .bkwf__playhead {

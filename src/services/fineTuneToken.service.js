@@ -16,6 +16,7 @@ import { ethers } from 'ethers';
 import { reactive, readonly, computed } from 'vue';
 import { CONFIG } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
+import { canMintContentType, checkAllLevels } from './level.service.js';
 import {
   getPoolInfo as _getPoolInfo,
   getUnclaimedFees as _getUnclaimedFees,
@@ -29,6 +30,7 @@ import {
 const FACTORY_ABI = [
   // Write functions
   'function launchToken(uint256 contentTokenId, string name, string symbol, string modelIrysHash, address creator) payable returns (address token, bytes32 poolId)',
+  'function launchValidatedToken(uint256 contentTokenId,string name,string symbol,string metadataURI,string description,string imageURI,string modelKind,bytes32 validationHash,address creator) payable returns (address token,bytes32 poolId)',
 
   // Read functions
   'function modelTokens(uint256 contentTokenId) view returns (address)',
@@ -37,6 +39,7 @@ const FACTORY_ABI = [
   'function minEthLiquidity() view returns (uint256)',
   'function totalTokensLaunched() view returns (uint256)',
   'function getAllTokens() view returns (address[])',
+  'function getModelProfile(uint256 contentTokenId) view returns (string metadataURI,string description,string imageURI,string modelKind,bytes32 validationHash)',
   'function TOTAL_SUPPLY() view returns (uint256)',
 
   // Events
@@ -62,6 +65,7 @@ const state = reactive({
   error: null,
   launchingContentTokenId: null,
 });
+const economyNetwork = () => ({ 1: 'ethereum', 42161: 'arbitrum', 8453: 'base' }[Number(CONFIG.contributionEconomy?.chainId || CONFIG.fineTuneTokenFactory?.chainId || 1)] || 'ethereum');
 
 /**
  * Get factory contract instance
@@ -78,7 +82,7 @@ async function getFactoryContract(withSigner = false) {
     return new ethers.Contract(factoryAddress, FACTORY_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider('base');
+  const provider = await web3Service.getProvider(economyNetwork());
   return new ethers.Contract(factoryAddress, FACTORY_ABI, provider);
 }
 
@@ -88,12 +92,12 @@ async function getFactoryContract(withSigner = false) {
  * @param {number|string} contentTokenId - BonzaiContent NFT token ID for the model
  * @param {string} name - Token name (e.g., "BonzAI Fine-Tune: My Custom Model")
  * @param {string} symbol - Token symbol (e.g., "BZCUSTOM")
- * @param {string} modelIrysHash - IPFS/Pinata hash of the model weights
+ * @param {string|Object} modelMetadataRef - IPFS/Pinata hash or metadata object for the model weights/provenance
  * @param {string} ethAmount - Amount of ETH for liquidity (e.g., "0.01")
  *
  * @returns {Promise<Object>} Launch result with token address and poolId
  */
-async function launchFineTuneToken(contentTokenId, name, symbol, modelIrysHash, ethAmount) {
+async function launchFineTuneToken(contentTokenId, name, symbol, modelMetadataRef, ethAmount, options = {}) {
   if (!contentTokenId) {
     throw new Error('Content NFT token ID required');
   }
@@ -109,8 +113,14 @@ async function launchFineTuneToken(contentTokenId, name, symbol, modelIrysHash, 
   state.error = null;
 
   try {
+    await checkAllLevels();
+    const gate = canMintContentType('training');
+    if (!gate.canMint) {
+      throw new Error(`${gate.levelRequired || 'LVL6'} required to launch model tokens. ${gate.reason || ''}`.trim());
+    }
+
     // Ensure we're on Base network
-    await web3Service.switchNetwork?.('base');
+    await web3Service.switchNetwork?.(economyNetwork());
 
     const factory = await getFactoryContract(true);
 
@@ -135,13 +145,31 @@ async function launchFineTuneToken(contentTokenId, name, symbol, modelIrysHash, 
     console.log(`[FineTuneToken] Launching $${symbol} token for model NFT #${contentTokenId}...`);
     console.log(`[FineTuneToken] Creator: ${creator}`);
     console.log(`[FineTuneToken] ETH liquidity: ${ethAmount}`);
+    const provenance = options.modelProvenance || options.provenance || null;
+    const revenuePlan = provenance?.attribution?.revenuePlan || options.revenuePlan || null;
+    const modelMetadataHash = typeof modelMetadataRef === 'string'
+      ? modelMetadataRef
+      : modelMetadataRef?.uri || modelMetadataRef?.hash || modelMetadataRef?.cid || '';
 
     // Launch token (V4: returns token + poolId)
-    const tx = await factory.launchToken(
+    const profile = options.profile || {}
+    const validationHash = options.validationHash || options.validation?.hash
+    if (!validationHash || !/^0x[a-fA-F0-9]{64}$/.test(validationHash)) {
+      throw new Error('Run and pass model validation before issuing its token.')
+    }
+    if (!profile.description || !profile.image) {
+      throw new Error('Model description and image are required before token issuance.')
+    }
+    const modelKind = options.modelKind === 'abliterated' ? 'abliterated' : 'fine_tuned'
+    const tx = await factory.launchValidatedToken(
       contentTokenId,
       name,
       symbol,
-      modelIrysHash || '',
+      modelMetadataHash,
+      profile.description,
+      profile.image,
+      modelKind,
+      validationHash,
       creator,
       { value: ethWei },
     );
@@ -183,6 +211,19 @@ async function launchFineTuneToken(contentTokenId, name, symbol, modelIrysHash, 
       txHash: receipt.hash,
       ethLiquidity: ethAmount,
       lpLocked: true,  // LP position NFT sent to DEAD address
+      modelMetadataHash,
+      modelProvenance: provenance,
+      revenuePlan,
+      modelKind,
+      profile,
+      validationHash,
+      contributionRouting: revenuePlan
+        ? {
+          mode: 'metadata-attached',
+          note: 'Current FineTuneTokenFactory records one creator on-chain. BonzAI attaches proof-of-contribution revenue routing in model metadata for downstream settlement.',
+          revenuePlan,
+        }
+        : null,
     };
   } catch (e) {
     console.error('[FineTuneToken] Launch failed:', e);
@@ -226,7 +267,7 @@ async function getModelToken(contentTokenId) {
  */
 async function getTokenInfo(tokenAddress) {
   try {
-    const provider = await web3Service.getProvider('base');
+    const provider = await web3Service.getProvider(economyNetwork());
     const token = new ethers.Contract(tokenAddress, TOKEN_ABI, provider);
 
     const [name, symbol, decimals, contentTokenId, modelIrysHash, creator] = await token.getTokenInfo();
@@ -279,6 +320,16 @@ async function getTotalTokensLaunched() {
     return 0;
   }
 }
+async function getAllTokenAddresses() {
+  try { return await (await getFactoryContract(false)).getAllTokens(); }
+  catch (e) { console.error('[FineTuneToken] getAllTokenAddresses failed:', e); return []; }
+}
+async function getModelProfile(contentTokenId) {
+  try {
+    const [metadataURI, description, imageURI, modelKind, validationHash] = await (await getFactoryContract(false)).getModelProfile(contentTokenId);
+    return { metadataURI, description, imageURI, modelKind, validationHash };
+  } catch (e) { console.error('[FineTuneToken] getModelProfile failed:', e); return null; }
+}
 
 // URL builders delegated to shared uniswapV4 utils (imported above)
 
@@ -311,6 +362,8 @@ export const fineTuneTokenService = {
   getUnclaimedFees,
   getMinEthLiquidity,
   getTotalTokensLaunched,
+  getAllTokenAddresses,
+  getModelProfile,
 
   // Fee claiming
   claimFees,

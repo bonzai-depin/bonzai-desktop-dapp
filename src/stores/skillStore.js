@@ -16,7 +16,6 @@ import { authService, isAuthenticated, refreshToken, reAuthenticate } from '../s
 import { SKILL_CATEGORIES, SKILL_CATEGORY_META } from '../skills/types.js';
 import { roleplayCompanion } from '../skills/flagship.js';
 import { x402ExecutorService } from '../services/x402Executor.service.js';
-import { purchaseExecutorService } from '../services/purchaseExecutor.service.js';
 import { CONFIG } from '../config/web3.config.js';
 import { ethers } from 'ethers';
 
@@ -974,23 +973,6 @@ REQUIREMENTS:
         isAutonomous: true,
         autonomousActivity: activity.type,
       };
-
-      // Handle autonomous purchase intent
-      if (responseData.purchaseIntent && session.settings.autonomous?.enablePurchases) {
-        assistantMsg.purchaseIntent = responseData.purchaseIntent;
-        const payResult = await purchaseExecutorService.executePurchase(
-          session.companion.id,
-          responseData.purchaseIntent,
-          session.settings.autonomous,
-          session.companion,
-          session
-        );
-        assistantMsg.purchaseApproved = true;
-        assistantMsg.purchaseExecuted = payResult.success;
-        assistantMsg.purchaseTxHash = payResult.txHash || null;
-        assistantMsg.purchaseType = payResult.type || null;
-        assistantMsg.purchaseDetails = payResult.details || null;
-      }
 
       session.history.push(assistantMsg);
       missedMessages.value++;

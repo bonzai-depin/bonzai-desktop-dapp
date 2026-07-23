@@ -22,6 +22,7 @@
  *   - New roleplay-generated images (Phase 5+): will be `bonzai-blob://`
  *     URLs once the renderer migrates session writes.
  */
+import { memoryService } from './memory.service.js';
 
 const COMPANIONS_KEY = "roleplayCompanions";
 const SESSIONS_KEY = "roleplaySessions";
@@ -293,6 +294,18 @@ export async function saveSessions(plainSessions) {
           err?.message || err,
         );
       }
+    }
+
+    try {
+      await memoryService.ingestRoleplaySession(key, {
+        ...sess,
+        companionId,
+        scenarioKey,
+        history: messages,
+        updatedAt: sess.updatedAt || Date.now(),
+      });
+    } catch (err) {
+      console.warn(`[roleplayStore] memory enrichment failed for ${key}:`, err?.message || err);
     }
   }
 

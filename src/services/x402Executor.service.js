@@ -14,6 +14,7 @@
 import { ethers } from 'ethers';
 import { walletProviderService } from './walletProvider.service.js';
 import { x402Service } from './x402.service.js';
+import { CONFIG } from '../config/web3.config.js';
 
 /**
  * @typedef {Object} TransactionRecord
@@ -45,7 +46,7 @@ const DAILY_SPENDING_PREFIX = 'x402-daily-spending-';
 // Default limits (in ETH)
 const DEFAULT_MAX_TX_AMOUNT = '0.001';    // ~$2 at $2000/ETH
 const DEFAULT_DAILY_LIMIT = '0.005';      // ~$10 at $2000/ETH
-const DEFAULT_CHAIN_ID = 8453;            // Base
+const DEFAULT_CHAIN_ID = Number(CONFIG.x402.defaultChainId);
 
 /**
  * Get transaction history for a companion

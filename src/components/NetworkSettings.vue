@@ -717,7 +717,7 @@
             class="bz-btn bz-btn--primary"
             :disabled="!serviceTimeReady || serviceTimeFlushing || !serviceTimePending?.rows"
             @click="flushServiceTime"
-            :title="serviceTimeEligibility?.ok ? 'Submit pending seconds to Arbitrum' : (serviceTimeEligibility?.balance >= 0n ? 'Need 1000 BONZAI on Arbitrum to submit' : 'Connect wallet to check eligibility')"
+            :title="serviceTimeEligibility?.ok ? 'Submit pending service time' : (serviceTimeEligibility?.balance >= 0n ? 'Need 1000 BONZAI to submit provider time' : 'Connect wallet to check eligibility')"
           >
             <span class="material-symbols-outlined mr-2">cloud_upload</span>
             <span v-if="serviceTimeFlushing">Submitting…</span>

@@ -1,4 +1,6 @@
-# Arweave Model Registry — Implementation Plan
+# Archived implementation sketch: Arweave/Irys model registry
+
+> **Superseded.** This file contains historical contract and service sketches. The current storage decision and implementation phases are defined in `MODEL_DISTRIBUTION_MIGRATION.md`: Arweave is canonical, IPFS/Filecoin provides an independent replica, and centralized storage is cache-only.
 
 ## Context
 
@@ -519,7 +521,7 @@ registryGet: () => ipcRenderer.invoke("registry-get"),
 - `_hf_token()` function
 - `_list_required_remote_files()` (HF API calls to list repo files)
 - `_download_repo_files()` (HF file-by-file downloads)
-- All HF URL constants (`FLUX_KREA_GGUF_URL`, `Z_GGUF_URL`, `LTX2_GGUF_URL`, etc.)
+- All HF URL constants (`Z_GGUF_URL`, `LTX2_GGUF_URL`, etc.)
 
 **Add:**
 ```python

@@ -65,7 +65,7 @@ describe("BonzaiCompanions", function () {
       expect(await companions.treasury()).to.equal(treasury.address);
     });
 
-    it("should set the default mint price to 0.25 ETH", async function () {
+    it("should set the default mint price to 0.30 ETH", async function () {
       const { companions } = await loadFixture(deployCompanions);
       expect(await companions.mintPrice()).to.equal(COMPANION_MINT_PRICE);
     });
@@ -88,6 +88,28 @@ describe("BonzaiCompanions", function () {
   // ─────────────────────────────────────────────────────────────────────────
 
   describe("mintCompanion", function () {
+    it("atomically launches a named token for cold-start companions", async function () {
+      const { companions, user1 } = await loadFixture(deployCompanions);
+      const Launcher = await ethers.getContractFactory("MockCompanionTokenLauncher");
+      const launcher = await Launcher.deploy();
+      await companions.setCompanionTokenFactory(await launcher.getAddress());
+
+      await expect(companions.connect(user1).mintCompanionWithToken(
+        AGENT_URI,
+        PERSONALITY_HASH,
+        VALID_SPENDING_PROFILE,
+        GENDER_FEMALE,
+        user1.address,
+        "Aurore Beaumont",
+        "AURORE",
+        { value: COMPANION_MINT_PRICE },
+      )).to.emit(companions, "CompanionEconomyLaunched");
+
+      expect(await launcher.lastName()).to.equal("Aurore Beaumont");
+      expect(await launcher.lastSymbol()).to.equal("AURORE");
+      expect(await launcher.lastLiquidity()).to.equal(await companions.tokenLiquidityAmount());
+    });
+
     it("should mint a companion and store all data correctly", async function () {
       const { companions, user1 } = await loadFixture(deployCompanions);
       const agentWallet = ethers.Wallet.createRandom().address;
@@ -896,7 +918,7 @@ describe("BonzaiCompanions", function () {
 
       await expect(
         companions.connect(owner).setMintPrice(0)
-      ).to.be.revertedWith("Price cannot be zero");
+      ).to.be.revertedWith("Price must cover liquidity");
     });
 
     it("should revert setMintPrice from non-owner", async function () {

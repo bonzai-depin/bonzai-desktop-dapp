@@ -32,10 +32,10 @@
   background: transparent;
   border: 1px solid var(--bz-border-strong);
   color: var(--bz-fg);
-  border-radius: var(--bz-r);
-  font-family: var(--bz-font-body);
-  font-size: var(--bz-size-body);
-  font-weight: 400;
+  border-radius: var(--bz-r-sm);
+  font-family: var(--bz-font-ui);
+  font-size: var(--bz-size-meta);
+  font-weight: 600;
   cursor: pointer;
   position: relative;
   overflow: hidden;
@@ -49,7 +49,7 @@
 }
 .bz-btn:hover:not(:disabled) {
   background: var(--bz-raised);
-  border-color: var(--bz-purple-300);
+  border-color: var(--bz-border-strong);
 }
 .bz-btn:disabled {
   cursor: not-allowed;
@@ -57,6 +57,11 @@
 }
 .bz-btn .material-symbols-outlined {
   font-size: 18px !important;
+}
+.bz-btn.fira-sans-condensed-black-italic {
+  font-family: var(--bz-font-ui) !important;
+  font-style: normal !important;
+  font-weight: 600 !important;
 }
 
 /* PRIMARY — solid brand surface. One per surface; reach for it for the
@@ -67,9 +72,27 @@
   color: var(--bz-on-accent);
 }
 .bz-btn--primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+  filter: brightness(1.06);
   border-color: var(--bz-purple-300);
   background: var(--bz-purple-500);
+}
+
+/* AGENT CTA — shared by agentic skill listing + inner skill primary CTAs.
+   It keeps the canonical button shape while borrowing the marketplace price
+   pill's brand/warm gradient language. */
+.bz-btn--agent-cta {
+  background: var(--bz-purple-500);
+  border-color: var(--bz-purple-500);
+  color: var(--bz-fg);
+  border-radius: var(--bz-r-sm);
+  box-shadow: none;
+}
+.bz-btn--agent-cta:hover:not(:disabled) {
+  background: var(--bz-purple-500);
+  border-color: var(--bz-purple-300);
+  color: var(--bz-fg);
+  filter: brightness(1.06);
+  box-shadow: none;
 }
 
 /* GHOST — same shape, recessed canvas tint. Use inside busy CTA rows. */
@@ -85,23 +108,23 @@
 
 /* STATUS variants — reserved for state, never decoration. */
 .bz-btn--success {
-  background: var(--bz-emerald-500);
-  border-color: var(--bz-emerald-500);
-  color: var(--bz-on-success);
+  background: var(--bz-card);
+  border-color: var(--bz-border-strong);
+  color: var(--bz-fg);
 }
 .bz-btn--success:hover:not(:disabled) {
-  filter: brightness(1.06);
-  background: var(--bz-emerald-500);
+  filter: none;
+  background: var(--bz-raised);
   border-color: var(--bz-emerald-500);
 }
 .bz-btn--warning {
-  background: var(--bz-warning);
-  border-color: var(--bz-warning);
-  color: var(--bz-on-warning);
+  background: var(--bz-card);
+  border-color: var(--bz-border-strong);
+  color: var(--bz-fg);
 }
 .bz-btn--warning:hover:not(:disabled) {
-  filter: brightness(1.06);
-  background: var(--bz-warning);
+  filter: none;
+  background: var(--bz-raised);
   border-color: var(--bz-warning);
 }
 .bz-btn--destructive {
@@ -193,7 +216,7 @@
   background: transparent;
   border: 1px solid var(--bz-border);
   color: var(--bz-fg-mid);
-  border-radius: var(--bz-r);
+  border-radius: var(--bz-r-sm);
   cursor: pointer;
   transition: background var(--bz-dur-fast), color var(--bz-dur-fast);
 }
@@ -201,6 +224,15 @@
   background: var(--bz-raised);
   color: var(--bz-fg);
   border-color: var(--bz-border-strong);
+}
+.bz-iconbtn--danger {
+  color: var(--bz-danger);
+  border-color: var(--bz-danger-soft);
+}
+.bz-iconbtn--danger:hover {
+  background: var(--bz-danger-soft);
+  color: var(--bz-danger);
+  border-color: var(--bz-danger);
 }
 .bz-iconbtn:disabled {
   cursor: not-allowed;

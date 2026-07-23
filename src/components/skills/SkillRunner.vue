@@ -23,7 +23,7 @@
               </div>
             </div>
             <button
-              class="bz-btn bz-btn--sm bz-btn--warning fira-sans-condensed-black-italic"
+              class="bz-btn bz-btn--sm bz-btn--agent-cta fira-sans-condensed-black-italic"
               @click="downloadModel(model)"
               :disabled="downloadingModel === model.key"
               :class="{ 'bz-btn--running': downloadingModel === model.key }"
@@ -195,7 +195,7 @@
       <!-- Run Button -->
       <div class="skill-run-actions">
         <button
-          class="bz-btn bz-btn--success bz-btn--lg fira-sans-condensed-black-italic"
+          class="bz-btn bz-btn--agent-cta bz-btn--lg fira-sans-condensed-black-italic"
           :disabled="!canRun || isExecuting"
           @click="executeSkill"
           :class="{ 'bz-btn--running': isExecuting }"

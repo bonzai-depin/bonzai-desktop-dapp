@@ -256,7 +256,12 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         require(bytes(symbol).length > 0, "Symbol required");
         require(bytes(name).length > 0, "Name required");
         require(companionContract != address(0), "Companion contract not set");
-        require(IERC721(companionContract).ownerOf(nftTokenId) == msg.sender, "Not NFT owner");
+        address liveOwner = IERC721(companionContract).ownerOf(nftTokenId);
+        if (msg.sender == companionContract) {
+            require(liveOwner == companionOwner, "Companion owner mismatch");
+        } else {
+            require(msg.sender == liveOwner, "Not NFT owner");
+        }
 
         // 1. Calculate supply split: 96% to pool, 4% to agent wallet
         uint256 poolAmount = (TOTAL_SUPPLY * POOL_SHARE_BPS) / BPS_DENOMINATOR;

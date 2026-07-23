@@ -5,6 +5,18 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+
+interface ICompanionTokenFactory {
+    function launchToken(
+        uint256 nftTokenId,
+        string calldata name,
+        string calldata symbol,
+        string calldata imageURI,
+        address agentWallet,
+        address companionOwner
+    ) external payable returns (address token, bytes32 poolId);
+}
 
 /**
  * @title IBonzaiMintPool (subset)
@@ -45,6 +57,7 @@ interface IERC8004 {
  *   [35:32]=reading  [39:36]=social  [43:40]=travel  [47:44]=sports
  */
 contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausable {
+    using Strings for uint256;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // TYPES
@@ -69,7 +82,9 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     address public treasury;
 
     // Flat mint price in ETH
-    uint256 public mintPrice = 0.25 ether;
+    uint256 public mintPrice = 0.30 ether;
+    uint256 public tokenLiquidityAmount = 0.05 ether;
+    ICompanionTokenFactory public companionTokenFactory;
 
     // Core companion data
     mapping(uint256 => CompanionData) public companions;
@@ -102,7 +117,7 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     /// @notice Agent URI pointing to registration file (IPFS)
     mapping(uint256 => string) private _agentURIs;
 
-    /// @notice Agent wallet for autonomous x402 payments
+    /// @notice Agent wallet for protocol revenue capture
     mapping(uint256 => address) private _agentWallets;
 
     /// @notice Arbitrary metadata storage for agent capabilities
@@ -129,6 +144,9 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     event PoolDepositFailed(address indexed pool, uint8 indexed poolIndex, uint256 amount);
     event PersonalityHashUpdated(uint256 indexed tokenId, bytes32 oldHash, bytes32 newHash);
     event SpendingProfileUpdated(uint256 indexed tokenId, uint96 oldProfile, uint96 newProfile);
+    event CompanionTokenFactoryUpdated(address indexed oldFactory, address indexed newFactory);
+    event TokenLiquidityAmountUpdated(uint256 oldAmount, uint256 newAmount);
+    event CompanionEconomyLaunched(uint256 indexed tokenId, address indexed token, bytes32 indexed poolId, uint256 liquidity);
 
     // ERC-8004 events
     event Registered(uint256 indexed agentId, string agentURI, address indexed owner);
@@ -163,7 +181,7 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
      * @param personalityHash Hash of personality traits
      * @param spendingProfile Packed uint96 — 12 categories × 4 bits
      * @param gender Companion gender
-     * @param agentWallet Address for autonomous x402 payments
+     * @param agentWallet Address that receives protocol revenue
      * @return tokenId The minted token ID (agentId)
      */
     function mintCompanion(
@@ -173,6 +191,49 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         Gender gender,
         address agentWallet
     ) external payable nonReentrant whenNotPaused returns (uint256) {
+        require(address(companionTokenFactory) == address(0), "Named companion token required");
+        return _mintCompanion(
+            agentURI,
+            personalityHash,
+            spendingProfile,
+            gender,
+            agentWallet,
+            "",
+            ""
+        );
+    }
+
+    function mintCompanionWithToken(
+        string memory agentURI,
+        bytes32 personalityHash,
+        uint96 spendingProfile,
+        Gender gender,
+        address agentWallet,
+        string memory tokenName,
+        string memory tokenSymbol
+    ) external payable nonReentrant whenNotPaused returns (uint256) {
+        require(bytes(tokenName).length > 0, "Empty token name");
+        require(bytes(tokenSymbol).length > 0, "Empty token symbol");
+        return _mintCompanion(
+            agentURI,
+            personalityHash,
+            spendingProfile,
+            gender,
+            agentWallet,
+            tokenName,
+            tokenSymbol
+        );
+    }
+
+    function _mintCompanion(
+        string memory agentURI,
+        bytes32 personalityHash,
+        uint96 spendingProfile,
+        Gender gender,
+        address agentWallet,
+        string memory tokenName,
+        string memory tokenSymbol
+    ) internal returns (uint256) {
         require(_tokenIdCounter < MAX_SUPPLY, "Max supply reached");
         require(balanceOf(msg.sender) < MAX_PER_WALLET, "Max companions per wallet reached");
         require(bytes(agentURI).length > 0, "Empty agent URI");
@@ -206,8 +267,11 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         // reverts, the affected slice falls back to the treasury so minting
         // is never blocked. The pool slice rounds down per bucket; any
         // remainder rolls into the treasury slice.
-        uint256 treasuryAmt = fee / 2;
-        uint256 poolBudget = fee - treasuryAmt;
+        uint256 liquidityBudget = address(companionTokenFactory) == address(0) ? 0 : tokenLiquidityAmount;
+        require(fee > liquidityBudget, "Mint price below liquidity reserve");
+        uint256 protocolFee = fee - liquidityBudget;
+        uint256 treasuryAmt = protocolFee / 2;
+        uint256 poolBudget = protocolFee - treasuryAmt;
         uint256 perPool = poolBudget / NUM_POOLS;
         uint256 distributed = 0;
 
@@ -245,6 +309,21 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         if (agentWallet != address(0)) {
             _agentWallets[tokenId] = agentWallet;
             emit AgentWalletSet(tokenId, agentWallet, msg.sender);
+        }
+
+        if (address(companionTokenFactory) != address(0)) {
+            require(bytes(tokenName).length > 0, "Empty token name");
+            require(bytes(tokenSymbol).length > 0, "Empty token symbol");
+            address launchWallet = agentWallet == address(0) ? msg.sender : agentWallet;
+            (address token, bytes32 poolId) = companionTokenFactory.launchToken{value: liquidityBudget}(
+                tokenId,
+                tokenName,
+                tokenSymbol,
+                agentURI,
+                launchWallet,
+                msg.sender
+            );
+            emit CompanionEconomyLaunched(tokenId, token, poolId, liquidityBudget);
         }
 
         emit Registered(tokenId, agentURI, msg.sender);
@@ -548,10 +627,23 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     // ═══════════════════════════════════════════════════════════════════════════
 
     function setMintPrice(uint256 _mintPrice) external onlyOwner {
-        require(_mintPrice > 0, "Price cannot be zero");
+        require(_mintPrice > tokenLiquidityAmount, "Price must cover liquidity");
         uint256 old = mintPrice;
         mintPrice = _mintPrice;
         emit MintPriceUpdated(old, _mintPrice);
+    }
+
+    function setCompanionTokenFactory(address newFactory) external onlyOwner {
+        address old = address(companionTokenFactory);
+        companionTokenFactory = ICompanionTokenFactory(newFactory);
+        emit CompanionTokenFactoryUpdated(old, newFactory);
+    }
+
+    function setTokenLiquidityAmount(uint256 newAmount) external onlyOwner {
+        require(newAmount > 0 && newAmount < mintPrice, "Invalid liquidity amount");
+        uint256 old = tokenLiquidityAmount;
+        tokenLiquidityAmount = newAmount;
+        emit TokenLiquidityAmountUpdated(old, newAmount);
     }
 
     function setTreasury(address _treasury) external onlyOwner {

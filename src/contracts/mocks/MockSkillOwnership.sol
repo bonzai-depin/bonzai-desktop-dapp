@@ -12,12 +12,21 @@ contract MockSkillOwnership {
     using SafeERC20 for IERC20;
 
     bool public shouldRevert;
+    bool public tokenAccess = true;
     uint256 public lastDistributedAmount;
     bytes32 public lastDistributedSkillId;
     uint256 public lastDistributedAmountUSDC;
 
     function setRevert(bool _shouldRevert) external {
         shouldRevert = _shouldRevert;
+    }
+
+    function setTokenAccess(bool _tokenAccess) external {
+        tokenAccess = _tokenAccess;
+    }
+
+    function hasTokenAccess(address, bytes32) external view returns (bool) {
+        return tokenAccess;
     }
 
     function distributeRevenue(bytes32 skillId, uint256 amount) external payable {

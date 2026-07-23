@@ -1,17 +1,15 @@
 /**
- * Agent Service — purchase + per-execution USDC fees via BonzaiSkillRegistry.
- * Revenue split: 80% to companion co-owners, 20% to skill author.
+ * Agent Service — agent purchases and companion-token skill access.
  *
  * Env gating:
  * - `isDevMode()` returns true in Vite dev or when VITE_MOCK_PURCHASES=1 →
  *   purchases are mocked locally (no on-chain call, no fee collected).
- * - Production (packaged build) always uses the real USDC flow against
- *   BonzaiSkillRegistry on Base (requires CONFIG.skillRegistry.contractAddress).
+ * - Production skill access is rebuilt from BonzaiSkillRegistry.
  */
 
 import { ethers } from 'ethers';
 import { reactive, readonly } from 'vue';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -199,15 +197,15 @@ export const hasEnoughForRunningFee = () => {
 };
 
 const getUsdcContract = async (withSigner = false) => {
-  const usdcAddress = CONFIG.tokens?.USDC?.base;
-  if (!usdcAddress) throw new Error('USDC address not configured for Base');
+  const usdcAddress = CONFIG.tokens?.usdc?.[ECONOMY_NETWORK_KEY];
+  if (!usdcAddress) throw new Error(`USDC address not configured for ${ECONOMY_NETWORK_KEY}`);
 
   if (withSigner) {
     const signer = await web3Service.getSigner();
     return new ethers.Contract(usdcAddress, ERC20_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider('base');
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
   return new ethers.Contract(usdcAddress, ERC20_ABI, provider);
 };
 
@@ -325,11 +323,8 @@ export const initialize = () => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// USDC SKILL PURCHASE (on-chain via BonzaiSkillRegistry on Base)
+// USDC SKILL PURCHASE (on-chain via BonzaiSkillRegistry)
 // ═══════════════════════════════════════════════════════════════════════════
-
-const USDC_ADDRESS_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const DEFAULT_SKILL_PRICE_USDC = 10_000_000; // 10 USDC (6 decimals)
 
 /**
  * Compute on-chain skill ID matching BonzaiSkillRegistry.registerSkill() encoding.
@@ -341,22 +336,14 @@ const DEFAULT_SKILL_PRICE_USDC = 10_000_000; // 10 USDC (6 decimals)
 function getOnChainSkillId(localSkillId) {
   const map = CONFIG.skillRegistry?.skillIdMap;
   if (map && map[localSkillId]) return map[localSkillId];
-  // Fallback: hash the local ID string (won't match contract-generated IDs)
-  return ethers.id(localSkillId);
+  throw new Error(`Skill ${localSkillId} is not registered on the configured economy chain`);
 }
 
 const SKILL_REGISTRY_ABI = [
-  'function userHasPurchased(address user, bytes32 skillId) view returns (bool)',
-  'function purchaseSkill(bytes32 skillId, uint256 maxPrice) external',
-  'function getSkill(bytes32 skillId) view returns (tuple(bytes32 id, address author, string name, string version, string category, string ipfsHash, uint256 purchasePrice, uint256 runningFee, bool isActive, bool isVerified, bool adminDeactivated, uint256 totalPurchases, uint256 totalExecutions, uint256 totalRevenue, uint256 createdAt, uint256 updatedAt))',
-  'function registerSkill(string name, string version, string category, string ipfsHash, uint256 purchasePrice, uint256 runningFee) external returns (bytes32)',
+  'function userHasAccess(address user, bytes32 skillId) view returns (bool)',
+  'function getSkill(bytes32 skillId) view returns (tuple(bytes32 id, address author, string name, string version, string category, string ipfsHash, bool tokenGated, bool isActive, bool isVerified, bool adminDeactivated, uint256 totalExecutions, uint256 createdAt, uint256 updatedAt))',
+  'function registerSkill(string name, string version, string category, string ipfsHash, bool tokenGated) external returns (bytes32)',
   'function getSkillsPaginated(uint256 offset, uint256 limit) view returns (bytes32[])',
-];
-
-const USDC_ABI = [
-  'function approve(address spender, uint256 amount) returns (bool)',
-  'function allowance(address owner, address spender) view returns (uint256)',
-  'function balanceOf(address account) view returns (uint256)',
 ];
 
 /**
@@ -373,22 +360,22 @@ async function getSkillRegistryContract(withSigner = false) {
     return new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider('base');
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
   return new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, provider);
 }
 
 /**
- * Check if a skill has been purchased by the current user.
+ * Check whether the current wallet holds an eligible companion-owner token.
  *
  * - **Dev mode**: always returns `true` (skills free locally).
- * - **Prod**: on-chain check via `BonzaiSkillRegistry.userHasPurchased()`.
- *   No localStorage fallback — caching is done via `loadPurchasedSkillsOnChain()`
+ * - **Prod**: on-chain check via `BonzaiSkillRegistry.userHasAccess()`.
+ *   No localStorage fallback; access is rebuilt from authoritative chain state.
  *   which populates a verified set at mount time.
  *
  * @param {string} skillId
  * @returns {Promise<boolean>}
  */
-export async function hasPurchasedSkill(skillId) {
+export async function hasSkillTokenAccess(skillId) {
   if (isDevMode()) return true;
   try {
     const registry = await getSkillRegistryContract();
@@ -396,9 +383,9 @@ export async function hasPurchasedSkill(skillId) {
     const userAddress = web3Service.state.walletAddress;
     if (!userAddress) return false;
     const skillIdBytes = getOnChainSkillId(skillId);
-    return await registry.userHasPurchased(userAddress, skillIdBytes);
+    return await registry.userHasAccess(userAddress, skillIdBytes);
   } catch (e) {
-    console.warn('[SkillPurchase] On-chain check failed:', e.message);
+    console.warn('[SkillAccess] On-chain check failed:', e.message);
     return false;
   }
 }
@@ -413,7 +400,7 @@ export async function hasPurchasedSkill(skillId) {
  * @param {string[]} skillIds
  * @returns {Promise<Set<string>>}
  */
-export async function loadPurchasedSkillsOnChain(skillIds) {
+export async function loadSkillTokenAccessOnChain(skillIds) {
   const purchased = new Set();
   if (!skillIds?.length) return purchased;
 
@@ -432,7 +419,7 @@ export async function loadPurchasedSkillsOnChain(skillIds) {
       skillIds.map(async (id) => {
         try {
           const skillIdBytes = getOnChainSkillId(id);
-          const ok = await registry.userHasPurchased(userAddress, skillIdBytes);
+          const ok = await registry.userHasAccess(userAddress, skillIdBytes);
           return ok ? id : null;
         } catch {
           return null;
@@ -441,119 +428,11 @@ export async function loadPurchasedSkillsOnChain(skillIds) {
     );
     results.filter(Boolean).forEach((id) => purchased.add(id));
   } catch (e) {
-    console.warn('[SkillPurchase] Batch load failed:', e.message);
+    console.warn('[SkillAccess] Batch load failed:', e.message);
   }
   return purchased;
 }
 
-/**
- * Purchase a skill with USDC on Base.
- * Handles USDC approval + on-chain purchase in one flow.
- *
- * @param {string} skillId
- * @param {number} [price=10_000_000] - Price in USDC smallest unit (6 decimals). Default 10 USDC.
- * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
- */
-export async function purchaseSkillUSDC(skillId, price = DEFAULT_SKILL_PRICE_USDC) {
-  state.isPurchasing = true;
-  state.error = null;
-
-  try {
-    // 1. Auto-connect wallet if not connected (supports both Privy and Reown)
-    if (!web3Service.state.isConnected) {
-      // Try to restore Privy session silently
-      try {
-        const { privyService } = await import('./privy.service.js');
-        await privyService.initialize();
-        if (privyService.state.isAuthenticated && privyService.state.embeddedWalletAddress) {
-          await web3Service.connectWithPrivy({ method: 'email', otpCode: '__restore__' }).catch(() => {});
-        }
-      } catch { /* Privy not configured or no session */ }
-
-      if (!web3Service.state.isConnected) {
-        throw new Error('Please connect your wallet or sign in to purchase skills.');
-      }
-    }
-
-    // 2. Ensure on Base — auto-switch if needed
-    if (web3Service.state.currentChainId !== 8453) {
-      await web3Service.switchToBase();
-    }
-
-    // 3. Get signer
-    const signer = await web3Service.getSigner();
-    const userAddress = await signer.getAddress();
-
-    // 4. Get registry contract
-    const registryAddress = CONFIG.skillRegistry?.contractAddress;
-    if (!registryAddress) {
-      throw new Error('Skill registry contract not yet deployed');
-    }
-
-    // 5. Check USDC balance
-    const usdcContract = new ethers.Contract(USDC_ADDRESS_BASE, USDC_ABI, signer);
-    const balance = await usdcContract.balanceOf(userAddress);
-    if (balance < BigInt(price)) {
-      const needed = (Number(price) / 1_000_000).toFixed(2);
-      const has = (Number(balance) / 1_000_000).toFixed(2);
-
-      // For Privy users: offer Coinbase onramp to fund wallet
-      if (web3Service.state.authProvider === 'privy') {
-        try {
-          const { privyService } = await import('./privy.service.js');
-          const funding = await privyService.getFundingUrl(needed);
-          if (funding.url) {
-            const { shell } = await import('electron');
-            shell.openExternal(funding.url);
-            throw new Error(`Insufficient USDC (have ${has}, need ${needed}). A funding page has been opened in your browser — purchase USDC with credit card, then retry.`);
-          }
-        } catch (e) {
-          if (e.message.includes('funding page')) throw e; // Re-throw our custom message
-        }
-      }
-      throw new Error(`Insufficient USDC. Need ${needed} USDC, have ${has} USDC. Add funds to your wallet on Base.`);
-    }
-
-    // 6. Check/set USDC allowance for SkillRegistry
-    const currentAllowance = await usdcContract.allowance(userAddress, registryAddress);
-    if (currentAllowance < BigInt(price)) {
-      const approveTx = await usdcContract.approve(registryAddress, BigInt(price));
-      await approveTx.wait();
-    }
-
-    // 7. Call registry.purchaseSkill(skillIdBytes, maxPrice)
-    const registry = new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, signer);
-    const skillIdBytes = getOnChainSkillId(skillId);
-    const tx = await registry.purchaseSkill(skillIdBytes, BigInt(price));
-    const receipt = await tx.wait();
-
-    await window.electronAPI?.store?.set(`skill-purchased-${skillId}`, {
-      purchasedAt: Date.now(),
-      txHash: receipt.hash,
-      price,
-    });
-
-    savePurchase(skillId, receipt.hash);
-
-    state.transactions.push({
-      type: 'skill-purchase-usdc',
-      skillId,
-      amount: price / 1_000_000,
-      token: 'USDC',
-      txHash: receipt.hash,
-      timestamp: Date.now(),
-    });
-
-    return { success: true, txHash: receipt.hash };
-  } catch (e) {
-    const error = e.shortMessage || e.message || String(e);
-    state.error = error;
-    console.error('[SkillPurchase] USDC purchase failed:', error);
-    return { success: false, error };
-  } finally {
-    state.isPurchasing = false;
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXPORT
@@ -567,10 +446,9 @@ export const agentService = {
   purchaseAgent,
   getAgentPurchaseInfo,
 
-  // USDC Skill Purchase (on-chain)
-  hasPurchasedSkill,
-  loadPurchasedSkillsOnChain,
-  purchaseSkillUSDC,
+  // Companion-token skill access (on-chain)
+  hasSkillTokenAccess,
+  loadSkillTokenAccessOnChain,
   isDevMode,
   skillRegistryReady,
   

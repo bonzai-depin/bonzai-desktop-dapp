@@ -31,6 +31,8 @@ import { createPinia } from 'pinia';
 import axios from 'axios';
 import App from "./App.vue";
 import { authService } from './services/auth.service.js';
+import { createI18nPlugin } from './i18n/index.js';
+import { installLegacyI18nBridge } from './i18n/legacy.js';
 
 // Add axios interceptor to include auth headers on all requests
 axios.interceptors.request.use(
@@ -104,4 +106,7 @@ const app = createApp(App);
 const pinia = createPinia();
 
 app.use(pinia);
-app.mount('#app');
+app.use(createI18nPlugin());
+const appRoot = document.querySelector('#app');
+installLegacyI18nBridge(appRoot);
+app.mount(appRoot);

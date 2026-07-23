@@ -172,6 +172,21 @@ export async function refreshList() {
   _state.companies = await svc.listCompanies();
 }
 
+export async function loadAllTeamWork() {
+  const companies = await svc.listCompanies();
+  return Promise.all(companies.map(async (company) => {
+    const [issues, goals, approvals, catalog, summary, depths] = await Promise.all([
+      svc.listIssues(company.id),
+      svc.listGoals(company.id),
+      svc.pendingApprovals(company.id),
+      svc.listCatalog(company.id),
+      svc.summarizeAudit(company.id),
+      svc.getQueueDepths(company.id),
+    ]);
+    return { company, issues, goals, approvals, catalog, summary, queueDepths: depths };
+  }));
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Actions
 // ─────────────────────────────────────────────────────────────────────────
@@ -266,9 +281,9 @@ export async function createConnector(input) {
   await refreshActive();
   return c;
 }
-export async function setConnectorSecret(connId, secret) {
+export async function setConnectorSecret(connId, secret, patch = {}) {
   if (!_state.activeId) return null;
-  const c = await svc.setConnectorSecret(_state.activeId, connId, plain(secret));
+  const c = await svc.setConnectorSecret(_state.activeId, connId, plain(secret), plain(patch));
   await refreshActive();
   return c;
 }
@@ -436,6 +451,7 @@ export const companyStore = {
   teardown,
   refreshActive,
   refreshList,
+  loadAllTeamWork,
   setActive,
   form,
   update,

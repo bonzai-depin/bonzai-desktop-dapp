@@ -25,9 +25,10 @@ import { ethers } from 'ethers';
 import { companionService } from './companion.service.js';
 import { skillOwnershipService } from './skillOwnership.service.js';
 import { web3Service } from './web3.service.js';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { tokenService } from './token.service.js';
 import { companionTokenService } from './companionToken.service.js';
+import { agentWalletService } from './agentWallet.service.js';
 
 const BONZAI_TOKEN_ABI = [
   'function balanceOf(address account) view returns (uint256)',
@@ -67,7 +68,7 @@ async function fetchAllMintedCompanions() {
   const addr = CONFIG.companionNFT_BASE?.contractAddress;
   if (!addr) return [];
   try {
-    const provider = await web3Service.getProvider('base');
+    const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
     const contract = new ethers.Contract(addr, COMPANIONS_ABI_EVENTS, provider);
     const filter = contract.filters.CompanionMinted();
     const events = await contract.queryFilter(filter, 0, 'latest');
@@ -120,7 +121,7 @@ async function fetchRegistrationEvents(contract) {
 async function getOwnershipContract() {
   const addr = CONFIG.skillRegistry?.ownershipContractAddress;
   if (!addr) return null;
-  const provider = await web3Service.getProvider('base');
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
   return new ethers.Contract(addr, OWNERSHIP_ABI_EVENTS, provider);
 }
 
@@ -179,7 +180,7 @@ async function buildLeaderboardEntries() {
       if (meta?.image) image = meta.image;
     } catch { /* metadata fetch best-effort */ }
 
-    const [bonzaiBalance, unclaimedRaw, tokenAddress] = await Promise.all([
+    const [bonzaiBalance, unclaimedRaw, tokenAddress, upData] = await Promise.all([
       getAggregateBonzaiBalance(m.agentWallet),
       (async () => {
         if (!ownershipContract) return '0';
@@ -190,6 +191,11 @@ async function buildLeaderboardEntries() {
       (async () => {
         try {
           return await companionTokenService.getCompanionToken(m.tokenId);
+        } catch { return null; }
+      })(),
+      (async () => {
+        try {
+          return await agentWalletService.getCompanionUP(m.tokenId);
         } catch { return null; }
       })(),
     ]);
@@ -205,6 +211,7 @@ async function buildLeaderboardEntries() {
       image,
       owner: m.owner,
       agentWallet: m.agentWallet,
+      universalProfile: upData?.upAddress || null,
       tokenAddress,
       hasToken: !!tokenAddress,
       bonzaiBalance: bonzaiWhole,
@@ -346,6 +353,7 @@ function getMockLeaderboard(mode, limit) {
     image: null,
     owner: null,
     agentWallet: null,
+    universalProfile: null,
     tokenAddress: `0x${String(i + 1).padStart(40, '0')}`,
     hasToken: true,
     bonzaiBalance: 100_000_000 - i * 8_000_000,

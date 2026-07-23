@@ -104,7 +104,7 @@
         </div>
         <div class="skill-field skill-field--action">
           <button
-            class="bz-btn bz-btn--success bz-btn--lg forecast-cta"
+            class="bz-btn bz-btn--agent-cta bz-btn--lg forecast-cta"
             :class="{ 'bz-btn--running': isForecasting }"
             :disabled="isForecasting || selectedSymbols.length === 0"
             @click="runForecast"
@@ -208,7 +208,7 @@
 <script>
 import { ref, computed, onBeforeUnmount, nextTick, watch } from 'vue';
 import BonzaiPulse from '../BonzaiPulse.vue';
-import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 
 const SKILL_ID = 'chart-forecaster-v1.0.0';
 
@@ -517,7 +517,7 @@ export default {
     };
 
     const runForecast = async () => {
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         error.value = 'Skill not purchased.';
         errorHint.value = 'Purchase this skill from the marketplace to run forecasts.';
         return;

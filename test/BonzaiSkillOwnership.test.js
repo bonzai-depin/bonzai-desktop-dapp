@@ -263,6 +263,31 @@ describe("BonzaiSkillOwnership", function () {
     });
   });
 
+  describe("Companion token access", function () {
+    it("grants access only when the user holds a registered companion token", async function () {
+      const fixture = await loadFixture(deploySkillOwnership);
+      const registration = await registerCompanionHelper(
+        fixture.ownership,
+        fixture.companionNFT,
+        fixture.bonzaiToken,
+        fixture.attestationSigner,
+        fixture.registrar1,
+      );
+      const MockFactory = await ethers.getContractFactory("MockCompanionTokenFactoryAccess");
+      const factory = await MockFactory.deploy();
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const companionToken = await MockERC20.deploy("Aurore", "AURORE");
+      await factory.setCompanionToken(registration.tokenId, await companionToken.getAddress());
+      await fixture.ownership.setCompanionTokenFactory(await factory.getAddress());
+
+      expect(await fixture.ownership.hasTokenAccess(fixture.registrar2.address, registration.skillId))
+        .to.equal(false);
+      await companionToken.mint(fixture.registrar2.address, ethers.parseEther("1"));
+      expect(await fixture.ownership.hasTokenAccess(fixture.registrar2.address, registration.skillId))
+        .to.equal(true);
+    });
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // COMPANION REGISTRATION
   // ─────────────────────────────────────────────────────────────────────────

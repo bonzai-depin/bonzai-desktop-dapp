@@ -9,7 +9,7 @@
               Mint Collectible
             </h2>
             <div class="header-right">
-              <span class="network-pill" :class="networkClass">
+              <span class="network-pill">
                 {{ networkConfig.label }} &middot; {{ networkConfig.standard }}
               </span>
               <BzCloseButton
@@ -76,6 +76,13 @@
                 ></iframe>
                 <span class="preview-type">{{ generationType }}</span>
               </div>
+              <div v-else-if="contentType === 'application/json'" class="preview-text preview-text--code">
+                <div class="preview-text__head">
+                  <span class="material-symbols-outlined" aria-hidden="true">model_training</span>
+                  <span>{{ generationType }}</span>
+                </div>
+                <pre class="text-snippet">{{ structuredSnippet }}</pre>
+              </div>
               <div v-else class="preview-icon">
                 <span class="material-symbols-outlined">
                   {{ previewIcon }}
@@ -92,6 +99,14 @@
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">Wallet not connected</p>
                   <p class="bz-notice__text">Connect your wallet to mint your content as a collectible.</p>
+                </div>
+              </div>
+
+              <div v-else-if="!hasRenderableContent" class="bz-notice bz-notice--danger">
+                <span class="bz-notice__icon"><span class="material-symbols-outlined">broken_image</span></span>
+                <div class="bz-notice__body">
+                  <p class="bz-notice__title">Generated file unavailable</p>
+                  <p class="bz-notice__text">The original output could not be loaded. Regenerate it or restore the source file before minting.</p>
                 </div>
               </div>
 
@@ -132,18 +147,39 @@
                   maxlength="500"
                 ></textarea>
               </div>
+              <div class="mint-policy">
+                <label class="mint-policy__item" :class="{ 'is-disabled': isNsfwGeneration }">
+                  <input
+                    v-model="marketplaceDiscoverable"
+                    type="checkbox"
+                    :disabled="isNsfwGeneration"
+                  />
+                  <span>
+                    <strong>Discoverable in marketplace metadata</strong>
+                    <small v-if="isNsfwGeneration">Disabled for NSFW/adult generations.</small>
+                    <small v-else>Allows collectors to find the mint and purchase it through NFT marketplaces such as OpenSea.</small>
+                  </span>
+                </label>
+                <label class="mint-policy__item">
+                  <input v-model="trainingMaterial" type="checkbox" />
+                  <span>
+                    <strong>Allow as training material</strong>
+                    <small>Downstream fine-tune revenue can reference this generation and route attribution to data owners.</small>
+                  </span>
+                </label>
+              </div>
               <div class="mint-actions">
                 <button
                   type="button"
                   class="bz-btn bz-btn--primary bz-btn--lg"
                   @click="startMint"
-                  :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields"
+                  :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields || !hasRenderableContent"
                 >
                   <span class="material-symbols-outlined">token</span>
                   <template v-if="!isWalletConnected">Connect wallet to mint</template>
                   <template v-else-if="isCheckingLevels">Checking access&hellip;</template>
                   <template v-else-if="!hasValidFields">Enter a title</template>
-                  <template v-else>Mint collectible &middot; {{ networkConfig.fee }} {{ networkConfig.currency }}</template>
+                  <template v-else>Mint collectible &middot; {{ mintFee }} {{ networkConfig.currency }}</template>
                 </button>
               </div>
             </div>
@@ -211,6 +247,19 @@
                     class="value link"
                   >
                     View on Explorer
+                    <span class="material-symbols-outlined">
+                      open_in_new
+                    </span>
+                  </a>
+                </div>
+                <div class="detail-row" v-if="mintResult.marketplaceUrl">
+                  <span class="label">Marketplace</span>
+                  <a
+                    :href="mintResult.marketplaceUrl"
+                    target="_blank"
+                    class="value link"
+                  >
+                    View on OpenSea
                     <span class="material-symbols-outlined">
                       open_in_new
                     </span>
@@ -291,6 +340,7 @@ import { mintContent, extractUserCode, buildInteractive3DViewer } from "../servi
 import { canMintContentType, checkAllLevels } from "../services/level.service.js";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
+import { CONTENT_TYPE_MAP } from "../constants/index.js";
 import audioBgSrc from "../assets/bonzai_music.webp";
 import videoPosterSrc from "../assets/bonzai_video.webp";
 import logoSrc from "../assets/bonzai_logo-full.png";
@@ -308,8 +358,10 @@ const props = defineProps({
 const emit = defineEmits(["close", "minted"]);
 
 const networkConfig = mintStore.activeMintNetwork;
-
-const networkClass = computed(() => mintStore.state.network);
+const mintFee = computed(() => {
+  const index = CONTENT_TYPE_MAP[props.inferenceType] ?? 0;
+  return networkConfig.value.fees[index] || networkConfig.value.fees[0];
+});
 
 // Wallet connection state — use Pinia store (same source as bottom bar)
 const web3Store = useWeb3Store();
@@ -328,6 +380,8 @@ const errorMessage = ref("");
 // Editable fields
 const mintTitle = ref("");
 const mintDescription = ref("");
+const marketplaceDiscoverable = ref(true);
+const trainingMaterial = ref(true);
 
 const stages = [
   { key: "upload", label: "Upload", icon: "cloud_upload" },
@@ -350,11 +404,32 @@ const generationType = computed(() => {
   return props.generation?.type || props.inferenceType || "Content";
 });
 
+function hasNsfwSignal(value) {
+  return /\b(nsfw|adult|explicit|porn|erotic|nude|nudity|sex|sexual|gore)\b/i.test(String(value || ""));
+}
+
+const isNsfwGeneration = computed(() => {
+  const generation = props.generation || {};
+  const tags = Array.isArray(generation.tags) ? generation.tags.join(" ") : generation.tags || "";
+  return generation.nsfw === true ||
+    generation.isNsfw === true ||
+    generation.contentLevel === "adult" ||
+    generation.safety?.nsfw === true ||
+    hasNsfwSignal(tags) ||
+    hasNsfwSignal(props.prompt) ||
+    hasNsfwSignal(mintTitle.value) ||
+    hasNsfwSignal(mintDescription.value);
+});
+
 // Level gate check for minting
 const mintAccess = computed(() => canMintContentType(props.inferenceType));
 
 // Form validation — title is required
 const hasValidFields = computed(() => mintTitle.value.trim().length > 0);
+const hasRenderableContent = computed(() => {
+  if (typeof props.content !== "string") return props.content instanceof Uint8Array;
+  return props.content.trim().length > 0;
+});
 
 // Show wallet signature overlay when wallet confirmation is needed
 const awaitingSignature = computed(() =>
@@ -395,6 +470,15 @@ const textSnippet = computed(() => {
   const clean = stripThinkTags(raw).replace(/[#*_`~\[\]]/g, "").trim();
   if (clean.length <= 1400) return clean;
   return clean.substring(0, 1400) + "...";
+});
+
+const structuredSnippet = computed(() => {
+  if (typeof props.content !== "string") return "";
+  try {
+    return JSON.stringify(JSON.parse(props.content), null, 2).slice(0, 1800);
+  } catch {
+    return props.content.slice(0, 1800);
+  }
 });
 
 const videoPreviewSrc = computed(() => {
@@ -481,6 +565,8 @@ watch(
       errorMessage.value = "";
       customBgSrc.value = null;
       isGeneratingBg.value = false;
+      marketplaceDiscoverable.value = true;
+      trainingMaterial.value = true;
 
       // Refresh balances + level status (await to ensure mint button reflects reality)
       if (isWalletConnected.value) {
@@ -500,9 +586,14 @@ watch(
         (props.prompt || "").substring(0, 50) ||
         `BonzAI ${generationType.value}`;
       mintDescription.value = `AI-generated ${generationType.value} by BonzAI.`;
+      if (isNsfwGeneration.value) marketplaceDiscoverable.value = false;
     }
   },
 );
+
+watch(isNsfwGeneration, (blocked) => {
+  if (blocked) marketplaceDiscoverable.value = false;
+});
 
 async function startMint() {
   isMinting.value = true;
@@ -520,6 +611,11 @@ async function startMint() {
     inferenceType: props.inferenceType,
     inferenceId: props.inferenceId,
     customThumbnail: customBgSrc.value || undefined,
+    marketplacePolicy: {
+      discoverable: marketplaceDiscoverable.value,
+      trainingMaterial: trainingMaterial.value,
+      requestedAt: new Date().toISOString(),
+    },
     onProgress: (stageKey, message, percent) => {
       currentStage.value = stageKey;
       progressMessage.value = message;
@@ -624,12 +720,6 @@ function handleClose() {
   font-size: var(--bz-size-micro);
   font-weight: 700;
   text-transform: uppercase;
-}
-
-.network-pill.base {
-  background: rgba(0, 82, 255, 0.12);
-  border-color: rgba(0, 82, 255, 0.35);
-  color: var(--bz-info);
 }
 
 .mint-modal-body {
@@ -893,6 +983,47 @@ function handleClose() {
 .mint-input:focus {
   border-color: var(--bz-purple-300);
   outline: none;
+}
+
+.mint-policy {
+  display: grid;
+  gap: var(--bz-space-2);
+}
+
+.mint-policy__item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: var(--bz-space-2);
+  align-items: start;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-card);
+  color: var(--bz-fg);
+}
+
+.mint-policy__item input {
+  margin-top: 2px;
+  accent-color: var(--bz-purple-400);
+}
+
+.mint-policy__item strong,
+.mint-policy__item small {
+  display: block;
+}
+
+.mint-policy__item strong {
+  font-size: var(--bz-size-sm);
+}
+
+.mint-policy__item small {
+  margin-top: 3px;
+  color: var(--bz-fg-low);
+  line-height: 1.35;
+}
+
+.mint-policy__item.is-disabled {
+  opacity: 0.72;
 }
 
 .mint-actions {

@@ -6,7 +6,7 @@
         <div class="column is-12">
           <header class="bz-screen-header">
             <div class="bz-screen-titleblock">
-              <p class="bz-eyebrow">Create</p>
+              <p class="bz-eyebrow">{{ $t('create.eyebrow') }}</p>
                 <h1 class="bz-h1 fira-sans-condensed-black-italic">
                   <span
                     class="material-symbols-outlined bz-title-icon"
@@ -14,7 +14,7 @@
                   >
                     graphic_eq
                   </span>
-                  Generative Audio
+                  {{ $t('create.audioTitle') }}
                 </h1>
             </div>
           </header>
@@ -25,7 +25,7 @@
             class="audio-progress-card"
           >
             <div class="audio-progress-card__head">
-              <span class="audio-progress-card__title fira-sans-condensed-black-italic">
+              <span class="audio-progress-card__title audio-progress-card__title--pill fira-sans-condensed-black-italic">
                 <BonzaiPulse variant="dot" />
                 Crafting...
               </span>
@@ -82,11 +82,11 @@
                 />
 
                 <!-- MUSIC MODE INPUTS -->
-                <div v-if="mode === 'music'" class="mb-4">
+                <div v-if="mode === 'music'" class="music-workspace mb-4">
                   <!-- ═══════════════════════════════════════════════════════════
                        SECTION 1: LYRICS GENERATION
                        ═══════════════════════════════════════════════════════════ -->
-                  <div class="music-section">
+                  <div class="music-section music-section--lyrics">
                     <!-- Lyrics Theme Input (for LLM generation) -->
                     <div class="field has-text-left">
                       <label
@@ -137,7 +137,7 @@
                           />
                         </div>
                         <button
-                          class="bz-btn is-info"
+                          class="bz-btn bz-btn--ghost"
                           :class="{ 'bz-btn--running': isGeneratingLyrics }"
                           :disabled="isGeneratingLyrics || !lyricsTheme.trim() || !lyricsModelReady"
                           @click.prevent="generateLyrics"
@@ -239,7 +239,7 @@
                   <!-- ═══════════════════════════════════════════════════════════
                        SECTION 3: INFERENCE PARAMETERS
                        ═══════════════════════════════════════════════════════════ -->
-                  <div class="music-section mt-4 has-text-left">
+                  <div class="music-section music-section--settings has-text-left">
                     <label
                       class="audio-field-label fira-sans-condensed-black-italic"
                     >
@@ -435,7 +435,7 @@
                   <!-- ═══════════════════════════════════════════════════════════
                        SECTION 2: CAPTION / STYLE DESCRIPTION
                        ═══════════════════════════════════════════════════════════ -->
-                  <div class="music-section mt-4">
+                  <div class="music-section music-section--palette">
                     <!-- Dimension Selectors -->
                     <div class="dimension-selectors">
                       <!-- Genre -->
@@ -559,13 +559,13 @@
                   </div>
 
                   <div
-                    class="music-section mt-4 models__activity--payouts has-text-left"
+                    class="music-section music-section--direction has-text-left"
                   >
                     <span
                       class="audio-panel-title fira-sans-condensed-black-italic"
                       style="width: auto !important"
                     >
-                      Ready ?
+                      Direction
                     </span>
                     <div class="control mt-5">
                       <textarea
@@ -580,7 +580,7 @@
 
                   <!-- Generate Button & Semantic Toggle -->
                   <div
-                    class="music-section mt-4 models__activity--payouts generate-row"
+                    class="music-generate-bar generate-row"
                   >
                     <div class="bz-select">
                       <select
@@ -635,7 +635,7 @@
                       <span class="material-symbols-outlined" aria-hidden="true">
                         graphic_eq
                       </span>
-                      <span>Make Music</span>
+                      <span>Generate track</span>
                     </button>
                   </div>
                 </div>
@@ -737,7 +737,7 @@
                     </span>
                   </div>
                   <button
-                    class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                    class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
                     @click="prefetchForMode"
                     :disabled="downloads.active || readiness.authRequired"
                     title="(Re)download required files"
@@ -766,7 +766,7 @@
                   class="audio-progress-card"
                 >
                   <div class="audio-progress-card__head">
-                    <span class="audio-progress-card__title fira-sans-condensed-black-italic">
+                    <span class="audio-progress-card__title audio-progress-card__title--pill fira-sans-condensed-black-italic">
                       <BonzaiPulse variant="dot" />
                       Downloading
                     </span>
@@ -777,7 +777,7 @@
                   <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
                   <div
                     v-if="downloadTaskList.length"
-                    style="max-height: 180px; overflow: auto"
+                    class="audio-download-taskwrap"
                   >
                     <ul>
                       <li
@@ -837,32 +837,38 @@
                   <div class="level-right">
                     <div class="level-item buttons">
                       <button
-                        class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                        type="button"
+                        class="bz-iconbtn"
+                        title="Import history"
+                        aria-label="Import history"
                         @click="importHistory()"
                       >
                         <span class="material-symbols-outlined" aria-hidden="true">
                           upload
                         </span>
-                        Import
                       </button>
                       <button
-                        class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                        type="button"
+                        class="bz-iconbtn"
+                        title="Export history"
+                        aria-label="Export history"
                         @click="exportHistory()"
                         :disabled="inferences.length === 0"
                       >
                         <span class="material-symbols-outlined" aria-hidden="true">
                           download
                         </span>
-                        Export
                       </button>
                       <button
-                        class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
+                        type="button"
+                        class="bz-iconbtn bz-iconbtn--danger"
+                        title="Clear history"
+                        aria-label="Clear history"
                         @click="clearHistory()"
                       >
                         <span class="material-symbols-outlined" aria-hidden="true">
                           ink_eraser
                         </span>
-                        Clear
                       </button>
                     </div>
                   </div>
@@ -3268,6 +3274,13 @@ h2.bz-h2 {
   color: var(--bz-fg);
 }
 
+.audio-progress-card {
+  position: sticky;
+  bottom: var(--bz-space-4);
+  z-index: 20;
+  box-shadow: var(--bz-elev-2);
+}
+
 .audio-progress-card__head,
 .audio-notice,
 .audio-control-row {
@@ -3294,14 +3307,43 @@ h2.bz-h2 {
   line-height: 1;
 }
 
+.audio-progress-card__title--pill {
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--bz-fg) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bz-panel) 82%, var(--bz-accent) 18%);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--bz-accent) 24%, transparent);
+  animation: bz-progress-pill-pulse 1.8s ease-in-out infinite;
+}
+
 .audio-progress-card__pct {
   color: var(--bz-fg);
+  font-family: "Fira Sans Condensed", var(--bz-font-body);
+  font-weight: 900;
+  font-style: italic;
   font-size: 1.45rem;
   line-height: 1;
 }
 
 .audio-progress-card :deep(.bz-pulse-wrap--bar) {
   margin-top: 12px;
+}
+
+@keyframes bz-progress-pill-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--bz-accent) 18%, transparent);
+    transform: translateY(0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--bz-accent) 0%, transparent);
+    transform: translateY(-1px);
+  }
+}
+
+.audio-download-taskwrap {
+  max-height: 180px;
+  overflow: auto;
+  margin-top: var(--bz-space-4);
 }
 
 .audio-notice--danger {
@@ -4469,5 +4511,138 @@ ol.chat {
 @media (min-width: 880px) {
   ol.chat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   ol.chat .history-item:first-child { grid-column: 1 / -1; }
+}
+
+/* Music studio: restrained, composition-first layout. */
+.music-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: var(--bz-space-4);
+  margin-top: var(--bz-space-4);
+}
+.music-section {
+  margin: 0 !important;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.music-section--lyrics { grid-column: 1; }
+.music-section--settings { grid-column: 2; grid-row: 1; }
+.music-section--palette,
+.music-section--direction,
+.music-generate-bar { grid-column: 1 / -1; }
+.music-section hr {
+  margin: var(--bz-space-4) 0;
+  background: var(--bz-border);
+}
+.audio-field-label,
+.audio-panel-title,
+.music-section .section-header {
+  font-family: var(--bz-font-ui) !important;
+  font-size: var(--bz-size-meta) !important;
+  font-style: normal !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+.lyrics-gen-row { align-items: stretch; }
+.lyrics-gen-row .bz-field-input { min-width: 0; }
+.lyrics-gen-row .bz-btn { min-width: 104px; flex-shrink: 0; }
+.music-workspace select,
+.music-workspace select.select.is-small.is-dark {
+  min-height: 38px;
+  border: 1px solid var(--bz-border) !important;
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas) !important;
+  color: var(--bz-fg) !important;
+}
+.structure-tags-help { margin-top: var(--bz-space-3) !important; gap: var(--bz-space-1); }
+.structure-tags-help .skill-chip,
+.dimension-tags .tag {
+  width: auto !important;
+  min-width: 0 !important;
+  min-height: 30px !important;
+  height: 30px !important;
+  aspect-ratio: auto !important;
+  padding: 0 var(--bz-space-2) !important;
+  border: 1px solid var(--bz-border) !important;
+  border-radius: var(--bz-r-sm) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--bz-fg-low) !important;
+  font: 500 var(--bz-size-micro) var(--bz-font-ui) !important;
+  letter-spacing: 0 !important;
+  text-shadow: none !important;
+  text-transform: none !important;
+  transform: none !important;
+}
+.structure-tags-help .skill-chip::before,
+.structure-tags-help .skill-chip::after,
+.dimension-tags .tag::before,
+.dimension-tags .tag::after { display: none !important; }
+.structure-tags-help .skill-chip:hover,
+.dimension-tags .tag:hover {
+  border-color: var(--bz-border-strong) !important;
+  background: var(--bz-raised) !important;
+  color: var(--bz-fg) !important;
+  transform: none !important;
+}
+.dimension-tags .tag:not(.is-dark) {
+  border-color: var(--bz-purple-300) !important;
+  background: var(--bz-purple-soft) !important;
+  color: var(--bz-fg) !important;
+}
+.dimension-selectors { gap: var(--bz-space-3); }
+.dimension-selectors hr { display: none; }
+.dimension-row { margin-top: calc(-1 * var(--bz-space-2)); }
+.dimension-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+.params-grid { gap: var(--bz-space-3); }
+.param-item {
+  min-height: 0;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+}
+.slider::-webkit-slider-thumb { background: var(--bz-purple-300); }
+.advanced-params { border-top: 1px solid var(--bz-border); }
+.music-generate-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3) 0 0;
+  border-top: 1px solid var(--bz-border);
+}
+input.music-toggle[type="checkbox"] + label {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 0 var(--bz-space-3);
+  border-color: var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg-mid) !important;
+  font: 500 var(--bz-size-meta) var(--bz-font-ui);
+}
+input.music-toggle[type="checkbox"] + label .material-symbols-outlined { font-size: 18px !important; }
+input.music-toggle[type="checkbox"]:checked + label {
+  border-color: var(--bz-purple-300) !important;
+  background: var(--bz-purple-soft) !important;
+  color: var(--bz-fg) !important;
+}
+.generate-music-btn { min-width: 156px; text-transform: none; letter-spacing: 0; }
+@media (max-width: 980px) {
+  .music-workspace { grid-template-columns: 1fr; }
+  .music-section--lyrics,
+  .music-section--settings,
+  .music-section--palette,
+  .music-section--direction,
+  .music-generate-bar { grid-column: 1; grid-row: auto; }
 }
 </style>

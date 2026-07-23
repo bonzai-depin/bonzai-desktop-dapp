@@ -12,6 +12,10 @@
 
 import { resolvePacks } from "./skillPacks.js";
 import { VETO_MODES } from "./charter.js";
+import { getManifest } from "./skillManifests.js";
+import { SUPPORTED_CONNECTOR_ACTIONS } from "./connectorExecutors.js";
+import { supportedConnectorKinds } from "../../config/companyConnectors.js";
+import { grantHiredCompanionSkills } from "../../skills/companionSkillRoadmap.js";
 
 /**
  * Each template ships with:
@@ -28,6 +32,77 @@ import { VETO_MODES } from "./charter.js";
  *   companionPresets          — suggested companion ids per role
  */
 export const TEMPLATES = {
+  // ─── Existing business operations team ───────────────────────────────
+  business_ops_team: {
+    id: "business_ops_team",
+    vertical: "business_ops_team",
+    name: "Business Ops Team",
+    summary: "Agentic team for existing businesses: business development, invoicing, payments, accounting, follow-ups, and process documentation.",
+    badgeIcon: "handshake",
+    skillPacks: ["smb_back_office"],
+
+    missionTemplate: (a) => `Support ${a.businessName || "the existing business"} by automating repeatable operations, customer or guest follow-up, invoicing, payment follow-up, and coordination without replacing the human team. Follow the current workflow: ${a.currentWorkflow || "map the existing process before acting"}. Systems of record: ${a.systemsOfRecord || "the tools selected during setup"}. Stakeholders to keep visible: ${a.stakeholders || "owner, customer or guest, operations, finance, and any field team involved"}. Approval owner: ${a.approvalOwner || "the business owner"}. Main operating rule: ${a.operatingRule || "draft first, execute only when the charter or owner approves"}.`.trim(),
+
+    defaultRoles: {
+      CEO: { companion: "james", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.notion_docs"] },
+      COO: { companion: "priya", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.google_calendar", "skill.notion_docs"] },
+      CFO: { companion: "marcus", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_checkout", "skill.stripe_subscriptions"] },
+      BusinessDevelopment: { companion: "mai", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.hubspot_lite", "skill.sendgrid_email", "skill.google_calendar", "skill.notion_docs"] },
+      ClientSuccess: { companion: "sofia", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.hubspot_lite", "skill.sendgrid_email", "skill.google_calendar"] },
+      InvoicingSpecialist: { companion: "arjun", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_checkout"] },
+      PaymentsSpecialist: { companion: "marcus", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_checkout", "skill.stripe_subscriptions"] },
+      AccountingSpecialist: { companion: "arjun", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.qbo_invoicing", "skill.notion_docs"] },
+      ProcessAnalyst: { companion: "jin", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.notion_docs", "skill.slack_team"] },
+      GeneralCounsel: { companion: "marcus", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.docusign"] },
+    },
+
+    hybridRoles: [],
+
+    vetoOverrides: {
+      "produce.text": VETO_MODES.AUTO,
+      replyToInbox: VETO_MODES.NOTIFY,
+      "business.development": VETO_MODES.NOTIFY,
+      "invoice.create": VETO_MODES.APPROVE,
+      "invoice.send": VETO_MODES.APPROVE,
+      "payment.collect": VETO_MODES.APPROVE,
+      "payment.reconcile": VETO_MODES.NOTIFY,
+      "accounting.sync": VETO_MODES.NOTIFY,
+      "accounting.closeBooks": VETO_MODES.APPROVE,
+      "process.map": VETO_MODES.AUTO,
+      "process.improve": VETO_MODES.NOTIFY,
+      "spend.under.50": VETO_MODES.NOTIFY,
+      "spend.under.250": VETO_MODES.APPROVE,
+      "spend.over.250": VETO_MODES.APPROVE,
+      hire: VETO_MODES.APPROVE,
+      fire: VETO_MODES.APPROVE,
+      amendCharter: VETO_MODES.APPROVE,
+    },
+
+    treasuryDefaults: {
+      currency: "USD",
+      reserveFloor: 10000,
+      perHeartbeatSpendCap: 100,
+    },
+
+    initialGoals: [
+      "Map the current lead-to-cash workflow and identify where humans approve work",
+      "Create a weekly business development follow-up queue from the CRM",
+      "Prepare draft invoices for approved work and flag missing billing details",
+      "Reconcile received payments against open invoices and list exceptions",
+      "Draft a month-end accounting checklist with owners, systems, and evidence",
+    ],
+
+    intakeQuestions: [
+      { id: "businessName", label: "Business name", placeholder: "e.g. Acme Studio", type: "text", required: true },
+      { id: "businessType", label: "What kind of business is this?", placeholder: "e.g. agency, contractor, SaaS, consulting firm", type: "text", required: true },
+      { id: "currentWorkflow", label: "Describe the current lead-to-cash workflow", placeholder: "Lead arrives -> qualify -> quote -> approve -> invoice -> collect -> reconcile", type: "text", required: true },
+      { id: "systemsOfRecord", label: "Systems of record", placeholder: "QuickBooks, Stripe, HubSpot, Gmail, Slack, Notion", type: "text", default: "QuickBooks, Stripe, HubSpot" },
+      { id: "approvalOwner", label: "Who approves financial or customer-facing actions?", placeholder: "Owner, CFO, operations manager", type: "text", required: true },
+      { id: "invoiceCadence", label: "Invoice cadence", placeholder: "On project approval, weekly, monthly, milestone-based", type: "text", default: "Monthly and milestone-based" },
+      { id: "operatingRule", label: "One rule agents must never violate", placeholder: "e.g. Never send an invoice without checking the signed quote", type: "text" },
+    ],
+  },
+
   // ─── UGC social media campaign studio ────────────────────────────────
   ugc_campaign_studio: {
     id: "ugc_campaign_studio",
@@ -42,15 +117,15 @@ export const TEMPLATES = {
     defaultRoles: {
       CEO: { companion: "zara", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.notion_docs"] },
       CFO: { companion: "marcus", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_checkout", "skill.stripe_subscriptions"] },
-      CPO: { companion: "kai", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.notion_docs"], pipelines: ["image", "video", "vision"] },
+      CPO: { companion: "james", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.notion_docs"], pipelines: ["image", "video", "vision"] },
       CSO: { companion: "mai", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.hubspot_lite", "skill.sendgrid_email", "skill.google_calendar", "skill.docusign"] },
-      CMO: { companion: "sofia", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.hubspot_lite", "skill.sendgrid_email"], pipelines: ["image", "video", "vision"] },
+      CMO: { companion: "zara", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.hubspot_lite", "skill.sendgrid_email"], pipelines: ["image", "video", "vision"] },
       COO: { companion: "james", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.google_calendar", "skill.notion_docs"] },
       GeneralCounsel: { companion: "marcus", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.docusign"] },
       "Producer:text": { companion: "aurore", llm: "llm_qwen3_5_4b_q4", grantedSkills: ["skill.notion_docs"] },
-      "Producer:image": { companion: "aria", llm: "llm_qwen3_5_4b_q4", grantedSkills: [], pipelines: ["image", "vision"] },
+      "Producer:image": { companion: "priya", llm: "llm_qwen3_5_4b_q4", grantedSkills: [], pipelines: ["image", "vision"] },
       "Producer:video": { companion: "zara", llm: "llm_qwen3_5_9b_q2", grantedSkills: [], pipelines: ["video", "audio"] },
-      RnDLead: { companion: "kai", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.notion_docs"], pipelines: ["vision"] },
+      RnDLead: { companion: "jin", llm: "llm_qwen3_5_9b_q2", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.notion_docs"], pipelines: ["vision"] },
     },
 
     hybridRoles: [],
@@ -172,15 +247,15 @@ export const TEMPLATES = {
     defaultRoles: {
       CEO: { companion: "aurore", grantedSkills: [] },
       CFO: { companion: "marcus", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_checkout", "skill.stripe_subscriptions"] },
-      CPO: { companion: "kai",    grantedSkills: ["skill.shopify_store", "skill.printful", "skill.printify"] },
+      CPO: { companion: "james",  grantedSkills: ["skill.shopify_store", "skill.printful", "skill.printify"] },
       CSO: { companion: "mai",    grantedSkills: ["skill.twilio_sms", "skill.twilio_whatsapp", "skill.sendgrid_email", "skill.hubspot_lite"] },
       CMO: { companion: "zara",   grantedSkills: ["skill.gbp_reviews", "skill.sendgrid_email"] },
       COO: { companion: "james",  grantedSkills: ["skill.fulfillment_coordination", "skill.shopify_store"] },
       GeneralCounsel: { companion: "marcus", grantedSkills: [] },
-      "Producer:image": { companion: "aria",   grantedSkills: [] }, // designs the merch
+      "Producer:image": { companion: "priya",  grantedSkills: [] }, // designs the merch
       "Producer:text": { companion: "aurore",  grantedSkills: ["skill.pdf_proposal"] }, // product copy
       "Producer:video": { companion: "zara",   grantedSkills: [] }, // social ads
-      RnDLead: { companion: "kai", grantedSkills: ["skill.shopify_store"] },
+      RnDLead: { companion: "jin", grantedSkills: ["skill.shopify_store"] },
     },
 
     // Optional human supports — most POD shops don't need them, but
@@ -307,15 +382,15 @@ export const TEMPLATES = {
     defaultRoles: {
       CEO: { companion: "marcus", grantedSkills: ["skill.notion_docs"] },
       CFO: { companion: "marcus", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_subscriptions", "skill.stripe_checkout"] },
-      CPO: { companion: "kai",    grantedSkills: ["skill.notion_docs"] },
+      CPO: { companion: "james",  grantedSkills: ["skill.notion_docs"] },
       CSO: { companion: "mai",    grantedSkills: ["skill.twilio_sms", "skill.sendgrid_email", "skill.hubspot_lite", "skill.docusign", "skill.google_calendar"] },
       CMO: { companion: "zara",   grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.gbp_reviews", "skill.sendgrid_email"] },
       COO: { companion: "james",  grantedSkills: ["skill.notion_docs", "skill.google_calendar"] },
       GeneralCounsel: { companion: "marcus", grantedSkills: ["skill.docusign"] },
       "Producer:text":  { companion: "aurore", grantedSkills: ["skill.pdf_proposal", "skill.notion_docs"] },
-      "Producer:image": { companion: "aria",   grantedSkills: [] },
+      "Producer:image": { companion: "priya",  grantedSkills: [] },
       "Producer:video": { companion: "zara",   grantedSkills: [] },
-      RnDLead: { companion: "kai", grantedSkills: ["skill.notion_docs", "skill.meta_ads", "skill.google_ads"] },
+      RnDLead: { companion: "jin", grantedSkills: ["skill.notion_docs", "skill.meta_ads", "skill.google_ads"] },
     },
 
     // No hybrid roles by default — agency work is fully digital. Owners
@@ -375,13 +450,13 @@ export const TEMPLATES = {
     defaultRoles: {
       CEO: { companion: "aurore", grantedSkills: ["skill.notion_docs"] },
       CFO: { companion: "marcus", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_subscriptions"] },
-      CPO: { companion: "kai",    grantedSkills: ["skill.notion_docs"] },
+      CPO: { companion: "james",  grantedSkills: ["skill.notion_docs"] },
       CSO: { companion: "mai",    grantedSkills: ["skill.sendgrid_email", "skill.hubspot_lite"] },
       CMO: { companion: "zara",   grantedSkills: ["skill.convertkit_newsletter", "skill.sendgrid_email"] },
       COO: { companion: "james",  grantedSkills: ["skill.notion_docs"] },
       "Producer:text":  { companion: "aurore", grantedSkills: ["skill.notion_docs"] },
-      "Producer:image": { companion: "aria",   grantedSkills: [] },
-      RnDLead: { companion: "kai", grantedSkills: ["skill.notion_docs", "skill.convertkit_newsletter"] },
+      "Producer:image": { companion: "priya",  grantedSkills: [] },
+      RnDLead: { companion: "jin", grantedSkills: ["skill.notion_docs", "skill.convertkit_newsletter"] },
     },
     hybridRoles: [],
     vetoOverrides: {
@@ -424,14 +499,14 @@ export const TEMPLATES = {
     defaultRoles: {
       CEO: { companion: "aurore", grantedSkills: ["skill.notion_docs"] },
       CFO: { companion: "marcus", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_subscriptions", "skill.stripe_checkout"] },
-      CPO: { companion: "kai",    grantedSkills: ["skill.teachable_course", "skill.notion_docs"] },
+      CPO: { companion: "james",  grantedSkills: ["skill.teachable_course", "skill.notion_docs"] },
       CSO: { companion: "mai",    grantedSkills: ["skill.sendgrid_email", "skill.hubspot_lite", "skill.calendly_booking", "skill.teachable_course"] },
       CMO: { companion: "zara",   grantedSkills: ["skill.sendgrid_email", "skill.gbp_reviews"] },
       COO: { companion: "james",  grantedSkills: ["skill.notion_docs", "skill.calendly_booking"] },
       "Producer:text":  { companion: "aurore", grantedSkills: ["skill.notion_docs"] },
       "Producer:video": { companion: "zara",   grantedSkills: [] },
       "Producer:audio": { companion: "mai",    grantedSkills: [] },
-      RnDLead: { companion: "kai", grantedSkills: ["skill.notion_docs"] },
+      RnDLead: { companion: "jin", grantedSkills: ["skill.notion_docs"] },
     },
     hybridRoles: [],
     vetoOverrides: {
@@ -475,7 +550,7 @@ export const TEMPLATES = {
     defaultRoles: {
       CEO: { companion: "marcus", grantedSkills: ["skill.notion_docs"] },
       CFO: { companion: "marcus", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_subscriptions", "skill.stripe_checkout"] },
-      CPO: { companion: "kai",    grantedSkills: ["skill.notion_docs"] },
+      CPO: { companion: "james",  grantedSkills: ["skill.notion_docs"] },
       CSO: { companion: "mai",    grantedSkills: ["skill.sendgrid_email", "skill.hubspot_lite", "skill.calendly_booking", "skill.docusign"] },
       CMO: { companion: "zara",   grantedSkills: ["skill.sendgrid_email", "skill.gbp_reviews"] },
       COO: { companion: "james",  grantedSkills: ["skill.notion_docs", "skill.calendly_booking", "skill.slack_team"] },
@@ -527,13 +602,13 @@ export const TEMPLATES = {
     missionTemplate: (a) => `Operate a ${a.productType || "B2B SaaS"} product called ${a.productName || "[your product]"} solving ${a.problem || "[the problem]"} for ${a.audience || "[users]"}. Maintain ${a.targetUptime || 99.9}% uptime, ${a.targetChurn || 3}% monthly churn or lower, and ship a customer-visible release weekly. Brand voice: ${a.brandVoice || "candid, technical, fast-moving"}.`.trim(),
 
     defaultRoles: {
-      CEO: { companion: "kai", grantedSkills: ["skill.notion_docs", "skill.linear_issues"] },
+      CEO: { companion: "jin", grantedSkills: ["skill.notion_docs", "skill.linear_issues"] },
       CFO: { companion: "marcus", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_subscriptions"] },
-      CPO: { companion: "kai",    grantedSkills: ["skill.linear_issues", "skill.notion_docs"] },
+      CPO: { companion: "james",  grantedSkills: ["skill.linear_issues", "skill.notion_docs"] },
       CSO: { companion: "mai",    grantedSkills: ["skill.slack_team", "skill.sendgrid_email", "skill.hubspot_lite"] },
       CMO: { companion: "zara",   grantedSkills: ["skill.sendgrid_email", "skill.notion_docs"] },
       COO: { companion: "james",  grantedSkills: ["skill.slack_team", "skill.linear_issues"] },
-      RnDLead: { companion: "kai", grantedSkills: ["skill.linear_issues", "skill.slack_team", "skill.notion_docs"] },
+      RnDLead: { companion: "jin", grantedSkills: ["skill.linear_issues", "skill.slack_team", "skill.notion_docs"] },
       "Producer:text": { companion: "aurore", grantedSkills: ["skill.notion_docs"] },
     },
     hybridRoles: [
@@ -541,7 +616,7 @@ export const TEMPLATES = {
         key: "FieldTech", // repurposed as "the founding engineer"
         library: "FieldTech",
         defaultGrantedSkills: ["skill.linear_issues", "skill.slack_team"],
-        defaultCompanion: "kai",
+        defaultCompanion: "jin",
         optional: true,
       },
     ],
@@ -586,13 +661,13 @@ export const TEMPLATES = {
     defaultRoles: {
       CEO: { companion: "marcus", grantedSkills: ["skill.notion_docs"] },
       CFO: { companion: "marcus", grantedSkills: ["skill.qbo_invoicing", "skill.stripe_subscriptions"] },
-      CPO: { companion: "kai",    grantedSkills: ["skill.notion_docs"] },
+      CPO: { companion: "james",  grantedSkills: ["skill.notion_docs"] },
       CMO: { companion: "zara",   grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.sendgrid_email", "skill.gbp_reviews"] },
       COO: { companion: "james",  grantedSkills: ["skill.notion_docs"] },
       "Producer:text":  { companion: "aurore", grantedSkills: ["skill.notion_docs"] },
-      "Producer:image": { companion: "aria",   grantedSkills: [] },
+      "Producer:image": { companion: "priya",  grantedSkills: [] },
       "Producer:video": { companion: "zara",   grantedSkills: [] },
-      RnDLead: { companion: "kai", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.notion_docs"] },
+      RnDLead: { companion: "jin", grantedSkills: ["skill.meta_ads", "skill.google_ads", "skill.notion_docs"] },
     },
     hybridRoles: [],
     vetoOverrides: {
@@ -698,17 +773,28 @@ export function applyTemplate(templateId, answers = {}, ownerOverrides = {}) {
   const t = getTemplate(templateId);
   if (!t) throw new Error(`unknown template: ${templateId}`);
 
-  const { skills, connectors } = resolvePacks(t.skillPacks);
+  const resolved = resolvePacks(t.skillPacks);
+  const isDemo = ownerOverrides.demoMode === true;
+  const skills = isDemo
+    ? resolved.skills
+    : resolved.skills.filter((skillId) => {
+        const manifest = getManifest(skillId);
+        return manifest?.actions?.length && manifest.actions.every((action) => SUPPORTED_CONNECTOR_ACTIONS.has(action.type));
+      });
+  const connectors = isDemo
+    ? resolved.connectors
+    : resolved.connectors.filter((kind) => supportedConnectorKinds.has(kind));
 
-  // Roles with grantedSkills filtered to the union of pack skills (so
-  // you can't grant a skill that isn't installed).
+  // Hiring a companion grants only the workflows in that companion's
+  // specialization which are also installed by the selected Company packs.
   const validSkillSet = new Set(skills);
   const roles = {};
   for (const [roleKey, roleDef] of Object.entries(t.defaultRoles)) {
     roles[roleKey] = {
       companion: roleDef.companion,
       llm: roleDef.llm || null,
-      grantedSkills: (roleDef.grantedSkills || []).filter((s) => validSkillSet.has(s)),
+      grantedSkills: grantHiredCompanionSkills(roleDef.companion, roleDef.grantedSkills, validSkillSet),
+      employment: { type: "companion-hire", companionId: roleDef.companion },
     };
     if (Array.isArray(roleDef.pipelines) && roleDef.pipelines.length) {
       roles[roleKey].pipelines = [...roleDef.pipelines];
@@ -735,7 +821,8 @@ export function applyTemplate(templateId, answers = {}, ownerOverrides = {}) {
     roles[hr.key] = {
       companion: hr.defaultCompanion,
       kind: "human_supported",
-      grantedSkills: (hr.defaultGrantedSkills || []).filter((s) => validSkillSet.has(s)),
+      grantedSkills: grantHiredCompanionSkills(hr.defaultCompanion, hr.defaultGrantedSkills, validSkillSet),
+      employment: { type: "companion-hire", companionId: hr.defaultCompanion },
       humanResources: explicit || fromRoster,
     };
   }
@@ -744,11 +831,41 @@ export function applyTemplate(templateId, answers = {}, ownerOverrides = {}) {
     name: ownerOverrides.name || t.name,
     mission: t.missionTemplate(answers),
     mode: ownerOverrides.mode || "solo",
+    operatingMode: "assist_existing_business",
     template: { id: t.id, version: "1.0", appliedAt: Date.now() },
     rules: {
       ...t.treasuryDefaults,
       ...(ownerOverrides.treasury || {}),
       vetoOverrides: t.vetoOverrides,
+    },
+    businessContext: {
+      existingProcessSummary: answers.currentWorkflow || answers.uvp || "",
+      systemsOfRecord: String(answers.systemsOfRecord || connectors.join(", "))
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      humanOwners: (ownerOverrides.humanRoster || []).map((h) => ({
+        name: h.name,
+        title: h.title,
+        contractorStatus: h.contractorStatus,
+      })),
+      nonReplacementPolicy:
+        "Agents support the existing team, preserve the company's current way of working, and escalate ambiguous or sensitive actions.",
+      approvalPolicy: answers.approvalOwner
+        ? `${answers.approvalOwner} approves financial, legal, irreversible, and customer-facing actions unless explicitly delegated.`
+        : "Financial, legal, irreversible, and customer-facing actions require approval unless explicitly delegated.",
+    },
+    teamMemory: {
+      enabled: true,
+      mode: "team-and-role",
+      purpose: "Retain business context, decisions, SOPs, outcomes, corrections, and approvals for future improvement.",
+      reinforcementSignals: ["approved", "rejected", "corrected", "completed", "reopened"],
+    },
+    provisioning: {
+      allowOnDemandCompanions: true,
+      defaultCompanionSource: "existing-roster",
+      roleFitPolicy:
+        "Create new roles only when a clear workflow owner is missing, bind each role to team memory, and grant the narrowest useful tool access.",
     },
     roles,
     humanRoster: ownerOverrides.humanRoster || [],

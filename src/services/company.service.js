@@ -31,6 +31,7 @@ import * as packs from "./company/skillPacks.js";
 import * as templates from "./company/templates.js";
 import { SKILL_MANIFESTS, listManifests } from "./company/skillManifests.js";
 import { dispatchAction, queueDepths, clearQueues } from "./company/dispatcher.js";
+import { memoryService } from "./memory.service.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Persistence — SQLite-backed via electronAPI.db.companies.* with a
@@ -150,6 +151,7 @@ export async function formCompany(cfg) {
     kind: "system", role: null, action: "formCompany", status: "executed",
     note: `formed "${charter.name}" in ${charter.mode} mode`,
   });
+  await _seedTeamMemory(charter, "formed");
   await _registerPoolModels(charter);
   scheduler.start(charter);
   return charter;
@@ -212,6 +214,61 @@ async function _registerPoolModels(charter) {
   }
 }
 
+function _charterMemoryText(charter) {
+  const roles = Object.entries(charter.roles || {})
+    .map(([roleKey, assignment]) => `${roleKey}: ${assignment.companion || "unassigned"}`)
+    .join("; ");
+  const systems = (charter.businessContext?.systemsOfRecord || charter.pendingConnectors || [])
+    .filter(Boolean)
+    .join(", ");
+  const goals = (charter.initialGoals || []).filter(Boolean).join(" | ");
+  return [
+    `Mission: ${charter.mission}`,
+    `Operating mode: ${charter.operatingMode || "assist_existing_business"}`,
+    `Non-replacement policy: ${charter.businessContext?.nonReplacementPolicy || ""}`,
+    `Approval policy: ${charter.businessContext?.approvalPolicy || ""}`,
+    systems ? `Systems of record: ${systems}` : "",
+    roles ? `Staffed roles: ${roles}` : "",
+    goals ? `Initial goals: ${goals}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+async function _seedTeamMemory(charter, reason = "charter") {
+  if (charter.teamMemory?.enabled === false) return;
+  const stamp = charter.updatedAt || charter.createdAt || Date.now();
+  try {
+    await memoryService.ingestTeamMemory(charter, {
+      sourceId: `company:${charter.id}:${reason}:${stamp}`,
+      type: "company_charter",
+      recordId: charter.id,
+      company: charter.name,
+      project: charter.name,
+      text: _charterMemoryText(charter),
+      summary: `Agentic team charter for ${charter.name}`,
+      noteKind: reason === "formed" ? "team_setup" : "team_update",
+      createdAt: new Date(stamp).toISOString(),
+    });
+    for (const [roleKey, assignment] of Object.entries(charter.roles || {})) {
+      const def = ROLE_LIBRARY[roleKey];
+      await memoryService.ingestTeamRoleMemory(charter, roleKey, {
+        sourceId: `company:${charter.id}:role:${roleKey}:${stamp}`,
+        type: "team_role_assignment",
+        recordId: `${charter.id}:${roleKey}`,
+        company: charter.name,
+        project: charter.name,
+        companionName: assignment.companion || roleKey,
+        skill: roleKey,
+        text: `${roleKey} is staffed by ${assignment.companion || "an unassigned companion"}. ${def?.description || ""} Connectors: ${(assignment.connectors || []).join(", ") || "none yet"}. Skills: ${(assignment.grantedSkills || []).join(", ") || "none yet"}.`,
+        summary: `${roleKey} role memory seed for ${charter.name}`,
+        noteKind: "role_setup",
+        createdAt: new Date(stamp).toISOString(),
+      });
+    }
+  } catch (err) {
+    console.warn("[company] team memory seed failed:", err?.message || err);
+  }
+}
+
 /** Save edits to an existing charter; restart the scheduler. */
 export async function updateCompany(charter) {
   // Same defensive clone as formCompany — Vue may hand us a reactive
@@ -225,6 +282,7 @@ export async function updateCompany(charter) {
     kind: "system", role: null, action: "amendCharter", status: "executed",
     note: "owner edited the charter",
   });
+  await _seedTeamMemory(charter, "updated");
   await _registerPoolModels(charter);
   scheduler.updateCharter(charter);
   return charter;
@@ -468,6 +526,10 @@ export async function formFromTemplate(templateId, answers, ownerOverrides = {})
     mission: draft.mission,
     mode: draft.mode,
     template: draft.template,
+    operatingMode: draft.operatingMode,
+    businessContext: draft.businessContext,
+    teamMemory: draft.teamMemory,
+    provisioning: draft.provisioning,
     grantedSkills: draft.grantedSkills,
     pendingConnectors: draft.pendingConnectors,
     skillPacks: draft.skillPacks,
@@ -499,6 +561,15 @@ function _defaultVetoMap() {
     publishContent: VETO_MODES.NOTIFY,
     broadcastChannel: VETO_MODES.NOTIFY,
     replyToInbox: VETO_MODES.AUTO,
+    "business.development": VETO_MODES.NOTIFY,
+    "invoice.create": VETO_MODES.APPROVE,
+    "invoice.send": VETO_MODES.APPROVE,
+    "payment.collect": VETO_MODES.APPROVE,
+    "payment.reconcile": VETO_MODES.NOTIFY,
+    "accounting.sync": VETO_MODES.NOTIFY,
+    "accounting.closeBooks": VETO_MODES.APPROVE,
+    "process.map": VETO_MODES.AUTO,
+    "process.improve": VETO_MODES.NOTIFY,
     "spend.under.10": VETO_MODES.AUTO,
     "spend.under.50": VETO_MODES.NOTIFY,
     "spend.under.250": VETO_MODES.APPROVE,
@@ -522,7 +593,7 @@ export const listConnectors = (id, filter) => connectors.list(id, filter);
 export const getConnector = (id, connId) => connectors.get(id, connId);
 export const createConnector = (id, input) => connectors.create(id, _plain(input));
 export const updateConnector = (id, connId, patch) => connectors.update(id, connId, _plain(patch));
-export const setConnectorSecret = (id, connId, secret) => connectors.setSecret(id, connId, _plain(secret));
+export const setConnectorSecret = (id, connId, secret, patch = {}) => connectors.setSecret(id, connId, _plain(secret), _plain(patch));
 export const revokeConnector = (id, connId, reason) => connectors.revoke(id, connId, reason);
 export const removeConnector = (id, connId) => connectors.remove(id, connId);
 export const connectorHealth = (id) => connectors.healthSummary(id);

@@ -34,6 +34,10 @@ interface IBonzaiMintPool {
     function depositForPool(uint8 poolIndex) external payable;
 }
 
+interface IBonzaiRevenueRouterHook {
+    function depositRevenue(bytes32 assetId) external payable;
+}
+
 /**
  * @title IERC721Light
  * @notice Minimal IERC721 interface used to look up the live NFT owner.
@@ -131,6 +135,7 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
 
     /// @notice BonzaiMintPool contract (receives 10% of fees)
     IBonzaiMintPool public mintPool;
+    IBonzaiRevenueRouterHook public revenueRouter;
 
     /// @notice Per-pool configuration (poolId hash → config)
     mapping(bytes32 => PoolConfig) public poolConfigs;
@@ -148,6 +153,8 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
 
     /// @notice Unclaimed MintPool fees per pool index
     mapping(uint8 => uint256) public unclaimedPool;
+    mapping(bytes32 => uint256) public unclaimedRoutedRevenue;
+    uint256 public totalUnclaimedRoutedRevenue;
 
     /// @notice Authorized factory contracts that can register pools
     mapping(address => bool) public authorizedFactories;
@@ -182,6 +189,8 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
     event FactoryAuthorized(address indexed factory, bool authorized);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event MintPoolUpdated(address indexed oldPool, address indexed newPool);
+    event RevenueRouterUpdated(address indexed oldRouter, address indexed newRouter);
+    event ModelRevenueRouted(bytes32 indexed poolId, uint256 amount);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -330,8 +339,13 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
             uint256 treasuryShare = (feeAmount * FINETUNE_TREASURY_BPS) / BPS_DENOMINATOR;
             uint256 poolShare = feeAmount - beneficiaryShare - treasuryShare;
 
-            unclaimedBeneficiary[config.beneficiary] += beneficiaryShare;
-            totalUnclaimedBeneficiary += beneficiaryShare;
+            if (address(revenueRouter) == address(0)) {
+                unclaimedBeneficiary[config.beneficiary] += beneficiaryShare;
+                totalUnclaimedBeneficiary += beneficiaryShare;
+            } else {
+                unclaimedRoutedRevenue[poolId] += beneficiaryShare;
+                totalUnclaimedRoutedRevenue += beneficiaryShare;
+            }
             unclaimedTreasury += treasuryShare;
             _spreadAcrossPools(poolShare);
 
@@ -514,6 +528,28 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
         emit MintPoolUpdated(old, _mintPool);
     }
 
+    function setRevenueRouter(address _revenueRouter) external onlyOwner {
+        address old = address(revenueRouter);
+        revenueRouter = IBonzaiRevenueRouterHook(_revenueRouter);
+        emit RevenueRouterUpdated(old, _revenueRouter);
+    }
+
+    function flushModelRevenue(bytes32 poolId) external nonReentrant {
+        require(address(revenueRouter) != address(0), "Revenue router not set");
+        require(poolConfigs[poolId].poolType == POOL_TYPE_FINETUNE, "Not model pool");
+        uint256 amount = unclaimedRoutedRevenue[poolId];
+        require(amount > 0, "No routed revenue");
+        unclaimedRoutedRevenue[poolId] = 0;
+        totalUnclaimedRoutedRevenue -= amount;
+        try revenueRouter.depositRevenue{value: amount}(poolId) {
+            emit ModelRevenueRouted(poolId, amount);
+        } catch {
+            unclaimedRoutedRevenue[poolId] = amount;
+            totalUnclaimedRoutedRevenue += amount;
+            revert("Revenue routing failed");
+        }
+    }
+
     /// @notice Admin recovery for stuck beneficiary fees.
     ///         INTENDED USE: a beneficiary address belongs to a smart
     ///         contract that started reverting on receive() (e.g., paused
@@ -545,7 +581,7 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
      *      fees without iterating the mapping.
      */
     function withdrawSurplus() external onlyOwner {
-        uint256 accountable = totalUnclaimedBeneficiary + unclaimedTreasury;
+        uint256 accountable = totalUnclaimedBeneficiary + totalUnclaimedRoutedRevenue + unclaimedTreasury;
 
         // Sum all unclaimed pool fees
         for (uint8 i = 0; i < 6; ) {

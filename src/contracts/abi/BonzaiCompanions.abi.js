@@ -275,6 +275,37 @@ export const BonzaiCompanionsABI = [
       {
         "indexed": true,
         "internalType": "address",
+        "name": "token",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "poolId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "liquidity",
+        "type": "uint256"
+      }
+    ],
+    "name": "CompanionEconomyLaunched",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "tokenId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "creator",
         "type": "address"
       },
@@ -298,6 +329,25 @@ export const BonzaiCompanionsABI = [
       }
     ],
     "name": "CompanionMinted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "oldFactory",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newFactory",
+        "type": "address"
+      }
+    ],
+    "name": "CompanionTokenFactoryUpdated",
     "type": "event"
   },
   {
@@ -537,6 +587,25 @@ export const BonzaiCompanionsABI = [
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldAmount",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newAmount",
+        "type": "uint256"
+      }
+    ],
+    "name": "TokenLiquidityAmountUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "address",
         "name": "from",
@@ -723,6 +792,19 @@ export const BonzaiCompanionsABI = [
         "internalType": "bool",
         "name": "",
         "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "companionTokenFactory",
+    "outputs": [
+      {
+        "internalType": "contract ICompanionTokenFactory",
+        "name": "",
+        "type": "address"
       }
     ],
     "stateMutability": "view",
@@ -1067,6 +1149,55 @@ export const BonzaiCompanionsABI = [
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "agentURI",
+        "type": "string"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "personalityHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint96",
+        "name": "spendingProfile",
+        "type": "uint96"
+      },
+      {
+        "internalType": "enum BonzaiCompanions.Gender",
+        "name": "gender",
+        "type": "uint8"
+      },
+      {
+        "internalType": "address",
+        "name": "agentWallet",
+        "type": "address"
+      },
+      {
+        "internalType": "string",
+        "name": "tokenName",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "tokenSymbol",
+        "type": "string"
+      }
+    ],
+    "name": "mintCompanionWithToken",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "mintPool",
     "outputs": [
@@ -1309,6 +1440,19 @@ export const BonzaiCompanionsABI = [
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "newFactory",
+        "type": "address"
+      }
+    ],
+    "name": "setCompanionTokenFactory",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "string",
         "name": "newContractURI",
         "type": "string"
@@ -1430,6 +1574,19 @@ export const BonzaiCompanionsABI = [
   {
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "newAmount",
+        "type": "uint256"
+      }
+    ],
+    "name": "setTokenLiquidityAmount",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "_treasury",
         "type": "address"
@@ -1467,6 +1624,19 @@ export const BonzaiCompanionsABI = [
         "internalType": "string",
         "name": "",
         "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "tokenLiquidityAmount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",

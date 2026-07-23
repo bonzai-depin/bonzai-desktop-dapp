@@ -22,7 +22,7 @@
       size="small"
       icon="person_pin"
       title="No companions yet"
-      subtitle="Mint or import a companion to start registering skills and earning revenue."
+      subtitle="Mint or import an agentic specialist to bring their workflows into BonzAI and Company."
       :show-orb="false"
     />
     <div v-else class="companions-grid">
@@ -47,9 +47,12 @@
             <span v-if="companion.isBare" class="companion-pill companion-pill--warning">Needs setup</span>
           </div>
           <p>{{ companion.isBare ? 'Minted but not configured. Click to set up.' : companion.shortBio }}</p>
+          <span v-if="careerFor(companion)" class="companion-career">
+            {{ careerFor(companion).title }} · ${{ careerFor(companion).tokenSymbol }}
+          </span>
           <button
             v-if="companion.isBare"
-            class="bz-btn bz-btn--sm bz-btn--warning fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--sm bz-btn--agent-cta fira-sans-condensed-black-italic"
             @click.stop="openSetupWizard(companion)"
           >
             <span class="material-symbols-outlined" aria-hidden="true">build</span>
@@ -77,6 +80,18 @@
           />
         </header>
         <section class="agent-modal__body" v-if="selectedCompanion">
+          <div v-if="selectedCareer" class="agent-section companion-career-panel">
+            <p class="bz-eyebrow">Agentic specialization</p>
+            <h4 class="agent-section__title fira-sans-condensed-black-italic">{{ selectedCareer.title }}</h4>
+            <p>{{ selectedCareer.summary }}</p>
+            <div class="agent-chip-grid">
+              <span class="agent-score-chip">${{ selectedCareer.tokenSymbol }}</span>
+              <span v-for="skill in selectedCareer.companySkills" :key="skill" class="agent-score-chip">
+                {{ skill.replace('skill.', '').replaceAll('_', ' ') }}
+              </span>
+            </div>
+            <p class="agent-help">Hire {{ selectedCareer.firstName }} in Company to add these workflows to the role.</p>
+          </div>
           <!-- Wallet Info -->
           <div class="agent-section">
             <div class="agent-wallet-row">
@@ -290,7 +305,7 @@
           <!-- Action Buttons -->
           <div class="agent-action-row">
             <button
-              class="bz-btn bz-btn--success fira-sans-condensed-black-italic"
+              class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
               :class="{ 'bz-btn--running': isClaimingRevenue }"
               :disabled="!companionRevenue || companionRevenue.monthly <= 0"
               @click="claimRevenue"
@@ -305,11 +320,11 @@
               <span class="material-symbols-outlined" aria-hidden="true">app_registration</span>
               Register for Skill
             </button>
-            <button v-if="companionWalletProvider === 'ows'" class="bz-btn bz-btn--warning fira-sans-condensed-black-italic" @click="showBackupModal = true">
+            <button v-if="companionWalletProvider === 'ows'" class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="showBackupModal = true">
               <span class="material-symbols-outlined" aria-hidden="true">download</span>
               Export Wallet
             </button>
-            <button v-else class="bz-btn bz-btn--warning fira-sans-condensed-black-italic" @click="showBackupModal = true">
+            <button v-else class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="showBackupModal = true">
               <span class="material-symbols-outlined" aria-hidden="true">key</span>
               Backup Private Key
             </button>
@@ -420,7 +435,7 @@
                 </div>
               </div>
                 <button
-                  class="bz-btn bz-btn--sm bz-btn--success fira-sans-condensed-black-italic"
+                  class="bz-btn bz-btn--sm bz-btn--agent-cta fira-sans-condensed-black-italic"
                   :class="{ 'bz-btn--running': registeringSkillId === skill.id }"
                 >
                   Register
@@ -458,7 +473,7 @@
           </div>
         </section>
         <footer class="agent-modal__foot">
-          <button class="bz-btn bz-btn--success fira-sans-condensed-black-italic" @click="createPolicy">Create Policy</button>
+          <button class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic" @click="createPolicy">Create Policy</button>
           <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="showPolicyModal = false">Cancel</button>
         </footer>
       </div>
@@ -637,7 +652,7 @@
                 <span class="material-symbols-outlined" aria-hidden="true">image</span>
               </div>
               <button
-                class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
                 :class="{ 'bz-btn--running': isGeneratingImage }"
                 :disabled="isGeneratingImage"
                 @click="generateSetupImage"
@@ -690,7 +705,7 @@
           </button>
           <button
             v-if="setupStep < 5"
-            class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
             @click="setupStep++"
             :disabled="!canAdvanceStep"
           >
@@ -698,7 +713,7 @@
           </button>
           <button
             v-if="setupStep === 5"
-            class="bz-btn bz-btn--success fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
             @click="executeFinalization"
           >
             <span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span>
@@ -717,6 +732,9 @@
           <span class="material-symbols-outlined" aria-hidden="true">leaderboard</span>
           Top 10 Companions
         </h2>
+        <p v-if="isMockData" class="leaderboard-source bz-meta">
+          Demo data shown until on-chain companion leaderboard data is available.
+        </p>
       </div>
       <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="loadLeaderboard">
         <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
@@ -746,6 +764,17 @@
         <span class="companion-rank">#{{ row.rank }}</span>
         <span class="fira-sans-condensed-black-italic">{{ row.name }}</span>
       </template>
+      <template #cell-universalProfile="{ row }">
+        <a
+          v-if="row.universalProfile"
+          :href="`https://universaleverything.io/${row.universalProfile}`"
+          target="_blank"
+          class="leaderboard-up bz-mono"
+        >
+          {{ shortAddress(row.universalProfile) }}
+        </a>
+        <span v-else class="muted">Not attached</span>
+      </template>
       <template #cell-action="{ row }">
         <a
           v-if="row.tokenAddress"
@@ -767,10 +796,12 @@ import { companionService } from "../../services/companion.service.js";
 import { getLeaderboard, isUsingMockData } from "../../services/leaderboard.service.js";
 import { skillOwnershipService } from "../../services/skillOwnership.service.js";
 import { web3Service, switchNetwork } from "../../services/web3.service.js";
+import { ECONOMY_NETWORK_KEY } from "../../config/web3.config.js";
 import { walletProviderService } from "../../services/walletProvider.service.js";
 import { owsMigrationService } from "../../services/owsMigration.service.js";
 import { SKILL_CATEGORY_META } from "../../skills/types.js";
 import { validateCompanionAge } from "../../skills/flagship.js";
+import { getCompanionCareer } from "../../skills/companionSkillRoadmap.js";
 import BonzaiPulse from "../BonzaiPulse.vue";
 import BzCloseButton from "../BzCloseButton.vue";
 import BonzaiDataTable from "../BonzaiDataTable.vue";
@@ -794,6 +825,8 @@ export default {
     const companions = ref([]);
     const isLoading = ref(true);
     const selectedCompanion = ref(null);
+    const careerFor = (companion) => getCompanionCareer(companion?.id || companion?.companionId);
+    const selectedCareer = computed(() => careerFor(selectedCompanion.value));
     const companionRevenue = ref(null);
     const companionOwnedSkills = ref([]);
     const isLoadingSkills = ref(false);
@@ -826,6 +859,7 @@ export default {
         mono: true,
         formatter: (value) => currencyFmt.format(value || 0),
       },
+      { key: "universalProfile", title: "Universal Profile", width: "170px" },
       { key: "action", title: "", width: "112px", align: "right" },
     ];
     const ownedSkillColumns = [
@@ -878,6 +912,10 @@ export default {
     // Universal Profile state
     const selectedCompanionUP = ref(null);
     const isDeployingUP = ref(false);
+    const shortAddress = (address) => {
+      if (!address) return "";
+      return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    };
 
     // OWS wallet state
     const companionWalletProvider = ref(null); // 'ows' | 'privy' | 'local'
@@ -931,7 +969,7 @@ export default {
         // Step 3: Switch back to Ethereum
         upDeployStatus.value = 'Returning to Ethereum...';
         try {
-          await switchNetwork('base');
+          await switchNetwork(ECONOMY_NETWORK_KEY);
         } catch {
           // Non-fatal — UP is deployed, user can switch manually
           console.warn('[BrowseAgents] Could not auto-switch back to Ethereum');
@@ -944,7 +982,7 @@ export default {
         alert('Universal Profile attachment failed: ' + err.message);
 
         // Try to return to Ethereum even on failure
-        try { await switchNetwork('base'); } catch { /* best effort */ }
+        try { await switchNetwork(ECONOMY_NETWORK_KEY); } catch { /* best effort */ }
       } finally {
         isDeployingUP.value = false;
       }
@@ -1434,7 +1472,7 @@ export default {
       leaderboardError.value = null;
       try {
         leaderboard.value = await getLeaderboard();
-        isMockData.value = isUsingMockData();
+        isMockData.value = isUsingMockData() || leaderboard.value.some((row) => row.isMock);
       } catch (err) {
         leaderboardError.value = err.message;
       } finally {
@@ -1457,6 +1495,8 @@ export default {
       companions,
       isLoading,
       selectedCompanion,
+      selectedCareer,
+      careerFor,
       companionRevenue,
       companionOwnedSkills,
       isLoadingSkills,
@@ -1465,6 +1505,7 @@ export default {
       leaderboardColumns,
       ownedSkillColumns,
       distributionColumns,
+      shortAddress,
       isLeaderboardLoading,
       leaderboardError,
       isMockData,
@@ -1548,6 +1589,10 @@ export default {
   gap: 16px;
 }
 
+.browse-agents__head .bz-eyebrow {
+  margin: 0 0 var(--bz-space-1);
+}
+
 .browse-agents__title {
   display: inline-flex;
   align-items: center;
@@ -1562,6 +1607,11 @@ export default {
 .browse-agents__title .material-symbols-outlined {
   color: var(--bz-accent);
   font-size: 0.85em;
+}
+
+.leaderboard-source {
+  margin: var(--bz-space-2) 0 0;
+  color: var(--bz-fg-mid);
 }
 
 .companions-grid {
@@ -1653,6 +1703,18 @@ export default {
   -webkit-line-clamp: 2;
 }
 
+.companion-career {
+  display: block;
+  margin-top: var(--bz-space-2);
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+}
+
+.companion-career-panel > p:not(.bz-eyebrow):not(.agent-help) {
+  color: var(--bz-fg-mid);
+  line-height: var(--bz-line-body);
+}
+
 .companion-pill {
   flex: 0 0 auto;
   padding: 4px 8px;
@@ -1694,6 +1756,16 @@ export default {
 
 .muted {
   color: var(--bz-muted);
+}
+
+.leaderboard-up {
+  color: var(--bz-purple-100);
+  text-decoration: none;
+}
+
+.leaderboard-up:hover {
+  color: var(--bz-control-selected-fg);
+  text-decoration: underline;
 }
 
 .companion-metrics {

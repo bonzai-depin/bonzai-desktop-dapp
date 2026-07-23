@@ -101,7 +101,7 @@ Response:
 | `/auth/challenge` | 65000 | POST | None | Get auth challenge |
 | `/auth/verify` | 65000 | POST | None | Verify signature, get JWT |
 | `/image/turbo` | 65000 | POST | Bearer | Fast image generation (FLUX Klein) |
-| `/image/quality` | 65000 | POST | Bearer | High quality image (FLUX Krea) |
+| `/image/quality` | 65000 | POST | Bearer | High quality image (Z-Image Turbo) |
 | `/image/standard` | 65000 | POST | Bearer | Standard image (SDXL, uncensored) |
 | `/image/advanced` | 65000 | POST | Bearer | Advanced image (Z-Image Turbo) |
 | `/image/image/turbo` | 65000 | POST | Bearer | Image-to-image editing |
@@ -147,7 +147,7 @@ Content-Type: application/json
 
 **Generation:**
 - `!generate image <prompt>` - Fast image (FLUX Klein)
-- `!generate image_quality <prompt>` - Quality image (FLUX Krea)
+- `!generate image_quality <prompt>` - Quality image (Z-Image Turbo)
 - `!generate image_standard <prompt>` - Standard image (SDXL, uncensored)
 - `!generate image_advanced <prompt>` - Advanced image (Z-Image)
 - `!generate video <prompt>` - Video (LTX-2)
@@ -406,7 +406,7 @@ To restore your original model:
 | `image_turbo` | `/image/turbo` | Fast | Good (FLUX Klein) |
 | `image_standard` | `/image/standard` | Medium | Good (SDXL, uncensored) |
 | `image_advanced` | `/image/advanced` | Medium | High (Z-Image Turbo) |
-| `image_quality` | `/image/quality` | Slower | Excellent (FLUX Krea) |
+| `image_quality` | `/image/quality` | Slower | Excellent (Z-Image Turbo) |
 
 ## Audio Generation
 

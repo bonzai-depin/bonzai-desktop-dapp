@@ -6,6 +6,11 @@
 
 import { shallowReactive, readonly, computed } from 'vue';
 import { v4 as uuid } from 'uuid';
+import { memoryService } from '../services/memory.service.js';
+import {
+  buildBonzaiUtilitySnapshot,
+  buildContributionManifest,
+} from '../services/bonzaiUtility.service.js';
 
 /**
  * @typedef {Object} HardwareSpecs
@@ -160,6 +165,51 @@ const createInferenceRecord = (type, data) => ({
   ...data,
 });
 
+function outputPreviewForContribution(type, payload = {}) {
+  if (type === 'text') return payload.answer?.text || payload.answerText || ''
+  if (type === 'image') return payload.answer?.data?.image_path || payload.image_path || 'image generation'
+  if (type === 'video') return payload.answer?.data?.video_path || payload.videoPath || 'video generation'
+  if (type === 'audio') return payload.answer?.data?.audio_path || payload.audioPath || 'audio generation'
+  if (type === 'object') return payload.code || payload.notes || '3D generation'
+  return ''
+}
+
+async function attachBonzaiUtility(record, role = 'creator') {
+  const contribution = buildContributionManifest({
+    id: record.id,
+    assetType: record.type,
+    role,
+    prompt: record.question || record.prompt || '',
+    output: outputPreviewForContribution(record.type, record),
+    metadata: {
+      model: record.model || null,
+      pipeline: record.pipeline || null,
+      networkMode: record.networkMode || null,
+      source: record.source || null,
+    },
+  });
+  const utility = buildBonzaiUtilitySnapshot({
+    assetType: record.type,
+    role,
+    contribution,
+    parents: contribution.parents,
+    action: 'generation',
+  });
+  return {
+    ...record,
+    contribution,
+    bonzaiUtility: utility,
+  };
+}
+
+async function enrichUserMemory(record) {
+  try {
+    await memoryService.ingestGeneration(record);
+  } catch (e) {
+    console.warn('[InferenceStore] Failed to enrich user memory:', e?.message || e);
+  }
+}
+
 // ==================== Public API ====================
 
 /**
@@ -176,6 +226,7 @@ export const initializeStore = async () => {
     state.videoInferences.length +
     state.audioInferences.length +
     state.objectInferences.length;
+  _mergedVersion++;
     
 };
 
@@ -192,7 +243,7 @@ export const initializeStore = async () => {
 export const addTextInference = async (question, answerText, metadata = {}) => {
   const recordId = uuid();
   const hardware = await getHardwareSpecs();
-  const record = {
+  let record = {
     id: recordId,
     question,
     answer: {
@@ -210,11 +261,13 @@ export const addTextInference = async (question, answerText, metadata = {}) => {
     networkMode: metadata.networkMode || 'local', // 'local' | 'remote' | 'private'
     hardware: hardware || null,
   };
+  record = await attachBonzaiUtility(record);
 
   state.textInferences = [...state.textInferences, record];
   state.totalInferences++;
   _mergedVersion++;
   await persist(STORE_KEYS.textInferences);
+  await enrichUserMemory(record);
   return record;
 };
 
@@ -235,7 +288,7 @@ export const loadTextInferences = async () => {
  */
 export const addImageInference = async (prompt, imageData, metadata = {}) => {
   const hardware = await getHardwareSpecs();
-  const record = {
+  let record = {
     id: uuid(),
     question: prompt,
     answer: {
@@ -257,11 +310,13 @@ export const addImageInference = async (prompt, imageData, metadata = {}) => {
     networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
   };
+  record = await attachBonzaiUtility(record);
 
   state.imageInferences = [...state.imageInferences, record];
   state.totalInferences++;
   _mergedVersion++;
   await persist(STORE_KEYS.imageInferences);
+  await enrichUserMemory(record);
   return record;
 };
 
@@ -282,7 +337,7 @@ export const loadImageInferences = async () => {
  */
 export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
   const hardware = await getHardwareSpecs();
-  const record = {
+  let record = {
     id: uuid(),
     question: prompt,
     answer: {
@@ -304,11 +359,13 @@ export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
     networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
   };
+  record = await attachBonzaiUtility(record);
 
   state.videoInferences = [...state.videoInferences, record];
   state.totalInferences++;
   _mergedVersion++;
   await persist(STORE_KEYS.videoInferences);
+  await enrichUserMemory(record);
   return record;
 };
 
@@ -329,7 +386,7 @@ export const loadVideoInferences = async () => {
  */
 export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
   const hardware = await getHardwareSpecs();
-  const record = {
+  let record = {
     id: uuid(),
     question: prompt,
     answer: {
@@ -349,11 +406,13 @@ export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
     networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
   };
+  record = await attachBonzaiUtility(record);
 
   state.audioInferences = [...state.audioInferences, record];
   state.totalInferences++;
   _mergedVersion++;
   await persist(STORE_KEYS.audioInferences);
+  await enrichUserMemory(record);
   return record;
 };
 
@@ -372,7 +431,7 @@ export const loadAudioInferences = async () => {
  */
 export const addObjectInference = async (prompt, code, metadata = {}) => {
   const hardware = await getHardwareSpecs();
-  const record = createInferenceRecord('object', {
+  let record = createInferenceRecord('object', {
     prompt: String(prompt || ''),
     hardware: hardware || null,
     code: String(code || ''),
@@ -387,6 +446,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     blueprint: metadata.blueprint ? String(metadata.blueprint) : undefined,
     tokensPerSecond: metadata.tokensPerSecond ? String(metadata.tokensPerSecond) : undefined,
   });
+  record = await attachBonzaiUtility(record);
 
   // Deep clone to ensure serializability before storing
   try {
@@ -395,6 +455,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     state.totalInferences++;
     _mergedVersion++;
     await persist(STORE_KEYS.objectInferences);
+    await enrichUserMemory(safeRecord);
     return safeRecord;
   } catch (e) {
     console.error('[InferenceStore] Failed to serialize record:', e);
@@ -414,6 +475,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     state.totalInferences++;
     _mergedVersion++;
     await persist(STORE_KEYS.objectInferences);
+    await enrichUserMemory(minimalRecord);
     return minimalRecord;
   }
 };
@@ -459,6 +521,7 @@ export const markAsMinted = async (type, inferenceId, nftData) => {
   const stateKey = `${type}Inferences` in state ? `${type}Inferences` : `${type}Datasets`;
   
   const items = state[stateKey];
+  if (!Array.isArray(items)) return false;
   const item = items.find(i => i.id === inferenceId);
   
   if (item) {
@@ -469,6 +532,14 @@ export const markAsMinted = async (type, inferenceId, nftData) => {
       mintedAt: Date.now(),
       chainId: nftData.chainId || 8453, // Base
       explorerUrl: nftData.explorerUrl,
+      contentUrl: nftData.contentUrl || null,
+      metadataUrl: nftData.metadataUrl || null,
+      marketplaceUrl: nftData.marketplaceUrl || null,
+      marketplace: nftData.marketplace || null,
+      trainingMaterial: nftData.trainingMaterial || null,
+      contentSafety: nftData.contentSafety || null,
+      contribution: nftData.contribution || null,
+      bonzaiUtility: nftData.bonzaiUtility || null,
     };
     await persist(storeKey);
     return true;
@@ -505,7 +576,8 @@ const _inferenceCount = computed(() =>
   state.textInferences.length +
   state.imageInferences.length +
   state.videoInferences.length +
-  state.audioInferences.length
+  state.audioInferences.length +
+  state.objectInferences.length
 );
 
 export const allInferences = computed(() => {
@@ -513,7 +585,7 @@ export const allInferences = computed(() => {
   if (_mergedVersion === _lastMergedVersion) return _mergedCache;
   _lastMergedVersion = _mergedVersion;
   _mergedCache = state.textInferences
-    .concat(state.imageInferences, state.videoInferences, state.audioInferences);
+    .concat(state.imageInferences, state.videoInferences, state.audioInferences, state.objectInferences);
   _mergedCache.sort((a, b) => b.timestamp - a.timestamp);
   return _mergedCache;
 });

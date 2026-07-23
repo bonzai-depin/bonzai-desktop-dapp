@@ -226,7 +226,7 @@ async function deployProviderRegistry() {
 }
 
 /**
- * Deploy BonzaiSkillRegistry — ETH-only, 2-arg constructor
+ * Deploy BonzaiSkillRegistry with token-gated companion ownership.
  */
 async function deploySkillRegistry() {
   const [owner, treasury, author1, author2, buyer1, buyer2] = await ethers.getSigners();
@@ -236,10 +236,7 @@ async function deploySkillRegistry() {
   const mockOwnership = await MockSkillOwnership.deploy();
 
   const BonzaiSkillRegistry = await ethers.getContractFactory("BonzaiSkillRegistry");
-  const registry = await BonzaiSkillRegistry.deploy(
-    treasury.address,
-    await mockOwnership.getAddress(),
-  );
+  const registry = await BonzaiSkillRegistry.deploy(await mockOwnership.getAddress());
 
   return { registry, mockOwnership, owner, treasury, author1, author2, buyer1, buyer2 };
 }

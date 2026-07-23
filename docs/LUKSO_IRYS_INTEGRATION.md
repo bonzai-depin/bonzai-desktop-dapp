@@ -1,4 +1,6 @@
-# BonzAI × LUKSO Universal Profiles × Irys Integration
+# Archived proposal: LUKSO and Irys
+
+> **Not part of BonzAI v4.** BonzAI does not use Irys. This file remains only as historical research. Current publishing uses configured IPFS/Pinata storage; see `BONZAI_V4_ARCHITECTURE.md`.
 
 > Decentralized AI content attribution and permanent storage using LUKSO's LSP8 NFT standard and Irys provenance layer on Arweave.
 

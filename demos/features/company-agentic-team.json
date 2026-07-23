@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "id": "company-agentic-team",
+  "title": "Company Agentic Team",
+  "surface": "desktop",
+  "viewport": { "width": 1920, "height": 1080 },
+  "capture": {
+    "steps": [
+      { "action": "clickRole", "role": "button", "name": "Company", "exact": false },
+      { "action": "waitForText", "text": "Agentic teams" },
+      { "action": "wait", "ms": 500 },
+      { "action": "screenshot", "name": "company-home" },
+      { "action": "clickRole", "role": "button", "name": "Create first team", "exact": false },
+      { "action": "waitForText", "text": "Pick the first margin leak to remove." },
+      { "action": "wait", "ms": 500 },
+      { "action": "screenshot", "name": "workflow-selector" }
+    ]
+  },
+  "film": {
+    "transition": 0.4,
+    "segments": [
+      {
+        "type": "cinematic",
+        "start": 0,
+        "duration": 4.5
+      },
+      {
+        "type": "capture",
+        "capture": "company-home",
+        "duration": 6,
+        "overlay": {
+          "eyebrow": "BONZAI COMPANY",
+          "title": "One workflow. One accountable team.",
+          "body": "Start with the margin leak. BonzAI assembles the roles, tools and safeguards.",
+          "x": 490,
+          "y": 650,
+          "titleFont": "src/assets/fonts/FiraSansCondensed-BlackItalic.ttf",
+          "bodyFont": "src/assets/fonts/FiraSans-Regular.ttf"
+        },
+        "emphasis": { "x": 486, "y": 160, "width": 210, "height": 52, "start": 4.4, "end": 5.3 }
+      },
+      {
+        "type": "cinematic",
+        "start": 63,
+        "duration": 2
+      },
+      {
+        "type": "capture",
+        "capture": "workflow-selector",
+        "duration": 8
+      },
+      {
+        "type": "cinematic",
+        "start": 102,
+        "duration": 8
+      }
+    ]
+  }
+}

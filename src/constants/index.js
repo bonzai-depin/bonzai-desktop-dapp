@@ -206,7 +206,6 @@ export function unpackSpendingProfile(packed) {
  */
 export const COLLECTIBLES_CLONE_ABI = [
   'function mint(string transactionId, string model, string tokenURI_, uint8 contentType) payable returns (uint256)',
-  'function mintFee() view returns (uint256)',
   'function mintFees(uint8 contentType) view returns (uint256)',
   'event ContentMinted(uint256 indexed tokenId, address indexed creator, string transactionId, string model, uint256 timestamp)',
 ];

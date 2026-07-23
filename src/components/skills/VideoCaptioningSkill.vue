@@ -36,7 +36,7 @@
       <!-- File Select -->
       <div v-if="selectedMode === 'file'" class="skill-action-row">
         <button
-          class="bz-btn bz-btn--success bz-btn--lg"
+          class="bz-btn bz-btn--agent-cta bz-btn--lg"
           @click="selectVideoFile"
         >
           <span class="material-symbols-outlined">folder_open</span>
@@ -58,7 +58,7 @@
         </div>
         <div class="skill-field skill-field--action">
           <button
-            class="bz-btn bz-btn--success bz-btn--lg"
+            class="bz-btn bz-btn--agent-cta bz-btn--lg"
             @click="loadVideoFromUrl"
             :disabled="!videoUrl"
           >
@@ -345,7 +345,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import BonzaiPulse from "../BonzaiPulse.vue";
 import { getAuthHeaders } from "../../services/auth.service.js";
-import { hasPurchasedSkill, isDevMode } from "../../services/agent.service.js";
+import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 
 const STORAGE_KEY = "video-captioning-sessions";
 const SKILL_ID = "video-captioning-v1.0.0";
@@ -610,7 +610,7 @@ export default {
     // ─── Vision Analysis ─────────────────────────────────────────────
     const analyzeFrame = async (imageDataUrl, frameTime) => {
       if (isAnalyzing.value || !captioningActive.value) return null;
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         console.warn("[VideoCaptioning] Skill not purchased — execution blocked.");
         return null;
       }

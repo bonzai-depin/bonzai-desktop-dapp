@@ -60,7 +60,7 @@
         </ul>
       </div>
         <button
-          class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+          class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
           @click="downloadAllMissingModels"
           :disabled="downloads.active"
         >
@@ -536,6 +536,7 @@ export default {
 }
 
 .skill-download-scroll {
+  margin-top: var(--bz-space-4);
   max-height: 180px;
   overflow: auto;
 }

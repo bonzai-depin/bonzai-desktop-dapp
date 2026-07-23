@@ -78,6 +78,43 @@ describe("FineTuneTokenFactory", function () {
       return { ...deployed, contentTokenId };
     }
 
+    it("issues a validated fine-tuned model token with complete identity metadata", async function () {
+      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const validationHash = ethers.id("validated-model-artifacts");
+      await factory.launchValidatedToken(
+        contentTokenId,
+        "BonzAI Research Model",
+        "BZRM",
+        "ipfs://model-metadata",
+        "A locally trained research assistant with attributable dataset lineage.",
+        "ipfs://model-image",
+        "fine_tuned",
+        validationHash,
+        creator.address,
+        { value: MIN_ETH_LIQUIDITY },
+      );
+      const token = await ethers.getContractAt("FineTuneToken", await factory.getToken(contentTokenId));
+      const profile = await token.getModelProfile();
+      expect(profile.description_).to.include("attributable dataset lineage");
+      expect(profile.modelKind_).to.equal("fine_tuned");
+      expect(profile.validationHash_).to.equal(validationHash);
+    });
+
+    it("supports validated abliterated model tokens and disables legacy issuance", async function () {
+      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      await factory.disableLegacyLaunch();
+      await expect(
+        factory.launchToken(contentTokenId, tokenName, tokenSymbol, modelIrysHash, creator.address, { value: MIN_ETH_LIQUIDITY }),
+      ).to.be.revertedWith("Use validated model launch");
+      await factory.launchValidatedToken(
+        contentTokenId, "BonzAI Open Model", "BZOPEN", "ipfs://metadata",
+        "A validated abliterated model.", "ipfs://image", "abliterated",
+        ethers.id("abliteration-validation"), creator.address, { value: MIN_ETH_LIQUIDITY },
+      );
+      const token = await ethers.getContractAt("FineTuneToken", await factory.getToken(contentTokenId));
+      expect(await token.modelKind()).to.equal("abliterated");
+    });
+
     it("should deploy a FineTuneToken and return its address", async function () {
       const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
 

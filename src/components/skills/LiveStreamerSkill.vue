@@ -80,7 +80,7 @@
           <div class="buttons is-centered">
             <button
               v-if="!isLive"
-              class="bz-btn bz-btn--success bz-btn--lg"
+              class="bz-btn bz-btn--agent-cta bz-btn--lg"
               :disabled="chatConnecting"
               :class="{ 'bz-btn--running': chatConnecting }"
               @click="connectChat"
@@ -91,7 +91,7 @@
             <template v-else>
               <button
                 class="bz-btn bz-btn--lg"
-                :class="isPaused ? 'bz-btn--success' : 'bz-btn--warning'"
+                :class="isPaused ? 'bz-btn--agent-cta' : 'bz-btn--agent-cta'"
                 @click="isPaused = !isPaused"
               >
                 <span class="material-symbols-outlined">{{ isPaused ? 'play_arrow' : 'pause' }}</span>
@@ -232,7 +232,7 @@
           </div>
         </div>
         <button
-          class="bz-btn bz-btn--success mt-3"
+          class="bz-btn bz-btn--agent-cta mt-3"
           @click="connectOBS"
           :disabled="obsConnecting"
           :class="{ 'bz-btn--running': obsConnecting }"
@@ -633,7 +633,7 @@
 
 <script>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 import BzCloseButton from '../BzCloseButton.vue';
 
 const SKILL_ID = 'live-streaming-v1.0.0';
@@ -893,7 +893,7 @@ export default {
     let chatClient = null;
 
     async function connectChat() {
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         showStatus('Skill not purchased — live streaming blocked.', 'error');
         return;
       }
@@ -1049,7 +1049,7 @@ export default {
     let isProcessing = false;
     async function processQueue() {
       if (isProcessing || isPaused.value || queue.value.length === 0) return;
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         console.warn('[LiveStreamer] Skill not purchased — queue processing blocked.');
         return;
       }

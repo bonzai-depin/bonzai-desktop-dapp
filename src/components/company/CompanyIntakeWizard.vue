@@ -5,13 +5,8 @@
       <div class="wiz__head">
         <div>
           <h1 class="fira-sans-condensed-black-italic wiz__title">
-            <span class="material-symbols-outlined is-size-1 mr-2">auto_awesome_motion</span>
-            <span class="wiz__title-text">Form a Zero-Human Company</span>
+            <span class="wiz__title-text">Set up a team</span>
           </h1>
-          <p class="wiz__subtitle muted">
-            A short setup that creates a real charter, staffed roles, first goals, and the
-            tools your company needs.
-          </p>
         </div>
         <BzCloseButton size="md" aria-label="Close" @click="confirmCancel" />
       </div>
@@ -39,215 +34,132 @@
 
       <hr />
 
-      <!-- ──── Step 1: Vertical pick ──── -->
+      <!-- ──── Step 1: Workflow pick ──── -->
       <div v-if="step === 0" class="wiz-panel">
         <h2 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">category</span>
-          What does your business do?
+          Pick the first margin leak to remove.
         </h2>
-        <p class="muted">
-          Pick the closest starting point. You can edit the charter and agentic team after setup.
+        <p class="panel-lede">
+          Choose a live operating scenario. BonzAI will shape the agent team around the work, the systems, and the people who touch the stay.
         </p>
-        <div class="tpl-grid">
-          <div
-            v-for="t in templates"
-            :key="t.id"
-            class="tpl-card"
-            :class="{ 'is-selected': draft.templateId === t.id }"
-            @click="selectTemplate(t.id)"
+        <div class="workflow-grid">
+          <button
+            v-for="workflow in workflows"
+            :key="workflow.id"
+            type="button"
+            class="workflow-card"
+            :class="{ 'is-selected': selectedWorkflowId === workflow.id }"
+            @click="selectWorkflow(workflow.id)"
           >
-            <div class="tpl-card__icon">
-              <span class="material-symbols-outlined">{{ t.badgeIcon }}</span>
-            </div>
-            <div class="tpl-card__title fira-sans-condensed-black-italic">{{ t.name }}</div>
-            <div class="tpl-card__summary">{{ t.summary }}</div>
-            <div class="tpl-card__packs">
-              <span v-for="tag in templateTags(t)" :key="tag" class="skill-chip is-small">{{ tag }}</span>
-            </div>
-          </div>
-          <div class="tpl-card tpl-card--coming">
-            <div class="tpl-card__icon"><span class="material-symbols-outlined">add_circle</span></div>
-            <div class="tpl-card__title fira-sans-condensed-black-italic">More verticals soon</div>
-            <div class="tpl-card__summary">
-              Law firms, marketing agencies, e-commerce, restaurants, real estate, coaching practices…
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ──── Step 2: Vertical-specific intake ──── -->
-      <div v-else-if="step === 1" class="wiz-panel">
-        <h2 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">edit_note</span>
-          Tell us about your {{ selectedTemplate.name }}
-        </h2>
-        <p class="muted">
-          Quick context so the CEO companion can write a real mission statement.
-        </p>
-        <div class="wiz-fields">
-          <div v-for="q in selectedTemplate.intakeQuestions" :key="q.id" class="wiz-field">
-            <label class="wiz-field__label">{{ q.label }}{{ q.required ? ' *' : '' }}</label>
-            <input
-              v-if="q.type === 'text' || q.type === undefined"
-              v-model="answers[q.id]"
-              :placeholder="q.placeholder || ''"
-              class="input is-medium"
-            />
-            <input
-              v-else-if="q.type === 'number'"
-              v-model.number="answers[q.id]"
-              type="number"
-              class="input is-medium"
-            />
-            <div v-else-if="q.type === 'select'" class="select is-medium skill-fullwidth">
-              <select v-model="answers[q.id]">
-                <option v-for="opt in q.options" :key="opt" :value="opt">{{ opt }}</option>
-              </select>
-            </div>
-            <label v-else-if="q.type === 'toggle'" class="wiz-toggle">
-              <input type="checkbox" v-model="answers[q.id]" />
-              <span class="wiz-toggle__track"></span>
-              <span class="wiz-toggle__text">{{ answers[q.id] ? 'Yes' : 'No' }}</span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <!-- ──── Step 3: Humans on the team ──── -->
-      <div v-else-if="step === 2" class="wiz-panel">
-        <h2 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">groups</span>
-          Who works there today?
-        </h2>
-        <p class="muted">
-          Add people who should stay visible in the operating plan. Mark hands-on roles so
-          tasks route through a coordinator instead of pretending software can do physical work.
-        </p>
-        <div class="roster">
-          <div v-for="(h, idx) in roster" :key="idx" class="roster-row">
-            <input v-model.trim="h.name" placeholder="Name" class="input" />
-            <input v-model.trim="h.title" placeholder="Job title" class="input" />
-            <div class="select">
-              <select v-model="h.contractorStatus">
-                <option value="W2">W-2</option>
-                <option value="1099">1099</option>
-                <option value="owner">Owner</option>
-              </select>
-            </div>
-            <label class="roster-row__hybrid">
-              <input type="checkbox" v-model="h.isPhysical" />
-              <span>Physical role</span>
-            </label>
-            <button class="bz-btn bz-btn--ghost icon-only-btn" @click="removeRoster(idx)" aria-label="Remove">
-              <span class="material-symbols-outlined">remove</span>
-            </button>
-          </div>
-        </div>
-        <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="addRoster">
-          <span class="material-symbols-outlined mr-1">add</span> Add person
-        </button>
-        <div v-if="hybridRoleHint" class="wiz-hint">
-          <span class="material-symbols-outlined">tips_and_updates</span>
-          Detected {{ physicalCount }} physical role{{ physicalCount === 1 ? '' : 's' }} —
-          we'll map them under <strong>{{ hybridRoleHint }}</strong>.
-          The companion in that role coordinates them; it doesn't claim to do the work itself.
-        </div>
-      </div>
-
-      <!-- ──── Step 4: Tools / connectors ──── -->
-      <div v-else-if="step === 3" class="wiz-panel">
-        <h2 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">extension</span>
-          What tools are you on?
-        </h2>
-        <p class="muted">
-          Tap the services your company uses. We'll request access via OAuth or API key after
-          formation; nothing gets touched without your explicit approval.
-        </p>
-        <div class="conn-grid">
-          <div
-            v-for="conn in availableConnectors"
-            :key="conn.kind"
-            class="conn-tile"
-            :class="{
-              'is-required': requiredConnectorSet.has(conn.kind),
-              'is-selected': pickedConnectors.has(conn.kind),
-            }"
-            @click="toggleConnector(conn.kind)"
-          >
-            <div class="conn-tile__icon">
-              <span class="material-symbols-outlined">{{ conn.icon }}</span>
-            </div>
-            <div class="conn-tile__name fira-sans-condensed-black-italic">{{ conn.name }}</div>
-            <div class="conn-tile__kind muted">{{ conn.kind }}</div>
-            <span v-if="requiredConnectorSet.has(conn.kind)" class="conn-tile__req">required</span>
-          </div>
-        </div>
-        <p class="muted wiz-hint__inline">
-          {{ pickedConnectors.size }} selected · {{ requiredConnectorSet.size }} required by your template
-        </p>
-      </div>
-
-      <!-- ──── Step 5: Money + repetitive work ──── -->
-      <div v-else-if="step === 4" class="wiz-panel">
-        <h2 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">tune</span>
-          Money picture &amp; first goals
-        </h2>
-        <p class="muted">
-          Set the money guardrails and first goals. The company plans inside these limits and
-          asks before sensitive work runs.
-        </p>
-        <div class="wiz-grid-2">
-          <div class="wiz-field">
-            <label class="wiz-field__label">Currency</label>
-            <div class="select is-medium skill-fullwidth">
-              <select v-model="treasury.currency">
-                <option v-for="c in currencies" :key="c" :value="c">{{ c }}</option>
-              </select>
-            </div>
-          </div>
-          <div class="wiz-field">
-            <label class="wiz-field__label">Working-capital floor</label>
-            <input v-model.number="treasury.reserveFloor" type="number" class="input is-medium" />
-            <p class="muted wiz-field__hint">Keep this amount untouched.</p>
-          </div>
-          <div class="wiz-field">
-            <label class="wiz-field__label">Per-tick spend cap</label>
-            <input v-model.number="treasury.perHeartbeatSpendCap" type="number" class="input is-medium" />
-            <p class="muted wiz-field__hint">Spending above this waits for approval.</p>
-          </div>
-          <div class="wiz-field">
-            <label class="wiz-field__label">Company name</label>
-            <input v-model.trim="companyName" class="input is-medium" :placeholder="defaultName" />
-          </div>
-        </div>
-
-        <hr />
-
-        <h3 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">flag</span>
-          Initial goals (you can edit later)
-        </h3>
-        <p class="muted">
-          These become the first visible goals after the company is formed.
-        </p>
-        <div class="initial-goals">
-          <div v-for="(g, idx) in initialGoals" :key="idx" class="initial-goal">
-            <input v-model="initialGoals[idx]" class="input" />
-            <button class="bz-btn bz-btn--ghost icon-only-btn" @click="initialGoals.splice(idx, 1)" aria-label="Remove">
-              <span class="material-symbols-outlined">remove</span>
-            </button>
-          </div>
-          <button class="bz-btn bz-btn--ghost is-small fira-sans-condensed-black-italic" @click="initialGoals.push('')">
-            <span class="material-symbols-outlined mr-1">add</span> Add goal
+            <span class="workflow-card__icon material-symbols-outlined">{{ workflow.icon }}</span>
+            <span class="workflow-card__body">
+              <strong class="workflow-card__title fira-sans-condensed-black-italic">{{ workflow.title }}</strong>
+              <span class="workflow-card__pain">{{ workflow.pain }}</span>
+              <span class="workflow-card__outcome">{{ workflow.outcome }}</span>
+              <span v-if="workflow.stakeholders?.length" class="workflow-card__stakeholders">
+                <span v-for="stakeholder in workflow.stakeholders" :key="stakeholder">{{ stakeholder }}</span>
+              </span>
+            </span>
           </button>
         </div>
+        <div class="quick-value">
+          <span class="material-symbols-outlined" aria-hidden="true">conversion_path</span>
+          <div>
+            <strong>{{ selectedWorkflow?.firstValue }}</strong>
+            <p>{{ selectedWorkflow?.review }}</p>
+          </div>
+        </div>
+      </div>
 
-        <hr />
+      <!-- ──── Step 2: Business basics + tools ──── -->
+      <div v-else-if="step === 1" class="wiz-panel">
+        <h2 class="panel-subtitle fira-sans-condensed-black-italic">
+          Setup in two minutes
+        </h2>
+        <div class="quick-setup-grid">
+          <div class="wiz-field">
+            <label class="wiz-field__label">Business name *</label>
+            <input v-model.trim="answers.businessName" class="input is-medium" placeholder="Acme Studio" />
+          </div>
+          <div class="wiz-field">
+            <label class="wiz-field__label">Business type</label>
+            <input v-model.trim="answers.businessType" class="input is-medium" placeholder="Agency, contractor, SaaS, consulting firm" />
+          </div>
+          <div class="wiz-field">
+            <label class="wiz-field__label">Who approves sensitive actions? *</label>
+            <input v-model.trim="answers.approvalOwner" class="input is-medium" placeholder="Owner, CFO, operations manager" />
+          </div>
+          <div class="wiz-field">
+            <label class="wiz-field__label">Stakeholders involved</label>
+            <input v-model.trim="answers.stakeholders" class="input is-medium" placeholder="Guest, owner, housekeeper, maintenance, finance" />
+          </div>
+          <div class="wiz-field">
+            <label class="wiz-field__label">Current way of working</label>
+            <textarea
+              v-model.trim="answers.currentWorkflow"
+              class="textarea"
+              rows="3"
+              :placeholder="selectedWorkflow?.workflowPlaceholder || 'Lead arrives, quote is approved, invoice is sent, payment is reconciled.'"
+            ></textarea>
+          </div>
+        </div>
 
-        <!-- Demo mode toggle — front-and-center because it unblocks
-             the entire experience without requiring a loaded model. -->
+        <div class="connector-section">
+          <div class="connector-section__head">
+            <div>
+              <h3 class="panel-subtitle fira-sans-condensed-black-italic">
+                Existing tools
+              </h3>
+            </div>
+          </div>
+          <div class="conn-grid">
+            <div
+              v-for="conn in recommendedConnectors"
+              :key="conn.kind"
+              class="conn-tile"
+              :class="{
+                'is-required': selectedWorkflow?.connectors.includes(conn.kind),
+                'is-selected': pickedConnectors.has(conn.kind),
+              }"
+              @click="toggleConnector(conn.kind)"
+            >
+              <div class="conn-tile__icon">
+                <span class="material-symbols-outlined">{{ conn.icon }}</span>
+              </div>
+              <div class="conn-tile__name fira-sans-condensed-black-italic">{{ conn.name }}</div>
+              <span v-if="selectedWorkflow?.connectors.includes(conn.kind)" class="conn-tile__req">suggested</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ──── Step 3: Review ──── -->
+      <div v-else-if="step === 2" class="wiz-panel">
+        <h2 class="panel-subtitle fira-sans-condensed-black-italic">
+          Ready to open the work inbox
+        </h2>
+        <div class="review-grid">
+          <section class="review-panel">
+            <span class="review-panel__eyebrow">Workflow</span>
+            <h3 class="review-panel__title fira-sans-condensed-black-italic">{{ selectedWorkflow?.title }}</h3>
+          </section>
+          <section class="review-panel">
+            <span class="review-panel__eyebrow">Approval</span>
+            <h3 class="review-panel__title fira-sans-condensed-black-italic">{{ answers.approvalOwner || 'Owner' }}</h3>
+          </section>
+          <section class="review-panel">
+            <span class="review-panel__eyebrow">Stakeholders</span>
+            <h3 class="review-panel__title fira-sans-condensed-black-italic">{{ answers.stakeholders || selectedWorkflow?.stakeholders?.join(', ') }}</h3>
+          </section>
+        </div>
+
+        <div class="first-work-list">
+          <div v-for="goal in initialGoals" :key="goal" class="first-work-item">
+            <span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
+            <span>{{ goal }}</span>
+          </div>
+        </div>
+
         <div class="demo-row">
           <label class="wiz-toggle">
             <input type="checkbox" v-model="demoMode" />
@@ -256,23 +168,10 @@
           <div class="demo-row__copy">
             <div class="demo-row__title fira-sans-condensed-black-italic">
               <span class="material-symbols-outlined mr-2">auto_awesome_motion</span>
-              Start with sample activity
+              Show sample work immediately
             </div>
-            <p class="demo-row__hint">
-              Populate the workspace quickly so you can see goals, tasks, approvals, and
-              deliverables before connecting every tool.
-            </p>
           </div>
         </div>
-
-        <hr />
-
-        <!-- Mission preview -->
-        <h3 class="panel-subtitle fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined">north_star</span>
-          Mission preview
-        </h3>
-        <div class="mission-preview">{{ missionPreview }}</div>
       </div>
 
       <hr />
@@ -281,7 +180,7 @@
       <div class="wiz__actions">
         <button
           v-if="step > 0"
-          class="bz-btn is-light fira-sans-condensed-black-italic"
+          class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
           @click="step--"
         >
           <span class="material-symbols-outlined mr-1">arrow_back</span> Back
@@ -290,7 +189,7 @@
         <div class="wiz__actions-right">
           <button
             v-if="step < steps.length - 1"
-            class="bz-btn is-success fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
             :disabled="!canAdvance"
             @click="step++"
           >
@@ -298,13 +197,13 @@
           </button>
           <button
             v-else
-            class="bz-btn is-warning fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
             :class="{ 'bz-btn--running': busy }"
             :disabled="busy || !canForm"
             @click="formCompany"
           >
-            <span class="material-symbols-outlined is-size-3 mr-2">rocket_launch</span>
-            Form company
+            <span class="material-symbols-outlined is-size-3 mr-2">workspaces</span>
+            Open team
           </button>
         </div>
       </div>
@@ -315,39 +214,210 @@
 <script>
 import { reactive, ref, computed } from "vue";
 import companyStore from "../../stores/companyStore.js";
-import { listTemplates as listCompanyTemplates } from "../../services/company/templates.js";
+import { COMPANY_CONNECTOR_CATALOG } from "../../config/companyConnectors.js";
 import BzCloseButton from "../BzCloseButton.vue";
 
 /**
- * The five-step intake wizard. Self-contained — opens, runs, returns
+ * The intake wizard. Self-contained — opens, runs, returns
  * a charter id (or null if cancelled). Parent handles the cancel/done
  * routing via `done` + `cancel` events.
  */
 
-// Connector catalog — keep it modest; the full list comes from
-// skillManifests.js requiredConnectors but we want pretty icons + names.
-const CONNECTOR_CATALOG = [
-  { kind: "twilio",          name: "Twilio",            icon: "call" },
-  { kind: "quickbooks",      name: "QuickBooks",        icon: "receipt_long" },
-  { kind: "stripe",          name: "Stripe",            icon: "credit_card" },
-  { kind: "google_calendar", name: "Google Calendar",   icon: "event" },
-  { kind: "hubspot",         name: "HubSpot",           icon: "hub" },
-  { kind: "sendgrid",        name: "SendGrid",          icon: "mail" },
-  { kind: "shopify",         name: "Shopify",           icon: "storefront" },
-  { kind: "printful",        name: "Printful",          icon: "local_shipping" },
-  { kind: "printify",        name: "Printify",          icon: "inventory" },
-  { kind: "optimoroute",     name: "OptimoRoute",       icon: "alt_route" },
-  { kind: "google_business", name: "Google Business",   icon: "storefront" },
-  { kind: "docusign",        name: "DocuSign",          icon: "draw" },
-  { kind: "clio",            name: "Clio",              icon: "gavel" },
-  { kind: "meta_ads",        name: "Meta Ads",          icon: "ads_click" },
-  { kind: "google_ads",      name: "Google Ads",        icon: "campaign" },
-  { kind: "notion",          name: "Notion",            icon: "menu_book" },
-  { kind: "convertkit",      name: "ConvertKit",        icon: "newspaper" },
-  { kind: "teachable",       name: "Teachable",         icon: "school" },
-  { kind: "calendly",        name: "Calendly",          icon: "event_available" },
-  { kind: "slack",           name: "Slack",             icon: "tag" },
-  { kind: "linear",          name: "Linear",            icon: "list_alt" },
+const CONNECTOR_CATALOG = COMPANY_CONNECTOR_CATALOG;
+const SUPPORTED_CONNECTORS = new Set(CONNECTOR_CATALOG.map((connector) => connector.kind));
+
+const WORKFLOW_TEMPLATE_ID = "business_ops_team";
+
+const WORKFLOW_PRESETS = [
+  {
+    id: "stay_turnover",
+    icon: "cleaning_services",
+    title: "Coordinate stay turnover",
+    pain: "Check-out, cleaning, inspection, and check-in handoffs happen across messages and spreadsheets.",
+    summary: "Turn each departure into a controlled readiness workflow before the next guest arrives.",
+    outcome: "Next stay readiness tracked",
+    firstValue: "BonzAI builds a readiness board for every upcoming stay, with late-risk alerts before they become guest problems.",
+    review: "Turnover timeline, cleaning confirmation, damage notes, maintenance exceptions, and owner-visible readiness status.",
+    stakeholders: ["Guest", "Housekeeper", "Maintenance", "Owner"],
+    connectors: ["airbnb", "booking", "guesty", "hospitable", "google_calendar", "slack"],
+    businessType: "short-term rental operator",
+    currentWorkflow: "Guest checks out, cleaning is scheduled, damage or missing items are reported, maintenance exceptions are escalated, and the property is marked ready before the next check-in.",
+    workflowPlaceholder: "Check-out -> cleaning -> inspection -> maintenance exception -> owner alert -> ready for next guest",
+    goals: [
+      "Build the next seven days of stay turnovers with risk flags",
+      "Draft housekeeper instructions for every check-out and same-day arrival",
+      "Flag maintenance, damage, and missing inventory exceptions for approval",
+      "Prepare a daily owner-facing readiness report",
+    ],
+  },
+  {
+    id: "stay_guest_messaging",
+    icon: "forum",
+    title: "Run guest messaging",
+    pain: "Guests ask the same questions while urgent requests get buried in the inbox.",
+    summary: "Classify guest messages, draft replies, and escalate issues that affect ratings or refunds.",
+    outcome: "Guest inbox under control",
+    firstValue: "BonzAI separates routine guest questions from stay-risk issues and prepares the next response.",
+    review: "Arrival instructions, late check-in replies, amenity questions, complaint triage, refund-risk escalations.",
+    stakeholders: ["Guest", "Ops manager", "Owner", "Maintenance"],
+    connectors: ["airbnb", "booking", "hospitable", "google_calendar", "slack"],
+    businessType: "hospitality or short-term rental business",
+    currentWorkflow: "Guest messages arrive from booking channels, routine questions are answered, urgent stay issues are escalated, and sensitive replies wait for owner approval.",
+    workflowPlaceholder: "Guest message -> classify urgency -> draft reply -> escalate if risky -> send or approve",
+    goals: [
+      "Sort guest messages by urgency, reservation, and rating risk",
+      "Draft replies for check-in, house rules, amenities, and local questions",
+      "Escalate complaints, refund requests, and safety issues to the approval owner",
+      "Prepare a guest experience summary for today's active stays",
+    ],
+  },
+  {
+    id: "stay_maintenance",
+    icon: "home_repair_service",
+    title: "Control maintenance exceptions",
+    pain: "Small property issues turn into refunds, bad reviews, or blocked nights.",
+    summary: "Detect maintenance risk, assign the right follow-up, and keep guests and owners updated.",
+    outcome: "Exceptions routed before they cost revenue",
+    firstValue: "BonzAI turns every defect into an owner-visible exception with guest impact, urgency, and next action.",
+    review: "Issue intake, vendor follow-up, guest update drafts, blocked-night risk, and resolution evidence.",
+    stakeholders: ["Guest", "Maintenance", "Vendor", "Owner"],
+    connectors: ["airbnb", "booking", "guesty", "hospitable", "slack", "notion"],
+    businessType: "property management business",
+    currentWorkflow: "Guest or cleaner reports an issue, operations decides urgency, maintenance is contacted, the guest is updated, and the owner gets a resolution note.",
+    workflowPlaceholder: "Issue reported -> classify impact -> assign vendor -> update guest -> record evidence -> owner summary",
+    goals: [
+      "Create an exception queue for open stay and property issues",
+      "Classify each issue by guest impact, urgency, and revenue risk",
+      "Draft maintenance/vendor instructions with evidence requested",
+      "Prepare owner updates for unresolved or costly issues",
+    ],
+  },
+  {
+    id: "stay_owner_reporting",
+    icon: "monitoring",
+    title: "Prepare owner performance reports",
+    pain: "Owners ask for performance, but the numbers live across channels, payouts, reviews, and expenses.",
+    summary: "Produce a weekly property report with revenue, risks, reviews, and next actions.",
+    outcome: "Owner report ready",
+    firstValue: "BonzAI assembles the owner narrative: what earned money, what created risk, and what needs a decision.",
+    review: "Revenue movement, occupancy, review risks, maintenance spend, upcoming stays, and recommended owner actions.",
+    stakeholders: ["Owner", "Finance", "Ops manager", "Guest"],
+    connectors: ["airbnb", "booking", "guesty", "quickbooks", "stripe", "notion"],
+    businessType: "short-term rental portfolio",
+    currentWorkflow: "Reservation revenue, payouts, occupancy, reviews, maintenance expenses, and upcoming risks are collected into an owner report.",
+    workflowPlaceholder: "Collect revenue -> match payouts -> summarize reviews -> list expenses -> recommend owner actions",
+    goals: [
+      "Prepare a weekly owner report for each managed property",
+      "Compare reservations, payouts, fees, and maintenance expenses",
+      "Summarize review themes and guest experience risks",
+      "List decisions the owner needs to make this week",
+    ],
+  },
+  {
+    id: "invoice",
+    icon: "receipt_long",
+    title: "Create and send invoices",
+    pain: "Invoices go out late or with missing details.",
+    summary: "Draft invoices from approved work, check missing details, and queue them for approval.",
+    outcome: "Draft invoices ready to review",
+    firstValue: "BonzAI prepares invoice drafts, lists missing PO or billing details, and creates payment-link tasks.",
+    review: "Invoice drafts, missing-detail checks, approval queue, and payment links.",
+    connectors: ["quickbooks", "stripe", "docusign", "sendgrid"],
+    stakeholders: ["Owner", "Finance", "Customer"],
+    businessType: "service business",
+    currentWorkflow: "Approved work is checked against the quote, invoice lines are prepared, the owner reviews, then the invoice is sent and tracked.",
+    workflowPlaceholder: "Approved job -> check quote -> draft invoice -> owner approves -> send invoice -> track payment",
+    goals: [
+      "Find approved work that is ready to invoice",
+      "Prepare draft invoices and flag missing billing details",
+      "Create payment-link tasks for approved invoices",
+      "Queue invoice emails for owner approval",
+    ],
+  },
+  {
+    id: "collections",
+    icon: "payments",
+    title: "Chase unpaid invoices",
+    pain: "Cash is stuck in awkward follow-ups.",
+    summary: "Find overdue invoices, draft polite follow-ups, and prepare the next action.",
+    outcome: "Follow-ups ready to send",
+    firstValue: "BonzAI identifies overdue invoices, sorts them by risk, and drafts customer-specific reminders.",
+    review: "A/R aging review, payment follow-up drafts, escalation notes, and reconciliation exceptions.",
+    connectors: ["quickbooks", "stripe", "sendgrid", "hubspot"],
+    stakeholders: ["Owner", "Finance", "Customer"],
+    businessType: "service business",
+    currentWorkflow: "Open invoices are reviewed weekly, overdue customers receive a polite reminder, and disputes or partial payments are escalated to the owner.",
+    workflowPlaceholder: "Review A/R -> find overdue invoices -> draft reminder -> owner approves -> send -> reconcile response",
+    goals: [
+      "Identify overdue invoices and sort them by amount and age",
+      "Draft follow-up emails for customers who need a payment reminder",
+      "Flag disputes, partial payments, and missing payment links",
+      "Prepare an owner approval queue for customer-facing reminders",
+    ],
+  },
+  {
+    id: "leads",
+    icon: "person_search",
+    title: "Follow up with leads",
+    pain: "Warm leads go quiet because the next touch slips.",
+    summary: "Build a daily follow-up queue from CRM, inbox, and calendar context.",
+    outcome: "Lead follow-up queue ready",
+    firstValue: "BonzAI finds stale opportunities, drafts next-touch emails, and suggests meetings to book.",
+    review: "Prioritized leads, next best action, draft outreach, and CRM update tasks.",
+    connectors: ["hubspot", "sendgrid", "google_calendar", "slack"],
+    stakeholders: ["Owner", "Sales", "Prospect"],
+    businessType: "sales-led business",
+    currentWorkflow: "New leads are qualified, added to the CRM, followed up by email, then booked for a call or marked as not ready.",
+    workflowPlaceholder: "Lead arrives -> qualify -> CRM update -> follow-up email -> book meeting -> update deal stage",
+    goals: [
+      "Build today's business development follow-up queue",
+      "Draft personalized next-touch emails for stale opportunities",
+      "Identify leads that need a meeting, quote, or owner reply",
+      "Prepare CRM update tasks for each lead",
+    ],
+  },
+  {
+    id: "payments",
+    icon: "sync_alt",
+    title: "Reconcile payments",
+    pain: "Payments, fees, refunds, and invoices do not line up cleanly.",
+    summary: "Match received payments to invoices and surface exceptions for humans.",
+    outcome: "Exceptions ready to resolve",
+    firstValue: "BonzAI compares payments with open invoices and produces an exception list.",
+    review: "Payment match list, unmatched deposits, partial payments, failed charges, and close checklist.",
+    connectors: ["quickbooks", "stripe", "notion", "slack"],
+    stakeholders: ["Owner", "Bookkeeper", "Finance"],
+    businessType: "service business",
+    currentWorkflow: "Payments are matched against invoices, exceptions are reviewed by the owner or bookkeeper, and the books are updated after approval.",
+    workflowPlaceholder: "Import payments -> match invoices -> flag exceptions -> owner approves -> update books",
+    goals: [
+      "Match recent Stripe payments against open QuickBooks invoices",
+      "List unmatched payments, failed charges, and partial payments",
+      "Prepare reconciliation notes for the approval owner",
+      "Draft a week-end payment reconciliation summary",
+    ],
+  },
+  {
+    id: "report",
+    icon: "analytics",
+    title: "Prepare weekly business report",
+    pain: "The owner has to open five tools to understand the week.",
+    summary: "Turn sales, invoices, payments, and customer activity into a weekly operating brief.",
+    outcome: "Weekly report draft ready",
+    firstValue: "BonzAI prepares a short report with wins, risks, unpaid invoices, and next actions.",
+    review: "Weekly operating report, A/R summary, pipeline movement, and action list.",
+    connectors: ["quickbooks", "stripe", "hubspot", "notion", "slack"],
+    stakeholders: ["Owner", "Ops", "Finance", "Sales"],
+    businessType: "small business",
+    currentWorkflow: "Each week the owner reviews sales, invoices, payments, lead activity, customer issues, and the next priorities.",
+    workflowPlaceholder: "Collect numbers -> summarize wins and risks -> list open actions -> share with the team",
+    goals: [
+      "Prepare this week's revenue, invoice, and payment summary",
+      "Summarize pipeline movement and customer follow-up risks",
+      "List the most important next actions for the owner",
+      "Draft a team-ready weekly business report",
+    ],
+  },
 ];
 
 export default {
@@ -356,95 +426,81 @@ export default {
   emits: ["done", "cancel"],
   setup(_props, { emit }) {
     const store = companyStore;
-    const templates = ref(listCompanyTemplates());
-    const initialTemplate = templates.value[0] || null;
-    const draft = reactive({ templateId: initialTemplate?.id || null });
+    const selectedWorkflowId = ref(WORKFLOW_PRESETS[0].id);
     const answers = reactive({});
-    const roster = ref([{ name: "", title: "Owner", contractorStatus: "owner", isPhysical: false }]);
-    const treasury = reactive({ currency: "USD", reserveFloor: 0, perHeartbeatSpendCap: 0 });
+    const treasury = reactive({ currency: "USD", reserveFloor: 10000, perHeartbeatSpendCap: 100 });
     const pickedConnectors = ref(new Set());
     const initialGoals = ref([]);
     const companyName = ref("");
     const step = ref(0);
     const busy = ref(false);
-    // Default ON — the user's frustration is "nothing works without a
-    // loaded model." Demo Mode resolves that by default; serious users
-    // toggle off after they've loaded a model.
     const demoMode = ref(true);
-    const currencies = ["USD", "EUR", "GBP", "JPY"];
 
     const steps = [
-      { id: "vertical", label: "Vertical",   icon: "category" },
-      { id: "context",  label: "Context",    icon: "edit_note" },
-      { id: "team",     label: "Team",       icon: "groups" },
-      { id: "tools",    label: "Tools",      icon: "extension" },
-      { id: "money",    label: "Charter",    icon: "tune" },
+      { id: "workflow", label: "Workflow", icon: "task_alt" },
+      { id: "setup", label: "Setup", icon: "rule" },
+      { id: "review", label: "Review", icon: "preview" },
     ];
 
-    const selectedTemplate = computed(() =>
-      templates.value.find((t) => t.id === draft.templateId) || null,
+    const workflows = WORKFLOW_PRESETS;
+    const selectedWorkflow = computed(() =>
+      workflows.find((workflow) => workflow.id === selectedWorkflowId.value) || workflows[0],
     );
 
-    const defaultName = computed(() =>
-      selectedTemplate.value ? selectedTemplate.value.name : "Untitled Company",
-    );
+    const defaultName = computed(() => {
+      const name = answers.businessName?.trim();
+      return name ? `${name} Team` : "New Team";
+    });
 
-    function selectTemplate(id) {
-      draft.templateId = id;
-      const t = templates.value.find((x) => x.id === id);
-      if (!t) return;
-      // Seed defaults from the template
-      Object.assign(treasury, t.treasuryDefaults || {});
-      initialGoals.value = [...(t.initialGoals || [])];
-      // Reset answers per template
-      Object.keys(answers).forEach((k) => delete answers[k]);
-      for (const q of t.intakeQuestions || []) {
-        if (q.default !== undefined) answers[q.id] = q.default;
-        else answers[q.id] = "";
-      }
-      // Pre-select all required connectors (user can deselect to skip)
-      pickedConnectors.value = new Set(requiredConnectorSet.value);
+    function connectorLabel(kind) {
+      return String(kind || "")
+        .split("_")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
     }
 
-    // ─── derived: required connectors based on chosen template's packs ───
-    const requiredConnectorSet = computed(() => {
-      if (!selectedTemplate.value) return new Set();
-      const t = selectedTemplate.value;
-      // Resolve via service layer — store gave us listSkillPacks indirectly
-      const packs = (t.skillPacks || []).map((pid) => ({
-        skills: (function () {
-          // Read from a tiny client-side mirror — defer to the service if needed
-          // We import the manifest dictionary lazily.
-          return [];
-        })(),
-      }));
-      // We'll resolve via window-side service — set it from intakePreview below.
-      return new Set(intakePreview.value?.requiredConnectors || []);
-    });
+    function seedWorkflow(workflow) {
+      const connectors = workflow.connectors.filter((kind) => SUPPORTED_CONNECTORS.has(kind));
+      answers.businessName = answers.businessName || "";
+      answers.businessType = workflow.businessType || "small business";
+      answers.currentWorkflow = workflow.currentWorkflow || "";
+      answers.systemsOfRecord = connectors.map(connectorLabel).join(", ");
+      answers.approvalOwner = answers.approvalOwner || "Owner";
+      answers.stakeholders = (workflow.stakeholders || []).join(", ");
+      answers.invoiceCadence = workflow.id === "invoice" ? "Milestone-based and monthly" : "Weekly";
+      answers.operatingRule = "Draft first. Ask before sending, charging, reconciling, or changing customer records.";
+      initialGoals.value = [...workflow.goals];
+      pickedConnectors.value = new Set(connectors);
+    }
 
-    const intakePreview = computed(() => {
-      if (!draft.templateId) return null;
-      try {
-        return store.previewTemplate(draft.templateId, answers, {
-          name: companyName.value || defaultName.value,
-          humanRoster: humanRosterPlain.value,
-          treasury: { ...treasury },
-          mode: "solo",
-          includeOptionalHumans: hasPhysicalHumans.value,
+    function selectWorkflow(id) {
+      selectedWorkflowId.value = id;
+      seedWorkflow(selectedWorkflow.value);
+    }
+
+    const recommendedConnectors = computed(() => {
+      const recommended = new Set(selectedWorkflow.value?.connectors || []);
+      const useful = new Set([
+        ...recommended,
+        "quickbooks",
+        "sage_accounting",
+        "stripe",
+        "hubspot",
+        "sendgrid",
+        "google_calendar",
+        "notion",
+        "slack",
+        "shopify",
+        "twilio",
+      ]);
+      return [...CONNECTOR_CATALOG]
+        .filter((conn) => useful.has(conn.kind))
+        .sort((a, b) => {
+          const ar = recommended.has(a.kind) ? 0 : 1;
+          const br = recommended.has(b.kind) ? 0 : 1;
+          if (ar !== br) return ar - br;
+          return a.name.localeCompare(b.name);
         });
-      } catch { return null; }
-    });
-
-    const availableConnectors = computed(() => {
-      // Prioritize required ones at the top; show the rest below.
-      const req = requiredConnectorSet.value;
-      const sorted = [...CONNECTOR_CATALOG].sort((a, b) => {
-        const ar = req.has(a.kind) ? 0 : 1;
-        const br = req.has(b.kind) ? 0 : 1;
-        if (ar !== br) return ar - br;
-        return a.name.localeCompare(b.name);
-      });
-      return sorted;
     });
 
     function toggleConnector(kind) {
@@ -452,65 +508,31 @@ export default {
       if (next.has(kind)) next.delete(kind);
       else next.add(kind);
       pickedConnectors.value = next;
+      answers.systemsOfRecord = [...next].map(connectorLabel).join(", ");
     }
 
-    function templateTags(template) {
-      const tags = [];
-      if ((template.defaultRoles || {})["Producer:image"]) tags.push("Design");
-      if ((template.defaultRoles || {})["Producer:video"]) tags.push("Video");
-      if ((template.defaultRoles || {})["Producer:text"]) tags.push("Writing");
-      if ((template.hybridRoles || []).length) tags.push("Human handoff");
-      if ((template.skillPacks || []).some((p) => /store|shop|affiliate/.test(p))) tags.push("Commerce");
-      if ((template.skillPacks || []).some((p) => /law|bookkeeping/.test(p))) tags.push("Client ops");
-      return [...new Set(tags)].slice(0, 4);
-    }
+    seedWorkflow(selectedWorkflow.value);
 
-    // ─── roster + hybrid hint ───
-    function addRoster() {
-      roster.value.push({ name: "", title: "", contractorStatus: "1099", isPhysical: false });
-    }
-    function removeRoster(idx) {
-      roster.value.splice(idx, 1);
-    }
-    const physicalCount = computed(() =>
-      roster.value.filter((h) => h.isPhysical && h.name.trim()).length,
-    );
-    const hasPhysicalHumans = computed(() => physicalCount.value > 0);
-    const hybridRoleHint = computed(() => {
-      if (!selectedTemplate.value || !hasPhysicalHumans.value) return null;
-      const hr = selectedTemplate.value.hybridRoles?.[0];
-      return hr?.key || null;
-    });
-    const humanRosterPlain = computed(() =>
-      roster.value
-        .filter((h) => h.name.trim())
-        .map((h) => ({
-          name: h.name,
-          title: h.title,
-          contractorStatus: h.contractorStatus,
-          isPhysical: !!h.isPhysical,
-        })),
-    );
-
-    if (initialTemplate) selectTemplate(initialTemplate.id);
-
-    // ─── mission preview ───
-    const missionPreview = computed(() => {
-      if (!intakePreview.value) return "(pick a template + answer the context questions)";
-      return intakePreview.value.draft?.mission || "";
-    });
+    const composedAnswers = computed(() => ({
+      businessName: answers.businessName || "My Business",
+      businessType: answers.businessType || selectedWorkflow.value.businessType || "small business",
+      currentWorkflow: answers.currentWorkflow || selectedWorkflow.value.currentWorkflow,
+      systemsOfRecord: answers.systemsOfRecord || [...pickedConnectors.value].map(connectorLabel).join(", "),
+      approvalOwner: answers.approvalOwner || "Owner",
+      stakeholders: answers.stakeholders || (selectedWorkflow.value.stakeholders || []).join(", "),
+      invoiceCadence: answers.invoiceCadence || "Weekly",
+      operatingRule: answers.operatingRule || "Draft first. Ask before sensitive actions.",
+    }));
 
     // ─── nav guards ───
     const canAdvance = computed(() => {
-      if (step.value === 0) return !!draft.templateId;
+      if (step.value === 0) return !!selectedWorkflow.value;
       if (step.value === 1) {
-        return (selectedTemplate.value?.intakeQuestions || [])
-          .filter((q) => q.required)
-          .every((q) => String(answers[q.id] || "").trim().length > 0);
+        return Boolean(answers.businessName?.trim() && answers.approvalOwner?.trim());
       }
       return true;
     });
-    const canForm = computed(() => !!draft.templateId);
+    const canForm = computed(() => !!selectedWorkflow.value && Boolean(answers.businessName?.trim()));
 
     function goTo(i) {
       if (i < step.value) step.value = i;
@@ -525,12 +547,11 @@ export default {
       if (!canForm.value) return;
       busy.value = true;
       try {
-        const c = await store.formFromTemplate(draft.templateId, answers, {
+        const c = await store.formFromTemplate(WORKFLOW_TEMPLATE_ID, composedAnswers.value, {
           name: companyName.value || defaultName.value,
-          humanRoster: humanRosterPlain.value,
           treasury: { ...treasury },
           mode: "solo",
-          includeOptionalHumans: hasPhysicalHumans.value,
+          includeOptionalHumans: false,
           demoMode: demoMode.value,
         });
         // Best-effort: queue placeholder connectors so dashboard prompts the user.
@@ -539,30 +560,33 @@ export default {
             await store.createConnector({
               kind,
               authType: "apiKey",
-              label: kind,
+              label: connectorLabel(kind),
             });
           } catch {}
         }
         // Best-effort: seed initial goals as user-created goal records.
         for (const title of initialGoals.value) {
           if (!title?.trim()) continue;
-          try { await store.createGoal({ title: title.trim(), rationale: "Imported from intake wizard." }); } catch {}
+          try {
+            await store.createGoal({
+              title: title.trim(),
+              rationale: `Imported from ${selectedWorkflow.value.title} setup.`,
+            });
+          } catch {}
         }
         emit("done", c.id);
       } catch (err) {
-        alert("Failed to form company: " + (err.message || err));
+        alert("Failed to set up team: " + (err.message || err));
         busy.value = false;
       }
     }
 
     return {
-      step, steps, busy, draft, answers, treasury, initialGoals, companyName, currencies,
+      step, steps, busy, answers, treasury, initialGoals, companyName,
       demoMode,
-      templates, selectedTemplate, defaultName,
-      roster, addRoster, removeRoster, physicalCount, hybridRoleHint,
-      pickedConnectors, requiredConnectorSet, availableConnectors, toggleConnector,
-      missionPreview, canAdvance, canForm, goTo, confirmCancel, formCompany,
-      selectTemplate, templateTags,
+      workflows, selectedWorkflowId, selectedWorkflow, selectWorkflow, recommendedConnectors,
+      defaultName, pickedConnectors, toggleConnector,
+      canAdvance, canForm, goTo, confirmCancel, formCompany,
     };
   },
 };
@@ -578,19 +602,25 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
+  background: var(--bz-border);
 }
-.muted { color: rgba(255, 255, 255, 0.65); font-size: 0.92em; }
+.muted { color: var(--bz-fg-mid); font-size: 0.92em; }
 .icon-only-btn { width: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .panel-subtitle {
-  font-size: 1.15rem;
+  font-size: 1.35rem;
   color: var(--bz-fg);
   display: flex;
   align-items: center;
   gap: 0.5em;
   margin-bottom: 0.5em;
 }
-.panel-subtitle .material-symbols-outlined { font-size: 22px; color: rgb(255, 153, 51); }
+.panel-lede {
+  max-width: 720px;
+  color: var(--bz-fg-mid);
+  line-height: 1.45;
+  margin: 0 0 var(--bz-space-4);
+}
+.panel-subtitle .material-symbols-outlined { font-size: 22px; color: var(--bz-purple-300); }
 
 /* ───────── Overlay shell ───────── */
 .wiz-overlay {
@@ -602,9 +632,9 @@ hr {
   color: var(--bz-fg);
 }
 .wiz {
-  width: 100%; max-width: 900px;
+  width: 100%; max-width: 980px;
   max-height: calc(100vh - 4em); overflow-y: auto;
-  padding: var(--bz-space-5) !important;
+  padding: var(--bz-space-6) !important;
   background: var(--bz-panel) !important;
   border: 1px solid var(--bz-border) !important;
   border-radius: var(--bz-r) !important;
@@ -615,7 +645,7 @@ hr {
   margin-bottom: 0.5em;
 }
 .wiz__title {
-  font-size: 1.85rem;
+  font-size: 2.25rem;
   display: flex; align-items: center;
   margin-bottom: 0.25em;
 }
@@ -627,7 +657,7 @@ hr {
 /* ───────── Step rail ───────── */
 .wiz__rail {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--bz-space-2);
   margin-top: 1em;
 }
@@ -640,7 +670,7 @@ hr {
   display: flex; align-items: center; gap: 0.5em;
   font-size: 0.85em;
   cursor: default;
-  transition: all 0.2s ease;
+  transition: border-color var(--bz-dur-fast) var(--bz-ease-stand), background var(--bz-dur-fast) var(--bz-ease-stand), color var(--bz-dur-fast) var(--bz-ease-stand);
 }
 .wiz-step.is-active {
   border-color: var(--bz-control-selected-border);
@@ -664,46 +694,171 @@ hr {
   padding: 0.5em 0;
 }
 
-/* ───────── Step 1: vertical tile grid ───────── */
-.tpl-grid {
+.workflow-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 1em;
-  margin-top: 1em;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-4);
 }
-.tpl-card {
-  background: var(--bz-card);
+.workflow-card {
+  appearance: none;
+  width: 100%;
+  min-height: 176px;
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r);
-  padding: 1.25em;
+  background: var(--bz-card);
+  color: var(--bz-fg);
+  text-align: left;
+  padding: var(--bz-space-4);
+  display: flex;
+  gap: var(--bz-space-3);
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: border-color var(--bz-dur-fast) var(--bz-ease-stand), background var(--bz-dur-fast) var(--bz-ease-stand);
+}
+.workflow-card:hover {
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised);
+}
+.workflow-card.is-selected {
+  border-color: var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
+}
+.workflow-card__icon {
+  flex: 0 0 auto;
+  color: var(--bz-purple-300);
+  font-size: 28px;
+}
+.workflow-card__body {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.4em;
-  min-height: 180px;
+  gap: 0.35rem;
 }
-.tpl-card:hover { border-color: rgba(255, 255, 255, 0.32); transform: translateY(-2px); }
-.tpl-card.is-selected {
-  border-color: var(--bz-control-selected-border) !important;
-  background: var(--bz-control-selected-bg) !important;
-  box-shadow: none;
+.workflow-card__title {
+  font-size: 1.1rem;
+  line-height: 1.1;
 }
-.tpl-card--coming { cursor: default; opacity: 0.55; }
-.tpl-card__icon .material-symbols-outlined {
-  font-size: 36px;
-  color: var(--bz-accent);
-}
-.tpl-card__title {
-  font-size: 1.15rem;
+.workflow-card__pain {
   color: var(--bz-fg);
+  font-size: 0.95rem;
+  line-height: 1.25;
 }
-.tpl-card__summary {
-  font-size: 0.88em;
+.workflow-card__summary,
+.workflow-card__outcome {
   color: var(--bz-fg-mid);
-  line-height: 1.45;
+  font-size: 0.88rem;
+  line-height: 1.35;
 }
-.tpl-card__packs { display: flex; gap: 0.3em; flex-wrap: wrap; margin-top: 0.4em; }
+.workflow-card__outcome {
+  color: var(--bz-purple-100);
+  margin-top: auto;
+}
+.workflow-card__stakeholders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: var(--bz-space-2);
+}
+.workflow-card__stakeholders span {
+  padding: 0.18rem 0.45rem;
+  border: 1px solid var(--bz-border);
+  border-radius: 999px;
+  color: var(--bz-fg-mid);
+  background: color-mix(in srgb, var(--bz-raised) 72%, transparent);
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+.quick-value {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-4);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-emerald-soft);
+}
+.quick-value .material-symbols-outlined {
+  color: var(--bz-emerald-500);
+  font-size: 22px;
+}
+.quick-value strong {
+  display: block;
+  color: var(--bz-fg);
+  margin-bottom: 0.2rem;
+  font-size: 1rem;
+}
+.quick-value p {
+  margin: 0;
+  color: var(--bz-fg-mid);
+  line-height: 1.4;
+}
+
+.quick-setup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--bz-space-4);
+  margin-top: var(--bz-space-4);
+}
+.quick-setup-grid .wiz-field:last-child {
+  grid-column: 1 / -1;
+}
+.connector-section {
+  margin-top: var(--bz-space-5);
+}
+.connector-section__head {
+  margin-bottom: var(--bz-space-2);
+}
+.review-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-4);
+}
+.review-panel {
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-card);
+  padding: var(--bz-space-4);
+}
+.review-panel__eyebrow {
+  display: block;
+  color: var(--bz-fg-low);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+.review-panel__title {
+  color: var(--bz-fg);
+  font-size: 1.15rem;
+  margin-bottom: 0.35rem;
+}
+.review-panel p {
+  margin: 0;
+  color: var(--bz-fg-mid);
+  line-height: 1.4;
+}
+.first-work-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+  margin: var(--bz-space-4) 0;
+}
+.first-work-item {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: color-mix(in srgb, var(--bz-card) 82%, transparent);
+  color: var(--bz-fg-mid);
+}
+.first-work-item .material-symbols-outlined {
+  color: var(--bz-emerald-500);
+  font-size: 18px;
+}
 
 /* ───────── Step 2: context fields ───────── */
 .wiz-fields { display: flex; flex-direction: column; gap: 1em; margin-top: 1em; }
@@ -714,7 +869,7 @@ hr {
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--bz-fg-low);
 }
 .wiz-field__hint { font-size: 0.78em !important; }
 
@@ -734,30 +889,15 @@ hr {
   position: absolute;
   top: 3px; left: 3px;
   width: 16px; height: 16px;
-  background: #fff;
+  background: var(--bz-fg);
   border-radius: 50%;
   transition: transform 0.2s;
 }
 .wiz-toggle input:checked + .wiz-toggle__track {
-  background: linear-gradient(135deg, rgb(155, 109, 200), rgb(255, 153, 51));
+  background: var(--bz-gradient-brand);
 }
 .wiz-toggle input:checked + .wiz-toggle__track::after { transform: translateX(18px); }
 
-/* ───────── Step 3: roster ───────── */
-.roster { display: flex; flex-direction: column; gap: 0.5em; margin: 1em 0; }
-.roster-row {
-  display: grid;
-  grid-template-columns: 1.2fr 1.2fr 130px auto auto;
-  gap: 0.5em;
-  align-items: center;
-}
-.roster-row .input { background: var(--bz-scrim); }
-.roster-row__hybrid {
-  display: flex; align-items: center; gap: 0.4em;
-  font-size: 0.85em;
-  color: rgba(255, 255, 255, 0.72);
-  white-space: nowrap;
-}
 .wiz-hint {
   display: flex;
   align-items: flex-start;
@@ -765,12 +905,12 @@ hr {
   margin-top: 1em;
   padding: 1em 1.2em;
   background: rgba(155, 109, 200, 0.16);
-  border: 1px solid rgba(155, 109, 200, 0.4);
+  border: 1px solid var(--bz-border-brand);
   border-radius: 4px;
   font-size: 0.92em;
   line-height: 1.5;
 }
-.wiz-hint .material-symbols-outlined { color: rgb(255, 153, 51); font-size: 22px; }
+.wiz-hint .material-symbols-outlined { color: var(--bz-purple-300); font-size: 22px; }
 .wiz-hint__inline { margin-top: 1em; font-size: 0.85em !important; }
 
 /* ───────── Step 4: connector tile grid ───────── */
@@ -787,7 +927,7 @@ hr {
   border-radius: var(--bz-r);
   padding: 1em 0.75em;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: border-color var(--bz-dur-fast) var(--bz-ease-stand), background var(--bz-dur-fast) var(--bz-ease-stand);
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -817,8 +957,8 @@ hr {
   letter-spacing: 0.05em;
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(255, 153, 51, 0.85);
-  color: #000;
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-100);
   font-weight: 700;
 }
 
@@ -835,7 +975,6 @@ hr {
 .mission-preview {
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
-  border-left: 3px solid var(--bz-accent);
   padding: 1em 1.25em;
   border-radius: 0 4px 4px 0;
   font-style: italic;
@@ -867,7 +1006,7 @@ hr {
   font-size: 22px;
 }
 .demo-row__hint {
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--bz-fg-mid);
   font-size: 0.88em !important;
   line-height: 1.55;
   margin: 0 !important;
@@ -897,10 +1036,9 @@ hr {
     flex-direction: column;
   }
   .wiz__rail,
-  .wiz-grid-2 {
-    grid-template-columns: 1fr;
-  }
-  .roster-row {
+  .wiz-grid-2,
+  .quick-setup-grid,
+  .review-grid {
     grid-template-columns: 1fr;
   }
   .wiz__step-count {
@@ -910,7 +1048,7 @@ hr {
 
 :deep(.input), :deep(.textarea) {
   background: var(--bz-scrim) !important;
-  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border: 1px solid var(--bz-border-strong) !important;
   color: var(--bz-fg) !important;
 }
 :deep(.input::placeholder), :deep(.textarea::placeholder) {
@@ -918,7 +1056,7 @@ hr {
 }
 :deep(.select select) {
   background: var(--bz-scrim) !important;
-  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border: 1px solid var(--bz-border-strong) !important;
   color: var(--bz-fg) !important;
 }
 :deep(.tag.is-light) {

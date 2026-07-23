@@ -337,7 +337,7 @@
                 {{ getThesis(idx, rIdx)?.loading ? 'Generating...' : 'Investment Thesis' }}
               </button>
               <button
-                class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
                 @click="openMarket(rec.slug)"
               >
                 <span class="material-symbols-outlined">open_in_new</span>
@@ -371,7 +371,7 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
 import VueMarkdown from 'vue-markdown-render';
 import polymarketAgent from '../polymarketAgent.js';
-import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 
 const SKILL_ID = 'polymarket-top-performers-v1.0.0';
 const WHALE_PULSE_INTERVAL_MS = 30_000;
@@ -454,7 +454,7 @@ export default {
     const runAnalysis = async () => {
       // Purchase gate: SmartAgent also shows a preview screen, but this
       // guards programmatic calls (console, extensions) that bypass the UI.
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         console.warn('[Polymarket] Skill not purchased — execution blocked.');
         return;
       }
@@ -560,7 +560,7 @@ Be direct and analytical.`;
 
     const pollWhalePulse = async () => {
       if (isLoadingPulse.value) return;
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) return;
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) return;
       isLoadingPulse.value = true;
       try {
         const leaderboard = await fetchViaProxy('leaderboard', {

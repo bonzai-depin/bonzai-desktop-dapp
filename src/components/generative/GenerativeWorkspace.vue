@@ -39,7 +39,10 @@
     <!-- PROGRESS: BonzaiPulse bar for generation in flight -->
     <div v-if="progress && progress.active" class="bz-workspace__progress">
       <div class="bz-genprogress__row">
-        <span class="bz-shout bz-genprogress__label">{{ progress.label || 'Crafting…' }}</span>
+        <span class="bz-shout bz-genprogress__label bz-genprogress__label--pill">
+          <BonzaiPulse variant="dot" />
+          {{ progress.label || i18n.t('generation.crafting') }}
+        </span>
         <span class="bz-mono bz-genprogress__pct">{{ Math.round(progress.pct || 0) }}%</span>
       </div>
       <BonzaiPulse variant="bar" :percent="Math.max(0, Math.min(100, progress.pct || 0))" />
@@ -50,7 +53,7 @@
       <BonzaiEmptyState
         :show-orb="true"
         :size="'large'"
-        :title="setup.title || 'Ready to create'"
+        :title="setup.title || i18n.t('workspace.ready')"
         :subtitle="setup.subtitle"
         :icon="setup.icon || 'auto_awesome'"
         :primary-action="setup.primaryAction"
@@ -77,7 +80,7 @@
     <div v-else-if="emptyHistory" class="bz-workspace__history-empty">
       <BonzaiEmptyState
         :size="'small'"
-        :title="emptyHistory.title || 'No outputs yet'"
+        :title="emptyHistory.title || i18n.t('workspace.noOutputs')"
         :subtitle="emptyHistory.subtitle"
         :icon="emptyHistory.icon || 'image'"
       />
@@ -122,6 +125,9 @@
  */
 import BonzaiPulse from "../BonzaiPulse.vue";
 import BonzaiEmptyState from "../BonzaiEmptyState.vue";
+import { useI18n } from "../../i18n/index.js";
+
+const i18n = useI18n();
 
 const props = defineProps({
   title:        { type: String, required: true },
@@ -242,10 +248,14 @@ const emit = defineEmits(["update:modelValue"]);
 
 /* ── Progress ─────────────────────────────────────────────────── */
 .bz-workspace__progress {
+  position: sticky;
+  bottom: var(--bz-space-4);
+  z-index: 20;
   padding: var(--bz-space-3) var(--bz-space-4);
   background: var(--bz-card);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r);
+  box-shadow: var(--bz-elev-2);
 }
 .bz-genprogress__row {
   display: flex;
@@ -254,8 +264,38 @@ const emit = defineEmits(["update:modelValue"]);
   gap: var(--bz-space-3);
   margin-bottom: var(--bz-space-2);
 }
-.bz-genprogress__label { color: var(--bz-fg); }
-.bz-genprogress__pct { color: var(--bz-fg-mid); font-size: var(--bz-size-h3); }
+.bz-genprogress__label {
+  color: var(--bz-fg);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+}
+.bz-genprogress__label--pill {
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--bz-fg) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bz-panel) 82%, var(--bz-accent) 18%);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--bz-accent) 24%, transparent);
+  animation: bz-progress-pill-pulse 1.8s ease-in-out infinite;
+}
+.bz-genprogress__pct {
+  color: var(--bz-fg-mid);
+  font-family: "Fira Sans Condensed", var(--bz-font-body);
+  font-weight: 900;
+  font-style: italic;
+  font-size: var(--bz-size-h3);
+}
+
+@keyframes bz-progress-pill-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--bz-accent) 18%, transparent);
+    transform: translateY(0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--bz-accent) 0%, transparent);
+    transform: translateY(-1px);
+  }
+}
 
 /* ── Setup / empty ────────────────────────────────────────────── */
 .bz-workspace__setup {

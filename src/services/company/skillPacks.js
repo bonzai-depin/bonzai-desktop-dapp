@@ -17,10 +17,14 @@ export const SKILL_PACKS = {
     skills: [
       "skill.qbo_invoicing",
       "skill.stripe_checkout",
+      "skill.stripe_subscriptions",
       "skill.google_calendar",
       "skill.hubspot_lite",
       "skill.sendgrid_email",
       "skill.pdf_proposal",
+      "skill.notion_docs",
+      "skill.slack_team",
+      "skill.docusign",
     ],
   },
 

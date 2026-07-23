@@ -299,7 +299,7 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
       session.peerIds = peerAssignments.map((p) => p.peerId);
 
       await negotiatePipeline(peerAssignments, {
-        sessionId, modelId: path.basename(modelPath), totalLayers: meta.n_layer, payment: null,
+        sessionId, modelId: path.basename(modelPath), totalLayers: meta.n_layer,
       });
 
       for (const assignment of peerAssignments) {

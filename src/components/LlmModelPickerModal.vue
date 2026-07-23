@@ -82,6 +82,14 @@
                 {{ t.label }}
               </button>
             </div>
+            <button
+              type="button"
+              class="bz-btn bz-btn--ghost bz-picker__import"
+              @click="onImportCustomModel"
+            >
+              <span class="material-symbols-outlined">drive_folder_upload</span>
+              Import LLM GGUF
+            </button>
           </div>
 
           <!-- Body — grouped by tier -->
@@ -255,6 +263,7 @@ const availability = reactive({});
 const downloading = reactive({});
 const downloadErrors = reactive({});
 const loading = reactive({});
+const customModels = ref([]);
 const activeIndex = ref(0);
 const currentFilename = computed(() => modelStore.state.current?.filename || null);
 
@@ -281,12 +290,23 @@ function toggleTier(tier) {
 }
 
 const allModels = computed(() => {
-  return listAllLLMs()
+  const official = listAllLLMs();
+  const custom = customModels.value.map((m) => ({
+    ...m,
+    name: m.name || m.modelname,
+    modelname: m.modelname || m.name,
+    filesize: m.filesize || m.size,
+    url: null,
+    custom: true,
+  }));
+
+  return [...official, ...custom]
     .map((e) => {
       const m = {
+        key: e.key,
         filename: e.filename,
-        modelname: e.name,
-        filesize: e.size,
+        modelname: e.modelname || e.name,
+        filesize: e.filesize || e.size,
         filesizeBytes: e.filesizeBytes,
         parameters: e.parameters,
         activeParameters: e.activeParameters,
@@ -296,6 +316,16 @@ const allModels = computed(() => {
         kvHeads: e.kvHeads,
         headDim: e.headDim,
         url: e.url,
+        repo: e.repo,
+        license: e.license,
+        licenseUrl: e.licenseUrl,
+        custom: e.custom || false,
+        source: e.source || null,
+        mmproj: e.mmproj || null,
+        draftModel: e.draftModel || null,
+        specType: e.specType || null,
+        specDraftNMax: e.specDraftNMax || null,
+        mtp: e.mtp || false,
       };
       const mem = computeMemoryRequirements(m);
       const fit = computeFitTier(mem, sysInfo.value);
@@ -397,7 +427,16 @@ const downloadSucceeded = (result) => {
 // ─────────────────────────────────────────────────────────────────────
 // AVAILABILITY + ACTIONS
 // ─────────────────────────────────────────────────────────────────────
+async function refreshCustomModels() {
+  try {
+    customModels.value = await window.electronAPI?.listCustomModels?.() || [];
+  } catch {
+    customModels.value = [];
+  }
+}
+
 async function refreshAvailability() {
+  await refreshCustomModels();
   for (const m of allModels.value) {
     try {
       availability[m.filename] = await window.electronAPI?.checkModel?.(m.filename);
@@ -411,6 +450,10 @@ let _unsubProgress = null;
 
 async function onDownload(model) {
   if (!window.electronAPI?.downloadModel) return;
+  if (!model.url) {
+    downloadErrors[model.filename] = "This model is local-only. Re-import it if the file is missing.";
+    return;
+  }
   downloading[model.filename] = 0;
   delete downloadErrors[model.filename];
   try {
@@ -434,6 +477,22 @@ async function onCancelDownload(model) {
   await window.electronAPI.cancelModelDownload(model.filename);
 }
 
+async function onImportCustomModel() {
+  if (!window.electronAPI?.importLocalModel) return;
+  const result = await window.electronAPI.importLocalModel();
+  if (!result || result.canceled) return;
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+  await refreshCustomModels();
+  await nextTick();
+  availability[result.filename] = true;
+  search.value = result.modelname || result.name || result.filename;
+  const idx = visibleModels.value.findIndex((m) => m.filename === result.filename);
+  if (idx >= 0) activeIndex.value = idx;
+}
+
 async function onLoad(model) {
   if (!window.electronAPI?.loadModel) return;
   if (model.fitTier === 3) return; // can't fit — block silently
@@ -452,6 +511,9 @@ async function onLoad(model) {
       specType: model.specType || null,
       specDraftNMax: model.specDraftNMax || null,
       mtp: model.mtp || false,
+      custom: model.custom || false,
+      license: model.license || null,
+      licenseUrl: model.licenseUrl || null,
     });
     modelStore.setCurrent(model);
     modelPicker._resolve(model);
@@ -467,6 +529,7 @@ async function onDelete(model) {
   if (!confirm(`Remove the downloaded copy of ${model.modelname}?`)) return;
   await window.electronAPI.deleteModel(model.filename);
   availability[model.filename] = false;
+  if (model.custom) await refreshCustomModels();
 }
 
 // Single-click row activation: download if missing, load if ready,
@@ -669,6 +732,17 @@ onUnmounted(() => {
   display: flex;
   gap: var(--bz-space-2);
   flex-wrap: wrap;
+}
+
+.bz-picker__import {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  white-space: nowrap;
+}
+
+.bz-picker__import .material-symbols-outlined {
+  font-size: 18px !important;
 }
 
 .bz-chip {

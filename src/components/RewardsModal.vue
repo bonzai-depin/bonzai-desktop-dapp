@@ -115,7 +115,7 @@
                       </div>
                       <div class="pool-threshold">
                         <span class="pool-threshold-label">Threshold</span>
-                        <span class="pool-threshold-value bz-mono">{{ pool.threshold.toLocaleString() }} BONZAI</span>
+                        <span class="pool-threshold-value bz-mono">{{ i18n.number(pool.threshold) }} BONZAI</span>
                       </div>
                       <div class="pool-progress" :title="`${Math.round(pool.progress)}%`">
                         <span :style="{ width: `${Math.min(100, pool.progress)}%` }"></span>
@@ -130,7 +130,7 @@
                           Ready
                         </span>
                         <span v-else class="rewards-state-pill">
-                          {{ pool.missing.toLocaleString() }} BONZAI away
+                          {{ i18n.number(pool.missing) }} BONZAI away
                         </span>
                       </div>
                     </div>
@@ -267,6 +267,7 @@ import { mintPoolService } from '../services/mintPool.service.js';
 import { getUnclaimedRevenue, claimAllRevenue } from '../services/skillOwnership.service.js';
 import { web3Service } from '../services/web3.service.js';
 import { ethers } from 'ethers';
+import { i18n } from '../i18n/index.js';
 
 const emit = defineEmits(['close']);
 
@@ -342,7 +343,7 @@ const hasQualifiedPool = computed(() => qualifiedPoolCount.value > 0);
 const nextUnlockLabel = computed(() => {
   const next = pools.value.find((pool) => !pool.qualified);
   if (!next) return 'Connect wallet to enter';
-  return `${next.missing.toLocaleString()} BONZAI to ${next.label}`;
+  return `${i18n.number(next.missing)} BONZAI to ${next.label}`;
 });
 
 const totalPoolBalance = computed(() => {
@@ -489,7 +490,7 @@ async function handleRegister() {
   try {
     const result = await mintPoolService.registerForEpoch();
     if (result.success) {
-      setStatus(`Registered for epoch #${result.epochId} with ${result.balance?.toLocaleString() || 0} BONZAI`, 'is-success');
+      setStatus(`Registered for epoch #${result.epochId} with ${i18n.number(result.balance || 0)} BONZAI`, 'is-success');
     } else {
       setStatus(result.error || 'Registration failed', 'is-danger');
     }

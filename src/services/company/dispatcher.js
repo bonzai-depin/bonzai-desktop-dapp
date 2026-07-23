@@ -29,6 +29,7 @@ import * as skillsRegistry from "./skillsRegistry.js";
 import { scriptedCEOPlan, scriptedRolePlan } from "./demoMode.js";
 import { actionListForPrompt } from "./skillManifests.js";
 import * as streamBus from "./streamBus.js";
+import { memoryService } from "../memory.service.js";
 import { v4 as uuid } from "uuid";
 import {
   ROLE_LIBRARY,
@@ -90,12 +91,16 @@ export async function tickCEO(charter) {
 
   // The CEO's prompt now asks for explicit mission_alignment + decomposed
   // tasks per goal, so every issue we persist has rationale baked in.
-  const prompt = _ceoPrompt({
+  const memoryContext = await memoryService.buildRecallContext(
+    `${charter.name || "team"} ${charter.mission || ""} ${activeGoals.map((g) => g.title).join(" ")}`,
+    { company: charter, roleKey: "CEO", includeUser: false, limit: 10 },
+  );
+  const prompt = [_ceoPrompt({
     charter,
     ceo,
     kpi: kpiSnapshot,
     activeGoals,
-  });
+  }), memoryContext].filter(Boolean).join("\n\n");
 
   let plan;
   try {
@@ -264,7 +269,11 @@ export async function tickRole(charter, roleKey) {
   const isHybrid = ROLE_LIBRARY[resolved.roleKey].kind === "human_supported";
   const humans = charter.roles?.[resolved.roleKey]?.humanResources || [];
 
-  const prompt = _rolePrompt({
+  const memoryContext = await memoryService.buildRecallContext(
+    `${goal.title || goal.directive || ""} ${goal.description || ""}`,
+    { company: charter, roleKey: resolved.roleKey, includeUser: false, limit: 10 },
+  );
+  const prompt = [_rolePrompt({
     charter,
     roleKey: resolved.roleKey,
     companion: resolved.companion,
@@ -276,7 +285,7 @@ export async function tickRole(charter, roleKey) {
     skillActionLines,
     isHybrid,
     humans,
-  });
+  }), memoryContext].filter(Boolean).join("\n\n");
 
   let plan;
   try {

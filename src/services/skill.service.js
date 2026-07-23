@@ -8,7 +8,7 @@ import {
 } from '../skills/types.js';
 
 import { flagshipSkills } from '../skills/flagship.js';
-import { hasPurchasedSkill, isDevMode } from './agent.service.js';
+import { hasSkillTokenAccess, isDevMode } from './agent.service.js';
 
 /** A skill is paid if it carries a positive `price` (USDC). */
 function isPaidSkill(skill) {
@@ -210,17 +210,17 @@ export async function executeSkill(skillId, inputs = {}, context = {}) {
     throw new Error(`Skill not found: ${skillId}`);
   }
 
-  // Service-level purchase gate. Defense in depth vs. UI bypass: components
-  // should ALSO check purchase state, but this guard covers any path that
+  // Service-level companion-token gate. Defense in depth vs. UI bypass:
+  // components should ALSO check access, but this guard covers any path that
   // reaches executeSkill directly. Dev mode bypasses (see isDevMode).
   if (isPaidSkill(skill) && !isDevMode()) {
-    const purchased = await hasPurchasedSkill(skill.id);
-    if (!purchased) {
+    const hasAccess = await hasSkillTokenAccess(skill.id);
+    if (!hasAccess) {
       return {
         success: false,
-        requiresPurchase: true,
+        requiresCompanionToken: true,
         skill: { id: skill.id, name: skill.name, category: skill.category },
-        error: `Skill "${skill.name}" requires purchase (${skill.price} USDC).`,
+        error: `Skill "${skill.name}" requires a token issued for one of its companion co-owners.`,
         executedAt: new Date().toISOString(),
       };
     }

@@ -32,6 +32,7 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
     address public mintPool;
     address public royaltySplitter;
     address public unlockContract;
+    address public stakingVault;
     /// @notice Default royalty bps clones use (informational; clone has its own admin setter).
     uint256 public originalCreatorRoyaltyBps = 250; // 2.5%
 
@@ -40,6 +41,7 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
     address[] public allCollections;
 
     event CollectionCreated(address indexed owner, address indexed collection, string name);
+    event StakingVaultUpdated(address indexed oldVault, address indexed newVault);
 
     constructor(
         address _implementation,
@@ -130,5 +132,12 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
 
     function setUnlockContract(address _unlock) external onlyOwner {
         unlockContract = _unlock;
+    }
+
+    function setStakingVault(address _vault) external onlyOwner {
+        require(_vault != address(0), "Zero staking vault");
+        address old = stakingVault;
+        stakingVault = _vault;
+        emit StakingVaultUpdated(old, _vault);
     }
 }

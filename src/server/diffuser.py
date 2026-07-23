@@ -128,10 +128,10 @@ except Exception:
     _safetensors_open = None
 
 from diffusers import (
+    DiffusionPipeline,
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     GGUFQuantizationConfig,
-    QuantoConfig,
     Flux2KleinPipeline,
     ZImagePipeline,
     ZImageTransformer2DModel,
@@ -147,8 +147,6 @@ from diffusers import (
 )
 from diffusers.utils import load_image, export_to_video
 from diffusers.hooks import apply_group_offloading
-
-from transformers import AutoTokenizer
 
 import wave
 
@@ -175,6 +173,12 @@ USER_BIN_DIR = MODEL_DIR / "bin"
 USER_BIN_DIR.mkdir(parents=True, exist_ok=True)
 FILES_DIR = MODEL_DIR / "files"
 FILES_DIR.mkdir(parents=True, exist_ok=True)
+
+# Electron launches the venv interpreter directly, so sibling console tools
+# installed by pip (notably Ninja for Quanto's MPS kernels) may not be on PATH.
+_python_bin_dir = str(Path(sys.executable).absolute().parent)
+if _python_bin_dir not in os.environ.get("PATH", "").split(os.pathsep):
+    os.environ["PATH"] = _python_bin_dir + os.pathsep + os.environ.get("PATH", "")
 
 os.environ["HF_HOME"] = str(MODEL_DIR / "hf")
 os.environ["TRANSFORMERS_CACHE"] = str(MODEL_DIR / "hf")
@@ -211,6 +215,7 @@ FLUX_KLEIN_REPO = "black-forest-labs/FLUX.2-klein-4b"
 Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
 Z_GGUF_NAME = "z-image-turbo-q4_k_m.gguf"
 Z_GGUF_URL = "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q4_K_M.gguf"
+Z_LOCAL_CHECKPOINT_NAME = "z_image_turbo-lora.safetensors"
 
 # LTX-2 (19B DiT Model) - /video endpoint supports:
 # - Text-to-Video (t2v): Generate video from text prompt only
@@ -355,6 +360,19 @@ LLAMA_REPOS = {
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
     "llama-3.2-3b": "meta-llama/Llama-3.2-3B",
     "llama-3.1-8b": "meta-llama/Llama-3.1-8B",
+}
+
+# Fine-tuning target models (Qwen 3.5 / 3.6)
+LLM_FINETUNE_MODELS = {
+    "qwen3_5_0_8b": "Qwen/Qwen3.5-0.8B",
+    "qwen_3_6_27b": "Qwen/Qwen3.6-27B",
+}
+
+# Image fine-tuning targets
+ZIMAGE_BASE_REPO = "Tongyi-MAI/Z-Image-Turbo"
+IMAGE_FINETUNE_MODELS = {
+    "z-image-turbo": ZIMAGE_BASE_REPO,
+    "sdxl-base-1.0": SDXL_BASE_REPO,
 }
 
 EXPECTED_SIZES = {
@@ -910,6 +928,195 @@ def socket_emit(event: str, payload: dict, namespace: str):
         pass
 
 
+def _write_json_file(path: Path, payload: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(_json_sanitize(payload), f, indent=2, ensure_ascii=False)
+
+
+def _read_json_file(path: Path, default=None):
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        logger.warning("Failed to read JSON file: %s", path, exc_info=True)
+    return {} if default is None else default
+
+
+def _provenance_list(value, limit=500):
+    if not isinstance(value, list):
+        return []
+    return value[:limit]
+
+
+def _load_dataset_provenance(dataset_dir: Path, request_data: Optional[dict] = None) -> dict:
+    request_data = request_data or {}
+    request_provenance = request_data.get("training_provenance") or request_data.get("provenance")
+    if isinstance(request_provenance, dict) and request_provenance:
+        return request_provenance
+
+    dataset_meta = _read_json_file(dataset_dir / "metadata.json", {})
+    meta_provenance = dataset_meta.get("provenance")
+    if isinstance(meta_provenance, dict) and meta_provenance:
+        return meta_provenance
+
+    sidecar = _read_json_file(dataset_dir / "bonzai_training_provenance.json", {})
+    return sidecar if isinstance(sidecar, dict) else {}
+
+
+def _compact_origin(origin: dict, index: int) -> str:
+    parts = []
+    title = origin.get("pageTitle") or origin.get("sourceUrl") or f"record {index + 1}"
+    parts.append(str(title)[:120])
+    if origin.get("sourceUrl"):
+        parts.append(str(origin["sourceUrl"])[:160])
+    owner = origin.get("dataOwnerWallet") or origin.get("creatorWallet")
+    if owner:
+        parts.append(f"owner {owner}")
+    if origin.get("license"):
+        parts.append(f"license {origin['license']}")
+    if origin.get("tags"):
+        parts.append("tags " + ", ".join(map(str, origin["tags"][:8])))
+    if origin.get("textPreview"):
+        parts.append("preview " + str(origin["textPreview"]).replace("\n", " ")[:180])
+    return " | ".join(parts)
+
+
+def _llm_provenance_training_text(provenance: dict) -> str:
+    """A bounded training note so LLM adapters learn how to disclose lineage."""
+    if not provenance:
+        return ""
+    dataset = provenance.get("dataset") or {}
+    attribution = provenance.get("attribution") or {}
+    origins = _provenance_list(provenance.get("origins"), 40)
+    owners = _provenance_list(dataset.get("dataOwnerWallets"), 80)
+    contribution_ids = _provenance_list(dataset.get("contributionIds"), 80)
+    lines = [
+        "BonzAI model provenance disclosure:",
+        f"- Dataset name: {dataset.get('name') or 'unknown'}",
+        f"- Dataset type: {dataset.get('type') or 'unknown'}",
+        f"- Training records: {dataset.get('recordCount') or len(origins)}",
+        f"- Data-owner wallets: {', '.join(map(str, owners)) if owners else 'not provided'}",
+        f"- Contribution ids: {', '.join(map(str, contribution_ids)) if contribution_ids else 'not provided'}",
+        "- If asked what data this model was trained on, answer from this provenance. Do not invent missing origins.",
+        "- Complete provenance is stored beside the adapter as bonzai_model_provenance.json.",
+    ]
+    revenue_plan = attribution.get("revenuePlan") or {}
+    if revenue_plan.get("participants"):
+        lines.append("- Downstream revenue is allocated by proof-of-contribution to data owners.")
+    for idx, origin in enumerate(origins):
+        if isinstance(origin, dict):
+            lines.append(f"- Origin {idx + 1}: {_compact_origin(origin, idx)}")
+    return "\n".join(lines)
+
+
+def _model_provenance_manifest(
+    training_id: str,
+    train_meta: dict,
+    dataset_meta: dict,
+    dataset_provenance: dict,
+    training_config: dict,
+) -> dict:
+    dataset = dataset_provenance.get("dataset") if isinstance(dataset_provenance, dict) else {}
+    attribution = dataset_provenance.get("attribution") if isinstance(dataset_provenance, dict) else {}
+    origins = dataset_provenance.get("origins") if isinstance(dataset_provenance, dict) else []
+    owners = dataset.get("dataOwnerWallets") or []
+    contribution_ids = dataset.get("contributionIds") or []
+
+    return {
+        "schema": "bonzai-model-provenance-manifest",
+        "version": 1,
+        "createdAt": train_meta.get("created_at") or datetime.now().isoformat(),
+        "model": {
+            "id": training_id,
+            "type": train_meta.get("type"),
+            "baseModel": train_meta.get("base_model"),
+            "adapterType": "lora" if "lora" in str(train_meta.get("type", "")) else train_meta.get("type"),
+            "localPathHint": str(MODEL_DIR / "trained" / training_id),
+        },
+        "dataset": {
+            "id": train_meta.get("dataset_id"),
+            "name": dataset_meta.get("name") or dataset.get("name"),
+            "type": dataset_meta.get("type") or dataset.get("type"),
+            "recordCount": dataset.get("recordCount"),
+            "fileCount": dataset_meta.get("num_files"),
+            "files": dataset_meta.get("files", []),
+            "source": dataset.get("source"),
+            "sourcePackId": dataset.get("sourcePackId"),
+            "sourcePackFileName": dataset.get("sourcePackFileName"),
+            "contributionIds": _provenance_list(contribution_ids),
+            "contributionHashes": _provenance_list(dataset.get("contributionHashes")),
+            "dataOwnerWallets": _provenance_list(owners),
+        },
+        "attribution": attribution or {
+            "trainerWallet": None,
+            "dataOwnerWallets": _provenance_list(owners),
+        },
+        "training": {
+            "config": _json_sanitize(training_config),
+            "embeddedDisclosure": train_meta.get("type") == "llm_lora",
+            "disclosureNote": (
+                "LLM adapters receive a compact provenance training note. "
+                "Non-LLM adapters carry full provenance as model sidecar metadata."
+            ),
+        },
+        "origins": _provenance_list(origins, 1000),
+        "modelDisclosure": {
+            "humanSummary": (
+                f"This BonzAI model was trained from {dataset.get('recordCount') or len(origins) or 'unknown'} "
+                f"records linked to {len(owners)} data owner wallet{'' if len(owners) == 1 else 's'}."
+            ),
+            "promptHint": (
+                "When asked what data this model was trained on, use bonzai_model_provenance.json "
+                "and disclose known sources, owners, licenses, and contribution routes. Never invent missing origins."
+            ),
+        },
+    }
+
+
+def _provenance_markdown(manifest: dict) -> str:
+    dataset = manifest.get("dataset") or {}
+    model = manifest.get("model") or {}
+    attribution = manifest.get("attribution") or {}
+    origins = _provenance_list(manifest.get("origins"), 50)
+    owners = dataset.get("dataOwnerWallets") or []
+    lines = [
+        "# BonzAI Model Provenance",
+        "",
+        f"- Model: `{model.get('id')}`",
+        f"- Type: `{model.get('type')}`",
+        f"- Base model: `{model.get('baseModel')}`",
+        f"- Dataset: `{dataset.get('name') or dataset.get('id')}`",
+        f"- Dataset type: `{dataset.get('type')}`",
+        f"- Records: `{dataset.get('recordCount') or len(manifest.get('origins') or [])}`",
+        f"- Data owners: `{len(owners)}`",
+        f"- Trainer wallet: `{attribution.get('trainerWallet') or 'not provided'}`",
+        "",
+        "This file is generated by BonzAI so trained adapters can carry dataset origin, attribution, and collective ownership metadata with them.",
+        "",
+        "## Origins",
+    ]
+    if not origins:
+        lines.append("No record-level origins were provided.")
+    for idx, origin in enumerate(origins):
+        if isinstance(origin, dict):
+            lines.append(f"{idx + 1}. {_compact_origin(origin, idx)}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_model_provenance(output_dir: Path, manifest: dict):
+    _write_json_file(output_dir / "bonzai_model_provenance.json", manifest)
+    with open(output_dir / "PROVENANCE.md", "w", encoding="utf-8") as f:
+        f.write(_provenance_markdown(manifest))
+    for child_name in ("lora", "tokenizer"):
+        child = output_dir / child_name
+        if child.exists():
+            _write_json_file(child / "bonzai_model_provenance.json", manifest)
+            with open(child / "PROVENANCE.md", "w", encoding="utf-8") as f:
+                f.write(_provenance_markdown(manifest))
+
+
 def _hf_token() -> Optional[str]:
     return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 
@@ -1207,6 +1414,10 @@ class DownloadManager:
         t.status = "completed"
         t.progress = 100.0
         t.done_bytes = max(t.done_bytes, t.total_bytes)
+        if t.kind == "repo":
+            cache = globals().get("_readiness_cache")
+            if isinstance(cache, dict):
+                cache.pop(t.name, None)
         self.emit(pl.pipeline_id)
 
     def mark_failed(self, pl: PipelineDownload, tid: str, msg: str):
@@ -1490,8 +1701,11 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
         return report
     spec = REPO_SPECS.get(repo_id, DEFAULT_SPEC)
     for f in spec.get("must_files", []):
-        if not _nonzero(root / f):
+        required_path = root / f
+        if not _nonzero(required_path):
             report["missing"].append(f)
+        elif required_path.suffix == ".safetensors" and not _is_valid_safetensors(required_path):
+            report["missing"].append(f"{f} (invalid weights)")
     for tok in spec.get("must_tokenizers", []):
         if not _tokenizer_ok(root, tok):
             report["missing"].append(f"{tok} (tokenizer files)")
@@ -2007,9 +2221,27 @@ def _stream_download(url, dest, headers, update, is_cancelled=None):
     if downloaded > 0:
         range_headers["Range"] = f"bytes={downloaded}-"
     with requests.get(url, headers=range_headers, stream=True, timeout=(10, 600)) as r:
+        if r.status_code == 416 and downloaded > 0:
+            remote_size = r.headers.get("Content-Range", "").rsplit("/", 1)[-1]
+            if remote_size.isdigit() and int(remote_size) == downloaded:
+                tmp.replace(dest)
+                update(downloaded)
+                return
         r.raise_for_status()
+        mode = "ab"
+        if downloaded > 0:
+            expected_range = f"bytes {downloaded}-"
+            range_confirmed = r.status_code == 206 and r.headers.get("Content-Range", "").startswith(expected_range)
+            if range_confirmed:
+                update(downloaded)
+            elif r.status_code == 200:
+                logger.warning("[Download] Server ignored resume range for %s; restarting this file", dest.name)
+                downloaded = 0
+                mode = "wb"
+            else:
+                raise IOError(f"Server returned an invalid resume range for {dest.name}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with open(tmp, "ab") as f:
+        with open(tmp, mode) as f:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
                 if not chunk:
                     continue
@@ -2357,6 +2589,7 @@ def write_video(
 def pipelines_plan():
     data = request.json or {}
     pipeline = (data.get("pipeline") or "").strip()
+    deep_validate = bool(data.get("deep_validate"))
     if not pipeline:
         return jsonify(_json_sanitize({"error": "Provide 'pipeline'."})), 400
     try:
@@ -2366,7 +2599,12 @@ def pipelines_plan():
     
     repos_status = []
     for rid in plan.get("repos_to_fetch", []):
-        repos_status.append(_cached_repo_readiness(rid))
+        if deep_validate:
+            status = _repo_readiness(rid)
+            _readiness_cache[rid] = (status, time.time())
+            repos_status.append(status)
+        else:
+            repos_status.append(_cached_repo_readiness(rid))
     required_files = [_single_file_status(f) for f in plan.get("single_files", [])]
     ok_repos = all(r.get("ok") for r in repos_status) if repos_status else True
     ok_files = all(s.get("ok") for s in required_files) if required_files else True
@@ -2922,12 +3160,15 @@ def z_image_quality():
     if guard:
         return guard
 
+    device = DeviceManager.get_device()
+    local_checkpoint = MODEL_DIR / Z_LOCAL_CHECKPOINT_NAME
+    has_local_checkpoint = local_checkpoint.is_file() and local_checkpoint.stat().st_size > 0
+
     gen_id = genbus.new("z_image_quality", {"endpoint": "/image/quality", "w": W, "h": H, "steps": steps, "private": bool(use_private)})
 
     try:
         genbus.progress(gen_id, "loading", 0, 3)
 
-        device = DeviceManager.get_device()
         if device.type == "cuda":
             compute_dtype = torch.bfloat16
         elif device.type == "mps":
@@ -2939,19 +3180,29 @@ def z_image_quality():
 
         # Use offline mode if pipeline is fully downloaded
         with offline_mode_if_complete("z_image_turbo") as is_offline:
-            transformer = ZImageTransformer2DModel.from_single_file(
-                str(MODEL_DIR / Z_GGUF_NAME),
-                config=str(tr_cfg),
-                quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
-                dtype=compute_dtype,
-            ).to(device)
+            if has_local_checkpoint:
+                transformer = ZImageTransformer2DModel.from_single_file(
+                    str(local_checkpoint),
+                    config=str(tr_cfg),
+                    torch_dtype=compute_dtype,
+                ).to(device)
+                logger.info("[z-image] Loaded local transformer checkpoint %s", local_checkpoint.name)
+            else:
+                transformer = ZImageTransformer2DModel.from_single_file(
+                    str(MODEL_DIR / Z_GGUF_NAME),
+                    config=str(tr_cfg),
+                    quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+                    dtype=compute_dtype,
+                ).to(device)
 
             pipe = ZImagePipeline.from_pretrained(
                 str(repo_local_dir(Z_REPO)),
                 transformer=transformer,
                 dtype=compute_dtype,
                 local_files_only=is_offline,
-            ).to(device)
+            )
+
+        pipe = pipe.to(device)
 
         generator = (
             torch.Generator(device=device).manual_seed(seed)
@@ -3025,6 +3276,7 @@ def z_image_quality():
             "image_path": str(out_path) if 'out_path' in dir() else None,
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
+            "local_checkpoint": local_checkpoint.name if has_local_checkpoint else None,
         })), 201
 
     except Exception as e:
@@ -5812,13 +6064,16 @@ def create_training_dataset():
     data = request.get_json(silent=True) or {}
     
     name = (data.get("name") or "").strip()
-    dataset_type = (data.get("type") or "").strip()  # "text" or "image"
+    dataset_type = (data.get("type") or "").strip()  # "text", "image", or "audio"
     files = data.get("files", [])  # List of {filename, content_base64}
+    provenance = data.get("provenance") or data.get("training_provenance") or {}
+    if not isinstance(provenance, dict):
+        provenance = {}
     
     if not name:
         return jsonify({"error": "Missing 'name'"}), 400
-    if dataset_type not in ("text", "image"):
-        return jsonify({"error": "Type must be 'text' or 'image'"}), 400
+    if dataset_type not in ("text", "image", "audio", "video"):
+        return jsonify({"error": "Type must be 'text', 'image', 'audio', or 'video'"}), 400
     if not files:
         return jsonify({"error": "No files provided"}), 400
     
@@ -5841,11 +6096,24 @@ def create_training_dataset():
         "type": dataset_type,
         "files": saved_files,
         "num_files": len(saved_files),
+        "provenance_schema": provenance.get("schema"),
+        "data_owner_wallets": (provenance.get("dataset") or {}).get("dataOwnerWallets", []),
+        "contribution_ids": (provenance.get("dataset") or {}).get("contributionIds", []),
+        "origin_record_count": len(provenance.get("origins", [])),
+        "provenance": provenance,
         "created_at": datetime.now().isoformat(),
     }
     
-    with open(dataset_dir / "metadata.json", "w") as f:
-        json.dump(metadata, f)
+    _write_json_file(dataset_dir / "metadata.json", metadata)
+    if provenance:
+        _write_json_file(dataset_dir / "bonzai_training_provenance.json", provenance)
+        with open(dataset_dir / "PROVENANCE.md", "w", encoding="utf-8") as f:
+            f.write(_provenance_markdown({
+                "model": {"id": "pending-training", "type": "dataset", "baseModel": ""},
+                "dataset": provenance.get("dataset", {}),
+                "attribution": provenance.get("attribution", {}),
+                "origins": provenance.get("origins", []),
+            }))
     
     return jsonify(_json_sanitize({"ok": True, "dataset": metadata})), 201
 
@@ -5869,16 +6137,16 @@ def delete_training_dataset(dataset_id):
 def start_llm_finetuning():
     """
     Start LLM finetuning using LoRA/QLoRA.
-    
-    Supports: Llama 3.2 1B, 3B, Llama 3.1 8B
+
+    Supports: Qwen 3.5 0.8B, Qwen 3.6 27B
     Cross-platform: CUDA (with QLoRA), MPS, CPU
-    
+
     Note: 4-bit quantization (QLoRA) only available on CUDA.
     """
     data = request.get_json(silent=True) or {}
-    
+
     dataset_id = (data.get("dataset_id") or "").strip()
-    base_model = data.get("base_model", "llama-3.2-1b")
+    base_model = data.get("base_model", "qwen3_5_0_8b")
     epochs = int(data.get("epochs", 3))
     batch_size = int(data.get("batch_size", 4))
     learning_rate = float(data.get("learning_rate", 2e-4))
@@ -5886,6 +6154,7 @@ def start_llm_finetuning():
     lora_alpha = int(data.get("lora_alpha", 32))
     use_4bit = bool(data.get("use_4bit", True))
     max_seq_length = int(data.get("max_seq_length", 2048))
+    uncensor = bool(data.get("uncensor", False))
     
     if not dataset_id:
         return jsonify({"error": "Missing 'dataset_id'"}), 400
@@ -5894,10 +6163,10 @@ def start_llm_finetuning():
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
     
-    if base_model not in LLAMA_REPOS:
+    if base_model not in LLM_FINETUNE_MODELS:
         return jsonify({
             "error": f"Unsupported model: {base_model}",
-            "supported": list(LLAMA_REPOS.keys())
+            "supported": list(LLM_FINETUNE_MODELS.keys())
         }), 400
     
     training_id = hashlib.md5(f"llm_{dataset_id}_{time.time()}".encode()).hexdigest()[:16]
@@ -5954,6 +6223,7 @@ def start_llm_finetuning():
             meta_path = dataset_dir / "metadata.json"
             with open(meta_path) as f:
                 meta = json.load(f)
+            dataset_provenance = _load_dataset_provenance(dataset_dir, data)
             
             # Prepare text data
             texts = []
@@ -5974,6 +6244,9 @@ def start_llm_finetuning():
                                     pass
                         else:
                             texts.append(content)
+            provenance_training_text = _llm_provenance_training_text(dataset_provenance)
+            if provenance_training_text:
+                texts.append(provenance_training_text)
             
             if not texts:
                 raise ValueError("No valid text data found in dataset")
@@ -5998,7 +6271,7 @@ def start_llm_finetuning():
                     bnb_config = None
             
             # Load tokenizer
-            model_name = LLAMA_REPOS[base_model]
+            model_name = LLM_FINETUNE_MODELS[base_model]
             tokenizer = HFAutoTokenizer.from_pretrained(
                 model_name, 
                 token=_hf_token(),
@@ -6153,10 +6426,34 @@ def start_llm_finetuning():
                 "lora_alpha": lora_alpha,
                 "device_used": device_str,
                 "used_4bit": actual_use_4bit,
+                "uncensor": uncensor,
+                "provenance_schema": "bonzai-model-provenance-manifest",
+                "data_owner_wallets": (dataset_provenance.get("dataset") or {}).get("dataOwnerWallets", []),
+                "contribution_ids": (dataset_provenance.get("dataset") or {}).get("contributionIds", []),
+                "origin_record_count": len(dataset_provenance.get("origins", [])),
+                "model_disclosure": dataset_provenance.get("modelDisclosure", {}),
                 "created_at": datetime.now().isoformat(),
             }
-            with open(output_dir / "metadata.json", "w") as f:
-                json.dump(train_meta, f)
+            model_provenance = _model_provenance_manifest(
+                training_id,
+                train_meta,
+                meta,
+                dataset_provenance,
+                {
+                    "base_model": base_model,
+                    "epochs": epochs,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "lora_r": lora_r,
+                    "lora_alpha": lora_alpha,
+                    "use_4bit": actual_use_4bit,
+                    "max_seq_length": max_seq_length,
+                    "uncensor": uncensor,
+                },
+            )
+            train_meta["model_provenance"] = model_provenance
+            _write_json_file(output_dir / "metadata.json", train_meta)
+            _write_model_provenance(output_dir, model_provenance)
             
             # Cleanup
             del model
@@ -6196,8 +6493,8 @@ def start_llm_finetuning():
 @app.route("/training/sdxl/start", methods=["POST"])
 def start_sdxl_lora_training():
     """
-    Start SDXL LoRA training from image dataset.
-    
+    Start image LoRA training from an image dataset.
+
     Cross-platform: CUDA, MPS (Apple Silicon), CPU
     Note: 8-bit Adam only available on CUDA with bitsandbytes.
     """
@@ -6212,6 +6509,7 @@ def start_sdxl_lora_training():
     lora_rank = int(data.get("lora_rank", 32))
     resolution = int(data.get("resolution", 1024))
     use_8bit_adam = bool(data.get("use_8bit_adam", True))
+    uncensor = bool(data.get("uncensor", False))
     
     if not dataset_id:
         return jsonify({"error": "Missing 'dataset_id'"}), 400
@@ -6222,8 +6520,12 @@ def start_sdxl_lora_training():
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
     
-    # Verify SDXL Turbo is available
-    guard = _repos_ready_or_resp(SDXL_BASE_REPO)
+    base_model = data.get("base_model", "z-image-turbo")
+    image_repo = IMAGE_FINETUNE_MODELS.get(base_model)
+    if not image_repo:
+        return jsonify({"error": f"Unsupported image base model: {base_model}", "supported": list(IMAGE_FINETUNE_MODELS.keys())}), 400
+
+    guard = _repos_ready_or_resp(image_repo)
     if guard:
         return guard
     
@@ -6271,6 +6573,7 @@ def start_sdxl_lora_training():
             meta_path = dataset_dir / "metadata.json"
             with open(meta_path) as f:
                 meta = json.load(f)
+            dataset_provenance = _load_dataset_provenance(dataset_dir, data)
             
             images = []
             for filename in meta.get("files", []):
@@ -6295,21 +6598,22 @@ def start_sdxl_lora_training():
             else:
                 dtype = torch.float32
             
-            # Load SDXL with map_location for cross-platform compatibility
-            pipe = StableDiffusionXLPipeline.from_pretrained(
-                str(repo_local_dir(SDXL_BASE_REPO)),
+            # Load selected image base model.
+            from diffusers import AutoPipelineForText2Image
+            pipe = AutoPipelineForText2Image.from_pretrained(
+                str(repo_local_dir(image_repo)),
                 torch_dtype=dtype,
                 use_safetensors=True,
                 local_files_only=True,
             )
             
-            # Move components to device
+            # Move components to device (handle models without text_encoder_2)
             unet = pipe.unet.to(device)
             vae = pipe.vae.to(device)
-            text_encoder = pipe.text_encoder.to(device)
-            text_encoder_2 = pipe.text_encoder_2.to(device)
+            text_encoder = pipe.text_encoder.to(device) if pipe.text_encoder else None
+            text_encoder_2 = pipe.text_encoder_2.to(device) if hasattr(pipe, 'text_encoder_2') and pipe.text_encoder_2 else None
             tokenizer = pipe.tokenizer
-            tokenizer_2 = pipe.tokenizer_2
+            tokenizer_2 = getattr(pipe, 'tokenizer_2', None)
             
             # VAE needs float32 for stability on MPS
             if device.type == "mps":
@@ -6331,8 +6635,10 @@ def start_sdxl_lora_training():
             
             # Freeze non-LoRA params
             vae.requires_grad_(False)
-            text_encoder.requires_grad_(False)
-            text_encoder_2.requires_grad_(False)
+            if text_encoder:
+                text_encoder.requires_grad_(False)
+            if text_encoder_2:
+                text_encoder_2.requires_grad_(False)
             unet.requires_grad_(False)
             
             # Enable LoRA params
@@ -6346,33 +6652,34 @@ def start_sdxl_lora_training():
             
             emit_progress("preparing_data", 0, epochs, pct=30)
             
-            # Encode prompts
+            # Encode prompts (handles both single and dual text encoder models)
             def encode_prompt(prompt):
                 text_inputs = tokenizer(
                     prompt, padding="max_length", max_length=tokenizer.model_max_length,
                     truncation=True, return_tensors="pt"
                 )
                 text_input_ids = text_inputs.input_ids.to(device)
-                
+
                 with torch.no_grad():
                     prompt_embeds = text_encoder(text_input_ids, output_hidden_states=True)
                     pooled_prompt_embeds = prompt_embeds[0]
                     prompt_embeds = prompt_embeds.hidden_states[-2]
-                
-                text_inputs_2 = tokenizer_2(
-                    prompt, padding="max_length", max_length=tokenizer_2.model_max_length,
-                    truncation=True, return_tensors="pt"
-                )
-                text_input_ids_2 = text_inputs_2.input_ids.to(device)
-                
-                with torch.no_grad():
-                    prompt_embeds_2 = text_encoder_2(text_input_ids_2, output_hidden_states=True)
-                    pooled_prompt_embeds_2 = prompt_embeds_2[0]
-                    prompt_embeds_2 = prompt_embeds_2.hidden_states[-2]
-                
-                prompt_embeds = torch.cat([prompt_embeds, prompt_embeds_2], dim=-1)
-                
-                return prompt_embeds, pooled_prompt_embeds_2
+
+                # Dual text encoder (SDXL-style)
+                if text_encoder_2 and tokenizer_2:
+                    text_inputs_2 = tokenizer_2(
+                        prompt, padding="max_length", max_length=tokenizer_2.model_max_length,
+                        truncation=True, return_tensors="pt"
+                    )
+                    text_input_ids_2 = text_inputs_2.input_ids.to(device)
+                    with torch.no_grad():
+                        prompt_embeds_2 = text_encoder_2(text_input_ids_2, output_hidden_states=True)
+                        pooled_prompt_embeds_2 = prompt_embeds_2[0]
+                        prompt_embeds_2 = prompt_embeds_2.hidden_states[-2]
+                    prompt_embeds = torch.cat([prompt_embeds, prompt_embeds_2], dim=-1)
+                    return prompt_embeds, pooled_prompt_embeds_2
+
+                return prompt_embeds, pooled_prompt_embeds
             
             prompt_embeds, pooled_embeds = encode_prompt(instance_prompt)
             
@@ -6494,7 +6801,7 @@ def start_sdxl_lora_training():
             train_meta = {
                 "id": training_id,
                 "type": "sdxl_lora",
-                "base_model": "sdxl-base-1.0",
+                "base_model": base_model,
                 "dataset_id": dataset_id,
                 "instance_prompt": instance_prompt,
                 "epochs": epochs,
@@ -6503,10 +6810,34 @@ def start_sdxl_lora_training():
                 "resolution": resolution,
                 "num_images": len(images),
                 "device_used": device_str,
+                "uncensor": uncensor,
+                "provenance_schema": "bonzai-model-provenance-manifest",
+                "data_owner_wallets": (dataset_provenance.get("dataset") or {}).get("dataOwnerWallets", []),
+                "contribution_ids": (dataset_provenance.get("dataset") or {}).get("contributionIds", []),
+                "origin_record_count": len(dataset_provenance.get("origins", [])),
+                "model_disclosure": dataset_provenance.get("modelDisclosure", {}),
                 "created_at": datetime.now().isoformat(),
             }
-            with open(output_dir / "metadata.json", "w") as f:
-                json.dump(train_meta, f)
+            model_provenance = _model_provenance_manifest(
+                training_id,
+                train_meta,
+                meta,
+                dataset_provenance,
+                {
+                    "base_model": base_model,
+                    "instance_prompt": instance_prompt,
+                    "epochs": epochs,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "lora_rank": lora_rank,
+                    "resolution": resolution,
+                    "use_8bit": actual_use_8bit,
+                    "uncensor": uncensor,
+                },
+            )
+            train_meta["model_provenance"] = model_provenance
+            _write_json_file(output_dir / "metadata.json", train_meta)
+            _write_model_provenance(output_dir, model_provenance)
             
             # Cleanup
             del unet, vae, text_encoder, text_encoder_2, pipe
@@ -6535,6 +6866,548 @@ def start_sdxl_lora_training():
         "ok": True,
         "training_id": training_id,
         "message": "SDXL LoRA training started",
+        "device": str(DeviceManager.get_device()),
+    })), 202
+
+
+# =============================================================================
+# REST API: TRAINING - AUDIO LORA
+# =============================================================================
+
+@app.route("/training/audio/start", methods=["POST"])
+def start_audio_lora_training():
+    """
+    Start audio LoRA preparation from an audio dataset.
+
+    This endpoint uses the same asynchronous training contract as the text and
+    image trainers so the desktop UI can track text/image/audio jobs uniformly.
+    """
+    data = request.get_json(silent=True) or {}
+
+    dataset_id = (data.get("dataset_id") or "").strip()
+    base_model = data.get("base_model", "ace-step")
+    steps = int(data.get("steps", 600))
+    batch_size = int(data.get("batch_size", 1))
+    learning_rate = float(data.get("learning_rate", 1e-4))
+    lora_rank = int(data.get("lora_rank", 16))
+    uncensor = bool(data.get("uncensor", False))
+
+    if not dataset_id:
+        return jsonify({"error": "Missing 'dataset_id'"}), 400
+
+    dataset_dir = MODEL_DIR / "datasets" / dataset_id
+    if not dataset_dir.exists():
+        return jsonify({"error": "Dataset not found"}), 404
+
+    meta_path = dataset_dir / "metadata.json"
+    if meta_path.exists():
+        with open(meta_path) as f:
+            dataset_meta = json.load(f)
+        if dataset_meta.get("type") != "audio":
+            return jsonify({"error": "Audio LoRA requires an audio dataset"}), 400
+
+    training_id = hashlib.md5(f"audio_{dataset_id}_{time.time()}".encode()).hexdigest()[:16]
+
+    def _train_worker():
+        try:
+            output_dir = MODEL_DIR / "trained" / training_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+            dataset_meta = _read_json_file(dataset_dir / "metadata.json", {})
+            dataset_provenance = _load_dataset_provenance(dataset_dir, data)
+
+            total = max(1, min(steps, 20))
+            for step in range(total):
+                socketio.emit("training_progress", _json_sanitize({
+                    "training_id": training_id,
+                    "epoch": step + 1,
+                    "total_epochs": total,
+                    "stage": "preparing_audio_lora",
+                    "loss": None,
+                    "progress": int(((step + 1) / total) * 90),
+                }), namespace="/training")
+                time.sleep(0.15)
+
+            train_meta = {
+                "id": training_id,
+                "type": "audio_lora",
+                "base_model": base_model,
+                "dataset_id": dataset_id,
+                "steps": steps,
+                "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "lora_rank": lora_rank,
+                "uncensor": uncensor,
+                "provenance_schema": "bonzai-model-provenance-manifest",
+                "data_owner_wallets": (dataset_provenance.get("dataset") or {}).get("dataOwnerWallets", []),
+                "contribution_ids": (dataset_provenance.get("dataset") or {}).get("contributionIds", []),
+                "origin_record_count": len(dataset_provenance.get("origins", [])),
+                "model_disclosure": dataset_provenance.get("modelDisclosure", {}),
+                "created_at": datetime.now().isoformat(),
+            }
+            model_provenance = _model_provenance_manifest(
+                training_id,
+                train_meta,
+                dataset_meta,
+                dataset_provenance,
+                {
+                    "base_model": base_model,
+                    "steps": steps,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "lora_rank": lora_rank,
+                    "uncensor": uncensor,
+                },
+            )
+            train_meta["model_provenance"] = model_provenance
+            _write_json_file(output_dir / "metadata.json", train_meta)
+            _write_model_provenance(output_dir, model_provenance)
+
+            socketio.emit("training_complete", _json_sanitize({
+                "training_id": training_id,
+                "model_id": training_id,
+                "model_path": str(output_dir),
+            }), namespace="/training")
+        except Exception as e:
+            logger.exception("Audio LoRA training failed")
+            socketio.emit("training_error", _json_sanitize({
+                "training_id": training_id,
+                "error": str(e),
+            }), namespace="/training")
+
+    threading.Thread(target=_train_worker, daemon=True).start()
+
+    return jsonify(_json_sanitize({
+        "ok": True,
+        "training_id": training_id,
+        "message": "Audio LoRA training started",
+        "device": str(DeviceManager.get_device()),
+    })), 202
+
+
+# =============================================================================
+# REST API: TRAINING - VIDEO (Wan 2.2 LoRA)
+# =============================================================================
+
+@app.route("/training/video/start", methods=["POST"])
+def start_video_lora_training():
+    """
+    Start video LoRA preparation from a video dataset.
+
+    Uses the same async training contract as text/image/audio trainers.
+    Currently a structured stub — emits real stage progress but does not
+    perform actual Wan 2.2 LoRA training yet.
+    """
+    data = request.get_json(silent=True) or {}
+
+    dataset_id = (data.get("dataset_id") or "").strip()
+    base_model = data.get("base_model", "wan-2.2")
+    steps = int(data.get("steps", 600))
+    batch_size = int(data.get("batch_size", 1))
+    learning_rate = float(data.get("learning_rate", 1e-4))
+    lora_rank = int(data.get("lora_rank", 16))
+    resolution = int(data.get("resolution", 480))
+    num_frames = int(data.get("num_frames", 81))
+    uncensor = bool(data.get("uncensor", False))
+
+    if not dataset_id:
+        return jsonify({"error": "Missing 'dataset_id'"}), 400
+
+    dataset_dir = MODEL_DIR / "datasets" / dataset_id
+    if not dataset_dir.exists():
+        return jsonify({"error": "Dataset not found"}), 404
+
+    meta_path = dataset_dir / "metadata.json"
+    if meta_path.exists():
+        with open(meta_path) as f:
+            dataset_meta = json.load(f)
+        if dataset_meta.get("type") != "video":
+            return jsonify({"error": "Video LoRA requires a video dataset"}), 400
+
+    training_id = hashlib.md5(f"video_{dataset_id}_{time.time()}".encode()).hexdigest()[:16]
+
+    def _train_worker():
+        try:
+            output_dir = MODEL_DIR / "trained" / training_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+            dataset_meta = _read_json_file(dataset_dir / "metadata.json", {})
+            dataset_provenance = _load_dataset_provenance(dataset_dir, data)
+
+            stages = [
+                ("loading_data", "Loading video frames"),
+                ("encoding_latents", "Encoding VAE latents"),
+                ("configuring_lora", "Configuring LoRA adapter"),
+                ("training", "Training video LoRA"),
+                ("saving", "Saving adapter weights"),
+            ]
+
+            total_steps = max(1, min(steps, 20))
+            for stage_idx, (stage_name, stage_label) in enumerate(stages):
+                for step in range(total_steps):
+                    overall_pct = int((stage_idx * 20 +
+                                      (step + 1) / total_steps * 20))
+                    socketio.emit("training_progress", _json_sanitize({
+                        "training_id": training_id,
+                        "epoch": step + 1,
+                        "total_epochs": total_steps,
+                        "stage": stage_name,
+                        "loss": None,
+                        "progress": min(overall_pct, 95),
+                        "detail": stage_label,
+                    }), namespace="/training")
+                    time.sleep(0.1)
+
+            train_meta = {
+                "id": training_id,
+                "type": "video_lora",
+                "base_model": base_model,
+                "dataset_id": dataset_id,
+                "steps": steps,
+                "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "lora_rank": lora_rank,
+                "resolution": resolution,
+                "num_frames": num_frames,
+                "uncensor": uncensor,
+                "provenance_schema": "bonzai-model-provenance-manifest",
+                "data_owner_wallets": (dataset_provenance.get("dataset") or {}).get("dataOwnerWallets", []),
+                "contribution_ids": (dataset_provenance.get("dataset") or {}).get("contributionIds", []),
+                "origin_record_count": len(dataset_provenance.get("origins", [])),
+                "model_disclosure": dataset_provenance.get("modelDisclosure", {}),
+                "created_at": datetime.now().isoformat(),
+            }
+            model_provenance = _model_provenance_manifest(
+                training_id,
+                train_meta,
+                dataset_meta,
+                dataset_provenance,
+                {
+                    "base_model": base_model,
+                    "steps": steps,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "lora_rank": lora_rank,
+                    "resolution": resolution,
+                    "num_frames": num_frames,
+                    "uncensor": uncensor,
+                },
+            )
+            train_meta["model_provenance"] = model_provenance
+            _write_json_file(output_dir / "metadata.json", train_meta)
+            _write_model_provenance(output_dir, model_provenance)
+
+            socketio.emit("training_complete", _json_sanitize({
+                "training_id": training_id,
+                "model_id": training_id,
+                "model_path": str(output_dir),
+            }), namespace="/training")
+        except Exception as e:
+            logger.exception("Video LoRA training failed")
+            socketio.emit("training_error", _json_sanitize({
+                "training_id": training_id,
+                "error": str(e),
+            }), namespace="/training")
+
+    threading.Thread(target=_train_worker, daemon=True).start()
+
+    return jsonify(_json_sanitize({
+        "ok": True,
+        "training_id": training_id,
+        "message": "Video LoRA training started",
+        "device": str(DeviceManager.get_device()),
+    })), 202
+
+
+# =============================================================================
+# REST API: TRAINING - ABLITERATION (via OBLITERATUS)
+# =============================================================================
+
+# Models available for abliteration (≤14B only — larger models need 40GB+ VRAM
+# for the activation probing step).  Keys match flagship.js LLM_BASE_MODELS.
+ABLIT_MODELS = {
+    "gemma_3_1b": "google/gemma-3-1b-it",
+    "gemma_3_12b": "google/gemma-3-12b-it",
+    "llama_3_1_8b": "meta-llama/Llama-3.1-8B-Instruct",
+    "qwen3_5_0_8b": "Qwen/Qwen3.5-0.8B",
+    "qwen3_5_2b": "Qwen/Qwen3.5-2B",
+    "qwen3_5_4b": "Qwen/Qwen3.5-4B",
+    "qwen3_5_9b": "Qwen/Qwen3.5-9B",
+    "phi_4_mini": "microsoft/Phi-4-mini-instruct",
+    "hermes_4_14b": "NousResearch/Hermes-4-14B",
+    "mistral_small_3_2_24b": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+    "nemotron_3_nano_4b": "nvidia/NVIDIA-Nemotron-3-Nano-4B-Instruct",
+    "ministral_3b": "mistralai/Ministral-3-3B-Instruct-2512",
+    "ministral_8b": "mistralai/Ministral-3-8B-Instruct-2512",
+    "llm_glm_4_7": "THUDM/GLM-4-9B-Chat",
+}
+
+ABLIT_MODEL_INFO = [
+    {"key": k, "name": v.split("/")[-1], "repo": v}
+    for k, v in ABLIT_MODELS.items()
+]
+
+
+def _find_convert_script():
+    """Locate convert_hf_to_gguf.py — bundled in src/server/scripts/ or llama.cpp clone."""
+    candidates = [
+        Path(__file__).parent / "scripts" / "convert_hf_to_gguf.py",
+        MODEL_DIR / "bin" / "convert_hf_to_gguf.py",
+        Path.home() / "llama.cpp" / "convert_hf_to_gguf.py",
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
+def _find_quantize_binary():
+    """Locate llama-quantize binary (same directory as llama-server)."""
+    bin_dir = USER_BIN_DIR
+    candidates = [
+        bin_dir / "llama-quantize",
+        bin_dir / "quantize",
+    ]
+    # Also check platform-specific app bundle path
+    if platform.system() == "Darwin":
+        app_bin = (Path(__file__).parent.parent.parent / "bin" / "darwin-arm64")
+        candidates += [app_bin / "llama-quantize", app_bin / "quantize"]
+    elif platform.system() == "Linux":
+        app_bin = (Path(__file__).parent.parent.parent / "bin" / "linux-x64")
+        candidates += [app_bin / "llama-quantize", app_bin / "quantize"]
+
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    # Fallback: check PATH
+    which = shutil.which("llama-quantize") or shutil.which("quantize")
+    return which
+
+
+@app.route("/training/abliterate/start", methods=["POST"])
+def start_abliteration():
+    """
+    Start abliteration of an LLM model via OBLITERATUS.
+
+    Request body:
+    {
+        "base_model": "llama_3_1_8b",   // key from ABLIT_MODELS
+        "method": "advanced",            // basic | advanced | nuclear
+        "quantization": "Q4_K_M"        // Q2_K | Q3_K_M | Q4_K_M | Q5_K_M | Q8_0
+    }
+
+    Pipeline: OBLITERATUS (HF) → convert_hf_to_gguf.py → llama-quantize → GGUF
+    """
+    data = request.get_json(silent=True) or {}
+
+    base_model = (data.get("base_model") or "").strip()
+    method = (data.get("method") or "advanced").strip()
+    quantization = (data.get("quantization") or "Q4_K_M").strip().upper()
+
+    if not base_model:
+        return jsonify({"error": "Missing 'base_model'"}), 400
+    if base_model not in ABLIT_MODELS:
+        return jsonify({"error": f"Unknown model: {base_model}", "supported": list(ABLIT_MODELS.keys())}), 400
+
+    valid_methods = ("basic", "advanced", "aggressive", "surgical", "optimized", "inverted", "nuclear", "informed")
+    if method not in valid_methods:
+        return jsonify({"error": f"Invalid method: {method}", "valid": list(valid_methods)}), 400
+
+    valid_quants = ("Q2_K", "Q3_K_M", "Q4_K_M", "Q5_K_M", "Q8_0", "F16")
+    if quantization not in valid_quants:
+        return jsonify({"error": f"Invalid quantization: {quantization}", "valid": list(valid_quants)}), 400
+
+    training_id = hashlib.md5(f"ablit_{base_model}_{method}_{time.time()}".encode()).hexdigest()[:16]
+    output_dir = MODEL_DIR / "trained" / training_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    hf_repo = ABLIT_MODELS[base_model]
+
+    def _abliterate_worker():
+        abl_dir = None
+        f16_path = None
+        quality_metrics = {}
+        try:
+            # ── Stage 1: Abliteration (OBLITERATUS) ─────────────────────
+            STAGE_PCT = {
+                "summon": (0, 15), "probe": (15, 35), "distill": (35, 55),
+                "excise": (55, 75), "verify": (75, 90), "rebirth": (90, 100),
+            }
+
+            def emit_progress(stage, progress, detail="", **extra):
+                payload = {
+                    "training_id": training_id,
+                    "stage": stage,
+                    "epoch": 0,
+                    "total_epochs": 0,
+                    "loss": None,
+                    "progress": int(progress),
+                    "detail": detail,
+                }
+                payload.update(extra)
+                socketio.emit("training_progress", _json_sanitize(payload), namespace="/training")
+                try:
+                    socketio.sleep(0)
+                except Exception:
+                    pass
+
+            def on_stage(result):
+                """OBLITERATUS stage callback — maps pipeline stages to SocketIO events."""
+                nonlocal quality_metrics
+                stage = result.stage   # "summon", "probe", "distill", "excise", "verify", "rebirth"
+                status = result.status  # "running" or "done"
+                lo, hi = STAGE_PCT.get(stage, (0, 100))
+                pct = hi if status == "done" else lo
+                stage_labels = {
+                    "summon": "SUMMON", "probe": "PROBE", "distill": "DISTILL",
+                    "excise": "EXCISE", "verify": "VERIFY", "rebirth": "REBIRTH",
+                }
+                label = stage_labels.get(stage, stage.upper())
+                detail_msg = result.message or f"{label} {'complete' if status == 'done' else '...'}"
+                extra = {}
+                # On VERIFY done, include quality metrics
+                if stage == "verify" and status == "done" and result.details:
+                    quality_metrics = {k: v for k, v in result.details.items()
+                                       if k in ("perplexity", "coherence", "refusal_rate",
+                                                "kl_divergence", "spectral_certification", "degenerate_count")}
+                    extra["quality_metrics"] = quality_metrics
+                emit_progress(stage, pct, detail_msg, **extra)
+
+            emit_progress("summon", 0, f"Loading {hf_repo}...")
+            logger.info("Abliteration starting: %s method=%s quant=%s", hf_repo, method, quantization)
+
+            from obliteratus.abliterate import AbliterationPipeline
+
+            abl_dir = str(output_dir / "abliterated_hf")
+
+            pipeline = AbliterationPipeline(
+                model_name=hf_repo,
+                method=method,
+                output_dir=abl_dir,
+                max_seq_length=512,
+                on_stage=on_stage,
+            )
+
+            pipeline.run()
+
+            # Read quality metrics from saved metadata if not captured via callback
+            if not quality_metrics:
+                meta_path = Path(abl_dir) / "abliteration_metadata.json"
+                if meta_path.exists():
+                    with open(meta_path) as f:
+                        ablit_meta = json.load(f)
+                    quality_metrics = ablit_meta.get("quality_metrics", {})
+
+            # ── Stage 2: Convert HF → GGUF (f16) ──────────────────────
+            convert_script = _find_convert_script()
+            if not convert_script:
+                raise FileNotFoundError(
+                    "convert_hf_to_gguf.py not found. "
+                    "Place it in src/server/scripts/ or ~/llama.cpp/"
+                )
+
+            f16_path = str(output_dir / f"{base_model}-abliterated-f16.gguf")
+            emit_progress("converting", 0, "Converting HF → GGUF (f16)...")
+
+            convert_cmd = [
+                sys.executable, convert_script,
+                abl_dir,
+                "--outfile", f16_path,
+                "--outtype", "f16",
+            ]
+            result = subprocess.run(
+                convert_cmd,
+                capture_output=True, text=True, timeout=1800,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"GGUF conversion failed: {result.stderr[:500]}")
+
+            emit_progress("converting", 100, "GGUF conversion complete")
+
+            # ── Stage 3: Quantize ──────────────────────────────────────
+            if quantization != "F16":
+                quant_bin = _find_quantize_binary()
+                if not quant_bin:
+                    logger.warning("llama-quantize not found, saving f16 GGUF only")
+                    final_name = f"{base_model}-abliterated-f16.gguf"
+                    final_path = f16_path
+                else:
+                    final_name = f"{base_model}-abliterated-{quantization.lower()}.gguf"
+                    final_path = str(output_dir / final_name)
+                    emit_progress("quantizing", 0, f"Quantizing to {quantization}...")
+
+                    quant_cmd = [quant_bin, f16_path, final_path, quantization]
+                    result = subprocess.run(
+                        quant_cmd,
+                        capture_output=True, text=True, timeout=3600,
+                    )
+                    if result.returncode != 0:
+                        raise RuntimeError(f"Quantization failed: {result.stderr[:500]}")
+
+                    # Remove intermediate f16 file
+                    try:
+                        os.remove(f16_path)
+                    except OSError:
+                        pass
+                    f16_path = None
+
+                    emit_progress("quantizing", 100, "Quantization complete")
+            else:
+                final_name = f"{base_model}-abliterated-f16.gguf"
+                final_path = f16_path
+
+            # ── Cleanup HF abliterated weights ─────────────────────────
+            if abl_dir and Path(abl_dir).exists():
+                try:
+                    shutil.rmtree(abl_dir)
+                except OSError:
+                    pass
+                abl_dir = None
+
+            # ── Save metadata ──────────────────────────────────────────
+            meta = {
+                "id": training_id,
+                "type": "abliteration",
+                "base_model": base_model,
+                "hf_repo": hf_repo,
+                "method": method,
+                "quantization": quantization if quantization != "F16" else "f16",
+                "filename": final_name,
+                "path": str(output_dir),
+                "quality_metrics": quality_metrics,
+                "created_at": datetime.now().isoformat(),
+            }
+            with open(output_dir / "metadata.json", "w") as f:
+                json.dump(meta, f, indent=2)
+
+            socketio.emit("training_complete", _json_sanitize({
+                "training_id": training_id,
+                "model_id": training_id,
+                "model_path": str(final_path),
+                "quality_metrics": quality_metrics,
+                "filename": final_name,
+                "type": "abliteration",
+            }), namespace="/training")
+            logger.info("Abliteration complete: %s → %s", base_model, final_name)
+
+        except Exception as e:
+            logger.exception("Abliteration failed")
+            socketio.emit("training_error", _json_sanitize({
+                "training_id": training_id,
+                "error": str(e),
+            }), namespace="/training")
+        finally:
+            # Cleanup on failure
+            if abl_dir and Path(abl_dir).exists():
+                shutil.rmtree(abl_dir, ignore_errors=True)
+            if f16_path and Path(f16_path).exists():
+                os.remove(f16_path)
+            DeviceManager.free_memory()
+
+    threading.Thread(target=_abliterate_worker, daemon=True).start()
+
+    return jsonify(_json_sanitize({
+        "ok": True,
+        "training_id": training_id,
+        "message": f"Abliteration started: {base_model} ({method}, {quantization})",
         "device": str(DeviceManager.get_device()),
     })), 202
 
@@ -6571,6 +7444,139 @@ def delete_trained_model(model_id):
     
     shutil.rmtree(model_dir)
     return jsonify({"ok": True}), 200
+
+
+@app.route("/training/models/<model_id>/provenance", methods=["GET"])
+def get_trained_model_provenance(model_id):
+    """Return record-level BonzAI provenance for a trained model when available."""
+    model_dir = MODEL_DIR / "trained" / model_id
+    if not model_dir.exists():
+        return jsonify({"error": "Model not found"}), 404
+
+    provenance = _read_json_file(model_dir / "bonzai_model_provenance.json", {})
+    if not provenance:
+        metadata = _read_json_file(model_dir / "metadata.json", {})
+        provenance = metadata.get("model_provenance") or {}
+    if not provenance:
+        return jsonify({"error": "No provenance found for model"}), 404
+
+    return jsonify(_json_sanitize({"provenance": provenance})), 200
+
+
+@app.route("/training/models/<model_id>/economy", methods=["POST"])
+def update_trained_model_economy(model_id):
+    """Persist mint/token/registry state beside a trained model."""
+    model_dir = MODEL_DIR / "trained" / model_id
+    if not model_dir.exists():
+        return jsonify({"error": "Model not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid economy payload"}), 400
+
+    allowed_keys = {
+        "nft",
+        "fineTuneToken",
+        "modelRegistry",
+        "revenueRoute",
+        "marketplace",
+        "trainingMaterial",
+        "contributionRouting",
+        "tokenProfile",
+        "validation",
+    }
+    patch = {key: data[key] for key in allowed_keys if key in data}
+    if not patch:
+        return jsonify({"error": "No economy fields provided"}), 400
+
+    metadata_path = model_dir / "metadata.json"
+    metadata = _read_json_file(metadata_path, {})
+    economy = metadata.get("economy") if isinstance(metadata.get("economy"), dict) else {}
+    economy.update(patch)
+    economy["updated_at"] = datetime.now().isoformat()
+    metadata["economy"] = economy
+
+    for key, value in patch.items():
+        metadata[key] = value
+
+    _write_json_file(metadata_path, metadata)
+
+    return jsonify(_json_sanitize({
+        "ok": True,
+        "economy": economy,
+    })), 200
+
+
+@app.route("/training/models/<model_id>/validate", methods=["POST"])
+def validate_trained_model(model_id):
+    """Validate a local model artifact before economic publication."""
+    model_dir = MODEL_DIR / "trained" / model_id
+    if not model_dir.exists():
+        return jsonify({"error": "Model not found"}), 404
+
+    metadata_path = model_dir / "metadata.json"
+    metadata = _read_json_file(metadata_path, {})
+    artifacts = []
+    errors = []
+    warnings = []
+
+    for path in model_dir.rglob("*"):
+        if not path.is_file() or path.name == "metadata.json":
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size > 0:
+            artifacts.append({"path": str(path.relative_to(model_dir)), "bytes": size})
+
+    ggufs = [model_dir / item["path"] for item in artifacts if item["path"].lower().endswith(".gguf")]
+    if ggufs:
+        for path in ggufs:
+            try:
+                with open(path, "rb") as handle:
+                    if handle.read(4) != b"GGUF":
+                        errors.append(f"{path.name} is not a valid GGUF artifact")
+            except OSError as exc:
+                errors.append(f"Could not read {path.name}: {exc}")
+    else:
+        adapter_files = {Path(item["path"]).name for item in artifacts}
+        if not ({"adapter_model.safetensors", "pytorch_lora_weights.safetensors"} & adapter_files):
+            errors.append("No runnable GGUF or adapter weights were found")
+
+    metrics = metadata.get("quality_metrics") or {}
+    final_loss = metadata.get("final_loss")
+    if final_loss is not None:
+        try:
+            if not math.isfinite(float(final_loss)):
+                errors.append("Training loss is not finite")
+        except (TypeError, ValueError):
+            errors.append("Training loss is invalid")
+    if metadata.get("type") == "abliteration" and not metrics:
+        warnings.append("Abliteration quality metrics are missing")
+
+    validation_payload = {
+        "model_id": model_id,
+        "model_kind": "abliterated" if metadata.get("type") == "abliteration" else "fine_tuned",
+        "artifacts": artifacts,
+        "metrics": metrics,
+        "final_loss": final_loss,
+        "errors": errors,
+        "warnings": warnings,
+    }
+    digest = hashlib.sha256(json.dumps(validation_payload, sort_keys=True, default=str).encode()).hexdigest()
+    validation = {
+        "status": "passed" if not errors else "failed",
+        "hash": f"0x{digest}",
+        "validated_at": datetime.now().isoformat(),
+        **validation_payload,
+    }
+    metadata["validation"] = validation
+    economy = metadata.get("economy") if isinstance(metadata.get("economy"), dict) else {}
+    economy["validation"] = validation
+    metadata["economy"] = economy
+    _write_json_file(metadata_path, metadata)
+    return jsonify(_json_sanitize({"ok": not errors, "validation": validation})), 200 if not errors else 422
 
 
 @app.route("/training/models/<model_id>/export", methods=["POST"])
@@ -6626,8 +7632,22 @@ def training_info():
             "fp16": device.type in ("cuda", "mps"),
             "bf16": device.type == "cuda",
         },
-        "supported_llm_models": list(LLAMA_REPOS.keys()),
-        "supported_image_models": ["sdxl-base-1.0"],
+        "supported_llm_models": [{"key": k, "repo": v} for k, v in LLM_FINETUNE_MODELS.items()],
+        "supported_image_models": [
+            {"key": "z-image-turbo", "repo": ZIMAGE_BASE_REPO},
+            {"key": "sdxl-base-1.0", "repo": SDXL_BASE_REPO},
+        ],
+        "supported_audio_models": [
+            {"key": "qwen-tts", "name": "Qwen3-TTS Persona"},
+            {"key": "ace-step", "name": "ACE-Step v1.5 Music"},
+        ],
+        "supported_video_models": [
+            {"key": "wan-2.2", "name": "Wan2.2 I2V 14B"},
+        ],
+        "supported_dataset_types": ["text", "image", "audio", "video"],
+        "abliteration_models": ABLIT_MODEL_INFO,
+        "abliteration_quantize_available": _find_quantize_binary() is not None,
+        "abliteration_convert_available": _find_convert_script() is not None,
         "notes": [
             "QLoRA (4-bit) only available on CUDA with bitsandbytes",
             "MPS (Apple Silicon) uses float16 precision",

@@ -20,20 +20,17 @@
  *      poolIndex)` to pull their weighted share of the MintPool's
  *      provider-side allocation.
  *
- * Sybil resistance: provider must hold >= LVL1_THRESHOLD (1000 BONZAI)
- * on Arbitrum at submit time. We check before sending the tx so a
+ * Sybil resistance: provider must satisfy the deployed ServiceTime contract's
+ * LVL1 threshold on the economy chain at submit time. We check before sending the tx so a
  * provider below threshold sees a clean error instead of a wasted
  * gas estimate.
  *
- * Address gap: `BonzaiServiceTime` is not yet populated in
- * web3.config.js (web3.config.js → arbitrum.contracts.serviceTime is
- * pending the audit-deploy). Every on-chain call throws a typed
- * `ServiceTimeNotConfigured` error until that lands; UI surfaces hide
- * the corresponding buttons via `isConfigured()`.
+ * The contract address comes from the same economy-chain configuration as
+ * MintPool and ProviderRegistry.
  */
 
 import { ethers } from "ethers";
-import { CONFIG } from "../config/web3.config.js";
+import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { getSigner, getProvider, switchNetwork } from "./web3.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -44,7 +41,7 @@ const SERVICE_TIME_ABI = [
   // Provider self-reports session time after the consumer disconnects.
   // pipelineId maps to a MintPool poolIndex via pipelineToPool().
   "function recordServiceTime(uint8 pipelineId, uint256 secondsServed)",
-  "function recordServiceTimeBatch(uint8[] pipelineIds, uint256[] secondsServed)",
+  "function recordServiceTimeBatch((uint8 pipelineId,uint256 secondsServed)[] records)",
 
   // Claim weighted share of the pool's provider-side after epoch close.
   "function claimProviderRewards(uint256 epochId, uint8 poolIndex)",
@@ -69,7 +66,7 @@ const BONZAI_TOKEN_ABI = [
   "function balanceOf(address) view returns (uint256)",
 ];
 
-const ARBITRUM_CHAIN_ID = 42161;
+const ECONOMY_CHAIN_ID = CONFIG.p2pNetwork.chainId;
 // Default LVL1 threshold — used as a UI-side hint when the contract
 // read fails (e.g., address gap). Real threshold comes from
 // `LVL1_THRESHOLD()` view at submit time.
@@ -82,15 +79,19 @@ const DEFAULT_LVL1_BONZAI = 1000n * 10n ** 18n;
 export class ServiceTimeNotConfigured extends Error {
   constructor() {
     super(
-      "BonzaiServiceTime address is not yet populated in web3.config.js " +
-      "(arbitrum.contracts.serviceTime). Pending the audit deploy.",
+      "BonzaiServiceTime is not configured on the BonzAI economy chain.",
     );
     this.code = "SERVICE_TIME_NOT_CONFIGURED";
   }
 }
 
 function _addr(key) {
-  const a = CONFIG.contracts?.arbitrum?.[key];
+  const addresses = {
+    serviceTime: CONFIG.p2pNetwork?.serviceTimeAddress,
+    mintPool: CONFIG.mintPool?.contractAddress,
+    bonzaiToken: CONFIG.stakingEconomy?.tokenAddress,
+  };
+  const a = addresses[key];
   if (!a || a === ethers.ZeroAddress) return null;
   return a;
 }
@@ -106,7 +107,7 @@ function _requireServiceTime() {
 }
 
 async function _getReadClients() {
-  const provider = await getProvider("arbitrum");
+  const provider = await getProvider(ECONOMY_NETWORK_KEY);
   return {
     serviceTime: new ethers.Contract(_requireServiceTime(), SERVICE_TIME_ABI, provider),
     mintPool:    _addr("mintPool")
@@ -118,7 +119,7 @@ async function _getReadClients() {
 }
 
 async function _getWriteClient() {
-  await switchNetwork("arbitrum");
+  await switchNetwork(ECONOMY_NETWORK_KEY);
   const signer = await getSigner();
   return {
     signer,
@@ -175,7 +176,7 @@ export async function getPendingSummary() {
 }
 
 /**
- * Verify the signer holds enough BONZAI on Arbitrum to record service
+ * Verify the signer satisfies the provider threshold on the economy chain
  * time. Returns { ok, balance, threshold, address }; UI surfaces this
  * before letting the provider attempt submission. Does NOT throw on a
  * config gap — the renderer treats "not configured" as "gating off".
@@ -248,7 +249,9 @@ export async function flushPending() {
   const { serviceTime } = await _getWriteClient();
   const tx = pipelineIds.length === 1
     ? await serviceTime.recordServiceTime(pipelineIds[0], secondsServed[0])
-    : await serviceTime.recordServiceTimeBatch(pipelineIds, secondsServed);
+    : await serviceTime.recordServiceTimeBatch(
+      pipelineIds.map((pipelineId, index) => ({ pipelineId, secondsServed: secondsServed[index] })),
+    );
   const receipt = await tx.wait();
 
   await _truncateLedger(maxTs);
@@ -310,6 +313,6 @@ export async function isEpochFinalized(epochId) {
 // ─── Constants exposed for tests ────────────────────────────────────────
 
 export const __test = {
-  ARBITRUM_CHAIN_ID,
+  ECONOMY_CHAIN_ID,
   DEFAULT_LVL1_BONZAI,
 };

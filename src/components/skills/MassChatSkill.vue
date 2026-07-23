@@ -83,7 +83,7 @@
           <div v-for="(p, i) in savedPrompts" :key="p.id" class="library-card">
             <div class="library-card-body" @click="loadSavedPrompt(p)">
               <div class="bz-meta library-card-meta">
-                {{ new Date(p.savedAt).toLocaleDateString() }} ·
+                {{ $d(p.savedAt, { dateStyle: 'medium' }) }} ·
                 {{ p.models?.length || 0 }} models
               </div>
               <div class="library-card-prompt">
@@ -183,7 +183,7 @@
             <span class="material-symbols-outlined">save</span>
           </button>
           <button
-            class="bz-btn bz-btn--success bz-btn--lg mass-chat-cta"
+            class="bz-btn bz-btn--agent-cta bz-btn--lg mass-chat-cta"
             :class="{ 'bz-btn--running': isRunning }"
             :disabled="
               isRunning || !prompt.trim() || selectedModels.length === 0
@@ -276,7 +276,7 @@
 <script>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import VueMarkdown from "vue-markdown-render";
-import { hasPurchasedSkill, isDevMode } from "../../services/agent.service.js";
+import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 import { listAllLLMs } from "../../skills/flagship.js";
 
 const SKILL_ID = "mass-chat-v1.0.0";
@@ -485,7 +485,7 @@ export default {
     };
 
     const runMassChat = async () => {
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         console.warn("[MassChat] Skill not purchased — execution blocked.");
         return;
       }

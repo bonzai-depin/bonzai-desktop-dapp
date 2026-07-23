@@ -21,7 +21,7 @@
           @click="clearFeed"
           :title="charter.demoMode
             ? 'Wipe the audit log so the next demo run starts fresh'
-            : 'Clear the visible audit history (does not affect goals, issues, or treasury)'"
+            : 'Clear the visible audit history (does not affect outcomes, tasks, or treasury)'"
         >
           <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>
           Clear
@@ -30,8 +30,7 @@
     </div>
 
     <p v-if="!compact" class="muted">
-      Every CEO ping, role action, skill call, and audit entry as it happens. Watch your
-      company think, plan, and ship in real time.
+      See coordinator planning, teammate runs, skill calls, approvals, and outputs as they happen.
     </p>
 
     <hr v-if="!compact" />
@@ -72,7 +71,7 @@
                 {{ roleDisplayName(s.role) }}
               </span>
               <span class="live-entry__action">
-                {{ s.action === 'tickCEO' ? 'Ping CEO' : 'Ping role' }}
+                {{ s.action === 'tickCEO' ? 'Plan next tasks' : 'Run teammate' }}
               </span>
               <span class="live-entry__duration">
                 {{ Math.round((nowTs - s.startedAt) / 1000) }}<small>s</small>
@@ -160,8 +159,8 @@
           {{ charter.demoMode
               ? 'Waiting for the next demo run...'
               : (charter.status === 'paused'
-                  ? 'Company is paused. Resume to see activity.'
-                  : 'Waiting for the next scheduled run. Click Ping CEO to start immediately.')
+                  ? 'This team is paused. Resume to see activity.'
+                  : 'Waiting for the next scheduled run. Click Plan next tasks to start immediately.')
           }}
         </div>
       </div>
@@ -249,6 +248,7 @@
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import companyStore from "../../stores/companyStore.js";
 import BzCloseButton from "../BzCloseButton.vue";
+import { i18n } from "../../i18n/index.js";
 
 export default {
   name: "CompanyLiveFeed",
@@ -286,9 +286,9 @@ export default {
       { id: "all",       label: "All" },
       { id: "llm",       label: "Thoughts" },
       { id: "system",    label: "System" },
-      { id: "issue",     label: "Issues" },
+      { id: "issue",     label: "Tasks" },
       { id: "action",    label: "Actions" },
-      { id: "production",label: "Deliverables" },
+      { id: "production",label: "Outputs" },
       { id: "veto",      label: "Vetoes" },
       { id: "treasury",  label: "Treasury" },
     ];
@@ -422,8 +422,8 @@ export default {
      */
     function formatLLMAction(entry) {
       if (entry.kind === "llm") {
-        if (entry.action === "tickCEO") return "Ping CEO";
-        if (entry.action === "tickRole") return "Ping role";
+        if (entry.action === "tickCEO") return "Plan next tasks";
+        if (entry.action === "tickRole") return "Run teammate";
       }
       return formatAction(entry.action);
     }
@@ -438,7 +438,7 @@ export default {
       if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
       if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
       const d = new Date(stamp);
-      return d.toLocaleString();
+      return d.toLocaleString(i18n.state.locale);
     }
 
     function formatAction(a) {
@@ -462,9 +462,15 @@ export default {
     }
     function contentPreview(row) {
       if (!row) return "";
-      if (typeof row.payload === "string") return row.payload;
+      if (typeof row.payload === "string") return stripReasoningTags(row.payload);
       if (row.blobId) return `${row.pipeline || "media"} artifact saved as ${row.blobExt || "blob"} (${row.blobId})`;
       return row.shareLink || "Artifact recorded.";
+    }
+    function stripReasoningTags(value) {
+      return String(value || "")
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/<\/?(?:think|thinking|reasoning|analysis|reflection)\b[^>]*>/gi, "")
+        .trim();
     }
     function openDetail(entry) {
       selectedEntry.value = entry;
@@ -488,7 +494,7 @@ export default {
         return `${label} Producer`;
       }
       const TITLES = {
-        CEO: "CEO", CFO: "CFO", CPO: "CPO", CMO: "CMO", CSO: "CSO", COO: "COO",
+        CEO: "Coordinator", CFO: "Finance", CPO: "Product", CMO: "Marketing", CSO: "Sales", COO: "Operations",
         GeneralCounsel: "General Counsel", RnDLead: "R&D Lead",
         FieldTech: "Field Tech", Packer: "Packer",
       };
@@ -496,12 +502,11 @@ export default {
     }
 
     /**
-     * Wipe the company's audit log. Goals, issues, treasury, and
-     * production catalog are preserved — this only clears the live-feed
-     * source. Useful for restarting a demo with a clean slate.
+     * Wipe the team's audit log. Outcomes, tasks, treasury, and
+     * outputs are preserved — this only clears the live-feed source.
      */
     async function clearFeed() {
-      if (!confirm("Clear the live feed?\n\nThis wipes the audit log only. Your goals, tasks, treasury, and deliverables stay intact.")) return;
+      if (!confirm("Clear the live feed?\n\nThis wipes the audit log only. Your outcomes, tasks, treasury, and outputs stay intact.")) return;
       try { await store.clearAudit(); }
       catch (err) { alert("Could not clear feed: " + (err.message || err)); }
     }

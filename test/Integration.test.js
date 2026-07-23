@@ -39,6 +39,14 @@ describe("Integration Tests", function () {
     const genesis = await mintPool.genesisTime();
     await time.increaseTo(genesis);
 
+    const BonzaiStakingVault = await ethers.getContractFactory("BonzaiStakingVault");
+    const stakingThresholds = POOL_THRESHOLDS.map((value) => ethers.parseEther(String(value)));
+    const stakingVault = await BonzaiStakingVault.deploy(
+      await bonzaiToken.getAddress(),
+      stakingThresholds,
+    );
+    await mintPool.setStakingVault(await stakingVault.getAddress());
+
     // Collectibles impl + factory (factory now takes unlockContract too)
     const BonzaiCollectibles = await ethers.getContractFactory("BonzaiCollectibles");
     const implementation = await BonzaiCollectibles.deploy();
@@ -54,6 +62,7 @@ describe("Integration Tests", function () {
 
     // Authorize factory on MintPool so it can register clones as authorized minters
     await mintPool.setCollectiblesFactory(await factory.getAddress());
+    await factory.setStakingVault(await stakingVault.getAddress());
 
     // Set the factory itself as a contentContract so it can recordMint when clones mint
     // (Actually each clone is added via setAuthorizedMinter inside getOrCreateCollection.)
@@ -77,8 +86,12 @@ describe("Integration Tests", function () {
     // Mint BONZAI to users
     await bonzaiToken.mint(user1.address, ethers.parseEther("50000"));
     await bonzaiToken.mint(user2.address, ethers.parseEther("10000"));
+    await bonzaiToken.connect(user1).approve(await stakingVault.getAddress(), ethers.MaxUint256);
+    await bonzaiToken.connect(user2).approve(await stakingVault.getAddress(), ethers.MaxUint256);
+    await stakingVault.connect(user1).stake(ethers.parseEther("50000"), 0);
+    await stakingVault.connect(user2).stake(ethers.parseEther("10000"), 0);
 
-    return { bonzaiToken, mintPool, content, content2, factory, splitter, owner, treasury, user1, user2 };
+    return { bonzaiToken, mintPool, stakingVault, content, content2, factory, splitter, owner, treasury, user1, user2 };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -142,13 +155,21 @@ describe("Integration Tests", function () {
 
     it("routes mints of different content types into separate buckets", async function () {
       const { content, mintPool, user1 } = await loadFixture(deployIntegration);
-      await mintContent(content, user1, CONTENT_TYPE.TEXT);
-      await mintContent(content, user1, CONTENT_TYPE.IMAGE);
-      await mintContent(content, user1, CONTENT_TYPE.VIDEO);
+      for (let contentType = 0; contentType < NUM_POOLS; contentType++) {
+        await mintContent(content, user1, contentType);
+      }
       const arr = await mintPool.getEpochHolderDeposits(0);
-      expect(arr[CONTENT_TYPE.TEXT]).to.be.gt(0);
-      expect(arr[CONTENT_TYPE.IMAGE]).to.be.gt(0);
-      expect(arr[CONTENT_TYPE.VIDEO]).to.be.gt(0);
+      for (let contentType = 0; contentType < NUM_POOLS; contentType++) {
+        expect(arr[contentType]).to.be.gt(0);
+      }
+    });
+
+    it("enforces the staking tier for each media type on-chain", async function () {
+      const { content2, user2 } = await loadFixture(deployIntegration);
+      await mintContent(content2, user2, CONTENT_TYPE.IMAGE);
+      await expect(
+        mintContent(content2, user2, CONTENT_TYPE.VIDEO),
+      ).to.be.revertedWith("Insufficient BONZAI stake");
     });
 
     it("records a per-(epoch,category,user) mint count via recordMint, satisfying the activity gate", async function () {

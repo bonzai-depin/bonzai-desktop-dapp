@@ -3,11 +3,6 @@ export const BonzaiSkillRegistryABI = [
     "inputs": [
       {
         "internalType": "address",
-        "name": "_treasury",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
         "name": "_skillOwnershipContract",
         "type": "address"
       }
@@ -16,24 +11,23 @@ export const BonzaiSkillRegistryABI = [
     "type": "constructor"
   },
   {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "user",
-        "type": "address"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "AlreadyPurchased",
+    "inputs": [],
+    "name": "AdminDeactivated",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "EmptyString",
+    "name": "CompanionTokenRequired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DirectPaymentsDisabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "EmptyField",
     "type": "error"
   },
   {
@@ -47,67 +41,13 @@ export const BonzaiSkillRegistryABI = [
     "type": "error"
   },
   {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "sent",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "required",
-        "type": "uint256"
-      }
-    ],
-    "name": "IncorrectPayment",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "category",
-        "type": "string"
-      }
-    ],
+    "inputs": [],
     "name": "InvalidCategory",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "InvalidIPFSHash",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "caller",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "author",
-        "type": "address"
-      }
-    ],
     "name": "NotAuthor",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "user",
-        "type": "address"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "NotPurchased",
     "type": "error"
   },
   {
@@ -134,113 +74,28 @@ export const BonzaiSkillRegistryABI = [
   },
   {
     "inputs": [],
-    "name": "ReentrancyGuardReentrantCall",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "fee",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "max",
-        "type": "uint256"
-      }
-    ],
-    "name": "RunningFeeTooHigh",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
     "name": "SkillAlreadyExists",
     "type": "error"
   },
   {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "SkillNotActive",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "SkillNotFound",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "author",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "count",
-        "type": "uint256"
-      }
-    ],
-    "name": "TooManySkills",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "recipient",
-        "type": "address"
-      }
-    ],
-    "name": "TransferFailed",
+    "inputs": [],
+    "name": "SkillInactive",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "UseCorrectFunction",
+    "name": "SkillNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TooManySkills",
     "type": "error"
   },
   {
     "inputs": [],
     "name": "ZeroAddress",
     "type": "error"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      }
-    ],
-    "name": "CoOwnerShareFallbackToTreasury",
-    "type": "event"
   },
   {
     "anonymous": false,
@@ -292,56 +147,7 @@ export const BonzaiSkillRegistryABI = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "PurchaseForfeited",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "executor",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "author",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "fee",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "coOwnerShare",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "authorShare",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
+        "name": "executionNumber",
         "type": "uint256"
       }
     ],
@@ -354,7 +160,7 @@ export const BonzaiSkillRegistryABI = [
       {
         "indexed": true,
         "internalType": "address",
-        "name": "oldContract",
+        "name": "previousContract",
         "type": "address"
       },
       {
@@ -365,61 +171,6 @@ export const BonzaiSkillRegistryABI = [
       }
     ],
     "name": "SkillOwnershipContractUpdated",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "buyer",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "author",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "price",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "coOwnerShare",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "authorShare",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "address",
-        "name": "paymentToken",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
-      }
-    ],
-    "name": "SkillPurchased",
     "type": "event"
   },
   {
@@ -457,27 +208,9 @@ export const BonzaiSkillRegistryABI = [
       },
       {
         "indexed": false,
-        "internalType": "string",
-        "name": "ipfsHash",
-        "type": "string"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "purchasePrice",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "runningFee",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
+        "internalType": "bool",
+        "name": "tokenGated",
+        "type": "bool"
       }
     ],
     "name": "SkillRegistered",
@@ -495,14 +228,8 @@ export const BonzaiSkillRegistryABI = [
       {
         "indexed": false,
         "internalType": "bool",
-        "name": "isActive",
+        "name": "active",
         "type": "bool"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
       }
     ],
     "name": "SkillStatusChanged",
@@ -525,21 +252,9 @@ export const BonzaiSkillRegistryABI = [
       },
       {
         "indexed": false,
-        "internalType": "uint256",
-        "name": "purchasePrice",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "runningFee",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
+        "internalType": "bool",
+        "name": "tokenGated",
+        "type": "bool"
       }
     ],
     "name": "SkillUpdated",
@@ -557,36 +272,11 @@ export const BonzaiSkillRegistryABI = [
       {
         "indexed": false,
         "internalType": "bool",
-        "name": "isVerified",
+        "name": "verified",
         "type": "bool"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "timestamp",
-        "type": "uint256"
       }
     ],
-    "name": "SkillVerificationChanged",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "oldTreasury",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "newTreasury",
-        "type": "address"
-      }
-    ],
-    "name": "TreasuryUpdated",
+    "name": "SkillVerified",
     "type": "event"
   },
   {
@@ -605,19 +295,6 @@ export const BonzaiSkillRegistryABI = [
   {
     "stateMutability": "payable",
     "type": "fallback"
-  },
-  {
-    "inputs": [],
-    "name": "MAX_RUNNING_FEE",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
   },
   {
     "inputs": [],
@@ -641,19 +318,6 @@ export const BonzaiSkillRegistryABI = [
       }
     ],
     "name": "adminDeactivateSkill",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "adminReactivateSkill",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -717,43 +381,20 @@ export const BonzaiSkillRegistryABI = [
   {
     "inputs": [
       {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "forfeitPurchase",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "string",
-        "name": "name",
-        "type": "string"
-      },
-      {
-        "internalType": "string",
-        "name": "version",
-        "type": "string"
-      },
-      {
         "internalType": "address",
         "name": "author",
         "type": "address"
       }
     ],
-    "name": "generateSkillId",
+    "name": "getAuthorSkills",
     "outputs": [
       {
-        "internalType": "bytes32",
+        "internalType": "bytes32[]",
         "name": "",
-        "type": "bytes32"
+        "type": "bytes32[]"
       }
     ],
-    "stateMutability": "pure",
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -799,14 +440,9 @@ export const BonzaiSkillRegistryABI = [
             "type": "string"
           },
           {
-            "internalType": "uint256",
-            "name": "purchasePrice",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "runningFee",
-            "type": "uint256"
+            "internalType": "bool",
+            "name": "tokenGated",
+            "type": "bool"
           },
           {
             "internalType": "bool",
@@ -825,17 +461,7 @@ export const BonzaiSkillRegistryABI = [
           },
           {
             "internalType": "uint256",
-            "name": "totalPurchases",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
             "name": "totalExecutions",
-            "type": "uint256"
-          },
-          {
-            "internalType": "uint256",
-            "name": "totalRevenue",
             "type": "uint256"
           },
           {
@@ -860,25 +486,6 @@ export const BonzaiSkillRegistryABI = [
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "author",
-        "type": "address"
-      }
-    ],
-    "name": "getSkillsByAuthor",
-    "outputs": [
-      {
-        "internalType": "bytes32[]",
-        "name": "",
-        "type": "bytes32[]"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
         "internalType": "uint256",
         "name": "offset",
         "type": "uint256"
@@ -893,68 +500,8 @@ export const BonzaiSkillRegistryABI = [
     "outputs": [
       {
         "internalType": "bytes32[]",
-        "name": "",
+        "name": "page",
         "type": "bytes32[]"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getStats",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "_totalSkills",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_totalTreasuryFees",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "_totalTreasuryRunningFees",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getTotalSkills",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "",
-        "type": "bytes32"
-      }
-    ],
-    "name": "hasPurchased",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "",
-        "type": "bool"
       }
     ],
     "stateMutability": "view",
@@ -999,24 +546,6 @@ export const BonzaiSkillRegistryABI = [
         "internalType": "bytes32",
         "name": "skillId",
         "type": "bytes32"
-      },
-      {
-        "internalType": "uint256",
-        "name": "maxPrice",
-        "type": "uint256"
-      }
-    ],
-    "name": "purchaseSkill",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
       }
     ],
     "name": "reactivateSkill",
@@ -1034,7 +563,7 @@ export const BonzaiSkillRegistryABI = [
     ],
     "name": "recordExecution",
     "outputs": [],
-    "stateMutability": "payable",
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -1060,14 +589,9 @@ export const BonzaiSkillRegistryABI = [
         "type": "string"
       },
       {
-        "internalType": "uint256",
-        "name": "purchasePrice",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "runningFee",
-        "type": "uint256"
+        "internalType": "bool",
+        "name": "tokenGated",
+        "type": "bool"
       }
     ],
     "name": "registerSkill",
@@ -1091,8 +615,26 @@ export const BonzaiSkillRegistryABI = [
   {
     "inputs": [
       {
+        "internalType": "string",
+        "name": "category",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "valid",
+        "type": "bool"
+      }
+    ],
+    "name": "setCategoryValidity",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
-        "name": "_skillOwnershipContract",
+        "name": "newContract",
         "type": "address"
       }
     ],
@@ -1104,25 +646,17 @@ export const BonzaiSkillRegistryABI = [
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "_treasury",
-        "type": "address"
-      }
-    ],
-    "name": "setTreasury",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
+        "internalType": "bytes32",
+        "name": "skillId",
+        "type": "bytes32"
+      },
       {
-        "internalType": "address",
-        "name": "_unlock",
-        "type": "address"
+        "internalType": "bool",
+        "name": "verified",
+        "type": "bool"
       }
     ],
-    "name": "setUnlockContract",
+    "name": "setSkillVerified",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -1181,14 +715,9 @@ export const BonzaiSkillRegistryABI = [
         "type": "string"
       },
       {
-        "internalType": "uint256",
-        "name": "purchasePrice",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "runningFee",
-        "type": "uint256"
+        "internalType": "bool",
+        "name": "tokenGated",
+        "type": "bool"
       },
       {
         "internalType": "bool",
@@ -1207,17 +736,7 @@ export const BonzaiSkillRegistryABI = [
       },
       {
         "internalType": "uint256",
-        "name": "totalPurchases",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
         "name": "totalExecutions",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "totalRevenue",
         "type": "uint256"
       },
       {
@@ -1236,20 +755,7 @@ export const BonzaiSkillRegistryABI = [
   },
   {
     "inputs": [],
-    "name": "totalTreasuryFees",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "totalTreasuryRunningFees",
+    "name": "totalSkills",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1275,46 +781,7 @@ export const BonzaiSkillRegistryABI = [
   },
   {
     "inputs": [],
-    "name": "treasury",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "unlockContract",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
     "name": "unpause",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "unverifySkill",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -1332,14 +799,9 @@ export const BonzaiSkillRegistryABI = [
         "type": "string"
       },
       {
-        "internalType": "uint256",
-        "name": "purchasePrice",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "runningFee",
-        "type": "uint256"
+        "internalType": "bool",
+        "name": "tokenGated",
+        "type": "bool"
       }
     ],
     "name": "updateSkill",
@@ -1360,7 +822,7 @@ export const BonzaiSkillRegistryABI = [
         "type": "bytes32"
       }
     ],
-    "name": "userHasPurchased",
+    "name": "userHasAccess",
     "outputs": [
       {
         "internalType": "bool",
@@ -1388,19 +850,6 @@ export const BonzaiSkillRegistryABI = [
       }
     ],
     "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "skillId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "verifySkill",
-    "outputs": [],
-    "stateMutability": "nonpayable",
     "type": "function"
   },
   {

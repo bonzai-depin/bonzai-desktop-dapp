@@ -62,6 +62,7 @@ const state = reactive({
   error: null,
   launchingCompanionId: null,
 });
+const economyNetwork = () => ({ 1: 'ethereum', 42161: 'arbitrum', 8453: 'base' }[Number(CONFIG.contributionEconomy?.chainId || CONFIG.companionTokenFactory?.chainId || 1)] || 'ethereum');
 
 /**
  * Get factory contract instance
@@ -74,7 +75,7 @@ async function getFactoryContract(withSigner = false) {
     throw new Error('Companion token factory not deployed. Set CONFIG.companionTokenFactory.contractAddress');
   }
 
-  const provider = await web3Service.getProvider('base');
+  const provider = await web3Service.getProvider(economyNetwork());
 
   if (withSigner) {
     const browserProvider = await web3Service.getBrowserProvider();
@@ -121,7 +122,7 @@ async function launchToken(companion, ethAmount) {
 
     if (currentChainId !== targetChainId) {
       console.log('[CompanionToken] Switching to Ethereum network...');
-      await web3Service.switchNetwork('base');
+      await web3Service.switchNetwork(economyNetwork());
     }
 
     const factory = await getFactoryContract(true);
@@ -256,7 +257,7 @@ async function getCompanionToken(nftTokenId) {
  */
 async function getTokenInfo(tokenAddress) {
   try {
-    const provider = await web3Service.getProvider('base');
+    const provider = await web3Service.getProvider(economyNetwork());
     const token = new ethers.Contract(tokenAddress, TOKEN_ABI, provider);
 
     const [name, symbol, decimals, imageURI, agentWallet, companionId] = await token.getTokenInfo();

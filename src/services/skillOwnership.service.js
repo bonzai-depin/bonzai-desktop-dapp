@@ -5,13 +5,13 @@
  * Handles registration, deregistration, revenue claiming, and cross-chain attestation.
  *
  * Revenue flow (USDC-only marketplace):
- *   SkillRegistry.purchaseSkill() → 80% USDC → SkillOwnership.distributeRevenueUSDC()
+ *   SkillOwnership registrations → companion-token access to compatible skills
  *   → weighted by BONZAI_balance * profileScore → credited to companion wallets
  *   → claimable via claimRevenueUSDC().
  */
 
 import { ethers } from 'ethers';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
 import { agentWalletService } from './agentWallet.service.js';
 import { owsService } from './ows.service.js';
@@ -103,7 +103,7 @@ async function getContract(withSigner = false) {
     return new ethers.Contract(contractAddress, SKILL_OWNERSHIP_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider('base');
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
   return new ethers.Contract(contractAddress, SKILL_OWNERSHIP_ABI, provider);
 }
 
@@ -566,7 +566,7 @@ export async function requestAttestation(skillId, companionTokenId, companionWal
 
   const signer = await getAttestationSigner();
   const deadline = Math.floor(Date.now() / 1000) + 300; // 5 minutes
-  const chainId = CONFIG.skillRegistry.chainId || 8453; // Base
+  const chainId = CONFIG.skillRegistry.chainId;
 
   // Encode exactly as the Solidity contract does with abi.encodePacked
   const messageHash = ethers.keccak256(

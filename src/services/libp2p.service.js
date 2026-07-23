@@ -283,7 +283,6 @@ class BonzaiP2PNode {
    * @param {Object} request Inference request
    * @param {string} request.pipeline - Pipeline name (e.g. 'image_turbo', 'llm')
    * @param {Record<string, unknown>} request.params - Pipeline-specific parameters
-   * @param {string} [request.paymentTxHash] - x402 payment transaction hash
    * @returns {Promise<{ok: boolean, result?: Record<string, unknown>, error?: string}>} Inference response
    */
   async sendInferenceRequest(peerId, request) {

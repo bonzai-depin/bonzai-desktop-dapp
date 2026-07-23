@@ -3,17 +3,17 @@
   <div class="bz-tab-shell">
     <GenerativeWorkspace
       v-model="mode"
-      eyebrow="Create"
-      title="Generative Image"
+      :eyebrow="$t('create.eyebrow')"
+      :title="$t('create.imageTitle')"
       icon="image"
       :modes="imageModeItems"
       :progress="workspaceProgress"
-      history-label="Generation History"
+      :history-label="$t('create.history')"
       :disabled="isLoading"
     >
       <template #modebar-extra>
         <div class="bz-image-quality">
-          <span class="bz-eyebrow">Resolution</span>
+          <span class="bz-eyebrow">{{ $t('create.resolution') }}</span>
           <ModeChipBar
             v-model="quality"
             :items="qualityModeItems"
@@ -35,7 +35,7 @@
             </div>
             <div class="bz-img-notice__body">
               <p class="bz-img-notice__title fira-sans-condensed-black-italic">
-                Download Required
+                {{ $t('create.downloadRequired') }}
               </p>
               <p class="bz-img-notice__text">
                 This image mode needs local model files before it can run.
@@ -74,7 +74,7 @@
             </div>
             <div class="bz-img-notice__body">
               <p class="bz-img-notice__title fira-sans-condensed-black-italic">
-                Generation Failed
+                {{ $t('create.generationFailed') }}
               </p>
               <p class="bz-img-notice__text">{{ generation.error }}</p>
             </div>
@@ -83,7 +83,7 @@
           <div v-if="downloads && downloads.active" class="bz-img-download" role="status">
             <div class="bz-img-download__head">
               <span class="bz-img-download__title fira-sans-condensed-black-italic">
-                Downloading
+                {{ $t('create.downloading') }}
               </span>
               <span class="bz-img-download__percent fira-sans-condensed-black-italic">
                 {{ Math.round(downloads.total_progress || 0) }}%
@@ -221,8 +221,8 @@
           v-else
           size="small"
           icon="image"
-          title="No images yet"
-          subtitle="Generated images will appear here with reuse, edit, animate, mint, and download actions."
+          :title="$t('create.noImages')"
+          :subtitle="$t('create.noImagesCopy')"
           :show-orb="false"
         />
 
@@ -885,11 +885,16 @@ export default {
       const allTasksComplete =
         tasksList.length > 0 &&
         tasksList.every((t) => t.status === "completed");
-      if (allTasksComplete && downloads.status === "downloading") {
+      if (
+        allTasksComplete &&
+        !["completed", "failed", "cancelled"].includes(downloads.status)
+      ) {
         console.log(
           "[Downloads] All tasks completed, forcing status to completed",
         );
         downloads.status = "completed";
+        downloads.total_progress = 100;
+        downloads.progress = 100;
       }
 
       const wasActive = downloads.active;
@@ -965,7 +970,7 @@ export default {
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
-      downloads.status = downloads.status || "downloading";
+      downloads.status = "downloading";
       try {
         downloadsSocket.value.emit("subscribe", { pipeline_id: pipelineId });
       } catch {}
@@ -1798,7 +1803,7 @@ export default {
         { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",
           label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
           title: "Reuse this prompt", variant: "default" },
-        { id: "mint",     icon: minted ? "check_circle" : "token",
+        { id: "mint", icon: minted ? "check_circle" : "token",
           label: minted ? "Minted" : "Mint",
           variant: minted ? "success" : "default", disabled: minted },
         { id: "edit",     icon: "edit",       label: "Edit",      variant: "warning",  disabled: !hasImage,
@@ -2042,7 +2047,7 @@ export default {
 .bz-img-notice__notes,
 .bz-img-download__tasks {
   padding: 0;
-  margin: var(--bz-space-3) 0 0;
+  margin: var(--bz-space-4) 0 0;
   list-style: none;
 }
 

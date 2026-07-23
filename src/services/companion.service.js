@@ -2,12 +2,12 @@
  * BonzAI Companion NFT Service
  *
  * Manages companion NFTs on Ethereum (ERC-721 + ERC-8004 Identity Registry).
- * Flat 0.25 ETH mint price, 10K supply cap, no rarity tiers.
+ * Atomic NFT + companion-token mint with permanent initial liquidity.
  */
 
 import { ethers } from 'ethers';
 import { reactive } from 'vue';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
 import { luksoService } from './lukso.service.js';
 import { agentWalletService } from './agentWallet.service.js';
@@ -40,6 +40,7 @@ const COMPANION_BASE_ABI = [
   'function getCreatorCompanions(address creator) view returns (uint256[])',
   'function getOwnerCompanions(address owner) view returns (uint256[])',
   'function mintPrice() view returns (uint256)',
+  'function tokenLiquidityAmount() view returns (uint256)',
   'function getSpendingProfile(uint256 tokenId) view returns (uint8[12])',
 
   // ERC-8004 View functions
@@ -49,7 +50,7 @@ const COMPANION_BASE_ABI = [
   'function getAgentIdentity(uint256 agentId) view returns (string uri, address wallet, address owner)',
 
   // Write functions
-  'function mintCompanion(string agentURI, bytes32 personalityHash, uint96 spendingProfile, uint8 gender, address agentWallet) payable returns (uint256)',
+  'function mintCompanionWithToken(string agentURI, bytes32 personalityHash, uint96 spendingProfile, uint8 gender, address agentWallet, string tokenName, string tokenSymbol) payable returns (uint256)',
   'function setAgentURI(uint256 agentId, string newURI)',
   'function setAgentWallet(uint256 agentId, address newWallet)',
   'function unsetAgentWallet(uint256 agentId)',
@@ -61,6 +62,7 @@ const COMPANION_BASE_ABI = [
 
   // Events
   'event CompanionMinted(uint256 indexed tokenId, address indexed creator, uint8 gender, uint96 indexed spendingProfile, string metadataURI)',
+  'event CompanionEconomyLaunched(uint256 indexed tokenId, address indexed token, bytes32 indexed poolId, uint256 liquidity)',
   'event Registered(uint256 indexed agentId, string agentURI, address indexed owner)',
   'event URIUpdated(uint256 indexed agentId, string newURI, address indexed updatedBy)',
   'event AgentWalletSet(uint256 indexed agentId, address indexed newWallet, address indexed setBy)',
@@ -151,13 +153,13 @@ function getAvailableNetworks() {
       chainId: CONFIG.companionNFT_BASE?.chainId || 1,
       standard: 'ERC-8004',
       currency: 'ETH',
-      mintPrice: '0.25',
+      mintPrice: '0.30',
       contractAddress: CONFIG.companionNFT_BASE?.contractAddress,
       available: !!CONFIG.companionNFT_BASE?.contractAddress,
-      x402Support: true,
+      x402Support: false,
       agentWalletProvider: 'local',
-      description: 'Trustless Agent NFT — 0.25 ETH flat',
-      features: ['Self-custody agent wallet', 'Spending profile on-chain', 'Native x402'],
+      description: 'Agent NFT, ERC-20 token, and permanent Uniswap liquidity in one mint',
+      features: ['Self-custody revenue wallet', 'Spending profile on-chain', 'Protocol revenue capture'],
     },
   ];
 }
@@ -183,7 +185,7 @@ async function mintCompanionMultiNetwork(params, network = 'base') {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MINTING — ETHEREUM (Primary: 0.25 ETH flat)
+// MINTING — ECONOMY CHAIN (0.30 ETH including token liquidity)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -197,7 +199,7 @@ function packSpendingProfile(habits) {
 
 /**
  * Mint companion on Ethereum with local self-custody agent wallet.
- * Flat 0.25 ETH mint price.
+ * Atomic companion, token, and permanent-liquidity mint at 0.30 ETH.
  */
 async function mintCompanionBase(params) {
   try {
@@ -226,7 +228,7 @@ async function mintCompanionBase(params) {
     const currentChainId = web3Service.state.currentChainId;
     if (currentChainId !== chainId) {
       console.log('[CompanionService] Switching to Ethereum...');
-      await web3Service.switchNetwork('base');
+      await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
     }
 
     // Get signer
@@ -246,7 +248,7 @@ async function mintCompanionBase(params) {
     try {
       ethMintPrice = await contract.mintPrice();
     } catch {
-      ethMintPrice = ethers.parseEther(config.mintPrice || "0.25");
+      ethMintPrice = ethers.parseEther(config.mintPrice || "0.30");
     }
 
     const ethBalance = await provider.getBalance(userAddress);
@@ -264,12 +266,20 @@ async function mintCompanionBase(params) {
 
     // Mint with flat ETH payment
     console.log(`[CompanionService] Minting BonzaiCompanion on Ethereum for ${ethers.formatEther(ethMintPrice)} ETH...`);
-    const tx = await contract.mintCompanion(
+    const tokenName = String(params.firstName || params.name || '').trim().split(/\s+/)[0];
+    const tokenSymbol = tokenName.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!tokenName || !tokenSymbol) {
+      throw new Error('A first name is required to issue the companion token');
+    }
+
+    const tx = await contract.mintCompanionWithToken(
       agentUri,
       personalityBytes,
       spendingProfile,
       params.gender || 0,
       agentWallet.address,
+      tokenName,
+      tokenSymbol,
       { value: ethMintPrice }
     );
 
@@ -278,12 +288,17 @@ async function mintCompanionBase(params) {
 
     // Find token ID from event
     let tokenId = null;
+    let tokenAddress = null;
+    let poolId = null;
     for (const log of receipt.logs) {
       try {
         const parsed = contract.interface.parseLog(log);
         if (parsed?.name === 'CompanionMinted' || parsed?.name === 'Registered') {
           tokenId = parsed.args.tokenId?.toString() || parsed.args.agentId?.toString();
-          if (tokenId) break;
+        }
+        if (parsed?.name === 'CompanionEconomyLaunched') {
+          tokenAddress = parsed.args.token;
+          poolId = parsed.args.poolId;
         }
       } catch { /* skip non-matching logs */ }
     }
@@ -297,7 +312,7 @@ async function mintCompanionBase(params) {
         const traitValues = [
           ethers.toUtf8Bytes(OASF_SKILLS.map(s => s.id).join(',')),
           ethers.toUtf8Bytes(domains.map(d => d.id).join(',')),
-          ethers.toUtf8Bytes('true'),
+          ethers.toUtf8Bytes('false'),
           ethers.toUtf8Bytes('0.8'),
         ];
         const metaTx = await contract.setMetadataBatch(tokenId, traitKeys, traitValues);
@@ -316,8 +331,11 @@ async function mintCompanionBase(params) {
       standard: 'ERC-8004',
       agentWallet: agentWallet.address,
       agentWalletProvider: 'local',
-      x402Support: true,
+      x402Support: false,
       spendingHabits,
+      tokenAddress,
+      poolId,
+      tokenSymbol,
     };
   } catch (e) {
     console.error('[CompanionService] Ethereum mint failed:', e);
@@ -401,7 +419,7 @@ function buildERC8004RegistrationWithSpending(params, spendingHabits = {}) {
         version: '1.0.0',
       },
     ],
-    x402Support: true,
+    x402Support: false,
     active: true,
     supportedTrust: ['reputation', 'validation'],
     attributes,
@@ -703,7 +721,7 @@ async function loadOwnedCompanions(walletAddress) {
   }
 
   try {
-    const provider = await web3Service.getProvider('base');
+    const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
     const contract = new ethers.Contract(config.contractAddress, COMPANION_BASE_ABI, provider);
 
     const tokenIds = await contract.getOwnerCompanions(walletAddress);
@@ -888,7 +906,7 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
       const traitValues = [
         ethers.toUtf8Bytes(OASF_SKILLS.map(s => s.id).join(',')),
         ethers.toUtf8Bytes(domains.map(d => d.id).join(',')),
-        ethers.toUtf8Bytes('true'),
+          ethers.toUtf8Bytes('false'),
         ethers.toUtf8Bytes('0.8'),
       ];
       const metaTx = await contract.setMetadataBatch(tokenId, traitKeys, traitValues);

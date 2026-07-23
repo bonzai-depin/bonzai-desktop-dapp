@@ -19,9 +19,7 @@
           All levels unlocked.
         </template>
         <template v-else>
-          Hold {{ holdingRequired.toLocaleString() }}+ BONZAI
-          <span class="bz-access__or">or</span>
-          unlock all levels for {{ unlockPrice }} ETH.
+          Stake {{ $n(holdingRequired) }}+ BONZAI to unlock this minting level.
         </template>
       </p>
     </div>
@@ -47,31 +45,14 @@
         Checking&hellip;
       </span>
 
-      <!-- Buy BONZAI -->
-      <a
+      <button
         v-else-if="!holdingMet && !allLevelsUnlocked"
         class="bz-btn bz-btn--ghost bz-access__cta"
-        :href="buyLink"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        <span class="material-symbols-outlined" aria-hidden="true">shopping_cart</span>
-        Buy BONZAI
-      </a>
-
-      <!-- Unlock All Levels with ETH -->
-      <button
-        v-if="isConnected && !isCheckingLevels && !allLevelsUnlocked && canUnlock"
         type="button"
-        class="bz-btn bz-btn--primary bz-access__cta"
-        :disabled="isUnlocking"
-        @click="unlockAllLevels"
-        :title="`Pay ${unlockPrice} ETH on Ethereum to unlock all 6 levels permanently`"
+        @click="openStaking"
       >
-        <span class="material-symbols-outlined" aria-hidden="true">
-          {{ isUnlocking ? "hourglass_empty" : "lock_open" }}
-        </span>
-        {{ isUnlocking ? (unlockStatus || "Unlocking…") : "Unlock everything" }}
+        <span class="material-symbols-outlined" aria-hidden="true">savings</span>
+        Stake BONZAI
       </button>
     </div>
   </div>
@@ -80,13 +61,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from "vue";
 import { useBonzaiWeb3 } from "../composables/useBonzaiWeb3.js";
-import { CONFIG } from "../config/web3.config.js";
-import {
-  levelService,
-  checkAllLevels,
-  canUnlockWithEth,
-  unlockAllWithEth,
-} from "../services/level.service.js";
+import { levelService, checkAllLevels } from "../services/level.service.js";
 
 const props = defineProps({
   level: {
@@ -116,14 +91,8 @@ const levelStatus = computed(() => levels.value[props.level] || {});
 const holdingMet = computed(() => levelStatus.value.holdingMet);
 
 // ETH unlock state
-const isUnlocking = ref(false);
 const isCheckingLevels = ref(false);
-const unlockPrice = computed(() => levelService.state.unlockPrice || 1.0);
 const allLevelsUnlocked = computed(() => levelService.state.allLevelsUnlocked);
-const canUnlock = computed(() => {
-  const { canUnlock } = canUnlockWithEth();
-  return canUnlock;
-});
 
 // Access is from token holdings OR ETH unlock
 const hasAccess = computed(
@@ -138,54 +107,12 @@ const iconName = computed(() => {
 });
 
 // Links
-const buyLink = CONFIG.links.buyBonzai;
-
 // Actions
 const connect = async () => {
   await doConnect();
 };
 
-const unlockStatus = ref("");
-
-const unlockAllLevels = async () => {
-  if (isUnlocking.value) return;
-
-  isUnlocking.value = true;
-  unlockStatus.value = "";
-
-  try {
-    const result = await unlockAllWithEth((status) => {
-      switch (status) {
-        case "switching_network":
-          unlockStatus.value = "Switching to Ethereum…";
-          break;
-        case "awaiting_payment":
-          unlockStatus.value = "Confirm in your wallet…";
-          break;
-        case "confirming":
-          unlockStatus.value = "Submitted — waiting…";
-          break;
-        default:
-          unlockStatus.value = status;
-      }
-    });
-
-    if (result.success) {
-      unlockStatus.value = "Success — all levels unlocked.";
-      await checkAllLevels();
-    } else {
-      console.error("[AccessRequirements] Unlock failed:", result.error);
-      unlockStatus.value = "";
-      alert(`Unlock failed: ${result.error}`);
-    }
-  } catch (e) {
-    console.error("[AccessRequirements] Unlock error:", e);
-    unlockStatus.value = "";
-    alert(`Unlock error: ${e.message}`);
-  } finally {
-    isUnlocking.value = false;
-  }
-};
+const openStaking = () => window.dispatchEvent(new CustomEvent("bonzai:set-mode", { detail: "economy" }));
 
 watch(
   hasAccess,

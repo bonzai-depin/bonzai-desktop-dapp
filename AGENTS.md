@@ -195,7 +195,7 @@ All LLM inference goes through OpenClaw's OpenAI-compatible API at `/v1/chat/com
 | Pipeline | Endpoint | Description |
 |----------|----------|-------------|
 | `image_turbo` | `/image/turbo` | Fast image generation (FLUX Klein) |
-| `image_quality` | `/image/quality` | High quality images (FLUX Krea) |
+| `image_quality` | `/image/quality` | High quality images (Z-Image Turbo) |
 | `image_standard` | `/image/standard` | Standard diffusion (SDXL + LoRA, uncensored) |
 | `image_advanced` | `/image/advanced` | Advanced generation (Z-Image Turbo) |
 | `audio_turbo` | `/audio/turbo` | Fast TTS (Kokoro) |

@@ -36,6 +36,8 @@ import * as embedAdapter from "../db/embed-adapter-llamacpp.js";
 import * as skillsRepo from "../db/repos/skills.js";
 import * as socialRepo from "../db/repos/social.js";
 import * as web3Repo from "../db/repos/web3.js";
+import * as memoryRepo from "../db/repos/memory.js";
+import * as jobsRepo from "../db/repos/jobs.js";
 
 /**
  * Send a "table changed" event to every active renderer. The store's
@@ -310,6 +312,41 @@ export function registerDbIpc() {
   ipcMain.handle("db:companions:memoryClear", (_e, companionId) => { companionsRepo.memoryClear(companionId); return { ok: true }; });
   ipcMain.handle("db:companions:memoryBulkInsert", (_e, rows) => ({ inserted: companionsRepo.memoryBulkInsert(rows) }));
 
+  // ─── linked local memory graph ───────────────────────────────────
+  ipcMain.handle("db:memory:exists", (_e, scope, id) => memoryRepo.exists(scope, id));
+  ipcMain.handle("db:memory:load", (_e, scope, id) => memoryRepo.load(scope, id));
+  ipcMain.handle("db:memory:save", (_e, memory) => {
+    const row = memoryRepo.save(memory);
+    broadcast("db:memory:changed", { scope: memory.scope, id: memory.id });
+    return row;
+  });
+  ipcMain.handle("db:memory:recall", async (_e, scope, id, query, limit) => {
+    let semanticIds = [];
+    try {
+      const vector = await embedWorker.embedQuery(query);
+      if (vector) semanticIds = embeddingsRepo.search(vector, { sourceTable: "memory_notes", k: Math.max(20, limit || 12) }).map((r) => r.sourceId);
+    } catch (err) {
+      console.warn("[memory] semantic recall unavailable:", err?.message);
+    }
+    return memoryRepo.recall(scope, id, query, limit, semanticIds);
+  });
+
+  // ─── smart-agent job board ───────────────────────────────────────
+  ipcMain.handle("db:jobs:create", (_e, input) => jobsRepo.createJob(input));
+  ipcMain.handle("db:jobs:list", (_e, filter) => jobsRepo.listJobs(filter));
+  ipcMain.handle("db:jobs:get", (_e, id) => jobsRepo.getJob(id));
+  ipcMain.handle("db:jobs:setStatus", (_e, id, status) => jobsRepo.setJobStatus(id, status));
+  ipcMain.handle("db:jobs:apply", (_e, jobId, input) => jobsRepo.apply(jobId, input));
+  ipcMain.handle("db:jobs:applications", (_e, jobId) => jobsRepo.listApplications(jobId));
+  ipcMain.handle("db:jobs:hire", (_e, jobId, applicationId) => jobsRepo.hire(jobId, applicationId));
+  ipcMain.handle("db:jobs:contract", (_e, jobId) => jobsRepo.getContract(jobId));
+  ipcMain.handle("db:jobs:addMilestone", (_e, contractId, input) => jobsRepo.addMilestone(contractId, input));
+  ipcMain.handle("db:jobs:milestones", (_e, contractId) => jobsRepo.listMilestones(contractId));
+  ipcMain.handle("db:jobs:submitEvidence", (_e, id, evidence) => jobsRepo.submitEvidence(id, evidence));
+  ipcMain.handle("db:jobs:approveMilestone", (_e, id) => jobsRepo.approveMilestone(id));
+  ipcMain.handle("db:jobs:review", (_e, contractId, input) => jobsRepo.review(contractId, input));
+  ipcMain.handle("db:jobs:reputation", (_e, companionId) => jobsRepo.reputation(companionId));
+
   // ─── roleplay sessions + messages ────────────────────────────────
   ipcMain.handle("db:roleplay:upsertSession", (_e, record) => {
     const r = roleplayRepo.upsertSession(record);
@@ -438,5 +475,5 @@ export function registerDbIpc() {
   ipcMain.handle("db:web3:claimRecord", (_e, claim) => web3Repo.claimRecord(claim));
   ipcMain.handle("db:web3:claimsList", (_e, filter) => web3Repo.claimsList(filter));
 
-  console.log("[db] IPC handlers registered: audit, generations, blobs, companies, goals, issues, treasury, approvals, distribution, connectors, companions, roleplay, embeddings, skills, moltbook, openclaw, web3");
+  console.log("[db] IPC handlers registered: audit, generations, blobs, companies, goals, issues, treasury, approvals, distribution, connectors, companions, memory, roleplay, embeddings, skills, moltbook, openclaw, web3");
 }

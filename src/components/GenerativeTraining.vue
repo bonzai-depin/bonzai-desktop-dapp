@@ -1,3071 +1,2588 @@
 <template>
-  <div class="background"></div>
-  <div class="bz-tab-shell">
-    <div class="models__deployment-install">
-      <div class="columns">
-        <div class="column is-12 p-5">
-          <header class="bz-screen-header">
-            <div class="bz-screen-titleblock">
-              <p class="bz-eyebrow">Train</p>
-              <h1 class="bz-h1 fira-sans-condensed-black-italic">
-                <span class="material-symbols-outlined bz-title-icon" aria-hidden="true">chat</span>
-                Chat Training
-              </h1>
-            </div>
-          </header>
+  <div class="bz-train" :class="`bz-train--${mode}`">
+    <!-- Header -->
+    <header class="bz-train__header bz-train__hero">
+      <div class="bz-train__hero-copy">
+        <span class="bz-eyebrow">{{ mode === 'uncensor' ? 'Model behavior' : 'Training studio' }}</span>
+        <h1 class="bz-train__title fira-sans-condensed-black-italic">{{ modeTitle }}</h1>
+        <p class="bz-train__subtitle">{{ modeSubtitle }}</p>
+      </div>
+      <div class="bz-train__hero-stats" aria-label="Training mode capabilities">
+        <span>{{ mode === 'uncensor' ? 'Abliteration' : 'LoRA' }}</span>
+        <span>Local</span>
+      </div>
+    </header>
 
-          <!-- TRAINING PROGRESS -->
-          <div
-            v-if="training.active"
-            class="training-progress-card"
-          >
-            <div class="training-progress-card__head">
-              <span class="training-progress-card__title fira-sans-condensed-black-italic">
-                <BonzaiPulse variant="dot" />
-                Crafting...
-              </span>
-              <span class="training-progress-card__pct fira-sans-condensed-black-italic">
-                {{ Math.round(training.pct) }}%
-              </span>
-            </div>
-            <BonzaiPulse variant="bar" :percent="Math.max(0, Math.min(100, training.pct))" />
-          </div>
+    <div class="bz-train__quick-steps" aria-label="Workflow overview">
+      <article v-for="step in modeSteps" :key="step.label" class="bz-train__quick-step">
+        <span class="material-symbols-outlined" aria-hidden="true">{{ step.icon }}</span>
+        <div>
+          <strong class="fira-sans-condensed-black-italic">{{ step.label }}</strong>
+          <small>{{ step.copy }}</small>
+        </div>
+      </article>
+    </div>
 
-          <!-- ACCESS REQUIREMENTS -->
-          <AccessRequirements
-            ref="accessRef"
-            level="LVL6"
-            @access-changed="onAccessChanged"
-          />
+    <!-- Access gate -->
+    <AccessRequirements level="LVL6" />
 
-          <!-- ═══════════════════════════════════════════════════════════ -->
-          <!-- MAIN TABS: Dataset / Run                                   -->
-          <!-- ═══════════════════════════════════════════════════════════ -->
-          <ModeChipBar
-            v-model="activeTab"
-            :items="trainingTabs"
-            class="training-tabs"
-          />
+    <!-- ============================================================ -->
+    <!-- TUNE MODE                                                    -->
+    <!-- ============================================================ -->
+    <div v-if="mode === 'tune'" class="bz-train__body">
 
-          <section class="training-rhythm">
-            <article v-for="card in trainingStats" :key="card.label" class="training-rhythm__card">
-              <span class="material-symbols-outlined" aria-hidden="true">{{ card.icon }}</span>
-              <strong class="fira-sans-condensed-black-italic">{{ card.value }}</strong>
-              <span>{{ card.label }}</span>
-            </article>
-          </section>
-
-          <section class="stake-train">
-            <div class="stake-train__head">
-              <div>
-                <p class="bz-eyebrow">Stake-to-train</p>
-                <h2 class="bz-h2 fira-sans-condensed-black-italic">Dataset Vault</h2>
-              </div>
-              <div class="stake-targets" role="group" aria-label="Training target">
-                <button
-                  v-for="target in trainTargets"
-                  :key="target.id"
-                  class="stake-target"
-                  :class="{ 'is-selected': stake.target === target.id }"
-                  @click="stake.target = target.id"
-                >
-                  <span class="material-symbols-outlined">{{ target.icon }}</span>
-                  {{ target.label }}
+      <!-- Step 1: Import Dataset -->
+      <section class="bz-train__section">
+        <h3 class="bz-train__section-title">
+          <span class="bz-train__step-num">1</span>
+          Import Dataset
+        </h3>
+        <div
+          class="bz-train__dropzone"
+          :class="{ 'is-dragover': isDragOver, 'has-data': jsonlRows.length > 0 }"
+          @dragover.prevent="isDragOver = true"
+          @dragleave="isDragOver = false"
+          @drop.prevent="onDrop"
+        >
+          <template v-if="jsonlRows.length === 0">
+            <span class="material-symbols-outlined bz-train__dropzone-icon">upload_file</span>
+            <p class="bz-train__dropzone-label">Drop a <strong>JSONL</strong> dataset or <strong>BonzAI contribution pack</strong></p>
+            <p class="bz-train__dropzone-hint">BonzAI+ packs keep provenance, permissions, quality, and revenue metadata attached.</p>
+            <input
+              type="file"
+              accept=".jsonl,.json,.txt,.md,.bonzai-contribution-pack"
+              class="bz-train__dropzone-input"
+              @change="onFileSelect"
+            />
+          </template>
+          <template v-else>
+            <div class="bz-train__jsonl-preview">
+              <div class="bz-train__jsonl-meta">
+                <span class="skill-chip skill-chip--brand">
+                  <span class="material-symbols-outlined" style="font-size:14px">description</span>
+                  {{ jsonlFileName }}
+                </span>
+                <span class="skill-chip skill-chip--success">{{ jsonlRows.length }} rows</span>
+                <span class="skill-chip skill-chip--info">{{ detectedType }} dataset</span>
+                <span v-if="hasContributionPack" class="skill-chip skill-chip--brand">Contribution Pack</span>
+                <span v-if="hasContributionPack && contributionSummary?.averageQuality !== null" class="skill-chip skill-chip--muted">
+                  Quality {{ contributionSummary.averageQuality }}/100
+                </span>
+                <button class="bz-iconbtn" style="margin-left:auto" @click="clearJsonl" title="Clear">
+                  <span class="material-symbols-outlined">close</span>
                 </button>
               </div>
-            </div>
-
-            <div class="stake-summary">
-              <div>
-                <strong>{{ stakedItems.length }}</strong>
-                <span>staked collectibles</span>
+              <div class="bz-train__jsonl-table-wrap">
+                <table class="bz-train__jsonl-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th v-for="col in jsonlColumns" :key="col">{{ col }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, i) in jsonlPreview" :key="i">
+                      <td class="bz-mono">{{ i + 1 }}</td>
+                      <td v-for="col in jsonlColumns" :key="col" :title="cellValue(row[col])">
+                        {{ truncate(cellValue(row[col]), 80) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-              <div>
-                <strong>{{ stakeTypeCounts.text }}</strong>
-                <span>text</span>
-              </div>
-              <div>
-                <strong>{{ stakeTypeCounts.image }}</strong>
-                <span>image</span>
-              </div>
-              <div>
-                <strong>{{ stakeTypeCounts.audio }}</strong>
-                <span>audio</span>
-              </div>
-              <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" :disabled="!stakedItems.length" @click="createDatasetFromStake">
-                <span class="material-symbols-outlined">dataset_linked</span>
-                Build dataset
-              </button>
-            </div>
-
-            <div class="stake-pool">
-              <button
-                v-for="item in stakeableCollectibles"
-                :key="item.id"
-                class="stake-item"
-                :class="{ 'is-staked': stake.selectedIds.has(item.id) }"
-                @click="toggleStake(item)"
-              >
-                <span class="material-symbols-outlined">{{ stakeIcon(item.type) }}</span>
-                <span>{{ item.question || item.prompt || item.type }}</span>
-                <small>{{ item.type }}</small>
-              </button>
-              <p v-if="!stakeableCollectibles.length" class="training-empty-note">
-                No text, image, or audio collectibles yet. Generate or mint content, then stake it into a training dataset here.
+              <p v-if="jsonlRows.length > 5" class="bz-train__jsonl-more">
+                …and {{ jsonlRows.length - 5 }} more rows
               </p>
-            </div>
-          </section>
-
-          <!-- ═══════════════════════════════════════════════════════════ -->
-          <!-- DATASET TAB                                                -->
-          <!-- ═══════════════════════════════════════════════════════════ -->
-          <div v-if="activeTab === 'dataset'">
-            <!-- DATASET STUDIO -->
-            <div class="models__activity--payouts mb-5">
-              <h3 class="bz-h2 fira-sans-condensed-black-italic mb-3 has-text-left">
-                Dataset Studio
-              </h3>
-              <p class="training-copy has-text-left">
-                Write examples that teach tone, format, procedures, and domain knowledge. Each saved entry becomes one JSONL training sample.
-              </p>
-              <hr />
-
-              <div class="studio-layout">
-                <!-- LEFT: Entry list -->
-                <div class="studio-sidebar has-text-left">
-                  <div class="studio-example-list">
-                    <div
-                      v-for="ex in studioTextExamples"
-                      :key="ex.id"
-                      class="studio-example-item"
-                      :class="{ 'is-active': studio.selected?.id === ex.id }"
-                      @click="studioSelect(ex)"
-                    >
-                      <span class="studio-example-title">
-                        {{ studioItemLabel(ex) }}
-                      </span>
-                    </div>
-                    <div
-                      v-if="studioTextExamples.length === 0"
-                      class="training-empty-note"
-                    >
-                      No chat examples yet. Add one and teach the model how to answer.
-                    </div>
-                  </div>
-
-                  <button
-                    class="bz-btn bz-btn--primary fira-sans-condensed-black-italic skill-fullwidth mt-3"
-                    @click="studioAddNew"
-                  >
-                    <span class="material-symbols-outlined mr-1">add</span>
-                    Add Example
-                  </button>
-                </div>
-
-                <!-- RIGHT: Editor -->
-                <div class="studio-main has-text-left">
-                  <div v-if="studio.selected" class="studio-preview">
-                    <!-- Mode toggle -->
-                    <div v-if="false" class="control mb-3 has-text-left studio-mode-toggle">
-                      <input
-                        v-model="studio.editMode"
-                        value="game"
-                        id="studio_mode_game"
-                        type="radio"
-                        name="studioMode"
-                      />
-                      <label for="studio_mode_game" class="radio mr-3">
-                        <span
-                          class="material-symbols-outlined"
-                          style="font-size: 18px !important"
-                        >
-                          sports_esports
-                        </span>
-                        Game
-                      </label>
-                      <input
-                        v-model="studio.editMode"
-                        value="text"
-                        id="studio_mode_text"
-                        type="radio"
-                        name="studioMode"
-                      />
-                      <label for="studio_mode_text" class="radio">
-                        <span
-                          class="material-symbols-outlined"
-                          style="font-size: 18px !important"
-                        >
-                          article
-                        </span>
-                        Text
-                      </label>
-                    </div>
-
-                    <!-- Tier dropdown (game mode only) -->
-                    <div v-if="false" class="field mb-3">
-                      <label
-                        class="label is-small fira-sans-condensed-black-italic"
-                      >
-                        TIER
-                      </label>
-                      <div class="studio-tier-select">
-                        <select v-model.number="studio.editTier">
-                          <option
-                            v-for="t in GAME_TIERS"
-                            :key="t.id"
-                            :value="t.id"
-                          >
-                            {{ t.id }}. {{ t.name }} — {{ t.desc }}
-                          </option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <!-- Game mode: 3 textareas + libraries -->
-                    <div v-if="false">
-                      <div class="field mb-3 fira-sans-condensed-black-italic">
-                        <label class="label is-small">HTML</label>
-                        <textarea
-                          v-model="studio.editHtml"
-                          class="studio-code-area"
-                          spellcheck="false"
-                          placeholder="HTML markup..."
-                          rows="6"
-                        ></textarea>
-                      </div>
-                      <div class="field mb-3">
-                        <label
-                          class="label is-small fira-sans-condensed-black-italic"
-                        >
-                          CSS
-                        </label>
-                        <textarea
-                          v-model="studio.editCss"
-                          class="studio-code-area"
-                          spellcheck="false"
-                          placeholder="CSS styles..."
-                          rows="6"
-                        ></textarea>
-                      </div>
-                      <div class="field mb-3">
-                        <label class="label is-small">JS</label>
-                        <textarea
-                          v-model="studio.editJs"
-                          class="studio-code-area"
-                          spellcheck="false"
-                          placeholder="JavaScript code..."
-                          rows="6"
-                        ></textarea>
-                      </div>
-
-                      <!-- Libraries -->
-                      <div class="field mb-3">
-                        <label
-                          class="label is-small fira-sans-condensed-black-italic"
-                        >
-                          LIBRARIES
-                        </label>
-                        <div
-                          class="studio-lib-tags"
-                          v-if="studio.editLibraries.length"
-                        >
-                          <span
-                            v-for="(lib, idx) in studio.editLibraries"
-                            :key="idx"
-                            class="studio-lib-tag"
-                          >
-                            {{ lib }}
-                            <button
-                              class="delete is-small"
-                              @click="studioRemoveLib(idx)"
-                            ></button>
-                          </span>
-                        </div>
-                        <div class="studio-lib-input-row">
-                          <input
-                            v-model="studio.newLibInput"
-                            class="input is-small"
-                            type="text"
-                            placeholder="e.g. three.js, cannon-es, gsap"
-                            @keydown.enter.prevent="studioAddLib"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Text mode: 1 large textarea -->
-                    <div>
-                      <div class="field mb-3">
-                        <label
-                          class="label is-small fira-sans-condensed-black-italic"
-                        >
-                          TEXT
-                        </label>
-                        <textarea
-                          v-model="studio.editText"
-                          class="studio-code-area"
-                          spellcheck="false"
-                          placeholder="Example:\nUser: Explain our refund policy in one paragraph.\nAssistant: Refunds are available within 14 days when..."
-                          rows="16"
-                        ></textarea>
-                      </div>
-                    </div>
-
-                    <div class="field mb-3 mt-4">
-                      <label
-                        class="label is-small fira-sans-condensed-black-italic"
-                      >
-                        INSTRUCTION / BEHAVIOR
-                      </label>
-                      <div class="studio-describe-row">
-                        <textarea
-                          v-model="studio.editDescription"
-                          class="studio-description-area"
-                          placeholder="What should the model learn from this example?"
-                          rows="3"
-                        ></textarea>
-                      </div>
-                    </div>
-
-                    <div class="studio-actions">
-                      <button
-                        class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic studio-describe-btn"
-                        @click="studioDescribe"
-                        :disabled="studio.describing || !studioHasContent"
-                      >
-                        <span
-                          v-if="studio.describing"
-                          class="loader mr-1"
-                        ></span>
-                        Draft Instruction
-                      </button>
-                      <button
-                        class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-                        @click="studioSave"
-                      >
-                        Save Example
-                      </button>
-                      <button
-                        class="bz-iconbtn bz-iconbtn--danger"
-                        @click="studioDelete"
-                      >
-                        <span class="material-symbols-outlined">delete</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div v-else class="studio-empty has-text-white">
-                    <span
-                      class="material-symbols-outlined"
-                      style="font-size: 128px"
-                    >
-                      dataset
-                    </span>
-                    <p class="bz-meta mt-2">Select or add an example.</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Bottom bar -->
-              <div class="studio-bottom-bar mt-4">
-                <span
-                  class="is-size-1 has-text-white fira-sans-condensed-black-italic"
-                >
-                  {{ studioTextExamples.length }} examples
-                </span>
-                <button
-                  class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-                  @click="studioExport"
-                  :disabled="studioTextExamples.length === 0"
-                >
-                  <span class="material-symbols-outlined mr-2">download</span>
-                  Export JSONL
-                </button>
-                <button
-                  class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-                  @click="studioCreateDataset"
-                  :disabled="studioTextExamples.length === 0 || creatingDataset"
-                >
-                  <span class="material-symbols-outlined mr-2">dataset</span>
-                  Create LLM Dataset
-                </button>
-              </div>
-            </div>
-
-            <!-- UPLOAD DATASET -->
-            <div class="models__activity--payouts mb-5">
-              <div class="buttons mb-3">
-                <button
-                  class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-                  @click="showCreateDataset = true"
-                >
-                  <span class="material-symbols-outlined mr-1">add</span>
-                  Create Dataset
-                </button>
-                <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="loadDatasets">
-                  <span class="material-symbols-outlined mr-1">refresh</span>
-                  Refresh
-                </button>
-              </div>
-              <hr />
-
-              <!-- Dataset List -->
-              <div v-if="datasets.length" class="dataset-list">
-                <div v-for="ds in datasets" :key="ds.id" class="dataset-item">
-                  <div class="dataset-info">
-                    <span class="material-symbols-outlined mr-2">
-                      {{ ds.type === "text" ? "description" : "photo_library" }}
-                    </span>
-                    <div>
-                      <strong>{{ ds.name }}</strong>
-                      <p class="is-size-7 has-text-grey-light">
-                        {{ ds.num_files || ds.num_examples || "?" }}
-                        {{ ds.type === "text" ? "examples" : "files" }} •
-                        {{ ds.type }}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    class="bz-iconbtn bz-iconbtn--danger"
-                    @click.stop="deleteDataset(ds.id)"
-                    title="Delete dataset"
-                  >
-                    <span class="material-symbols-outlined">delete</span>
-                  </button>
-                </div>
-              </div>
-              <div v-else class="bz-notice bz-notice--info is-size-6 p-3">
-                No LLM datasets yet. Create one from the studio above or upload text files.
-              </div>
-            </div>
-          </div>
-
-          <!-- ═══════════════════════════════════════════════════════════ -->
-          <!-- RUN TAB                                                    -->
-          <!-- ═══════════════════════════════════════════════════════════ -->
-          <div v-if="activeTab === 'run'">
-            <div class="models__activity--payouts mb-5">
-              <!-- TRAINING TYPE SELECTION -->
-              <div v-if="false" class="control mb-5 has-text-left">
-                <input
-                  v-model="trainingType"
-                  :value="'llm'"
-                  id="type_llm"
-                  type="radio"
-                  name="trainingType"
-                  checked
-                  :disabled="!hasAccess"
-                />
-                <label for="type_llm" class="radio mr-3">
-                  <span
-                    class="material-symbols-outlined"
-                    style="font-size: 32px !important"
-                  >
-                    chat
-                  </span>
-                  Chat Model
-                  <span class="skill-chip skill-chip--info ml-1">LLaMa</span>
-                </label>
-                <input
-                  v-model="trainingType"
-                  :value="'sdxl'"
-                  id="type_sdxl"
-                  type="radio"
-                  name="trainingType"
-                  :disabled="!hasAccess"
-                />
-                <label for="type_sdxl" class="radio">
-                  <span
-                    class="material-symbols-outlined"
-                    style="font-size: 32px !important"
-                  >
-                    image
-                  </span>
-                  Image Model
-                  <span class="skill-chip skill-chip--warning ml-1">SDXL</span>
-                </label>
-              </div>
-
-              <!-- DATASET PICKER -->
-              <div class="field has-text-left mb-5">
-                <label class="label fira-sans-condensed-black-italic is-size-5">
-                  <span
-                    class="material-symbols-outlined mr-1"
-                    style="vertical-align: middle"
-                  >
-                    dataset
-                  </span>
-                  Training Dataset
-                </label>
-                <div v-if="filteredDatasets.length" class="dataset-list">
-                  <div
-                    v-for="ds in filteredDatasets"
-                    :key="ds.id"
-                    class="dataset-item"
-                    :class="{ 'is-selected': selectedDataset?.id === ds.id }"
-                    @click="selectedDataset = ds"
-                  >
-                    <div class="dataset-info">
-                      <span class="material-symbols-outlined mr-2">
-                        {{
-                          ds.type === "text" ? "description" : "photo_library"
-                        }}
-                      </span>
-                      <div>
-                        <strong>{{ ds.name }}</strong>
-                        <p class="is-size-7 has-text-grey-light">
-                          {{ ds.num_files || ds.num_examples || "?" }}
-                          {{ ds.type === "text" ? "examples" : "files" }} •
-                          {{ ds.type }}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="has-text-grey-light is-size-6 p-3">
-                  No text datasets found.
-                  <a
-                    @click.prevent="activeTab = 'dataset'"
-                    class="has-text-info"
-                    style="cursor: pointer"
-                  >
-                    Go to Dataset tab
-                  </a>
-                  to create one.
-                </div>
-              </div>
-            </div>
-
-            <!-- LLM TRAINING CONFIGURATION -->
-            <div
-              v-if="trainingType === 'llm'"
-              class="models__activity--payouts mb-5"
-            >
-              <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
-                <span class="material-symbols-outlined mr-2 is-size-2">
-                  tune
-                </span>
-                LoRA Configuration
-              </h3>
-
-              <div class="field has-text-left mt-5">
-                <label class="label fira-sans-condensed-black-italic is-size-5">
-                  Base Model
-                </label>
-                <div class="select skill-fullwidth is-medium mb-5 is-large">
-                  <select v-model="llmConfig.base_model">
-                    <option value="llama-3.2-1b">LLaMa 3.2 1B (Fastest)</option>
-                    <option value="llama-3.2-3b">
-                      LLaMa 3.2 3B (Balanced)
-                    </option>
-                    <option value="llama-3.1-8b">
-                      LLaMa 3.1 8B (Best Quality)
-                    </option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="columns has-text-left mb-5">
-                <div class="column">
-                  <div class="field">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Epochs: {{ llmConfig.epochs }}
-                    </label>
-                    <input
-                      class="slider skill-fullwidth p-4"
-                      type="range"
-                      v-model.number="llmConfig.epochs"
-                      min="1"
-                      max="10"
-                      step="1"
-                    />
-                  </div>
-                </div>
-                <div class="column">
-                  <div class="field">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Batch Size
-                    </label>
-                    <div class="select skill-fullwidth is-large">
-                      <select v-model.number="llmConfig.batch_size">
-                        <option :value="1">1 (Low VRAM)</option>
-                        <option :value="2">2</option>
-                        <option :value="4">4 (Default)</option>
-                        <option :value="8">8 (High VRAM)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="columns has-text-left mb-5">
-                <div class="column">
-                  <div class="field">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      LoRA Rank: {{ llmConfig.lora_r }}
-                    </label>
-                    <input
-                      class="slider skill-fullwidth p-4"
-                      type="range"
-                      v-model.number="llmConfig.lora_r"
-                      min="4"
-                      max="64"
-                      step="4"
-                    />
-                  </div>
-                </div>
-                <div class="column">
-                  <div class="field">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      LoRA Alpha: {{ llmConfig.lora_alpha }}
-                    </label>
-                    <input
-                      class="slider skill-fullwidth p-4"
-                      type="range"
-                      v-model.number="llmConfig.lora_alpha"
-                      min="8"
-                      max="128"
-                      step="8"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div class="field has-text-left">
-                <label class="label fira-sans-condensed-black-italic is-size-5">
-                  Learning Rate
-                </label>
-                <input
-                  class="input is-large"
-                  type="number"
-                  v-model.number="llmConfig.learning_rate"
-                  step="0.00001"
-                />
-              </div>
-
-              <div class="field mt-5">
-                <label class="checkbox fira-sans-condensed-black-italic">
-                  <input
-                    class="mr-2"
-                    type="checkbox"
-                    v-model="llmConfig.use_4bit"
-                  />
-                  4-bit Quantization
-                </label>
-              </div>
-            </div>
-
-            <!-- SDXL TRAINING CONFIGURATION -->
-            <div
-              v-if="false"
-              class="models__activity--payouts mb-5 has-text-left"
-            >
-              <h3 class="fira-sans-condensed-black-italic is-size-3 mb-3">
-                <span class="material-symbols-outlined is-size-2 mr-2">
-                  tune
-                </span>
-                LoRA Configuration
-              </h3>
-
-              <div class="field mb-5 mt-5">
-                <label class="label fira-sans-condensed-black-italic is-size-5">
-                  Instance Prompt
-                  <span class="has-text-danger">*</span>
-                </label>
-                <input
-                  class="input is-large"
-                  type="text"
-                  v-model="sdxlConfig.instance_prompt"
-                  placeholder="A photo of sks person"
-                />
-                <p class="help">
-                  Use a unique token like "sks" to identify your subject.
-                </p>
-              </div>
-
-              <div class="field mb-5">
-                <label class="label fira-sans-condensed-black-italic is-size-5">
-                  Class Prompt (Optional)
-                </label>
-                <input
-                  class="input is-large"
-                  type="text"
-                  v-model="sdxlConfig.class_prompt"
-                  placeholder="A photo of a person"
-                />
-                <p class="help">
-                  General class description for prior preservation.
-                </p>
-              </div>
-
-              <div class="columns">
-                <div class="column">
-                  <div class="field">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Training Steps: {{ sdxlConfig.epochs }}
-                    </label>
-                    <input
-                      class="slider skill-fullwidth p-4"
-                      type="range"
-                      v-model.number="sdxlConfig.epochs"
-                      min="100"
-                      max="2000"
-                      step="100"
-                    />
-                  </div>
-                </div>
-                <div class="column">
-                  <div class="field mb-5">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Resolution
-                    </label>
-                    <div class="select skill-fullwidth is-large">
-                      <select v-model.number="sdxlConfig.resolution">
-                        <option :value="512">512 (Fast)</option>
-                        <option :value="768">768</option>
-                        <option :value="1024">1024 (Best)</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="columns">
-                <div class="column">
-                  <div class="field">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      LoRA Rank: {{ sdxlConfig.lora_rank }}
-                    </label>
-                    <input
-                      class="slider skill-fullwidth p-4"
-                      type="range"
-                      v-model.number="sdxlConfig.lora_rank"
-                      min="4"
-                      max="128"
-                      step="4"
-                    />
-                  </div>
-                </div>
-                <div class="column">
-                  <div class="field">
-                    <label
-                      class="label fira-sans-condensed-black-italic is-size-5"
-                    >
-                      Learning Rate
-                    </label>
-                    <input
-                      class="input is-large"
-                      type="number"
-                      v-model.number="sdxlConfig.learning_rate"
-                      step="0.00001"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div class="field fira-sans-condensed-black-italic is-size-5">
-                <label class="checkbox">
-                  <input
-                    type="checkbox"
-                    v-model="sdxlConfig.use_8bit_adam"
-                    class="mr-2"
-                  />
-                  Use 8-bit Adam
-                </label>
-              </div>
-            </div>
-
-            <div class="models__activity--payouts">
-              <!-- START TRAINING BUTTON -->
-              <button
-                class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic"
-                @click="startTraining"
-                :disabled="!canStartTraining || training.active"
-              >
-                <span class="material-symbols-outlined mr-2 is-size-2">
-                  exercise
-                </span>
-                Start Chat Fine-tune
-              </button>
-            </div>
-
-            <!-- TRAINED MODELS -->
-            <div
-              v-if="trainedModels.length"
-              class="bz-notice bz-notice--success mb-5 mt-5"
-            >
-              <h3 class="fira-sans-condensed-black-italic is-size-4 mb-3">
-                <span class="material-symbols-outlined mr-2">verified</span>
-                Trained Models
-              </h3>
-              <div
-                v-for="model in trainedModels"
-                :key="model.id"
-                class="trained-model-item"
-              >
-                <div class="model-info">
-                  <span class="skill-chip mr-2">
-                    {{ model.type === "llm_lora" ? "🧠 LLM" : "🎨 SDXL" }}
-                  </span>
+              <div v-if="hasContributionPack" class="bz-train__contribution">
+                <div class="bz-train__contribution-head">
                   <div>
-                    <strong>{{ model.id }}</strong>
-                    <p class="is-size-7">
-                      {{ model.base_model }} • Loss:
-                      {{ model.final_loss?.toFixed(4) }}
-                    </p>
-                    <input
-                      v-model="model.hf_repo"
-                      class="input is-small mt-1"
-                      type="text"
-                      placeholder="HuggingFace repo (e.g. username/model-name)"
-                      style="max-width: 320px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg); font-size: 11px;"
-                    />
+                    <span class="bz-eyebrow">Contribution Studio</span>
+                    <h4 class="bz-train__contribution-title">Proof-of-Contribution import</h4>
+                  </div>
+                  <div class="bz-train__contribution-actions">
+                    <span class="skill-chip skill-chip--brand">{{ contributionSummary.source }}</span>
+                    <button
+                      class="bz-btn bz-btn--ghost bz-btn--sm"
+                      :disabled="contributionPublish.active || !canPublishContributionPack"
+                      :title="canPublishContributionPack ? 'Publish contribution pack' : 'Contribution registries are not configured'"
+                      @click="publishContributionPack"
+                    >
+                      {{ contributionPublish.active ? 'Publishing...' : 'Publish' }}
+                    </button>
                   </div>
                 </div>
-                <div class="buttons">
-                  <button
-                    class="bz-btn bz-btn--sm is-info"
-                    @click="exportModel(model)"
-                    title="Export model"
+                <div class="bz-train__contribution-grid">
+                  <div class="bz-train__contribution-stat">
+                    <span class="bz-mono">{{ contributionSummary.recordCount }}</span>
+                    <small>usable records</small>
+                  </div>
+                  <div class="bz-train__contribution-stat">
+                    <span class="bz-mono">{{ contributionSummary.publishable }}</span>
+                    <small>publishable</small>
+                  </div>
+                  <div class="bz-train__contribution-stat">
+                    <span class="bz-mono">{{ contributionSummary.royaltyBearing }}</span>
+                    <small>royalty-bearing</small>
+                  </div>
+                  <div class="bz-train__contribution-stat">
+                    <span class="bz-mono">{{ formatPercent(contributionSummary.trainingAllowed, contributionSummary.recordCount) }}</span>
+                    <small>training allowed</small>
+                  </div>
+                  <div class="bz-train__contribution-stat">
+                    <span class="bz-mono">{{ contributionSummary.dataOwnerCount || 0 }}</span>
+                    <small>data owners</small>
+                  </div>
+                </div>
+                <div class="bz-train__contribution-kinds">
+                  <span
+                    v-for="(count, kind) in contributionSummary.byKind"
+                    :key="kind"
+                    class="skill-chip skill-chip--muted"
                   >
-                    <span class="material-symbols-outlined">download</span>
-                  </button>
-                  <button
-                    class="bz-btn bz-btn--sm is-warning"
-                    @click="mintModelNFT(model)"
-                    title="Mint as NFT"
-                  >
-                    <span class="material-symbols-outlined">token</span>
-                  </button>
-                  <button
-                    class="bz-btn bz-btn--sm is-link"
-                    @click="launchModelToken(model)"
-                    :disabled="!model.contentTokenId"
-                    :title="model.contentTokenId ? 'Issue ERC-20 Token' : 'Mint as NFT first'"
-                  >
-                    <span class="material-symbols-outlined">currency_exchange</span>
-                  </button>
-                  <button
-                    class="bz-btn bz-btn--sm is-danger"
-                    @click="deleteModel(model.id)"
-                    title="Delete model"
-                  >
-                    <span class="material-symbols-outlined">delete</span>
-                  </button>
+                    {{ contributionKindLabel(kind) }} · {{ count }}
+                  </span>
+                </div>
+                <div v-if="contributionRevenuePlan?.participants?.length" class="bz-train__contribution-alert is-success">
+                  Downstream fine-tune revenue plan: {{ contributionRevenuePlan.participants.length }} data owner{{ contributionRevenuePlan.participants.length === 1 ? '' : 's' }} weighted by contribution quality.
+                </div>
+                <div v-if="contributionErrors.length" class="bz-train__contribution-alert is-error">
+                  <span v-for="error in contributionErrors" :key="error">{{ error }}</span>
+                </div>
+                <div v-if="contributionWarnings.length" class="bz-train__contribution-alert">
+                  <span v-for="warning in contributionWarnings" :key="warning">{{ warning }}</span>
+                </div>
+                <div v-if="contributionPublish.error" class="bz-train__contribution-alert is-error">
+                  {{ contributionPublish.error }}
+                </div>
+                <div v-if="contributionPublish.result" class="bz-train__contribution-alert is-success">
+                  Published dataset {{ contributionPublish.result.datasetId }}.
                 </div>
               </div>
             </div>
+          </template>
+        </div>
+      </section>
 
-            <!-- TRAINING ERROR -->
-            <div
-              v-if="training.error"
-              class="bz-notice bz-notice--danger"
-              style="margin-bottom: 1rem"
+      <section v-if="ledgerPreview.length" class="bz-train__section bz-train__ledger">
+        <div class="bz-train__section-header">
+          <h3 class="bz-train__section-title">
+            <span class="bz-train__step-num">◎</span>
+            Local Contribution Ledger
+          </h3>
+        </div>
+        <div class="bz-train__ledger-list">
+          <div v-for="entry in ledgerPreview" :key="entry.id" class="bz-train__ledger-row">
+            <div>
+              <span class="bz-train__ledger-file">{{ entry.fileName }}</span>
+              <span class="bz-train__ledger-meta">
+                {{ entry.recordCount }} records · {{ entry.datasetType }} · {{ entry.status.replace('_', ' ') }}
+              </span>
+            </div>
+            <span class="bz-mono bz-train__ledger-quality">
+              {{ entry.averageQuality !== null ? entry.averageQuality + '/100' : 'unscored' }}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step 2: Choose Target -->
+      <section class="bz-train__section">
+        <h3 class="bz-train__section-title">
+          <span class="bz-train__step-num">2</span>
+          Choose Target
+        </h3>
+        <div class="bz-train__targets">
+          <button
+            v-for="t in targets" :key="t.key"
+            class="bz-train__target-card"
+            :class="{ 'is-selected': selectedTarget === t.key }"
+            @click="selectedTarget = t.key"
+          >
+            <span class="material-symbols-outlined bz-train__target-icon">{{ t.icon }}</span>
+            <span class="bz-train__target-name">{{ t.name }}</span>
+            <span class="bz-train__target-model">{{ t.model }}</span>
+            <span class="bz-train__target-desc">{{ t.desc }}</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Step 3: Configure -->
+      <section class="bz-train__section" v-if="selectedTarget">
+        <h3 class="bz-train__section-title">
+          <span class="bz-train__step-num">3</span>
+          Configure
+        </h3>
+
+        <!-- Model picker for text -->
+        <div v-if="selectedTarget === 'text'" class="bz-train__config-group">
+          <label class="bz-train__label">Base Model</label>
+          <div class="bz-train__model-pills">
+            <button
+              v-for="m in llmModels" :key="m.key"
+              class="bz-train__model-pill"
+              :class="{ 'is-selected': tuneConfig.base_model === m.key }"
+              @click="tuneConfig.base_model = m.key"
             >
-              <strong>Training failed:</strong>
-              {{ training.error }}
+              {{ m.name }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Model picker for audio -->
+        <div v-if="selectedTarget === 'audio'" class="bz-train__config-group">
+          <label class="bz-train__label">Base Model</label>
+          <div class="bz-train__model-pills">
+            <button
+              v-for="m in audioModels" :key="m.key"
+              class="bz-train__model-pill"
+              :class="{ 'is-selected': tuneConfig.base_model === m.key }"
+              @click="tuneConfig.base_model = m.key"
+            >
+              {{ m.name }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Instance prompt for image -->
+        <div v-if="selectedTarget === 'image'" class="bz-train__config-group">
+          <label class="bz-train__label">Base Model</label>
+          <div class="bz-train__model-pills">
+            <button
+              v-for="m in imageModels" :key="m.key"
+              class="bz-train__model-pill"
+              :class="{ 'is-selected': tuneConfig.base_model === m.key }"
+              @click="tuneConfig.base_model = m.key"
+            >
+              {{ m.name }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="selectedTarget === 'image'" class="bz-train__config-group">
+          <label class="bz-train__label">Instance Prompt</label>
+          <input
+            v-model="tuneConfig.instance_prompt"
+            class="bz-train__input"
+            placeholder="e.g. a photo of sks person"
+          />
+        </div>
+
+        <!-- Shared LoRA config -->
+        <div class="bz-train__config-grid">
+          <div class="bz-train__config-group">
+            <label class="bz-train__label">LoRA Rank</label>
+            <select v-model.number="tuneConfig.lora_rank" class="bz-train__select">
+              <option :value="4">4</option><option :value="8">8</option>
+              <option :value="16">16</option><option :value="32">32</option>
+              <option :value="64">64</option><option :value="128">128</option>
+            </select>
+          </div>
+          <div class="bz-train__config-group">
+            <label class="bz-train__label">Learning Rate</label>
+            <select v-model="tuneConfig.learning_rate" class="bz-train__select">
+              <option value="1e-5">1e-5</option>
+              <option value="5e-5">5e-5</option>
+              <option value="1e-4">1e-4</option>
+              <option value="2e-4">2e-4</option>
+            </select>
+          </div>
+          <div class="bz-train__config-group">
+            <label class="bz-train__label">Epochs</label>
+            <div class="bz-train__slider-row">
+              <input type="range" min="1" max="10" v-model.number="tuneConfig.epochs" class="bz-train__slider" />
+              <span class="bz-mono bz-train__slider-val">{{ tuneConfig.epochs }}</span>
             </div>
           </div>
+          <div class="bz-train__config-group">
+            <label class="bz-train__label">Batch Size</label>
+            <select v-model.number="tuneConfig.batch_size" class="bz-train__select">
+              <option :value="1">1</option><option :value="2">2</option>
+              <option :value="4">4</option><option :value="8">8</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Options -->
+        <div class="bz-train__options">
+          <label class="bz-train__checkbox">
+            <input type="checkbox" v-model="tuneConfig.use_4bit" />
+            <span>4-bit quantization (QLoRA, CUDA only)</span>
+          </label>
+          <label class="bz-train__checkbox">
+            <input type="checkbox" v-model="tuneConfig.uncensor" />
+            <span>Uncensor (remove refusal patterns)</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Start Button -->
+      <div class="bz-train__actions" v-if="selectedTarget && jsonlRows.length > 0">
+        <button
+          class="bz-btn bz-btn--primary bz-btn--lg"
+          :disabled="training.active || (selectedTarget === 'image' && !tuneConfig.instance_prompt)"
+          @click="startTuneTraining"
+        >
+          <span class="material-symbols-outlined" style="font-size:18px">play_arrow</span>
+          {{ training.active ? 'Training…' : 'Start Training' }}
+        </button>
+      </div>
+
+      <!-- Training Progress -->
+      <div v-if="training.active" class="bz-train__progress-card">
+        <div class="bz-train__progress-header">
+          <span class="bz-train__progress-stage">{{ stageLabel(training.stage) }}</span>
+          <span class="bz-mono">{{ training.pct }}%</span>
+        </div>
+        <div class="bz-train__progress-bar">
+          <div class="bz-train__progress-fill" :style="{ width: training.pct + '%' }" />
+        </div>
+        <div class="bz-train__progress-detail" v-if="training.epoch > 0">
+          Epoch {{ training.epoch }} / {{ training.total_epochs }}
+          <template v-if="training.loss !== null"> · Loss: {{ training.loss.toFixed(4) }}</template>
+          <template v-if="training.eta"> · ETA: {{ training.eta }}</template>
         </div>
       </div>
     </div>
 
-    <!-- CREATE DATASET MODAL (LVL Style - Purple) -->
-    <div
-      v-if="showCreateDataset"
-      class="dataset-modal-overlay"
-      @click.self="showCreateDataset = false"
-    >
-      <div class="dataset-modal">
-        <div class="has-text-right">
-          <BzCloseButton size="md" aria-label="Close" @click="showCreateDataset = false" />
-        </div>
+    <!-- ============================================================ -->
+    <!-- UNCENSOR MODE                                                -->
+    <!-- ============================================================ -->
+    <div v-if="mode === 'uncensor'" class="bz-train__body">
 
-        <div class="dataset-modal-header has-text-center">
-          <span class="material-symbols-outlined is-size-1">dataset</span>
-          <h2 class="fira-sans-condensed-black-italic is-size-3">
-            Create Training Dataset
-          </h2>
+      <!-- Model Selector -->
+      <section class="bz-train__section">
+        <h3 class="bz-train__section-title">Select Model</h3>
+        <div class="bz-train__ablit-grid">
+          <button
+            v-for="m in ablitModels" :key="m.key"
+            class="bz-train__ablit-card"
+            :class="{ 'is-selected': ablitConfig.base_model === m.key }"
+            @click="ablitConfig.base_model = m.key"
+          >
+            <span class="bz-train__ablit-name">{{ m.name }}</span>
+            <span class="bz-train__ablit-repo bz-mono">{{ m.repo }}</span>
+          </button>
         </div>
+      </section>
 
-        <div class="dataset-modal-body has-text-left">
-          <!-- Dataset Type Preview -->
-          <div class="dataset-type-preview">
-            <div class="dataset-modal-status mb-4">
-              <span
-                class="dataset-status-pill fira-sans-condensed-black-italic is-size-5"
+      <!-- Method + Quantization -->
+      <section class="bz-train__section" v-if="ablitConfig.base_model">
+        <div class="bz-train__config-row">
+          <div class="bz-train__config-group">
+            <label class="bz-train__label">Method</label>
+            <div class="bz-train__chips">
+              <button
+                v-for="m in ablitMethods" :key="m.value"
+                class="bz-train__chip"
+                :class="{ 'is-selected': ablitConfig.method === m.value }"
+                @click="ablitConfig.method = m.value"
               >
-                {{
-                  "TEXT DATASET"
-                }}
-              </span>
-            </div>
-            <div class="dataset-type-tags">
-              <span class="dataset-tag fira-sans-condensed-black-italic">
-                LLM
-              </span>
-              <span
-                v-if="newDataset.files.length"
-                class="dataset-tag dataset-tag--count fira-sans-condensed-black-italic"
-              >
-                {{ newDataset.files.length }} files
-              </span>
+                {{ m.label }}
+              </button>
             </div>
           </div>
-
-          <!-- Form Section -->
-          <div class="dataset-form-section">
-            <div class="dataset-field mb-5">
-              <label class="dataset-label fira-sans-condensed-black-italic">
-                Dataset Name
-              </label>
-              <input
-                class="dataset-input"
-                type="text"
-                v-model="newDataset.name"
-                placeholder="My Training Dataset"
-              />
-            </div>
-
-            <div class="dataset-field mb-5">
-              <label class="dataset-label fira-sans-condensed-black-italic">
-                Dataset Type
-              </label>
-              <div class="dataset-static-type">Text for chat fine-tuning</div>
-            </div>
-
-            <div class="dataset-field">
-              <label class="dataset-label fira-sans-condensed-black-italic">
-                Upload
-                Text Files
-              </label>
-              <div class="dataset-upload-zone">
-                <input
-                  class="file-input"
-                  type="file"
-                  :accept="
-                    '.txt,.md,.json,.jsonl'
-                  "
-                  multiple
-                  @change="handleDatasetFiles"
-                  id="dataset-file-input"
-                />
-                <label for="dataset-file-input" class="dataset-upload-label">
-                  <span class="material-symbols-outlined is-size-2">
-                    upload_file
-                  </span>
-                  <span class="fira-sans-condensed-black-italic">
-                    Click to select
-                    text files
-                  </span>
-                  <span class="dataset-upload-hint">
-                    {{
-                      "Supports .txt, .md, .json, .jsonl"
-                    }}
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <!-- Selected Files Preview -->
-            <div v-if="newDataset.files.length" class="dataset-files-preview">
-              <label class="dataset-label fira-sans-condensed-black-italic">
-                Selected Files
-              </label>
-              <div class="dataset-file-tags">
-                <span
-                  v-for="(file, idx) in newDataset.files"
-                  :key="idx"
-                  class="dataset-file-tag"
-                >
-                  {{ file.name }}
-                  <button
-                    class="delete is-small"
-                    @click="removeDatasetFile(idx)"
-                  ></button>
-                </span>
-              </div>
+          <div class="bz-train__config-group">
+            <label class="bz-train__label">Quantization</label>
+            <div class="bz-train__chips">
+              <button
+                v-for="q in ablitQuants" :key="q"
+                class="bz-train__chip"
+                :class="{ 'is-selected': ablitConfig.quantization === q }"
+                @click="ablitConfig.quantization = q"
+              >
+                {{ q }}
+              </button>
             </div>
           </div>
         </div>
+      </section>
 
-        <div class="dataset-modal-footer mb-5">
-          <button
-            class="bz-btn bz-btn--primary dataset-primary-btn fira-sans-condensed-black-italic"
-            @click="createDataset"
-            :disabled="
-              !newDataset.name || !newDataset.files.length || creatingDataset
-            "
+      <!-- Pipeline Visualization -->
+      <section v-if="ablPipeline.active || ablPipeline.completed" class="bz-train__section bz-train__pipeline-section">
+        <h3 class="bz-train__section-title">Abliteration Pipeline</h3>
+        <div class="bz-train__stages">
+          <div
+            v-for="(s, i) in pipelineStages" :key="s.key"
+            class="bz-train__stage"
+            :class="{
+              'is-running': ablPipeline.currentStage === s.key && ablPipeline.active,
+              'is-done': ablPipeline.completedStages.has(s.key),
+              'is-error': ablPipeline.errorStage === s.key,
+            }"
           >
-            <span v-if="creatingDataset" class="loader mr-2"></span>
-            <span class="material-symbols-outlined mr-2">add_circle</span>
-            Create Dataset
-          </button>
-          <button
-            class="bz-btn bz-btn--destructive is-medium"
-            @click="showCreateDataset = false"
-          >
-            Cancel
-          </button>
+            <div class="bz-train__stage-dot">
+              <span v-if="ablPipeline.completedStages.has(s.key)" class="material-symbols-outlined">check</span>
+              <span v-else-if="ablPipeline.currentStage === s.key && ablPipeline.active" class="bz-train__stage-spinner" />
+              <span v-else-if="ablPipeline.errorStage === s.key" class="material-symbols-outlined">error</span>
+              <span v-else class="bz-train__stage-num">{{ i + 1 }}</span>
+            </div>
+            <span class="bz-train__stage-name">{{ s.name }}</span>
+            <span class="bz-train__stage-desc">{{ s.desc }}</span>
+          </div>
+        </div>
+        <!-- Stage detail -->
+        <div v-if="ablPipeline.detail" class="bz-train__stage-detail">
+          <span class="material-symbols-outlined" style="font-size:16px">info</span>
+          {{ ablPipeline.detail }}
+        </div>
+      </section>
+
+      <!-- Quality Metrics Dashboard -->
+      <section v-if="ablPipeline.metrics" class="bz-train__section bz-train__metrics-section">
+        <h3 class="bz-train__section-title">Quality Report</h3>
+        <div class="bz-train__metric-grid">
+          <div class="bz-train__metric-card">
+            <span class="bz-train__metric-value" :class="metricClass('refusal_rate', ablPipeline.metrics.refusal_rate)">
+              {{ ablPipeline.metrics.refusal_rate !== undefined ? (ablPipeline.metrics.refusal_rate * 100).toFixed(1) + '%' : '—' }}
+            </span>
+            <span class="bz-train__metric-label">Refusal Rate</span>
+            <span class="bz-train__metric-hint">Lower = more uncensored</span>
+          </div>
+          <div class="bz-train__metric-card">
+            <span class="bz-train__metric-value">
+              {{ ablPipeline.metrics.perplexity !== undefined ? formatPerplexity(ablPipeline.metrics.perplexity) : '—' }}
+            </span>
+            <span class="bz-train__metric-label">Perplexity</span>
+            <span class="bz-train__metric-hint">Lower = better</span>
+          </div>
+          <div class="bz-train__metric-card">
+            <span class="bz-train__metric-value" :class="metricClass('coherence', ablPipeline.metrics.coherence)">
+              {{ ablPipeline.metrics.coherence !== undefined ? (ablPipeline.metrics.coherence * 100).toFixed(0) + '%' : '—' }}
+            </span>
+            <span class="bz-train__metric-label">Coherence</span>
+            <span class="bz-train__metric-hint">Higher = better</span>
+          </div>
+          <div class="bz-train__metric-card">
+            <span class="bz-train__metric-value">
+              {{ ablPipeline.metrics.kl_divergence !== undefined ? ablPipeline.metrics.kl_divergence.toFixed(3) : '—' }}
+            </span>
+            <span class="bz-train__metric-label">KL Divergence</span>
+            <span class="bz-train__metric-hint">Lower = less drift</span>
+          </div>
+          <div class="bz-train__metric-card">
+            <span class="bz-train__metric-value">
+              <span
+                class="bz-train__spectral-badge"
+                :class="{
+                  'is-green': ablPipeline.metrics.spectral_certification === 'GREEN',
+                  'is-yellow': ablPipeline.metrics.spectral_certification === 'YELLOW',
+                  'is-red': ablPipeline.metrics.spectral_certification === 'RED',
+                }"
+              >{{ ablPipeline.metrics.spectral_certification || '—' }}</span>
+            </span>
+            <span class="bz-train__metric-label">Spectral Cert.</span>
+            <span class="bz-train__metric-hint">GREEN = certified</span>
+          </div>
+          <div class="bz-train__metric-card">
+            <span class="bz-train__metric-value">
+              {{ ablPipeline.metrics.degenerate_count !== undefined ? ablPipeline.metrics.degenerate_count : '—' }}
+            </span>
+            <span class="bz-train__metric-label">Degenerate</span>
+            <span class="bz-train__metric-hint">Count of broken outputs</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Start Button -->
+      <div class="bz-train__actions" v-if="ablitConfig.base_model">
+        <button
+          class="bz-btn bz-btn--primary bz-btn--lg"
+          :disabled="ablPipeline.active"
+          @click="startAbliteration"
+        >
+          <span class="material-symbols-outlined" style="font-size:18px">science</span>
+          {{ ablPipeline.active ? 'Abliterating…' : 'Abliterate' }}
+        </button>
+      </div>
+
+      <!-- Abliteration Progress -->
+      <div v-if="ablPipeline.active" class="bz-train__progress-card">
+        <div class="bz-train__progress-header">
+          <span class="bz-train__progress-stage">{{ stageLabel(ablPipeline.stage) }}</span>
+          <span class="bz-mono">{{ ablPipeline.pct }}%</span>
+        </div>
+        <div class="bz-train__progress-bar">
+          <div class="bz-train__progress-fill" :style="{ width: ablPipeline.pct + '%' }" />
         </div>
       </div>
     </div>
+
+    <!-- ============================================================ -->
+    <!-- SHARED: Error Banner                                         -->
+    <!-- ============================================================ -->
+    <div v-if="training.error || ablPipeline.error" class="bz-notice bz-notice--danger" style="margin-top:var(--bz-space-3)">
+      <span class="material-symbols-outlined bz-notice__icon">error</span>
+      <span>{{ training.error || ablPipeline.error }}</span>
+      <button class="bz-iconbtn bz-iconbtn--sm" @click="training.error = ''; ablPipeline.error = ''">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- SHARED: Trained Models Gallery                               -->
+    <!-- ============================================================ -->
+    <section class="bz-train__section bz-train__models-section">
+      <div class="bz-train__section-header">
+        <h3 class="bz-train__section-title">Trained Models</h3>
+        <button class="bz-iconbtn" @click="loadTrainedModels" title="Refresh">
+          <span class="material-symbols-outlined">refresh</span>
+        </button>
+      </div>
+      <div v-if="trainedModels.length === 0" class="bz-train__empty">
+        <span class="material-symbols-outlined" style="font-size:32px;color:var(--bz-fg-faint)">inventory_2</span>
+        <p>No trained models yet. Start a training run above.</p>
+      </div>
+      <div v-else class="bz-train__model-list">
+        <div v-for="m in trainedModels" :key="m.id" class="bz-train__model-card">
+          <div class="bz-train__model-card-top">
+            <span class="skill-chip" :class="modelTypeChip(m.type)">{{ modelTypeLabel(m.type) }}</span>
+            <span class="bz-train__model-date bz-mono">{{ formatDate(m.created_at) }}</span>
+          </div>
+          <div class="bz-train__model-card-body">
+            <span class="bz-train__model-name">{{ m.base_model || m.filename || m.id }}</span>
+            <span v-if="m.final_loss" class="bz-train__model-loss">Loss: {{ m.final_loss.toFixed(4) }}</span>
+            <span v-if="m.nft?.tokenId" class="skill-chip skill-chip--success">
+              NFT #{{ m.nft.tokenId }}
+            </span>
+            <span v-if="m.fineTuneToken?.tokenAddress" class="skill-chip skill-chip--brand">
+              ${{ m.fineTuneToken.symbol || 'MODEL' }}
+            </span>
+            <span v-if="m.modelRegistry?.modelId" class="skill-chip skill-chip--success">
+              Registry
+            </span>
+            <span v-if="m.revenueRoute?.assetId" class="skill-chip skill-chip--brand">
+              Route
+            </span>
+            <span v-if="m.origin_record_count" class="skill-chip skill-chip--brand">
+              {{ m.origin_record_count }} origin{{ m.origin_record_count === 1 ? '' : 's' }}
+            </span>
+            <span v-if="m.data_owner_wallets?.length" class="skill-chip skill-chip--success">
+              {{ m.data_owner_wallets.length }} data owner{{ m.data_owner_wallets.length === 1 ? '' : 's' }}
+            </span>
+            <span v-if="m.filename" class="bz-mono" style="font-size:11px;color:var(--bz-fg-low)">{{ m.filename }}</span>
+          </div>
+          <div class="bz-train__model-card-actions">
+            <button class="bz-btn bz-btn--primary bz-btn--sm" @click="mintModel(m)">
+              <span class="material-symbols-outlined" style="font-size:14px">token</span> Mint
+            </button>
+            <button
+              v-if="m.validation?.status !== 'passed'"
+              class="bz-btn bz-btn--ghost bz-btn--sm"
+              :disabled="modelValidation.loading && modelValidation.activeModelId === m.id"
+              @click="validateModelForIssuance(m)"
+            >
+              <span class="material-symbols-outlined" style="font-size:14px">verified</span>
+              {{ modelValidation.loading && modelValidation.activeModelId === m.id ? 'Testing...' : 'Test model' }}
+            </button>
+            <button
+              v-if="m.validation?.status === 'passed' && m.nft?.tokenId && !m.fineTuneToken?.tokenAddress"
+              class="bz-btn bz-btn--ghost bz-btn--sm"
+              :disabled="!fineTuneTokenConfigured"
+              @click="prepareTokenLaunch(m)"
+            >
+              <span class="material-symbols-outlined" style="font-size:14px">rocket_launch</span> Token
+            </button>
+            <button
+              v-if="m.nft?.tokenId && !m.modelRegistry?.modelId"
+              class="bz-btn bz-btn--ghost bz-btn--sm"
+              :disabled="!modelRegistryReady() || modelRegistryPublish.loading"
+              :title="modelRegistryReady() ? 'Publish trained model to the model registry' : 'Model registry is not configured'"
+              @click="publishTrainedModel(m)"
+            >
+              <span class="material-symbols-outlined" style="font-size:14px">public</span>
+              {{ modelRegistryPublish.activeModelId === m.id && modelRegistryPublish.loading ? 'Publishing...' : 'Registry' }}
+            </button>
+            <button
+              v-if="m.nft?.tokenId && !m.revenueRoute?.assetId"
+              class="bz-btn bz-btn--ghost bz-btn--sm"
+              :disabled="!bonzaiRevenueRouterService.isConfigured() || revenueRoutePublish.loading"
+              :title="bonzaiRevenueRouterService.isConfigured() ? 'Register contributor revenue route' : 'Revenue router is not configured'"
+              @click="publishModelRevenueRoute(m)"
+            >
+              <span class="material-symbols-outlined" style="font-size:14px">account_balance</span>
+              {{ revenueRoutePublish.activeModelId === m.id && revenueRoutePublish.loading ? 'Routing...' : 'Route' }}
+            </button>
+            <button
+              v-if="m.model_provenance || m.provenance_schema"
+              class="bz-btn bz-btn--ghost bz-btn--sm"
+              @click="copyModelProvenance(m)"
+            >
+              <span class="material-symbols-outlined" style="font-size:14px">account_tree</span> Provenance
+            </button>
+            <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="exportModel(m)">
+              <span class="material-symbols-outlined" style="font-size:14px">download</span> Export
+            </button>
+            <button class="bz-iconbtn bz-iconbtn--sm" style="margin-left:auto" @click="deleteModel(m.id)" title="Delete">
+              <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+            </button>
+          </div>
+          <div v-if="modelValidation.activeModelId === m.id && modelValidation.error" class="bz-train__contribution-alert is-error">
+            {{ modelValidation.error }}
+          </div>
+          <div v-if="tokenLaunch.activeModelId === m.id" class="bz-train__token-launch">
+            <div class="bz-train__token-grid">
+              <input v-model="tokenLaunch.name" class="bz-train__input" placeholder="Token name" />
+              <input v-model="tokenLaunch.symbol" class="bz-train__input" placeholder="Symbol" maxlength="12" />
+              <input v-model="tokenLaunch.ethAmount" class="bz-train__input" placeholder="ETH liquidity" />
+              <textarea v-model="tokenLaunch.description" class="bz-train__input bz-train__token-description" placeholder="What makes this model useful"></textarea>
+              <input v-model="tokenLaunch.image" class="bz-train__input" placeholder="Token image URL or data URL" />
+              <label class="bz-btn bz-btn--ghost bz-btn--sm bz-train__upload">
+                Upload image
+                <input type="file" accept="image/*" @change="handleTokenImage" />
+              </label>
+            </div>
+            <div class="bz-train__token-profile-actions">
+              <button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="tokenLaunch.generating" @click="generateTokenProfile(m)">
+                {{ tokenLaunch.generating ? 'Generating identity...' : 'Generate identity' }}
+              </button>
+              <span class="skill-chip skill-chip--success">Validated {{ shortHash(m.validation?.hash) }}</span>
+            </div>
+            <p class="bz-train__token-note">
+              Revenue route is attached from {{ m.data_owner_wallets?.length || 0 }} data owner{{ (m.data_owner_wallets?.length || 0) === 1 ? '' : 's' }} and this model's provenance manifest.
+            </p>
+            <div v-if="tokenLaunch.error" class="bz-train__contribution-alert is-error">{{ tokenLaunch.error }}</div>
+            <div class="bz-train__token-actions">
+              <button class="bz-btn bz-btn--primary bz-btn--sm" :disabled="tokenLaunch.loading" @click="launchModelToken(m)">
+                {{ tokenLaunch.loading ? 'Launching...' : `Launch ${m.type === 'abliteration' ? 'abliterated' : 'fine-tune'} token` }}
+              </button>
+              <button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="tokenLaunch.loading" @click="cancelTokenLaunch">
+                Cancel
+              </button>
+            </div>
+          </div>
+          <div
+            v-if="modelRegistryPublish.activeModelId === m.id && modelRegistryPublish.error"
+            class="bz-train__contribution-alert is-error"
+          >
+            {{ modelRegistryPublish.error }}
+          </div>
+          <div
+            v-if="revenueRoutePublish.activeModelId === m.id && revenueRoutePublish.error"
+            class="bz-train__contribution-alert is-error"
+          >
+            {{ revenueRoutePublish.error }}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Mint Modal -->
+    <MintModal
+      v-if="showMintModal"
+      :visible="showMintModal"
+      v-bind="mintTarget"
+      @close="showMintModal = false"
+      @minted="onMintComplete"
+    />
   </div>
-
-  <!-- Mint Modal -->
-  <MintModal
-    v-if="mintTarget"
-    :visible="showMintModal"
-    :inference-type="mintTarget.inferenceType"
-    :inference-id="mintTarget.inferenceId"
-    :content="mintTarget.content"
-    :content-type="mintTarget.contentType"
-    :prompt="mintTarget.prompt"
-    :generation="mintTarget.generation"
-    @close="showMintModal = false"
-    @minted="onMintComplete"
-  />
-
-  <!-- Token Launch Modal -->
-  <Teleport to="body">
-    <Transition name="fade">
-      <div
-        v-if="showTokenLaunchModal"
-        class="token-launch-overlay"
-        @click.self="!isLaunchingToken && (showTokenLaunchModal = false)"
-      >
-        <div class="token-launch-modal">
-          <div class="token-launch-header p-5">
-            <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-white">
-              <span class="material-symbols-outlined mr-2 is-size-2">currency_exchange</span>
-              Issue Model Token
-            </h2>
-            <BzCloseButton size="md" aria-label="Close" @click="showTokenLaunchModal = false" />
-          </div>
-
-          <div class="token-launch-body p-5">
-            <div v-if="!tokenLaunchResult?.success">
-              <p class="has-text-white-ter mb-4" style="font-size: 13px;">
-                Launch an ERC-20 token for your fine-tuned model on Base.
-                96% of supply goes to Uniswap V2 LP (burned), 4% to you.
-              </p>
-
-              <div class="field mb-4">
-                <label class="label" style="color: var(--bz-fg-mid); font-size: 12px;">Token Name</label>
-                <input v-model="tokenName" class="input" type="text" maxlength="64"
-                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg);" />
-              </div>
-
-              <div class="field mb-4">
-                <label class="label" style="color: var(--bz-fg-mid); font-size: 12px;">Token Symbol</label>
-                <input v-model="tokenSymbol" class="input" type="text" maxlength="10"
-                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg); text-transform: uppercase;" />
-              </div>
-
-              <div class="field mb-5">
-                <label class="label" style="color: var(--bz-fg-mid); font-size: 12px;">ETH for Liquidity</label>
-                <input v-model="tokenEthAmount" class="input" type="number" step="0.001" min="0.01"
-                  style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--bz-fg);" />
-                <p class="help" style="color: rgba(255,255,255,0.4);">Min 0.01 ETH. LP tokens are burned (unruggable).</p>
-              </div>
-
-              <div v-if="tokenLaunchResult?.error" class="bz-notice bz-notice--danger mb-4">
-                {{ tokenLaunchResult.error }}
-              </div>
-
-              <div class="has-text-centered">
-                <button
-                  class="bz-btn bz-btn--primary is-large"
-                  @click="executeTokenLaunch"
-                  :disabled="isLaunchingToken || !tokenName || !tokenSymbol"
-                  :class="{ 'bz-btn--running': isLaunchingToken }"
-                >
-                  <span class="material-symbols-outlined mr-2">rocket_launch</span>
-                  Launch Token
-                </button>
-              </div>
-            </div>
-
-            <!-- Success -->
-            <div v-else class="has-text-centered">
-              <span class="material-symbols-outlined" style="font-size: 48px; color: var(--bz-emerald-500);">check_circle</span>
-              <h3 class="has-text-white mt-3 mb-4">Token Launched!</h3>
-              <div style="text-align: left;" class="mb-4">
-                <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
-                  <span style="color: var(--bz-fg-low); font-size: 12px;">Symbol</span>
-                  <span class="has-text-white" style="font-size: 13px; font-weight: 600;">${{ tokenLaunchResult.symbol }}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
-                  <span style="color: var(--bz-fg-low); font-size: 12px;">Token</span>
-                  <a :href="`https://basescan.org/token/${tokenLaunchResult.tokenAddress}`" target="_blank"
-                    style="color: var(--bz-info); font-size: 12px; font-family: monospace;">
-                    {{ tokenLaunchResult.tokenAddress?.slice(0, 10) }}...
-                  </a>
-                </div>
-                <div style="display: flex; justify-content: space-between; padding: 8px 0;">
-                  <span style="color: var(--bz-fg-low); font-size: 12px;">Trade</span>
-                  <a :href="`https://app.uniswap.org/swap?chain=base&outputCurrency=${tokenLaunchResult.tokenAddress}`"
-                    target="_blank" style="color: var(--bz-info); font-size: 12px;">
-                    Uniswap
-                    <span class="material-symbols-outlined" style="font-size: 12px;">open_in_new</span>
-                  </a>
-                </div>
-              </div>
-              <button class="bz-btn bz-btn--success skill-fullwidth" @click="showTokenLaunchModal = false">Done</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
 </template>
 
-<script>
+<script setup>
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import axios from 'axios'
+import { io } from 'socket.io-client'
+import AccessRequirements from './AccessRequirements.vue'
+import MintModal from './MintModal.vue'
+import { useBonzaiWeb3 } from '../composables/useBonzaiWeb3.js'
 import {
-  ref,
-  reactive,
-  computed,
-  onMounted,
-  onBeforeUnmount,
-  watch,
-} from "vue";
-import { v4 as uuid } from "uuid";
-import axios from "axios";
-import { io } from "socket.io-client";
-import AccessRequirements from "./AccessRequirements.vue";
-import MintModal from "./MintModal.vue";
-import BonzaiPulse from "./BonzaiPulse.vue";
-import BzCloseButton from "./BzCloseButton.vue";
-import ModeChipBar from "./generative/ModeChipBar.vue";
-import { fineTuneTokenService } from "../services/fineTuneToken.service.js";
-import { allInferences } from "../stores/inferenceStore.js";
+  appendContributionLedgerEntry,
+  buildTrainingProvenanceManifest,
+  loadContributionLedger,
+  parseDatasetText,
+  updateContributionLedgerEntry,
+} from '../services/contribution.service.js'
+import {
+  contributionEconomyReady,
+  modelRegistryReady,
+  publishDatasetFromRows,
+  publishModelFromProvenance,
+} from '../services/contributionRegistry.service.js'
+import { fineTuneTokenService } from '../services/fineTuneToken.service.js'
+import { bonzaiRevenueRouterService } from '../services/bonzaiRevenueRouter.service.js'
+import { i18n } from '../i18n/index.js'
 
-const API_BASE =
-  (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
-  (window?.electronAPI?.env && window.electronAPI.env.API_BASE) ||
-  "http://127.0.0.1:65000";
+/* ── Props ─────────────────────────────────────────────────────── */
+const props = defineProps({
+  mode: { type: String, default: 'tune' },           // 'tune' | 'uncensor'
+  initialTab: { type: String, default: '' },          // legacy compat
+  fixedTab: { type: Boolean, default: false },        // legacy compat
+})
 
-const WS_TRAINING = `${API_BASE}/training`;
 
-export default {
-  name: "GenerativeTraining",
-  components: { AccessRequirements, MintModal, BonzaiPulse, BzCloseButton, ModeChipBar },
-  setup() {
-    // Main tabs
-    const activeTab = ref("dataset");
-    const trainingTabs = [
-      { value: "dataset", label: "Dataset", icon: "dataset" },
-      { value: "run", label: "Fine-tune", icon: "model_training" },
-    ];
-    const trainTargets = [
-      { id: "qwen-0.8b", label: "Qwen 0.8B", icon: "chat" },
-      { id: "sdxl", label: "SDXL", icon: "image" },
-      { id: "ace-step", label: "ACE-Step", icon: "graphic_eq" },
-    ];
-    const stake = reactive({
-      target: "qwen-0.8b",
-      selectedIds: new Set(),
-    });
+const modeTitle = computed(() => props.mode === 'uncensor' ? 'Uncensor' : 'Tune')
+const modeSubtitle = computed(() => props.mode === 'uncensor'
+  ? 'Remove refusal behavior and verify the result.'
+  : 'Train local adapters from your data.'
+)
+const modeSteps = computed(() => props.mode === 'uncensor'
+  ? [
+      { icon: 'travel_explore', label: 'Probe', copy: 'Find refusal circuits.' },
+      { icon: 'content_cut', label: 'Excise', copy: 'Remove the behavior vector.' },
+      { icon: 'verified', label: 'Verify', copy: 'Check coherence before export.' },
+    ]
+  : [
+      { icon: 'dataset', label: 'Import', copy: 'Load data with provenance.' },
+      { icon: 'tune', label: 'Train', copy: 'Create a local adapter.' },
+      { icon: 'account_tree', label: 'Route', copy: 'Attach contributors and revenue.' },
+    ])
 
-    // Training type selection
-    const trainingType = ref("llm"); // production path: chat/LLM fine-tuning
+/* ── API base ──────────────────────────────────────────────────── */
+const API_BASE = import.meta.env.VITE_API_BASE
+  || window.electronAPI?.env?.API_BASE
+  || 'http://127.0.0.1:65000'
+const { walletAddress } = useBonzaiWeb3()
 
-    // Datasets
-    const datasets = ref([]);
-    const selectedDataset = ref(null);
-    const showCreateDataset = ref(false);
-    const creatingDataset = ref(false);
-    const newDataset = reactive({
-      name: "",
-      type: "text",
-      files: [],
-      fileContents: [],
-    });
+/* ── Tune state ────────────────────────────────────────────────── */
+const jsonlRows = ref([])
+const jsonlColumns = ref([])
+const jsonlFileName = ref('')
+const isDragOver = ref(false)
+const selectedTarget = ref(null)
+const contributionPack = ref(null)
+const contributionLedger = ref([])
+const activeContributionLedgerId = ref('')
+const contributionPublish = reactive({
+  active: false,
+  error: '',
+  result: null,
+})
 
-    // Trained models
-    const trainedModels = ref([]);
+const targets = [
+  { key: 'text',  name: 'Text',  icon: 'chat',         model: 'Qwen 3.5 / 3.6',  desc: 'LoRA fine-tune LLMs for custom behavior' },
+  { key: 'image', name: 'Image', icon: 'image',         model: 'Z-Image Turbo',    desc: 'LoRA fine-tune diffusion for custom styles' },
+  { key: 'audio', name: 'Audio', icon: 'graphic_eq',    model: 'Qwen TTS / ACE-Step', desc: 'Voice LoRA or music LoRA adapters' },
+  { key: 'video', name: 'Video', icon: 'movie',         model: 'Wan 2.2 I2V',      desc: 'Video LoRA for motion and style' },
+]
 
-    // LLM Config
-    const llmConfig = reactive({
-      base_model: "llama-3.2-1b",
-      epochs: 3,
-      batch_size: 4,
-      learning_rate: 0.0002,
-      lora_r: 16,
-      lora_alpha: 32,
-      use_4bit: true,
-      max_seq_length: 2048,
-    });
+const llmModels = [
+  { key: 'qwen3_5_0_8b', name: 'Qwen3.5 0.8B' },
+  { key: 'qwen_3_6_27b', name: 'Qwen3.6 27B' },
+]
 
-    // SDXL Config
-    const sdxlConfig = reactive({
-      instance_prompt: "",
-      class_prompt: "",
-      epochs: 500,
-      batch_size: 1,
-      learning_rate: 0.0001,
-      lora_rank: 32,
-      resolution: 1024,
-      use_8bit_adam: true,
-    });
+const audioModels = [
+  { key: 'qwen-tts', name: 'Qwen TTS Voice' },
+  { key: 'ace-step', name: 'ACE-Step Music' },
+]
 
-    // Training state
-    const training = reactive({
-      active: false,
-      type: null,
-      id: null,
-      stage: "",
-      pct: 0,
-      epoch: 0,
-      total_epochs: 0,
-      loss: null,
-      eta: null,
-      error: null,
-    });
+const imageModels = [
+  { key: 'z-image-turbo', name: 'Z-Image Turbo' },
+  { key: 'sdxl-base-1.0', name: 'SDXL 1.0' },
+]
 
-    // ─────────────────────────────────────────────────────────────
-    // Dataset Studio
-    // ─────────────────────────────────────────────────────────────
-    // Game tier definitions (imported concept — keep in sync with dataset-studio.js)
-    const GAME_TIERS = [
-      {
-        id: 1,
-        name: "Primitives",
-        desc: "Scene setup, camera, renderer, basic meshes, lighting",
-      },
-      {
-        id: 2,
-        name: "Materials & Shaders",
-        desc: "PBR materials, custom ShaderMaterial, GLSL, post-processing",
-      },
-      {
-        id: 3,
-        name: "Geometry & Terrain",
-        desc: "Procedural geometry, heightmaps, infinite terrain, LOD",
-      },
-      {
-        id: 4,
-        name: "Models & Assets",
-        desc: "GLTF/GLB loading, Blender workflow, animations, textures",
-      },
-      {
-        id: 5,
-        name: "Physics",
-        desc: "Cannon-es/Rapier integration, collision, rigid bodies, vehicles",
-      },
-      {
-        id: 6,
-        name: "Controls & Input",
-        desc: "FPS/orbit/pointer-lock, keyboard, gamepad, mobile touch",
-      },
-      {
-        id: 7,
-        name: "Animation & Particles",
-        desc: "Skeletal animation, tweens (GSAP), particle systems, trails",
-      },
-      {
-        id: 8,
-        name: "Game Systems",
-        desc: "State machines, entity component, inventory, health, scoring",
-      },
-      {
-        id: 9,
-        name: "UI & Audio",
-        desc: "HUD overlays, menus, spatial audio, CSS3D",
-      },
-      {
-        id: 10,
-        name: "Full Games",
-        desc: "Complete mini-games combining 3+ tiers above",
-      },
-    ];
+const tuneConfig = reactive({
+  base_model: 'qwen3_5_0_8b',
+  lora_rank: 16,
+  learning_rate: '2e-4',
+  epochs: 3,
+  batch_size: 4,
+  use_4bit: true,
+  uncensor: false,
+  instance_prompt: '',
+})
 
-    const studio = reactive({
-      examples: [],
-      selected: null,
-      editMode: "text",
-      editTier: 1,
-      editHtml: "",
-      editCss: "",
-      editJs: "",
-      editText: "",
-      editDescription: "",
-      editLibraries: [],
-      newLibInput: "",
-      describing: false,
-    });
+/* ── Uncensor state ────────────────────────────────────────────── */
+const ablitModels = ref([])
+const ablitConfig = reactive({
+  base_model: '',
+  method: 'advanced',
+  quantization: 'Q4_K_M',
+})
 
-    // Access control
-    const accessRef = ref(null);
-    const hasAccess = ref(false);
+const ablitMethods = [
+  { value: 'basic',     label: 'Basic' },
+  { value: 'advanced',  label: 'Advanced' },
+  { value: 'nuclear',   label: 'Nuclear' },
+  { value: 'informed',  label: 'Informed' },
+]
 
-    const onAccessChanged = (access) => {
-      hasAccess.value = access;
-    };
+const ablitQuants = ['Q2_K', 'Q3_K_M', 'Q4_K_M', 'Q5_K_M', 'Q8_0', 'F16']
 
-    // Socket
-    const trainingSocket = ref(null);
+const pipelineStages = [
+  { key: 'summon',  name: 'SUMMON',  desc: 'Loading model into memory' },
+  { key: 'probe',   name: 'PROBE',   desc: 'Probing refusal circuits' },
+  { key: 'distill', name: 'DISTILL', desc: 'Extracting refusal subspace via SVD' },
+  { key: 'excise',  name: 'EXCISE',  desc: 'Excising refusal directions from weights' },
+  { key: 'verify',  name: 'VERIFY',  desc: 'Verifying coherence and quality' },
+  { key: 'rebirth', name: 'REBIRTH', desc: 'Saving the liberated model' },
+]
 
-    // Computed
-    const filteredDatasets = computed(() => {
-      return datasets.value.filter((ds) => ds.type === "text");
-    });
+/* ── Training progress ─────────────────────────────────────────── */
+const training = reactive({
+  active: false, type: '', id: '', stage: '', pct: 0,
+  epoch: 0, total_epochs: 0, loss: null, eta: '', error: '',
+})
 
-    const studioTextExamples = computed(() => {
-      return studio.examples.filter((ex) => (ex.mode || "text") === "text");
-    });
+const ablPipeline = reactive({
+  active: false, completed: false, stage: '', pct: 0, detail: '',
+  currentStage: '', completedStages: new Set(), errorStage: '', error: '',
+  metrics: null,
+})
 
-    const trainingStats = computed(() => {
-      const activeModels = trainedModels.value.filter((m) => m.type === "llm_lora").length;
-      return [
-        { icon: "deployed_code", value: String(stakedItems.value.length), label: "staked items" },
-        { icon: "dataset", value: String(filteredDatasets.value.length), label: "LLM datasets" },
-        { icon: "model_training", value: String(activeModels), label: "fine-tunes" },
-      ];
-    });
+/* ── Trained models ────────────────────────────────────────────── */
+const trainedModels = ref([])
+const showMintModal = ref(false)
+const mintTarget = ref(null)
+const modelEconomy = ref({})
+const tokenLaunch = reactive({
+  activeModelId: '',
+  name: '',
+  symbol: '',
+  ethAmount: '0.01',
+  loading: false,
+  error: '',
+  result: null,
+  description: '',
+  image: '',
+  generating: false,
+})
+const modelValidation = reactive({ activeModelId: '', loading: false, error: '' })
+const modelRegistryPublish = reactive({
+  activeModelId: '',
+  loading: false,
+  error: '',
+})
+const revenueRoutePublish = reactive({
+  activeModelId: '',
+  loading: false,
+  error: '',
+})
 
-    const stakeableCollectibles = computed(() =>
-      allInferences.value
-        .filter((item) => ["text", "image", "audio"].includes(item.type))
-        .slice(0, 18)
-    );
-    const stakedItems = computed(() =>
-      stakeableCollectibles.value.filter((item) => stake.selectedIds.has(item.id))
-    );
-    const stakeTypeCounts = computed(() =>
-      stakedItems.value.reduce((acc, item) => {
-        acc[item.type] = (acc[item.type] || 0) + 1;
-        return acc;
-      }, { text: 0, image: 0, audio: 0 })
-    );
+/* ── Computed ──────────────────────────────────────────────────── */
+const detectedType = computed(() => {
+  if (jsonlRows.value.length === 0) return 'unknown'
+  const first = jsonlRows.value[0]
+  if (first.kind?.includes('audio')) return 'audio'
+  if (first.kind?.includes('image')) return 'image'
+  if (first.kind?.includes('video')) return 'video'
+  if (first.audio || first.audio_url || first.waveform) return 'audio'
+  if (first.image || first.image_url || first.image_base64) return 'image'
+  if (first.video || first.video_url || first.frames) return 'video'
+  return 'text'
+})
 
-    const canStartTraining = computed(() => {
-      if (!hasAccess.value) return false;
-      if (!selectedDataset.value) return false;
-      if (trainingType.value === "sdxl" && !sdxlConfig.instance_prompt)
-        return false;
-      return true;
-    });
+const jsonlPreview = computed(() => jsonlRows.value.slice(0, 5))
+const hasContributionPack = computed(() => !!contributionPack.value)
+const contributionSummary = computed(() => contributionPack.value?.summary || null)
+const contributionWarnings = computed(() => contributionPack.value?.validation?.warnings || [])
+const contributionErrors = computed(() => contributionPack.value?.validation?.errors || [])
+const contributionRevenuePlan = computed(() => contributionPack.value?.revenuePlan || null)
+const ledgerPreview = computed(() => contributionLedger.value.slice(0, 3))
+const canPublishContributionPack = computed(() => hasContributionPack.value && jsonlRows.value.length > 0 && contributionEconomyReady())
+const fineTuneTokenConfigured = fineTuneTokenService.isConfigured
 
-    function stakeIcon(type) {
-      return type === "image" ? "image" : type === "audio" ? "graphic_eq" : "article";
+const MODEL_ECONOMY_KEY = 'bonzai-trained-model-economy-v1'
+
+function loadModelEconomy() {
+  try {
+    const raw = window.localStorage?.getItem(MODEL_ECONOMY_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveModelEconomy(next = modelEconomy.value) {
+  modelEconomy.value = next
+  try {
+    window.localStorage?.setItem(MODEL_ECONOMY_KEY, JSON.stringify(next))
+  } catch { /* local persistence is best-effort */ }
+}
+
+function applyModelEconomy(models) {
+  return models.map(model => ({
+    ...model,
+    ...(model.economy || {}),
+    ...(modelEconomy.value[model.id] || {}),
+  }))
+}
+
+async function persistModelEconomy(modelId, patch) {
+  try {
+    await axios.post(`${API_BASE}/training/models/${modelId}/economy`, patch)
+  } catch (err) {
+    console.warn('[Training] Failed to persist model economy state', err)
+  }
+}
+
+function updateModelEconomy(modelId, patch, { syncServer = true } = {}) {
+  if (!modelId) return
+  const next = {
+    ...modelEconomy.value,
+    [modelId]: {
+      ...(modelEconomy.value[modelId] || {}),
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    },
+  }
+  saveModelEconomy(next)
+  trainedModels.value = applyModelEconomy(trainedModels.value)
+  if (syncServer) {
+    void persistModelEconomy(modelId, patch)
+  }
+}
+
+function tokenDefaults(model) {
+  const base = String(model.base_model || model.filename || model.id || 'model')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+  const words = base.split(/\s+/).filter(Boolean)
+  const symbol = (`BZ${words.map(word => word[0]).join('') || 'MODEL'}`).slice(0, 10).toUpperCase()
+  return {
+    name: `BonzAI Fine-Tune: ${base.slice(0, 42) || model.id}`,
+    symbol,
+  }
+}
+
+/* ── JSONL Import ──────────────────────────────────────────────── */
+function onDrop(e) {
+  isDragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) parseDatasetFile(file)
+}
+
+function onFileSelect(e) {
+  const file = e.target?.files?.[0]
+  if (file) parseDatasetFile(file)
+}
+
+function parseDatasetFile(file) {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const text = e.target.result
+    const parsed = parseDatasetText(text, file.name)
+    if (parsed.rows.length === 0) return
+    jsonlRows.value = parsed.rows
+    jsonlColumns.value = parsed.columns
+    jsonlFileName.value = file.name
+    contributionPack.value = parsed.contributionPack
+    activeContributionLedgerId.value = ''
+
+    if (parsed.contributionPack) {
+      const entry = appendContributionLedgerEntry(parsed.contributionPack, detectedType.value)
+      activeContributionLedgerId.value = entry.id
+      contributionLedger.value = loadContributionLedger()
+    }
+  }
+  reader.readAsText(file)
+}
+
+function clearJsonl() {
+  jsonlRows.value = []
+  jsonlColumns.value = []
+  jsonlFileName.value = ''
+  contributionPack.value = null
+  activeContributionLedgerId.value = ''
+}
+
+function truncate(str, max) {
+  return str.length > max ? str.slice(0, max) + '…' : str
+}
+
+function cellValue(value) {
+  if (Array.isArray(value)) return value.join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  return String(value || '')
+}
+
+function formatPercent(value, total) {
+  if (!total) return '0%'
+  return `${Math.round((value / total) * 100)}%`
+}
+
+function contributionKindLabel(kind) {
+  return String(kind || '').replace('dataset_', '')
+}
+
+async function publishContributionPack() {
+  if (!hasContributionPack.value || contributionPublish.active) return
+
+  contributionPublish.active = true
+  contributionPublish.error = ''
+  contributionPublish.result = null
+
+  try {
+    if (!contributionEconomyReady()) {
+      throw new Error('Contribution registries are not configured yet.')
     }
 
-    function toggleStake(item) {
-      if (stake.selectedIds.has(item.id)) stake.selectedIds.delete(item.id);
-      else stake.selectedIds.add(item.id);
+    const result = await publishDatasetFromRows(jsonlRows.value, {
+      packMetadataURI: contributionSummary.value?.packId ? `bonzai-pack://${contributionSummary.value.packId}` : '',
+      datasetMetadataURI: contributionSummary.value?.packId ? `bonzai-dataset://${contributionSummary.value.packId}` : '',
+      commercialAllowed: contributionSummary.value?.commercialAllowed > 0,
+      royaltyBearing: contributionSummary.value?.royaltyBearing > 0,
+    })
+    contributionPublish.result = result
+
+    if (activeContributionLedgerId.value) {
+      updateContributionLedgerEntry(activeContributionLedgerId.value, {
+        status: 'published',
+        registryDatasetId: result.datasetId,
+        registryTxHash: result.txHash,
+      })
+      contributionLedger.value = loadContributionLedger()
+    }
+  } catch (err) {
+    contributionPublish.error = err.message || 'Contribution publishing failed'
+  } finally {
+    contributionPublish.active = false
+  }
+}
+
+/* ── Training ──────────────────────────────────────────────────── */
+let socket = null
+
+function setupSocket() {
+  socket = io(`${API_BASE}/training`, { transports: ['websocket'] })
+
+  socket.on('training_progress', (data) => {
+    // Abliteration pipeline stages
+    if (['summon', 'probe', 'distill', 'excise', 'verify', 'rebirth'].includes(data.stage)) {
+      ablPipeline.stage = data.stage
+      ablPipeline.pct = data.progress || 0
+      ablPipeline.detail = data.detail || ''
+      ablPipeline.currentStage = data.stage
+      // Mark completed stages
+      const stageOrder = ['summon', 'probe', 'distill', 'excise', 'verify', 'rebirth']
+      const idx = stageOrder.indexOf(data.stage)
+      for (let i = 0; i < idx; i++) {
+        ablPipeline.completedStages.add(stageOrder[i])
+      }
+      // Capture quality metrics from VERIFY done
+      if (data.quality_metrics) {
+        ablPipeline.metrics = data.quality_metrics
+      }
+      return
+    }
+    // Standard training progress
+    training.stage = data.stage || ''
+    training.pct = data.progress || 0
+    training.epoch = data.epoch || 0
+    training.total_epochs = data.total_epochs || 0
+    training.loss = data.loss
+    training.eta = data.eta || ''
+  })
+
+  socket.on('training_complete', (data) => {
+    if (data.type === 'abliteration') {
+      ablPipeline.active = false
+      ablPipeline.completed = true
+      ablPipeline.pct = 100
+      pipelineStages.forEach(s => ablPipeline.completedStages.add(s.key))
+      if (data.quality_metrics) {
+        ablPipeline.metrics = data.quality_metrics
+      }
+    } else {
+      training.active = false
+      training.pct = 100
+    }
+    loadTrainedModels()
+  })
+
+  socket.on('training_error', (data) => {
+    if (ablPipeline.active) {
+      ablPipeline.active = false
+      ablPipeline.error = data.error || 'Abliteration failed'
+      ablPipeline.errorStage = ablPipeline.currentStage
+    } else {
+      training.active = false
+      training.error = data.error || 'Training failed'
+    }
+  })
+}
+
+async function startTuneTraining() {
+  if (!jsonlRows.value.length) return
+
+  training.active = true
+  training.error = ''
+  training.pct = 0
+  training.epoch = 0
+
+  try {
+    // Build dataset from JSONL
+    const datasetName = `tune-${Date.now()}`
+    const trainingConfig = {
+      target: selectedTarget.value,
+      ...tuneConfig,
+      learning_rate: parseFloat(tuneConfig.learning_rate),
+    }
+    const trainingProvenance = buildTrainingProvenanceManifest({
+      rows: jsonlRows.value,
+      contributionPack: contributionPack.value,
+      datasetType: detectedType.value,
+      datasetName,
+      trainerWallet: walletAddress.value || null,
+      trainingConfig,
+    })
+    const jsonlContent = jsonlRows.value.map(r => JSON.stringify(r)).join('\n')
+    const blob = new Blob([jsonlContent], { type: 'application/jsonl' })
+    const base64 = await blobToBase64(blob)
+
+    const dsResp = await axios.post(`${API_BASE}/training/datasets`, {
+      name: datasetName,
+      type: detectedType.value,
+      files: [{ filename: jsonlFileName.value || 'data.jsonl', content_base64: base64 }],
+      provenance: trainingProvenance,
+    })
+
+    if (!dsResp.data?.dataset?.id) throw new Error('Failed to create dataset')
+    const datasetId = dsResp.data.dataset.id
+    if (activeContributionLedgerId.value) {
+      updateContributionLedgerEntry(activeContributionLedgerId.value, {
+        datasetId,
+        datasetType: detectedType.value,
+        trainingProvenance,
+        dataOwnerCount: trainingProvenance.dataset.dataOwnerWallets.length,
+        contributionIds: trainingProvenance.dataset.contributionIds,
+        status: 'dataset_created',
+      })
+      contributionLedger.value = loadContributionLedger()
     }
 
-    function createDatasetFromStake() {
-      const items = stakedItems.value;
-      if (!items.length) return;
-      const name = `Staked ${stake.target} dataset ${new Date().toLocaleDateString()}`;
-      const samples = items.map((item) => ({
-        id: item.id,
-        type: item.type,
-        prompt: item.question || "",
-        answer: item.answer || null,
-        model: item.model || item.pipeline || "",
-        nft: item.nft || null,
-        metadata: {
-          createdAt: item.createdAt,
-          hardware: item.hardware || null,
-          elapsed: item.elapsed || null,
-          tokensPerSecond: item.tokensPerSecond || null,
-          source: item.source || null,
-          networkMode: item.networkMode || null,
+    // Pick endpoint
+    const endpointMap = { text: 'llm', image: 'sdxl', audio: 'audio', video: 'video' }
+    const endpoint = endpointMap[detectedType.value] || 'llm'
+
+    const payload = {
+      dataset_id: datasetId,
+      ...tuneConfig,
+      learning_rate: parseFloat(tuneConfig.learning_rate),
+      training_provenance: trainingProvenance,
+    }
+    if (detectedType.value === 'image' && !tuneConfig.instance_prompt) {
+      throw new Error('Instance prompt is required for image training')
+    }
+
+    const resp = await axios.post(`${API_BASE}/training/${endpoint}/start`, payload)
+    if (resp.status !== 202) throw new Error(resp.data?.error || 'Failed to start training')
+    training.id = resp.data.training_id
+    if (activeContributionLedgerId.value) {
+      updateContributionLedgerEntry(activeContributionLedgerId.value, {
+        trainingId: training.id,
+        trainingProvenance,
+        status: 'training_started',
+      })
+      contributionLedger.value = loadContributionLedger()
+    }
+  } catch (err) {
+    training.active = false
+    training.error = err.message
+  }
+}
+
+async function startAbliteration() {
+  if (!ablitConfig.base_model) return
+
+  ablPipeline.active = true
+  ablPipeline.completed = false
+  ablPipeline.error = ''
+  ablPipeline.pct = 0
+  ablPipeline.detail = ''
+  ablPipeline.currentStage = ''
+  ablPipeline.completedStages = new Set()
+  ablPipeline.errorStage = ''
+  ablPipeline.metrics = null
+
+  try {
+    const resp = await axios.post(`${API_BASE}/training/abliterate/start`, {
+      base_model: ablitConfig.base_model,
+      method: ablitConfig.method,
+      quantization: ablitConfig.quantization,
+    })
+    if (resp.status !== 202) throw new Error(resp.data?.error || 'Failed to start abliteration')
+  } catch (err) {
+    ablPipeline.active = false
+    ablPipeline.error = err.message
+  }
+}
+
+/* ── Data loading ──────────────────────────────────────────────── */
+async function loadTrainedModels() {
+  try {
+    const resp = await axios.get(`${API_BASE}/training/models`)
+    trainedModels.value = applyModelEconomy(resp.data?.models || [])
+  } catch { /* silent */ }
+}
+
+async function loadAblitModels() {
+  try {
+    const resp = await axios.get(`${API_BASE}/training/info`)
+    ablitModels.value = resp.data?.abliteration_models || []
+  } catch { /* silent */ }
+}
+
+/* ── Model actions ─────────────────────────────────────────────── */
+function registryDatasetIdsForModel(provenance) {
+  const contributionIds = new Set((provenance?.dataset?.contributionIds || []).map(String))
+  const ids = new Set()
+  contributionLedger.value.forEach(entry => {
+    const entryIds = entry.contributionIds || []
+    const matchesContribution = entryIds.some(id => contributionIds.has(String(id)))
+    if ((matchesContribution || !contributionIds.size) && /^0x[a-fA-F0-9]{64}$/.test(String(entry.registryDatasetId || ''))) {
+      ids.add(entry.registryDatasetId)
+    }
+  })
+  return [...ids]
+}
+
+async function exportModel(model) {
+  try {
+    const resp = await axios.post(`${API_BASE}/training/models/${model.id}/export`)
+    if (window.electronAPI?.saveModel && resp.data?.model_path) {
+      await window.electronAPI.saveModel(model.filename || model.id, resp.data.model_path)
+    }
+  } catch { /* silent */ }
+}
+
+async function modelProvenance(model) {
+  if (model?.model_provenance) return model.model_provenance
+  try {
+    const resp = await axios.get(`${API_BASE}/training/models/${model.id}/provenance`)
+    return resp.data?.provenance || null
+  } catch {
+    return null
+  }
+}
+
+async function mintModel(model) {
+  const provenance = await modelProvenance(model)
+  const dataOwners = provenance?.dataset?.dataOwnerWallets || model.data_owner_wallets || []
+  const payload = {
+    model,
+    provenance,
+    mintedAt: new Date().toISOString(),
+  }
+  mintTarget.value = {
+    inferenceType: 'training',
+    inferenceId: model.id,
+    content: JSON.stringify(payload, null, 2),
+    contentType: 'application/json',
+    prompt: `BonzAI fine-tuned model: ${model.base_model || model.filename || model.id}`,
+    generation: {
+      type: 'fine-tuned-model',
+      model: model.base_model || model.filename || model.id,
+      timestamp: model.created_at ? new Date(model.created_at).getTime() : Date.now(),
+      modelProvenance: provenance,
+      contributionParents: provenance?.dataset?.contributionIds || model.contribution_ids || [],
+      dataOwnerWallets: dataOwners,
+      safety: { nsfw: false },
+    },
+  }
+  showMintModal.value = true
+}
+
+function prepareTokenLaunch(model) {
+  if (model.validation?.status !== 'passed') return
+  const defaults = tokenDefaults(model)
+  tokenLaunch.activeModelId = model.id
+  tokenLaunch.name = defaults.name
+  tokenLaunch.symbol = defaults.symbol
+  tokenLaunch.ethAmount = tokenLaunch.ethAmount || '0.01'
+  tokenLaunch.loading = false
+  tokenLaunch.error = ''
+  tokenLaunch.result = null
+  tokenLaunch.description = model.tokenProfile?.description || ''
+  tokenLaunch.image = model.tokenProfile?.image || ''
+}
+
+function cancelTokenLaunch() {
+  tokenLaunch.activeModelId = ''
+  tokenLaunch.error = ''
+  tokenLaunch.result = null
+}
+
+async function launchModelToken(model) {
+  if (!model?.nft?.tokenId) {
+    tokenLaunch.error = 'Mint this trained model before launching a fine-tune token.'
+    return
+  }
+  if (!fineTuneTokenConfigured.value) {
+    tokenLaunch.error = 'Fine-tune token factory is not configured.'
+    return
+  }
+  if (model.validation?.status !== 'passed' || !model.validation?.hash) {
+    tokenLaunch.error = 'Test and validate this model before token issuance.'
+    return
+  }
+
+  tokenLaunch.loading = true
+  tokenLaunch.error = ''
+  tokenLaunch.result = null
+  try {
+    const provenance = await modelProvenance(model)
+    const result = await fineTuneTokenService.launchFineTuneToken(
+      model.nft.tokenId,
+      tokenLaunch.name.trim(),
+      tokenLaunch.symbol.trim().toUpperCase(),
+      model.nft.metadataUrl || model.nft.contentUrl || `bonzai-model://${model.id}`,
+      tokenLaunch.ethAmount,
+      {
+        modelProvenance: provenance,
+        revenuePlan: provenance?.attribution?.revenuePlan || null,
+        validation: model.validation,
+        validationHash: model.validation.hash,
+        modelKind: model.type === 'abliteration' ? 'abliterated' : 'fine_tuned',
+        profile: { description: tokenLaunch.description.trim(), image: tokenLaunch.image },
+      },
+    )
+    if (!result?.success) throw new Error(result?.error || 'Fine-tune token launch failed')
+    tokenLaunch.result = result
+    updateModelEconomy(model.id, {
+      fineTuneToken: {
+        tokenAddress: result.tokenAddress,
+        poolId: result.poolId,
+        symbol: result.symbol,
+        txHash: result.txHash,
+        ethLiquidity: result.ethLiquidity,
+        modelMetadataHash: result.modelMetadataHash,
+        contributionRouting: result.contributionRouting,
+        modelKind: result.modelKind,
+        profile: result.profile,
+        validationHash: result.validationHash,
+        launchedAt: new Date().toISOString(),
+      },
+    })
+    if (bonzaiRevenueRouterService.isConfigured() && result.poolId) {
+      const route = await bonzaiRevenueRouterService.registerModelRevenueRoute(
+        { ...model, fineTuneToken: { poolId: result.poolId } },
+        provenance,
+        result.poolId,
+      )
+      updateModelEconomy(model.id, {
+        revenueRoute: {
+          assetId: route.assetId,
+          txHash: route.txHash,
+          participants: route.participants,
+          registeredAt: new Date().toISOString(),
         },
-      }));
-      const ds = {
-        id: uuid(),
-        name,
-        type: stake.target === "qwen-0.8b" ? "text" : stake.target,
-        target_model: stake.target,
-        source: "stake-to-train",
-        num_examples: samples.length,
-        samples,
-        created_at: new Date().toISOString(),
-      };
-      datasets.value = [ds, ...datasets.value];
-      selectedDataset.value = ds;
-      activeTab.value = "run";
+      })
     }
+    tokenLaunch.activeModelId = ''
+  } catch (err) {
+    tokenLaunch.error = err.message || 'Fine-tune token launch failed'
+  } finally {
+    tokenLaunch.loading = false
+  }
+}
 
-    // Socket setup
-    const setupTrainingSocket = () => {
-      trainingSocket.value = io(WS_TRAINING, {
-        transports: ["polling", "websocket"],
-        forceNew: true,
-      });
+async function validateModelForIssuance(model) {
+  modelValidation.activeModelId = model.id
+  modelValidation.loading = true
+  modelValidation.error = ''
+  try {
+    const resp = await axios.post(`${API_BASE}/training/models/${model.id}/validate`)
+    const validation = resp.data?.validation
+    if (!validation || validation.status !== 'passed') throw new Error('Model validation did not pass')
+    model.validation = validation
+    updateModelEconomy(model.id, { validation })
+  } catch (err) {
+    modelValidation.error = err.response?.data?.validation?.errors?.join('. ') || err.message || 'Model validation failed'
+  } finally {
+    modelValidation.loading = false
+  }
+}
 
-      trainingSocket.value.on("connect", () => {
-        console.log("[training] Socket connected");
-      });
+async function generateTokenProfile(model) {
+  tokenLaunch.generating = true
+  tokenLaunch.error = ''
+  try {
+    const kind = model.type === 'abliteration' ? 'abliterated local language model' : 'locally fine-tuned AI model'
+    const raw = await window.electronAPI.chat(
+      `Return JSON only with name, ticker, description, and imagePrompt for a token representing this ${kind}. Base model: ${model.base_model || model.filename || model.id}. Description must be concrete, under 240 characters. Ticker must be 3-10 uppercase letters.`,
+      { maxTokens: 320, temperature: 0.7 },
+    )
+    const match = String(raw?.text || raw || '').match(/\{[\s\S]*\}/)
+    const generated = match ? JSON.parse(match[0]) : {}
+    tokenLaunch.name = generated.name || tokenLaunch.name
+    tokenLaunch.symbol = String(generated.ticker || tokenLaunch.symbol).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12)
+    tokenLaunch.description = generated.description || tokenLaunch.description
+    if (generated.imagePrompt && window.electronAPI?.inferenceRequest) {
+      const imageResult = await window.electronAPI.inferenceRequest('image_turbo', {
+        prompt: `${generated.imagePrompt}. Square token identity image, no text, no logo, clean central subject.`,
+        width: 512,
+        height: 512,
+      })
+      const value = imageResult?.result?.image_base64 || imageResult?.result?.image || imageResult?.image_base64
+      if (value) tokenLaunch.image = String(value).startsWith('data:') ? value : `data:image/png;base64,${value}`
+    }
+    await updateModelEconomy(model.id, { tokenProfile: {
+      name: tokenLaunch.name, symbol: tokenLaunch.symbol, description: tokenLaunch.description, image: tokenLaunch.image,
+    } })
+  } catch (err) {
+    tokenLaunch.error = err.message || 'Could not generate the model identity.'
+  } finally {
+    tokenLaunch.generating = false
+  }
+}
 
-      trainingSocket.value.on("training_progress", (data) => {
-        if (training.id && data.training_id !== training.id) return;
+function handleTokenImage(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => { tokenLaunch.image = String(reader.result || '') }
+  reader.readAsDataURL(file)
+}
 
-        training.epoch = data.epoch || 0;
-        training.total_epochs = data.total_epochs || 0;
-        training.loss = data.loss;
-        training.pct = data.progress || 0;
-        training.stage = data.stage || "training";
-        training.eta = data.eta;
-      });
+function shortHash(value) {
+  const text = String(value || '')
+  return text.length > 12 ? `${text.slice(0, 8)}...${text.slice(-4)}` : text
+}
 
-      trainingSocket.value.on("training_complete", async (data) => {
-        if (training.id && data.training_id !== training.id) return;
+async function publishTrainedModel(model) {
+  if (!model?.nft?.tokenId) {
+    modelRegistryPublish.activeModelId = model.id
+    modelRegistryPublish.error = 'Mint this trained model before publishing it to the registry.'
+    return
+  }
+  if (!modelRegistryReady()) {
+    modelRegistryPublish.activeModelId = model.id
+    modelRegistryPublish.error = 'Model registry is not configured.'
+    return
+  }
 
-        training.active = false;
-        training.pct = 100;
-        training.stage = "complete";
+  modelRegistryPublish.activeModelId = model.id
+  modelRegistryPublish.loading = true
+  modelRegistryPublish.error = ''
 
-        // Reload trained models
-        await loadTrainedModels();
-      });
+  try {
+    const provenance = await modelProvenance(model)
+    const result = await publishModelFromProvenance(model, provenance, {
+      datasetIds: registryDatasetIdsForModel(provenance),
+      metadataURI: model.nft.metadataUrl || model.nft.contentUrl || `bonzai-model://${model.id}`,
+    })
+    updateModelEconomy(model.id, {
+      modelRegistry: {
+        modelId: result.modelId,
+        txHash: result.txHash,
+        metadataURI: result.metadataURI,
+        datasetIds: result.datasetIds,
+        evaluationIds: result.evaluationIds,
+        revenueRecipient: result.revenueRecipient,
+        publishedAt: new Date().toISOString(),
+      },
+    })
+    modelRegistryPublish.activeModelId = ''
+  } catch (err) {
+    modelRegistryPublish.error = err.message || 'Model registry publishing failed'
+  } finally {
+    modelRegistryPublish.loading = false
+  }
+}
 
-      trainingSocket.value.on("training_error", (data) => {
-        if (training.id && data.training_id !== training.id) return;
+async function publishModelRevenueRoute(model) {
+  if (!model?.nft?.tokenId) {
+    revenueRoutePublish.activeModelId = model.id
+    revenueRoutePublish.error = 'Mint this trained model before registering a revenue route.'
+    return
+  }
+  if (!bonzaiRevenueRouterService.isConfigured()) {
+    revenueRoutePublish.activeModelId = model.id
+    revenueRoutePublish.error = 'Revenue router is not configured.'
+    return
+  }
 
-        training.active = false;
-        training.error = data.error || "Unknown error";
-      });
-    };
+  revenueRoutePublish.activeModelId = model.id
+  revenueRoutePublish.loading = true
+  revenueRoutePublish.error = ''
 
-    // API calls
-    const loadDatasets = async () => {
-      try {
-        const { data } = await axios.get(`${API_BASE}/training/datasets`);
-        datasets.value = data.datasets || [];
-      } catch (e) {
-        console.error("Failed to load datasets:", e);
-      }
-    };
+  try {
+    const provenance = await modelProvenance(model)
+    const result = await bonzaiRevenueRouterService.registerModelRevenueRoute(model, provenance)
+    updateModelEconomy(model.id, {
+      revenueRoute: {
+        assetId: result.assetId,
+        txHash: result.txHash,
+        participants: result.participants,
+        registeredAt: new Date().toISOString(),
+      },
+    })
+    revenueRoutePublish.activeModelId = ''
+  } catch (err) {
+    revenueRoutePublish.error = err.message || 'Revenue route registration failed'
+  } finally {
+    revenueRoutePublish.loading = false
+  }
+}
 
-    const loadTrainedModels = async () => {
-      try {
-        const { data } = await axios.get(`${API_BASE}/training/models`);
-        trainedModels.value = data.models || [];
-      } catch (e) {
-        console.error("Failed to load trained models:", e);
-      }
-    };
+async function copyModelProvenance(model) {
+  const provenance = await modelProvenance(model)
+  if (!provenance) return
+  const text = JSON.stringify(provenance, null, 2)
+  try {
+    await navigator.clipboard?.writeText(text)
+  } catch {
+    console.info('[Training] Model provenance:', provenance)
+  }
+}
 
-    const handleDatasetFiles = async (event) => {
-      const files = Array.from(event.target.files || []);
-      newDataset.files = files;
-      newDataset.fileContents = [];
+async function deleteModel(id) {
+  try {
+    await axios.delete(`${API_BASE}/training/models/${id}`)
+    await loadTrainedModels()
+  } catch { /* silent */ }
+}
 
-      for (const file of files) {
-        const reader = new FileReader();
-        const content = await new Promise((resolve) => {
-          reader.onload = () => resolve(reader.result.split(",")[1]);
-          reader.readAsDataURL(file);
-        });
-        newDataset.fileContents.push({
-          filename: file.name,
-          content_base64: content,
-        });
-      }
-    };
+function onMintComplete(result) {
+  if (mintTarget.value?.inferenceId && result) {
+    const id = mintTarget.value.inferenceId
+    updateModelEconomy(id, { nft: result })
+  }
+  showMintModal.value = false
+}
 
-    const removeDatasetFile = (idx) => {
-      newDataset.files.splice(idx, 1);
-      newDataset.fileContents.splice(idx, 1);
-    };
+/* ── Helpers ───────────────────────────────────────────────────── */
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1]
+      resolve(base64)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
 
-    const createDataset = async () => {
-      if (!newDataset.name || !newDataset.fileContents.length) return;
+function stageLabel(stage) {
+  const labels = {
+    loading_dataset: 'Loading Dataset', loading_model: 'Loading Model',
+    configuring_lora: 'Configuring LoRA', preparing_data: 'Preparing Data',
+    training: 'Training', saving: 'Saving',
+    loading_images: 'Loading Images', loading_data: 'Loading Data',
+    encoding_latents: 'Encoding Latents', preparing_audio_lora: 'Preparing Audio LoRA',
+    summon: 'SUMMON', probe: 'PROBE', distill: 'DISTILL',
+    excise: 'EXCISE', verify: 'VERIFY', rebirth: 'REBIRTH',
+    converting: 'Converting', quantizing: 'Quantizing',
+    abliteration: 'Abliterating',
+  }
+  return labels[stage] || stage || 'Processing'
+}
 
-      creatingDataset.value = true;
-      try {
-        const { data } = await axios.post(`${API_BASE}/training/datasets`, {
-          name: newDataset.name,
-          type: "text",
-          files: newDataset.fileContents,
-        });
+function modelTypeLabel(type) {
+  if (type?.includes('llm')) return 'Text'
+  if (type?.includes('sdxl') || type?.includes('image')) return 'Image'
+  if (type?.includes('audio')) return 'Audio'
+  if (type?.includes('video')) return 'Video'
+  if (type?.includes('ablit')) return 'Ablit'
+  return type || 'Model'
+}
 
-        if (data.ok) {
-          datasets.value.push(data.dataset);
-          selectedDataset.value = data.dataset;
-          showCreateDataset.value = false;
+function modelTypeChip(type) {
+  const label = modelTypeLabel(type)
+  const map = { Text: 'skill-chip--brand', Image: 'skill-chip--info', Audio: 'skill-chip--warning', Video: 'skill-chip--success', Ablit: 'skill-chip--danger' }
+  return map[label] || 'skill-chip--muted'
+}
 
-          // Reset form
-          newDataset.name = "";
-          newDataset.files = [];
-          newDataset.fileContents = [];
-        }
-      } catch (e) {
-        console.error("Failed to create dataset:", e);
-        alert(
-          "Failed to create dataset: " + (e.response?.data?.error || e.message),
-        );
-      } finally {
-        creatingDataset.value = false;
-      }
-    };
+function formatDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleDateString(i18n.state.locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
 
-    const deleteDataset = async (datasetId) => {
-      if (!confirm("Delete this dataset?")) return;
+function formatPerplexity(val) {
+  if (val > 1000) return (val / 1000).toFixed(1) + 'K'
+  if (val > 100) return val.toFixed(0)
+  return val.toFixed(1)
+}
 
-      try {
-        await axios.delete(`${API_BASE}/training/datasets/${datasetId}`);
-        datasets.value = datasets.value.filter((d) => d.id !== datasetId);
-        if (selectedDataset.value?.id === datasetId) {
-          selectedDataset.value = null;
-        }
-      } catch (e) {
-        console.error("Failed to delete dataset:", e);
-      }
-    };
+function metricClass(key, val) {
+  if (val === undefined || val === null) return ''
+  if (key === 'refusal_rate') return val < 0.1 ? 'is-good' : val < 0.5 ? 'is-warn' : 'is-bad'
+  if (key === 'coherence') return val > 0.8 ? 'is-good' : val > 0.5 ? 'is-warn' : 'is-bad'
+  return ''
+}
 
-    const startTraining = async () => {
-      if (!canStartTraining.value) return;
+/* ── Watch target → update base_model ──────────────────────────── */
+watch(selectedTarget, (t) => {
+  if (t === 'text') tuneConfig.base_model = 'qwen3_5_0_8b'
+  else if (t === 'image') tuneConfig.base_model = 'z-image-turbo'
+  else if (t === 'audio') tuneConfig.base_model = 'qwen-tts'
+  else if (t === 'video') tuneConfig.base_model = 'wan-2.2'
+})
 
-      training.active = true;
-      training.type = trainingType.value;
-      training.error = null;
-      training.pct = 0;
-      training.stage = "initializing";
+/* ── Lifecycle ─────────────────────────────────────────────────── */
+onMounted(() => {
+  setupSocket()
+  modelEconomy.value = loadModelEconomy()
+  contributionLedger.value = loadContributionLedger()
+  loadTrainedModels()
+  loadAblitModels()
+})
 
-      const endpoint =
-        trainingType.value === "llm"
-          ? `${API_BASE}/training/llm/start`
-          : `${API_BASE}/training/sdxl/start`;
-
-      const payload =
-        trainingType.value === "llm"
-          ? {
-              dataset_id: selectedDataset.value.id,
-              ...llmConfig,
-            }
-          : {
-              dataset_id: selectedDataset.value.id,
-              ...sdxlConfig,
-            };
-
-      try {
-        const { data, status } = await axios.post(endpoint, payload, {
-          validateStatus: () => true,
-        });
-
-        if (status === 202) {
-          training.id = data.training_id;
-          training.total_epochs =
-            trainingType.value === "llm" ? llmConfig.epochs : sdxlConfig.epochs;
-        } else {
-          training.active = false;
-          training.error = data.error || `Failed to start training (${status})`;
-        }
-      } catch (e) {
-        training.active = false;
-        training.error = e.message || "Network error";
-      }
-    };
-
-    const exportModel = async (model) => {
-      try {
-        const { data } = await axios.post(
-          `${API_BASE}/training/models/${model.id}/export`,
-        );
-
-        if (data.model_path) {
-          const result = await window.electronAPI?.saveModel?.(
-            `bonzai_${model.type}_${model.id}.zip`,
-            data.model_path,
-          );
-
-          if (result?.success) {
-            alert(`Model exported to: ${result.path}`);
-          }
-        }
-      } catch (e) {
-        console.error("Export failed:", e);
-        alert("Export failed: " + e.message);
-      }
-    };
-
-    const deleteModel = async (modelId) => {
-      if (!confirm("Delete this trained model?")) return;
-
-      try {
-        await axios.delete(`${API_BASE}/training/models/${modelId}`);
-        trainedModels.value = trainedModels.value.filter(
-          (m) => m.id !== modelId,
-        );
-      } catch (e) {
-        console.error("Failed to delete model:", e);
-      }
-    };
-
-    // ─────────────────────────────────────────────────────────────
-    // NFT Minting
-    // ─────────────────────────────────────────────────────────────
-    const showMintModal = ref(false);
-    const mintTarget = ref(null);
-
-    const mintModelNFT = async (model) => {
-      const modelLabel = model.type === 'llm_lora' ? 'LLM' : 'SDXL';
-      mintTarget.value = {
-        inferenceType: 'training',
-        inferenceId: model.id,
-        content: JSON.stringify({
-          id: model.id,
-          type: model.type,
-          base_model: model.base_model,
-          final_loss: model.final_loss,
-          dataset_id: model.dataset_id,
-          created_at: model.created_at,
-          hf_repo: model.hf_repo || null,
-        }),
-        contentType: 'application/json',
-        prompt: `Fine-tuned ${modelLabel} model: ${model.id}`,
-        generation: {
-          type: 'training',
-          model: model.base_model,
-          timestamp: Date.now(),
-          hfRepo: model.hf_repo || null,
-        },
-      };
-      showMintModal.value = true;
-    };
-
-    const onMintComplete = (result) => {
-      // Store contentTokenId on the model for token issuance
-      if (result.tokenId && mintTarget.value) {
-        const model = trainedModels.value.find(m => m.id === mintTarget.value.inferenceId);
-        if (model) {
-          model.contentTokenId = result.tokenId;
-          model.ipfsHash = result.transactionId;
-        }
-      }
-    };
-
-    // ─────────────────────────────────────────────────────────────
-    // Token Issuance (ERC-20 for fine-tuned models)
-    // ─────────────────────────────────────────────────────────────
-    const showTokenLaunchModal = ref(false);
-    const tokenLaunchTarget = ref(null);
-    const tokenName = ref('');
-    const tokenSymbol = ref('');
-    const tokenEthAmount = ref('0.01');
-    const isLaunchingToken = ref(false);
-    const tokenLaunchResult = ref(null);
-
-    const launchModelToken = (model) => {
-      if (!model.contentTokenId) {
-        alert('Mint this model as an NFT first before issuing a token.');
-        return;
-      }
-      tokenLaunchTarget.value = model;
-      tokenName.value = `BonzAI Fine-Tune: ${model.id}`;
-      tokenSymbol.value = `BZ${model.id.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6).toUpperCase()}`;
-      tokenLaunchResult.value = null;
-      showTokenLaunchModal.value = true;
-    };
-
-    const executeTokenLaunch = async () => {
-      if (!tokenLaunchTarget.value) return;
-      isLaunchingToken.value = true;
-      tokenLaunchResult.value = null;
-
-      try {
-        const result = await fineTuneTokenService.launchFineTuneToken(
-          tokenLaunchTarget.value.contentTokenId,
-          tokenName.value,
-          tokenSymbol.value,
-          tokenLaunchTarget.value.ipfsHash || '',
-          tokenEthAmount.value,
-        );
-
-        tokenLaunchResult.value = result;
-        if (result.success) {
-          tokenLaunchTarget.value.tokenAddress = result.tokenAddress;
-          tokenLaunchTarget.value.pairAddress = result.pairAddress;
-        }
-      } catch (e) {
-        tokenLaunchResult.value = { success: false, error: e.message };
-      } finally {
-        isLaunchingToken.value = false;
-      }
-    };
-
-    // Watch training type to update dataset type for new datasets
-    watch(trainingType, (newType) => {
-      newDataset.type = newType === "llm" ? "text" : "image";
-    });
-
-    // (studio.selected synced via studioSelect method)
-
-    // ─────────────────────────────────────────────────────────────
-    // Studio methods
-    // ─────────────────────────────────────────────────────────────
-    const loadStudioExamples = async () => {
-      try {
-        const res = await window.electronAPI?.synthExamplesList();
-        if (res?.ok) {
-          studio.examples = res.examples;
-        }
-      } catch (e) {
-        console.error("[Studio] Failed to load examples:", e);
-      }
-    };
-
-    const studioHasContent = computed(() => {
-      if (studio.editMode === "text") {
-        return !!(studio.editText && studio.editText.trim());
-      }
-      // game mode
-      return !!(
-        (studio.editHtml && studio.editHtml.trim()) ||
-        (studio.editCss && studio.editCss.trim()) ||
-        (studio.editJs && studio.editJs.trim())
-      );
-    });
-
-    const studioItemLabel = (ex) => {
-      const tierBadge = ex.mode !== "text" && ex.tier ? `[T${ex.tier}] ` : "";
-      if (ex.description && ex.description.trim()) {
-        return tierBadge + ex.description.substring(0, 36);
-      }
-      // Fallback: first 36 chars of content
-      if (ex.mode === "text" && ex.text) {
-        return ex.text.substring(0, 40) || "Empty";
-      }
-      const code = ex.js || ex.html || ex.css || "";
-      return tierBadge + (code.substring(0, 36) || "Empty");
-    };
-
-    const studioSelect = (ex) => {
-      studio.selected = ex;
-      studio.editMode = ex.mode || "game";
-      studio.editTier = ex.tier || 1;
-      studio.editHtml = ex.html || "";
-      studio.editCss = ex.css || "";
-      studio.editJs = ex.js || "";
-      studio.editText = ex.text || "";
-      studio.editDescription = ex.description || "";
-      studio.editLibraries = ex.libraries ? [...ex.libraries] : [];
-      studio.newLibInput = "";
-    };
-
-    const studioAddNew = () => {
-      const newEx = {
-        id: uuid(),
-        mode: "text",
-        html: "",
-        css: "",
-        js: "",
-        text: "",
-        description: "",
-        libraries: [],
-        createdAt: new Date().toISOString(),
-      };
-      studio.examples.unshift(newEx);
-      studioSelect(newEx);
-    };
-
-    const studioSave = async () => {
-      if (!studio.selected) return;
-      studio.selected.mode = studio.editMode;
-      if (studio.editMode !== "text") {
-        studio.selected.tier = studio.editTier;
-      }
-      studio.selected.html = studio.editHtml;
-      studio.selected.css = studio.editCss;
-      studio.selected.js = studio.editJs;
-      studio.selected.text = studio.editText;
-      studio.selected.description = studio.editDescription;
-      studio.selected.libraries = [...studio.editLibraries];
-      await window.electronAPI?.synthExampleSave(
-        JSON.parse(JSON.stringify(studio.selected)),
-      );
-      await loadStudioExamples();
-    };
-
-    const studioDelete = async () => {
-      if (!studio.selected) return;
-      if (!confirm("Delete this example?")) return;
-      await window.electronAPI?.synthExampleDelete(studio.selected.id);
-      studio.selected = null;
-      studio.editMode = "text";
-      studio.editTier = 1;
-      studio.editHtml = "";
-      studio.editCss = "";
-      studio.editJs = "";
-      studio.editText = "";
-      studio.editDescription = "";
-      studio.editLibraries = [];
-      studio.newLibInput = "";
-      await loadStudioExamples();
-    };
-
-    const studioDescribe = async () => {
-      if (!studioHasContent.value) return;
-      studio.describing = true;
-      try {
-        const res = await window.electronAPI?.synthDescribe({
-          mode: studio.editMode,
-          tier: studio.editTier,
-          html: studio.editHtml,
-          css: studio.editCss,
-          js: studio.editJs,
-          text: studio.editText,
-        });
-        if (res?.ok) {
-          studio.editDescription = res.description;
-          // Merge auto-detected libraries (don't lose manually added ones)
-          if (res.libraries && res.libraries.length > 0) {
-            const existing = new Set(
-              studio.editLibraries.map((l) => l.toLowerCase()),
-            );
-            for (const lib of res.libraries) {
-              if (!existing.has(lib.toLowerCase())) {
-                studio.editLibraries.push(lib);
-                existing.add(lib.toLowerCase());
-              }
-            }
-          }
-        } else {
-          alert("Describe failed: " + (res?.error || "Unknown error"));
-        }
-      } catch (e) {
-        alert("Describe failed: " + e.message);
-      } finally {
-        studio.describing = false;
-      }
-    };
-
-    const studioAddLib = () => {
-      const lib = studio.newLibInput.trim();
-      if (!lib) return;
-      const exists = studio.editLibraries.some(
-        (l) => l.toLowerCase() === lib.toLowerCase(),
-      );
-      if (!exists) {
-        studio.editLibraries.push(lib);
-      }
-      studio.newLibInput = "";
-    };
-
-    const studioRemoveLib = (idx) => {
-      studio.editLibraries.splice(idx, 1);
-    };
-
-    const studioExport = async () => {
-      const name = prompt("Dataset name:", "Dataset Studio Export");
-      if (!name) return;
-      try {
-        const res = await window.electronAPI?.synthExport({ name });
-        if (res?.ok) {
-          alert(
-            `Dataset exported!\n\n${res.metadata.num_examples} examples\nPath: ${res.path}`,
-          );
-          await loadDatasets();
-        } else {
-          alert("Export failed: " + (res?.error || "Unknown"));
-        }
-      } catch (e) {
-        alert("Export failed: " + e.message);
-      }
-    };
-
-    const base64FromString = (value) => {
-      const bytes = new TextEncoder().encode(value);
-      let binary = "";
-      bytes.forEach((b) => { binary += String.fromCharCode(b); });
-      return btoa(binary);
-    };
-
-    const studioCreateDataset = async () => {
-      if (!studioTextExamples.value.length) return;
-      const fallback = `chat-dataset-${new Date().toISOString().slice(0, 10)}`;
-      const name = prompt("Dataset name:", fallback);
-      if (!name) return;
-
-      creatingDataset.value = true;
-      try {
-        await studioSave();
-        const lines = studioTextExamples.value
-          .map((ex) => {
-            const text = [
-              ex.description ? `Instruction: ${ex.description}` : "",
-              ex.text || "",
-            ].filter(Boolean).join("\n\n").trim();
-            return text ? JSON.stringify({ text }) : "";
-          })
-          .filter(Boolean)
-          .join("\n");
-
-        const { data } = await axios.post(`${API_BASE}/training/datasets`, {
-          name,
-          type: "text",
-          files: [
-            {
-              filename: `${name.replace(/[^a-z0-9_-]+/gi, "-").toLowerCase() || "dataset"}.jsonl`,
-              content_base64: base64FromString(lines),
-            },
-          ],
-        });
-
-        if (data.ok) {
-          datasets.value.push(data.dataset);
-          selectedDataset.value = data.dataset;
-          activeTab.value = "run";
-        }
-      } catch (e) {
-        console.error("Failed to create studio dataset:", e);
-        alert("Failed to create dataset: " + (e.response?.data?.error || e.message));
-      } finally {
-        creatingDataset.value = false;
-      }
-    };
-
-    // Lifecycle
-    onMounted(async () => {
-      setupTrainingSocket();
-      await loadDatasets();
-      await loadTrainedModels();
-      await loadStudioExamples();
-    });
-
-    onBeforeUnmount(() => {
-      if (trainingSocket.value?.connected) {
-        trainingSocket.value.disconnect();
-      }
-    });
-
-    return {
-      activeTab,
-      trainingTabs,
-      trainTargets,
-      stake,
-      stakeableCollectibles,
-      stakedItems,
-      stakeTypeCounts,
-      stakeIcon,
-      toggleStake,
-      createDatasetFromStake,
-      trainingType,
-      datasets,
-      filteredDatasets,
-      selectedDataset,
-      showCreateDataset,
-      creatingDataset,
-      newDataset,
-      trainedModels,
-      llmConfig,
-      sdxlConfig,
-      training,
-      trainingStats,
-      canStartTraining,
-      loadDatasets,
-      handleDatasetFiles,
-      removeDatasetFile,
-      createDataset,
-      deleteDataset,
-      startTraining,
-      exportModel,
-      deleteModel,
-      mintModelNFT,
-      showMintModal,
-      mintTarget,
-      onMintComplete,
-      // Token issuance
-      showTokenLaunchModal,
-      tokenLaunchTarget,
-      tokenName,
-      tokenSymbol,
-      tokenEthAmount,
-      isLaunchingToken,
-      tokenLaunchResult,
-      launchModelToken,
-      executeTokenLaunch,
-      // Access control
-      accessRef,
-      hasAccess,
-      onAccessChanged,
-      // Studio
-      GAME_TIERS,
-      studio,
-      studioTextExamples,
-      studioHasContent,
-      studioItemLabel,
-      studioSelect,
-      studioAddNew,
-      studioSave,
-      studioDelete,
-      studioDescribe,
-      studioAddLib,
-      studioRemoveLib,
-      studioExport,
-      studioCreateDataset,
-    };
-  },
-};
+onBeforeUnmount(() => {
+  if (socket) socket.disconnect()
+})
 </script>
 
 <style scoped>
-.models__deployment-install {
+/* ── Layout ──────────────────────────────────────────────────── */
+.bz-train {
+  position: relative;
+  min-height: 100%;
+  padding: var(--bz-space-5) var(--bz-space-5) var(--bz-space-8);
   overflow-y: auto;
-  padding: var(--bz-space-5) var(--bz-space-6);
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  background: transparent;
   display: flex;
   flex-direction: column;
-  gap: var(--bz-space-5);
-}
-
-.models__deployment-install > .columns {
-  display: block;
-  margin: 0;
-}
-
-.models__deployment-install > .columns > .column {
-  width: 100%;
-  padding: 0 !important;
-}
-
-.models__activity--payouts {
-  padding: var(--bz-space-4);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r) !important;
-  background: var(--bz-card);
-  width: 100%;
-}
-
-.models__activity--payouts > .columns {
-  margin: 0;
-}
-
-.models__activity--payouts > .columns > .column {
-  padding: 0;
-}
-
-h1.bz-h1 {
-  font-size: var(--bz-size-h1) !important;
-  line-height: var(--bz-line-tight);
-  text-align: left;
-  margin: 0;
-}
-
-.bz-screen-header .bz-title-icon {
-  color: var(--bz-purple-300);
-  font-size: 28px !important;
-}
-
-.bz-screen-header .bz-eyebrow {
-  margin: 0;
-  color: var(--bz-fg-low);
-  font-size: var(--bz-size-micro);
-  line-height: 1.2;
-  text-align: left;
-  font-weight: 400;
-}
-
-.bz-screen-header .bz-screen-subtitle {
-  margin: 0;
-  max-width: 60ch;
-  color: var(--bz-fg-low);
-  font-size: var(--bz-size-meta);
-  line-height: var(--bz-line-body);
-  text-align: left;
-}
-
-h2.bz-h2,
-h3.bz-h2 {
-  font-size: var(--bz-size-h2) !important;
-  line-height: var(--bz-line-tight);
-  color: var(--bz-fg);
-  margin: 0;
-}
-
-.training-copy {
-  margin: 0;
-  color: var(--bz-fg-mid);
-  font-size: var(--bz-size-body);
-  line-height: var(--bz-line-body);
-}
-
-.training-rhythm {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--bz-space-3);
 }
 
-.training-rhythm__card {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
-  gap: var(--bz-space-2) var(--bz-space-3);
-  align-items: center;
-  padding: var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-sm);
-  background: var(--bz-card);
-}
-
-.training-rhythm__card .material-symbols-outlined {
-  grid-row: span 2;
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--bz-accent);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-sm);
-  background: var(--bz-panel);
-}
-
-.training-rhythm__card strong {
-  color: var(--bz-fg);
-  font-size: 1.6rem;
-  line-height: 1;
-}
-
-.training-rhythm__card span:last-child {
-  color: var(--bz-fg-mid);
-  font-size: var(--bz-size-meta);
-}
-
-.training-empty-note {
-  padding: var(--bz-space-3);
-  color: var(--bz-fg-mid);
-  font-size: var(--bz-size-meta);
-}
-
-.dataset-static-type {
-  padding: var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-sm);
-  background: var(--bz-panel);
-  color: var(--bz-fg);
-}
-
-@media (max-width: 900px) {
-  .training-rhythm {
-    grid-template-columns: 1fr;
-  }
-}
-
-.training-progress-card {
-  margin-bottom: 1rem;
-  padding: 14px 16px;
-  border: 1px solid var(--bz-border);
-  border-radius: 8px;
-  background: var(--bz-panel);
-  color: var(--bz-fg);
-}
-
-.training-progress-card__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.training-progress-card__title {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--bz-fg);
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.training-progress-card__pct {
-  color: var(--bz-fg);
-  font-size: 1.45rem;
-  line-height: 1;
-}
-
-.training-progress-card :deep(.bz-pulse-wrap--bar) {
-  margin-top: 12px;
-}
-
-.training-tabs {
-  margin-bottom: var(--bz-space-5);
-}
-
-.background {
-  position: absolute;
-  z-index: -1;
-  height: 100%;
-  width: 100%;
-  background: url("../assets/bonzai_robots.webp") no-repeat;
-  background-size: cover;  overflow: hidden;
-}
-
-.models__deployment {
-  position: relative;
-  background: transparent;
-  padding: 0 !important;
-  margin: 0 !important;
-}
-
-h1,
-h3 {
-  color: var(--bz-fg);
-  text-align: left;
-}
-
-h1 {
-  font-size: 64px;
-  text-align: right;
-}
-
-hr {
-  margin: 12px 0;
-  width: 100%;
-  border: none;
-  height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    var(--bz-fg),
-    transparent
-  );
-}
-
-.label {
-  color: var(--bz-fg);
-  font-weight: 600;
-}
-
-.material-symbols-outlined {
-  font-variation-settings:
-    "FILL" 0,
-    "wght" 100,
-    "GRAD" -25,
-    "opsz" 48;
-}
-
-input[type="radio"] {
-  display: none;
-}
-
-input[type="radio"] + label {
-  padding: 6px 16px 12px;
-  color: var(--bz-fg-faint) !important;
-  border: 1px solid var(--bz-fg-faint);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-input[type="radio"]:checked + label {
-  color: var(--bz-fg) !important;
-  border: 1px solid var(--bz-fg) !important;
-  background: var(--bz-purple-soft) !important;
-}
-
-.notification.is-dark {
-  background: rgba(30, 30, 40, 0.8);
-  border: 1px solid var(--bz-border);
-}
-
-.notification.is-warning {
-  background: rgba(255, 221, 87, 0.15);
-  color: var(--bz-fg);
-  border: 1px solid rgba(255, 221, 87, 0.3);
-}
-
-.notification.is-success {
-  background: var(--bz-emerald-soft);
-  color: var(--bz-fg);
-  border: 1px solid var(--bz-emerald-soft);
-}
-
-.dataset-list {
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.dataset-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem 1rem;
-  margin-bottom: 0.5rem;
-  background: var(--bz-canvas);
-  border: 1px solid var(--bz-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.dataset-item:hover {
-  background: var(--bz-border);
-}
-
-.dataset-item.is-selected {
-  background: var(--bz-purple-soft);
-  border-color: var(--bz-border-brand);
-}
-
-.dataset-info {
-  display: flex;
-  align-items: center;
-}
-
-.trained-model-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem 1rem;
-  margin-bottom: 0.5rem;
-  background: var(--bz-canvas);
-  border: 1px solid var(--bz-border);
-  border-radius: 4px;
-}
-
-.model-info {
-  display: flex;
-  align-items: center;
-}
-
-.slider {
-  -webkit-appearance: none;
-  width: 100%;
-  height: 8px;
-  border-radius: 5px;
-  background: var(--bz-border-strong);
-  outline: none;
-}
-
-.slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--bz-purple-500);
-  cursor: pointer;
-}
-
-.input,
-.select select {
-  background: var(--bz-border);
-  border-color: var(--bz-fg-faint);
-  color: var(--bz-fg);
-}
-
-.input::placeholder {
-  color: var(--bz-fg-low);
-}
-
-.checkbox {
-  color: var(--bz-fg);
-}
-
-.bz-modal-panel {
-  background: var(--bz-card);
-  color: var(--bz-fg);
-}
-
-.bz-modal-head,
-.bz-modal-foot {
-  background: rgba(30, 30, 40, 0.9);
-  border-color: var(--bz-border);
-}
-
-.bz-modal-title {
-  color: var(--bz-fg);
-}
-
-.bz-modal-body {
-  background: var(--bz-card);
-}
-
-.bz-modal-body .label {
-  color: var(--bz-fg);
-}
-
-.bz-modal-body .input,
-.bz-modal-body .select select {
-  background: var(--bz-border);
-  border-color: var(--bz-fg-faint);
-  color: var(--bz-fg);
-}
-
-.file-cta,
-.file-name {
-  background: var(--bz-border);
-  border-color: var(--bz-fg-faint);
-  color: var(--bz-fg);
-}
-
-.help {
-  color: var(--bz-fg-mid);
-}
-
-.loader {
-  width: 16px;
-  height: 16px;
-  border: 2px solid #fff;
-  border-bottom-color: transparent;
-  border-radius: 50%;
-  display: inline-block;
-  animation: rotation 1s linear infinite;
-}
-
-@keyframes rotation {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-/* Dataset Modal (LVL Style - Purple) */
-.dataset-modal-overlay {
+.bz-train__orb {
   position: fixed;
+  top: 20%;
+  right: -120px;
+  width: 400px;
+  height: 400px;
+  pointer-events: none;
+  z-index: 0;
+}
+.bz-train__orb::before {
+  content: '';
+  position: absolute;
   inset: 0;
-  background: var(--bz-overlay);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--bz-purple-glow) 0%, transparent 70%);
+  animation: bz-orb-drift 12s ease-in-out infinite alternate;
+  opacity: 0.35;
+}
+
+.bz-train__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Header ──────────────────────────────────────────────────── */
+.bz-train__header {
+  position: relative;
+  z-index: 1;
+  margin-bottom: var(--bz-space-2);
+}
+.bz-train__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--bz-space-4);
+  padding-bottom: var(--bz-space-4);
+  border-bottom: 1px solid var(--bz-border);
+}
+.bz-train__hero-copy {
+  min-width: 0;
+}
+.bz-train__title {
+  margin: 0;
+  color: var(--bz-fg) !important;
+  -webkit-text-fill-color: var(--bz-fg) !important;
+  background: none !important;
+  font-size: var(--bz-size-h1);
+  line-height: var(--bz-line-tight);
+  letter-spacing: 0;
+}
+.bz-train__hero-stats {
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 10000;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--bz-space-2);
 }
-
-.dataset-modal {
-  width: 92%;
-  max-width: 520px;
-  background: #0a0a0f;
-  border: 1px solid var(--bz-border);
-  border-radius: 16px;
-  padding: 24px;
-  position: relative;
-  color: var(--bz-fg);
-}
-
-.dataset-modal-header {
-  text-align: center;
-  margin-bottom: 18px;
-}
-
-.dataset-modal-header .material-symbols-outlined {
-  color: var(--bz-purple-500);
-  display: block;
-  margin-bottom: 8px;
-}
-
-.dataset-modal-badge {
-  display: inline-block;
-  padding: 6px 16px;
-  background: linear-gradient(135deg, var(--bz-purple-500) 0%, var(--bz-purple-700) 100%);
-  border-radius: 20px;
-  font-weight: 900;
-  color: var(--bz-on-accent);
-  margin-bottom: 10px;
-}
-
-.dataset-modal-header h2 {
-  margin: 0;
-  color: var(--bz-fg);
-}
-
-.dataset-modal-body {
-  margin-bottom: 16px;
-}
-
-.dataset-type-preview {
-  background: var(--bz-canvas);
-  border-radius: 10px;
-  padding: 1.5em;
-  border: 1px solid var(--bz-purple-soft);
-  margin-bottom: 16px;
-  text-align: center;
-}
-
-.dataset-modal-status {
-  margin-bottom: 10px;
-}
-
-.dataset-status-pill {
+.bz-train__hero-stats span {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 2px solid rgba(147, 51, 234, 0.6);
-  color: var(--bz-purple-300);
-  font-size: 14px;
-  font-weight: 600;
-  background: rgba(147, 51, 234, 0.1);
+  min-height: 30px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-ui);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-
-.dataset-type-tags {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.dataset-tag {
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: var(--bz-card);
+.bz-train__subtitle {
+  margin: var(--bz-space-1) 0 0;
   color: var(--bz-fg-mid);
-  font-size: 12px;
+  font-size: var(--bz-size-body);
+  max-width: none;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
-.dataset-tag.dataset-tag--count {
-  background: rgba(16, 185, 129, 0.15);
-  color: var(--bz-emerald-500);
-  font-weight: 600;
+.bz-train__quick-steps {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  border-bottom: 1px solid var(--bz-border);
 }
-
-.dataset-form-section {
-  background: var(--bz-canvas);
-  border-radius: 10px;
-  padding: 1.5em;
-  border: 1px solid var(--bz-border);
-  margin-bottom: 16px;
+.bz-train__quick-step {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--bz-space-2);
+  align-items: start;
+  padding: var(--bz-space-3) var(--bz-space-4);
+  border-right: 1px solid var(--bz-border);
+  background: transparent;
 }
-
-.dataset-field {
-  margin-bottom: 16px;
+.bz-train__quick-step:last-child { border-right: 0; }
+.bz-train__quick-step .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+  font-size: 21px;
 }
-
-.dataset-field:last-child {
-  margin-bottom: 0;
-}
-
-.dataset-label {
+.bz-train__quick-step strong,
+.bz-train__quick-step small {
   display: block;
-  color: var(--bz-fg);
-  margin-bottom: 8px;
-  font-size: 14px;
 }
-
-.dataset-input,
-.dataset-select {
-  width: 100%;
-  padding: 12px 14px;
-  background: var(--bz-canvas);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 8px;
+.bz-train__quick-step strong {
   color: var(--bz-fg);
   font-size: 16px;
-  transition: border-color 0.2s ease;
+  line-height: 1;
+}
+.bz-train__quick-step small {
+  margin-top: 4px;
+  color: var(--bz-fg-low);
+  font-size: 12px;
+  line-height: 1.25;
 }
 
-.dataset-input:focus,
-.dataset-select:focus {
-  outline: none;
-  border-color: var(--bz-purple-500);
+/* ── Sections ────────────────────────────────────────────────── */
+.bz-train__section {
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  padding: var(--bz-space-4);
+  position: relative;
+  z-index: 1;
+}
+.bz-train__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bz-train__section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  font-family: var(--bz-font-body);
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--bz-fg);
+  margin: 0 0 var(--bz-space-3);
+}
+.bz-train__section-header .bz-train__section-title {
+  margin: 0;
+}
+.bz-train__step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bz-purple-soft);
+  color: var(--bz-purple-300);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
-.dataset-input::placeholder {
+/* ── Dropzone ────────────────────────────────────────────────── */
+.bz-train__dropzone {
+  position: relative;
+  border: 2px dashed var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  padding: var(--bz-space-5) var(--bz-space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bz-space-2);
+  cursor: pointer;
+  transition: border-color var(--bz-dur-fast) var(--bz-ease-out),
+              background var(--bz-dur-fast) var(--bz-ease-out);
+  min-height: 160px;
+}
+.bz-train__dropzone:hover,
+.bz-train__dropzone.is-dragover {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+}
+.bz-train__dropzone.has-data {
+  border-style: solid;
+  border-color: var(--bz-border);
+  cursor: default;
+  padding: var(--bz-space-3);
+  align-items: stretch;
+}
+.bz-train__dropzone-icon {
+  font-size: 40px;
   color: var(--bz-fg-low);
 }
-
-.dataset-select-wrapper {
-  position: relative;
+.bz-train__dropzone-label {
+  font-size: var(--bz-size-body);
+  color: var(--bz-fg-mid);
 }
-
-.dataset-select {
-  appearance: none;
-  cursor: pointer;
+.bz-train__dropzone-hint {
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-faint);
 }
-
-.dataset-select option {
-  background: var(--bz-card);
-  color: var(--bz-fg);
-}
-
-.dataset-upload-zone {
-  position: relative;
-  border: 2px dashed var(--bz-purple-soft);
-  border-radius: 10px;
-  padding: 2em;
-  text-align: center;
-  transition: all 0.2s ease;
-  cursor: pointer;
-}
-
-.dataset-upload-zone:hover {
-  border-color: var(--bz-purple-500);
-  background: rgba(147, 51, 234, 0.05);
-}
-
-.dataset-upload-zone .file-input {
+.bz-train__dropzone-input {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   opacity: 0;
   cursor: pointer;
 }
 
-.dataset-upload-label {
+/* ── JSONL Preview ───────────────────────────────────────────── */
+.bz-train__jsonl-preview {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+}
+.bz-train__jsonl-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  flex-wrap: wrap;
+}
+.bz-train__jsonl-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+}
+.bz-train__jsonl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--bz-size-meta);
+  font-family: var(--bz-font-body);
+}
+.bz-train__jsonl-table th {
+  background: var(--bz-raised);
+  color: var(--bz-fg-mid);
+  font-weight: 500;
+  text-align: left;
+  padding: var(--bz-space-1) var(--bz-space-2);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--bz-border);
+}
+.bz-train__jsonl-table td {
+  padding: var(--bz-space-1) var(--bz-space-2);
+  border-bottom: 1px solid var(--bz-border);
+  color: var(--bz-fg);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bz-train__jsonl-table tr:last-child td {
+  border-bottom: none;
+}
+.bz-train__jsonl-more {
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-low);
+  text-align: center;
+}
+.bz-train__contribution {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+}
+.bz-train__contribution-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+.bz-train__contribution-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.bz-train__contribution-title {
+  margin: 2px 0 0;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-body);
+  font-weight: 500;
+}
+.bz-train__contribution-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--bz-space-2);
+}
+.bz-train__contribution-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--bz-space-2);
+  background: var(--bz-card);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+}
+.bz-train__contribution-stat span {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-body);
+}
+.bz-train__contribution-stat small {
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+}
+.bz-train__contribution-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-1);
+}
+.bz-train__contribution-alert {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-2);
+  background: var(--bz-warning-soft);
+  border: 1px solid var(--bz-warning);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-warning);
+  font-size: var(--bz-size-meta);
+  line-height: 1.45;
+}
+.bz-train__contribution-alert.is-error {
+  background: var(--bz-danger-soft);
+  border-color: var(--bz-danger);
+  color: var(--bz-danger);
+}
+.bz-train__contribution-alert.is-success {
+  background: var(--bz-emerald-soft);
+  border-color: var(--bz-emerald-500);
+  color: var(--bz-emerald-300);
+}
+.bz-train__ledger {
+  padding-top: var(--bz-space-3);
+}
+.bz-train__ledger-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+}
+.bz-train__ledger-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-2);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+}
+.bz-train__ledger-file {
+  display: block;
+  color: var(--bz-fg);
+  font-size: var(--bz-size-meta);
+  font-weight: 500;
+}
+.bz-train__ledger-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-micro);
+}
+.bz-train__ledger-quality {
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  white-space: nowrap;
+}
+
+/* ── Target Cards ────────────────────────────────────────────── */
+.bz-train__targets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--bz-space-2);
+}
+.bz-train__target-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  color: var(--bz-fg-mid);
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-3) var(--bz-space-2);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
   cursor: pointer;
+  transition: all var(--bz-dur-fast) var(--bz-ease-out);
+  text-align: center;
 }
-
-.dataset-upload-label .material-symbols-outlined {
-  color: var(--bz-purple-500);
+.bz-train__target-card:hover {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-raised);
 }
-
-.dataset-upload-hint {
-  font-size: 12px;
+.bz-train__target-card.is-selected {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+  box-shadow: 0 0 0 1px var(--bz-purple-300);
+}
+.bz-train__target-icon {
+  font-size: 28px;
+  color: var(--bz-fg-mid);
+}
+.bz-train__target-card.is-selected .bz-train__target-icon {
+  color: var(--bz-purple-300);
+}
+.bz-train__target-name {
+  font-size: var(--bz-size-body);
+  font-weight: 500;
+  color: var(--bz-fg);
+}
+.bz-train__target-model {
+  font-size: var(--bz-size-micro);
   color: var(--bz-fg-low);
+  font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
+}
+.bz-train__target-desc {
+  font-size: var(--bz-size-micro);
+  color: var(--bz-fg-faint);
+  line-height: 1.4;
 }
 
-.dataset-files-preview {
-  margin-top: 16px;
-}
-
-.dataset-file-tags {
+/* ── Config ──────────────────────────────────────────────────── */
+.bz-train__config-group {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-height: 120px;
-  overflow-y: auto;
+  flex-direction: column;
+  gap: var(--bz-space-1);
+}
+.bz-train__label {
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-mid);
+  font-weight: 500;
+}
+.bz-train__config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-3);
+}
+.bz-train__config-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--bz-space-3);
+}
+.bz-train__input,
+.bz-train__select {
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  padding: var(--bz-space-1) var(--bz-space-2);
+  color: var(--bz-fg);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  height: 36px;
+  outline: none;
+  transition: border-color var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-train__input:focus,
+.bz-train__select:focus {
+  border-color: var(--bz-purple-300);
+}
+.bz-train__select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2374748a'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
 }
 
-.dataset-file-tag {
+/* ── Model Pills ─────────────────────────────────────────────── */
+.bz-train__model-pills {
+  display: flex;
+  gap: var(--bz-space-1);
+  flex-wrap: wrap;
+}
+.bz-train__model-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: rgba(147, 51, 234, 0.15);
-  border: 1px solid rgba(147, 51, 234, 0.3);
-  border-radius: 6px;
-  color: var(--bz-purple-300);
-  font-size: 12px;
-}
-
-.dataset-preview-box {
-  background: rgba(147, 51, 234, 0.08);
-  border: 1px solid var(--bz-purple-soft);
-  border-radius: 10px;
-  padding: 1em 1.25em;
-}
-
-.dataset-preview-box p:first-child {
-  color: var(--bz-purple-500);
-  margin-bottom: 8px;
-  font-size: 13px;
-}
-
-.dataset-preview-text {
-  color: var(--bz-fg);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.dataset-preview-text strong {
-  color: var(--bz-purple-300);
-}
-
-.dataset-modal-footer {
-  display: flex;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid var(--bz-card);
-}
-
-.dataset-modal-footer .button {
-  flex: 1;
-  cursor: pointer;
-}
-
-.dataset-primary-btn {
-  background: linear-gradient(135deg, var(--bz-purple-500) 0%, var(--bz-purple-700) 100%);
-  border: none;
-  color: var(--bz-on-accent);
-}
-
-.dataset-primary-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--bz-purple-300) 0%, var(--bz-purple-500) 100%);
-}
-
-.dataset-primary-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* ──────────────────────────────────────────────────────────────
-   Dataset Studio
-   ────────────────────────────────────────────────────────────── */
-
-.studio-layout {
-  display: flex;
-  gap: 16px;
-  min-height: 400px;
-}
-
-.studio-sidebar {
-  width: 240px;
-  flex-shrink: 0;
-}
-
-.studio-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.studio-example-list {
-  max-height: 400px;
-  overflow-y: auto;
+  height: 32px;
+  padding: 0 var(--bz-space-2);
+  background: var(--bz-canvas);
   border: 1px solid var(--bz-border);
-  border-radius: 4px;
-  background: var(--bz-scrim-soft);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+  cursor: pointer;
+  transition: all var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-train__model-pill:hover {
+  border-color: var(--bz-purple-300);
+}
+.bz-train__model-pill.is-selected {
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-purple-300);
+  color: var(--bz-purple-300);
+  font-weight: 500;
 }
 
-.studio-example-item {
+/* ── Slider ──────────────────────────────────────────────────── */
+.bz-train__slider-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--bz-fg-mid);
-  border-bottom: 1px solid var(--bz-canvas);
-  transition: background 0.15s ease;
+  gap: var(--bz-space-2);
 }
-
-.tabs a {
-  color: var(--bz-fg-faint);
-  border-color: var(--bz-border);
-}
-
-.tabs a:hover {
-  color: var(--bz-fg);
-  border-color: var(--bz-fg);
-}
-
-.tabs li.is-active a {
-  color: var(--bz-warning);
-  border-color: var(--bz-warning);
-}
-
-.studio-example-item:hover {
-  background: var(--bz-canvas);
-}
-
-.studio-example-item.is-active {
-  background: var(--bz-purple-soft);
-  color: var(--bz-fg);
-}
-
-.studio-example-title {
+.bz-train__slider {
   flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bz-border-strong);
+  border-radius: 2px;
+  outline: none;
+}
+.bz-train__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bz-purple-300);
+  cursor: pointer;
+}
+.bz-train__slider-val {
+  min-width: 24px;
+  text-align: right;
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-mid);
+}
+
+/* ── Options ─────────────────────────────────────────────────── */
+.bz-train__options {
+  display: flex;
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-3);
+  flex-wrap: wrap;
+}
+.bz-train__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-1);
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-mid);
+  cursor: pointer;
+}
+.bz-train__checkbox input[type="checkbox"] {
+  accent-color: var(--bz-purple-300);
+}
+
+/* ── Chips ───────────────────────────────────────────────────── */
+.bz-train__chips {
+  display: flex;
+  gap: var(--bz-space-1);
+  flex-wrap: wrap;
+}
+.bz-train__chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--bz-space-2);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-pill);
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-micro);
+  cursor: pointer;
+  transition: all var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-train__chip:hover {
+  border-color: var(--bz-purple-300);
+}
+.bz-train__chip.is-selected {
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-purple-300);
+  color: var(--bz-purple-300);
+}
+
+/* ── Abliteration Grid ───────────────────────────────────────── */
+.bz-train__ablit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--bz-space-2);
+}
+.bz-train__ablit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--bz-space-2) var(--bz-space-3);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-train__ablit-card:hover {
+  border-color: var(--bz-purple-300);
+}
+.bz-train__ablit-card.is-selected {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+}
+.bz-train__ablit-name {
+  font-size: var(--bz-size-body);
+  font-weight: 500;
+  color: var(--bz-fg);
+}
+.bz-train__ablit-repo {
+  font-size: 11px;
+  color: var(--bz-fg-low);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.studio-mode-toggle {
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--bz-card);
-  margin-bottom: 12px;
-}
-
-.studio-mode-toggle input[type="radio"] + label {
-  padding: 4px 12px 6px;
-  font-size: 13px;
-}
-
-.studio-tier-select select {
-  width: 100%;
-  padding: 6px 10px;
-  background: var(--bz-scrim);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 4px;
-  color: var(--bz-fg-mid);
-  font-size: 12px;
-  cursor: pointer;
-  appearance: auto;
-}
-
-.studio-tier-select select:focus {
-  outline: none;
-  border-color: var(--bz-purple-500);
-}
-
-.studio-tier-select select option {
-  background: var(--bz-card);
-  color: var(--bz-fg);
-}
-
-.studio-preview {
-  padding: 12px;
-  border: 1px solid var(--bz-border);
-  border-radius: 4px;
-  background: var(--bz-scrim-soft);
-}
-
-.studio-code-area {
-  width: 100%;
-  min-height: 200px;
-  background: var(--bz-scrim);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 4px;
-  color: var(--bz-fg-mid);
-  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
-  font-size: 12px;
-  padding: 10px;
-  resize: vertical;
-  line-height: 1.5;
-}
-
-.studio-code-area:focus {
-  outline: none;
-  border-color: var(--bz-purple-500);
-}
-
-.studio-lib-tags {
+/* ── Pipeline Stages ─────────────────────────────────────────── */
+.bz-train__stages {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: var(--bz-space-1);
+  overflow-x: auto;
+  padding-bottom: var(--bz-space-2);
 }
-
-.studio-lib-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  background: rgba(147, 51, 234, 0.2);
-  border: 1px solid var(--bz-purple-soft);
-  border-radius: 4px;
-  color: var(--bz-purple-100);
-  font-size: 12px;
-  font-family: "SF Mono", "Fira Code", "Consolas", monospace;
-}
-
-.studio-lib-input-row {
-  display: flex;
-  gap: 6px;
-}
-
-.studio-lib-input-row .input {
-  flex: 1;
-}
-
-.studio-describe-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.studio-description-area {
-  flex: 1;
-  background: var(--bz-scrim);
-  border: 1px solid var(--bz-border-strong);
-  border-radius: 4px;
-  color: var(--bz-fg-mid);
-  font-size: 13px;
-  padding: 10px;
-  resize: vertical;
-  line-height: 1.5;
-}
-
-.studio-description-area:focus {
-  outline: none;
-  border-color: var(--bz-purple-500);
-}
-
-.studio-describe-btn {
-  flex-shrink: 0;
-  align-self: flex-end;
-}
-
-.studio-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
-.studio-empty {
+.bz-train__stage {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: var(--bz-space-1);
+  min-width: 100px;
+  padding: var(--bz-space-2);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  transition: all var(--bz-dur-base) var(--bz-ease-out);
+  position: relative;
+}
+.bz-train__stage:not(:last-child)::after {
+  content: '→';
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--bz-fg-faint);
+  font-size: 14px;
+  z-index: 2;
+}
+.bz-train__stage.is-running {
+  border-color: var(--bz-purple-300);
+  background: var(--bz-purple-soft);
+  animation: bz-pulse 1.5s ease-in-out infinite;
+}
+.bz-train__stage.is-done {
+  border-color: var(--bz-emerald-500);
+  background: rgba(16, 185, 129, 0.08);
+}
+.bz-train__stage.is-error {
+  border-color: var(--bz-danger);
+  background: var(--bz-danger-soft);
+}
+.bz-train__stage-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  min-height: 300px;
+  background: var(--bz-raised);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bz-fg-mid);
+}
+.bz-train__stage.is-done .bz-train__stage-dot {
+  background: var(--bz-emerald-500);
+  color: white;
+}
+.bz-train__stage.is-running .bz-train__stage-dot {
+  background: var(--bz-purple-500);
+  color: white;
+}
+.bz-train__stage.is-error .bz-train__stage-dot {
+  background: var(--bz-danger);
+  color: white;
+}
+.bz-train__stage-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: bz-spin 0.8s linear infinite;
+}
+.bz-train__stage-name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--bz-fg-mid);
+}
+.bz-train__stage.is-done .bz-train__stage-name { color: var(--bz-emerald-500); }
+.bz-train__stage.is-running .bz-train__stage-name { color: var(--bz-purple-300); }
+.bz-train__stage-desc {
+  font-size: 10px;
+  color: var(--bz-fg-faint);
   text-align: center;
+  line-height: 1.3;
 }
-
-.studio-bottom-bar {
+.bz-train__stage-detail {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
-  border-top: 1px solid var(--bz-border);
+  gap: var(--bz-space-1);
+  margin-top: var(--bz-space-2);
+  padding: var(--bz-space-2);
+  background: var(--bz-canvas);
+  border-radius: var(--bz-r-sm);
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-mid);
 }
 
-.stake-train {
-  margin: var(--bz-space-5) 0;
-  padding: var(--bz-space-5);
-  border: 1px solid var(--bz-border-brand);
-  background:
-    linear-gradient(135deg, var(--bz-purple-soft), transparent 55%),
-    var(--bz-panel);
-}
-.stake-train__head,
-.stake-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--bz-space-4);
-}
-.stake-targets {
-  display: flex;
-  flex-wrap: wrap;
+/* ── Metrics ─────────────────────────────────────────────────── */
+.bz-train__metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--bz-space-2);
 }
-.stake-target,
-.stake-item {
-  border: 1px solid var(--bz-border);
-  background: var(--bz-card);
-  color: var(--bz-fg-mid);
-  cursor: pointer;
-}
-.stake-target {
-  display: inline-flex;
+.bz-train__metric-card {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 2px;
+  padding: var(--bz-space-3) var(--bz-space-2);
+  background: var(--bz-canvas);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  text-align: center;
+}
+.bz-train__metric-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--bz-fg);
+  font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
+}
+.bz-train__metric-value.is-good { color: var(--bz-emerald-500); }
+.bz-train__metric-value.is-warn { color: var(--bz-warning); }
+.bz-train__metric-value.is-bad { color: var(--bz-danger); }
+.bz-train__metric-label {
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-mid);
+  font-weight: 500;
+}
+.bz-train__metric-hint {
+  font-size: 10px;
+  color: var(--bz-fg-faint);
+}
+.bz-train__spectral-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--bz-r-pill);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.bz-train__spectral-badge.is-green { background: rgba(16,185,129,0.15); color: var(--bz-emerald-500); }
+.bz-train__spectral-badge.is-yellow { background: var(--bz-warning-soft); color: var(--bz-warning); }
+.bz-train__spectral-badge.is-red { background: var(--bz-danger-soft); color: var(--bz-danger); }
+
+/* ── Actions ─────────────────────────────────────────────────── */
+.bz-train__actions {
+  display: flex;
+  justify-content: center;
+  padding: var(--bz-space-2) 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Progress Card ───────────────────────────────────────────── */
+.bz-train__progress-card {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  box-shadow: var(--bz-elev-3);
+}
+.bz-train__progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: var(--bz-space-2);
+}
+.bz-train__progress-stage {
+  font-size: var(--bz-size-body);
+  font-weight: 500;
+  color: var(--bz-fg);
+}
+.bz-train__progress-bar {
+  height: 4px;
+  background: var(--bz-border-strong);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bz-train__progress-fill {
+  height: 100%;
+  background: var(--bz-gradient-brand);
+  border-radius: 2px;
+  transition: width var(--bz-dur-base) var(--bz-ease-out);
+  position: relative;
+}
+.bz-train__progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  animation: bz-gradient-sweep 2.4s linear infinite;
+}
+.bz-train__progress-detail {
+  margin-top: var(--bz-space-1);
+  font-size: var(--bz-size-meta);
+  color: var(--bz-fg-low);
+}
+
+/* ── Models Gallery ──────────────────────────────────────────── */
+.bz-train__models-section {
+  margin-top: var(--bz-space-2);
+}
+.bz-train__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-5);
+  color: var(--bz-fg-faint);
   font-size: var(--bz-size-meta);
 }
-.stake-target.is-selected,
-.stake-item.is-staked {
-  color: var(--bz-fg);
-  border-color: var(--bz-border-brand);
-  box-shadow: inset 0 0 0 1px var(--bz-border-brand);
+.bz-train__model-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--bz-space-2);
 }
-.stake-summary {
-  margin: var(--bz-space-4) 0;
+.bz-train__model-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
   padding: var(--bz-space-3);
-  background: var(--bz-card);
+  background: var(--bz-canvas);
   border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  transition: border-color var(--bz-dur-fast) var(--bz-ease-out);
 }
-.stake-summary div {
+.bz-train__model-card:hover {
+  border-color: var(--bz-border-strong);
+}
+.bz-train__model-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bz-train__model-date {
+  font-size: 11px;
+  color: var(--bz-fg-faint);
+}
+.bz-train__model-card-body {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.stake-summary strong {
-  color: var(--bz-purple-300);
-  font-size: 20px;
+.bz-train__model-name {
+  font-size: var(--bz-size-body);
+  font-weight: 500;
+  color: var(--bz-fg);
 }
-.stake-summary span {
-  color: var(--bz-fg-low);
+.bz-train__model-loss {
   font-size: var(--bz-size-meta);
-}
-.stake-pool {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: var(--bz-space-3);
-}
-.stake-item {
-  min-height: 86px;
-  display: grid;
-  grid-template-columns: 24px 1fr;
-  grid-template-rows: 1fr auto;
-  align-items: start;
-  gap: 6px var(--bz-space-2);
-  padding: var(--bz-space-3);
-  text-align: left;
-}
-.stake-item span:not(.material-symbols-outlined) {
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-.stake-item small {
-  grid-column: 2;
   color: var(--bz-fg-low);
-  text-transform: uppercase;
-  font-size: var(--bz-size-micro);
+  font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
 }
-
-@keyframes move {
-  0% {
-    transform: scale(1.1);
-    transform-origin: bottom left;
-  }
-  50% {
-    transform: scale(1.2);
-  }
-  100% {
-    transform: scale(1.1);
-    transform-origin: bottom left;
-  }
-}
-
-/* Token Launch Modal */
-.token-launch-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--bz-overlay);
+.bz-train__model-card-actions {
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 10003;
+  gap: var(--bz-space-1);
+  margin-top: auto;
+  padding-top: var(--bz-space-2);
+  border-top: 1px solid var(--bz-border);
+  flex-wrap: wrap;
 }
-
-.token-launch-modal {
-  width: 90%;
-  max-width: 480px;
-  border: 1px solid var(--bz-border);
-  border-radius: 16px;
-  overflow: hidden;
+.bz-train__token-launch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+  padding-top: var(--bz-space-2);
+  border-top: 1px solid var(--bz-border);
 }
-
-.token-launch-header {
+.bz-train__token-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(88px, 0.7fr) minmax(96px, 0.7fr);
+  gap: var(--bz-space-1);
+}
+.bz-train__token-description {
+  grid-column: 1 / -1;
+  min-height: 76px;
+  resize: vertical;
+}
+.bz-train__token-profile-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  background: var(--bz-scrim);
-  border-bottom: 1px solid var(--bz-border);
+  gap: var(--bz-space-2);
 }
-
-.token-launch-header h2 {
-  display: flex;
-  align-items: center;
-  margin: 0;
+.bz-train__upload {
+  position: relative;
+  overflow: hidden;
 }
-
-.token-launch-body {
-  padding: 20px;
-}
-
-/* Fade transitions */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
+.bz-train__upload input {
+  position: absolute;
+  inset: 0;
   opacity: 0;
+  cursor: pointer;
+}
+.bz-train__token-note {
+  margin: 0;
+  color: var(--bz-fg-low);
+  font-size: var(--bz-size-meta);
+  line-height: 1.4;
+}
+.bz-train__token-actions {
+  display: flex;
+  gap: var(--bz-space-1);
+  flex-wrap: wrap;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .bz-train__targets {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .bz-train__config-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .bz-train__config-row {
+    grid-template-columns: 1fr;
+  }
+  .bz-train__metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .bz-train__token-grid {
+    grid-template-columns: 1fr;
+  }
+  .bz-train__stages {
+    gap: var(--bz-space-1);
+  }
+  .bz-train__stage {
+    min-width: 80px;
+    padding: var(--bz-space-1);
+  }
 }
 </style>

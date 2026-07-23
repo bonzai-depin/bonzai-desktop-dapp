@@ -2,9 +2,8 @@
  * BonzAI Company — Connectors (renderer-side adapter, SQLite-backed).
  *
  * Public CRUD is typed; secret blobs are stored separately in
- * electron-store under a `secret:` prefix (Phase 6 swaps to OS
- * keychain via keytar). The connector row's `secretRef` points at
- * the keychain / store key — the row itself never holds raw bytes.
+ * Electron safeStorage-encrypted blobs. The connector row's `secretRef`
+ * points at the encrypted store key; the row never holds credentials.
  */
 
 import { append, _notify } from "./auditLog.js";
@@ -37,21 +36,22 @@ async function _safe(fn, fallback) {
 }
 
 // ─── Secret store ─────────────────────────────────────────────────────
-// v0: Electron Store under a `secret:` prefix. Phase 6 swaps to OS
-// keychain via keytar. The renderer-side store IPC is preserved so the
-// secret round-trip works even when the new SQLite layer isn't up.
 const SECRET_KEY = (companyId, connId) => `secret:${companyId}:${connId}`;
 
-async function _writeSecret(companyId, connId, secret) {
+async function _writeSecret(companyId, connId, secret, metadata = {}) {
   if (!secret) return null;
-  await window.electronAPI?.store?.set?.(SECRET_KEY(companyId, connId), secret);
+  if (window.electronAPI?.companyConnector?.setSecret) {
+    await window.electronAPI.companyConnector.setSecret(companyId, connId, secret, metadata);
+  } else {
+    await window.electronAPI?.store?.set?.(SECRET_KEY(companyId, connId), secret);
+  }
   return SECRET_KEY(companyId, connId);
 }
 async function _deleteSecret(companyId, connId) {
+  if (window.electronAPI?.companyConnector?.deleteSecret) {
+    await window.electronAPI.companyConnector.deleteSecret(companyId, connId);
+  }
   await window.electronAPI?.store?.delete?.(SECRET_KEY(companyId, connId));
-}
-async function _readSecret(companyId, connId) {
-  return window.electronAPI?.store?.get?.(SECRET_KEY(companyId, connId), null);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -62,7 +62,10 @@ export async function create(companyId, input) {
   const conn = await _safe((api) => api.create(companyId, input), null);
   if (!conn) return null;
   if (input.secret) {
-    const ref = await _writeSecret(companyId, conn.id, input.secret);
+    const ref = await _writeSecret(companyId, conn.id, input.secret, {
+      kind: conn.kind,
+      accountIdentifier: conn.accountIdentifier,
+    });
     if (ref) await _safe((api) => api.setSecretRef(companyId, conn.id, ref), null);
   }
   await append(companyId, {
@@ -92,12 +95,30 @@ export async function update(companyId, connId, patch) {
   return c;
 }
 
-export async function setSecret(companyId, connId, secret) {
-  const ref = await _writeSecret(companyId, connId, secret);
+export async function setSecret(companyId, connId, secret, patch = {}) {
+  let conn = await get(companyId, connId);
+  if (!conn) throw new Error("Connector not found");
+  if (patch.label || patch.accountIdentifier !== undefined) {
+    conn = await update(companyId, connId, {
+      ...(patch.label ? { label: patch.label } : {}),
+      ...(patch.accountIdentifier !== undefined ? { accountIdentifier: patch.accountIdentifier || null } : {}),
+    });
+  }
+  const ref = await _writeSecret(companyId, connId, secret, {
+    kind: conn.kind,
+    accountIdentifier: conn.accountIdentifier,
+  });
   if (!ref) return null;
-  const c = await _safe((api) => api.setSecretRef(companyId, connId, ref), null);
-  _notify();
-  return c;
+  try {
+    if (!window.electronAPI?.companyConnector?.validate) throw new Error("Connector validation is unavailable");
+    await window.electronAPI.companyConnector.validate(companyId, connId);
+    const active = await _safe((api) => api.setSecretRef(companyId, connId, ref), null);
+    _notify();
+    return active;
+  } catch (error) {
+    await update(companyId, connId, { status: "broken", error: error.message || "Credential validation failed" });
+    throw error;
+  }
 }
 
 export async function revoke(companyId, connId, reason) {
@@ -131,9 +152,32 @@ export async function clear(companyId) {
 export async function resolveForCall(companyId, connId) {
   const conn = await get(companyId, connId);
   if (!conn || conn.status !== "active") return null;
-  const secret = await _readSecret(companyId, connId);
   await update(companyId, connId, { lastUsedAt: Date.now() });
-  return { ...conn, secret };
+  return conn;
+}
+
+export async function request(companyId, connector, spec) {
+  if (!connector?.id || connector.status !== "active") throw new Error("Connector is not active");
+  if (!window.electronAPI?.companyConnector?.request) throw new Error("Secure connector proxy is unavailable");
+  try {
+    const result = await window.electronAPI.companyConnector.request({
+      companyId,
+      connectorId: connector.id,
+      connectorKind: connector.kind,
+      accountIdentifier: connector.accountIdentifier,
+      ...spec,
+    });
+    await update(companyId, connector.id, { lastUsedAt: Date.now(), lastValidatedAt: Date.now(), error: null });
+    return result.data;
+  } catch (error) {
+    const message = error?.message || "Connector request failed";
+    const authFailure = /\b(401|403)\b|unauthori[sz]ed|forbidden|expired|invalid token/i.test(message);
+    await update(companyId, connector.id, {
+      status: authFailure ? "expired" : "broken",
+      error: message.slice(0, 240),
+    });
+    throw error;
+  }
 }
 
 export async function healthSummary(companyId) {

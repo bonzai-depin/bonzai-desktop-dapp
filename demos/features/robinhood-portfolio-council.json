@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "robinhood-portfolio-council",
+  "title": "Robinhood Portfolio Council",
+  "surface": "desktop",
+  "viewport": { "width": 1920, "height": 1080 },
+  "capture": {
+    "steps": [
+      { "action": "clickRole", "role": "button", "name": "Agents", "exact": false },
+      { "action": "waitForText", "text": "Robinhood Portfolio Council" },
+      { "action": "wait", "ms": 500 },
+      { "action": "screenshot", "name": "portfolio-marketplace" },
+      { "action": "clickRole", "role": "button", "name": "Run Robinhood Portfolio Council" },
+      { "action": "waitForText", "text": "Five checks, one mandate" },
+      { "action": "screenshot", "name": "portfolio-council" },
+      { "action": "scrollToText", "text": "Mandate" },
+      { "action": "screenshot", "name": "portfolio-mandate" },
+      { "action": "scrollToText", "text": "Live capabilities" },
+      { "action": "screenshot", "name": "portfolio-tools" }
+    ]
+  },
+  "film": {
+    "transition": 0.4,
+    "segments": [
+      { "type": "capture", "capture": "portfolio-marketplace", "duration": 4 },
+      { "type": "capture", "capture": "portfolio-council", "duration": 4 },
+      { "type": "capture", "capture": "portfolio-mandate", "duration": 4 },
+      { "type": "capture", "capture": "portfolio-tools", "duration": 4 }
+    ]
+  }
+}

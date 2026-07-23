@@ -10,6 +10,7 @@ import {
   net,
   session,
   clipboard,
+  safeStorage,
 } from "electron";
 import Store from "electron-store";
 import os from "os";
@@ -32,17 +33,12 @@ import {
   PROTOCOLS as P2P_PROTOCOLS,
 } from "./services/libp2p.service.js";
 import {
-  createPaymentRequest,
-  validatePayment,
-  isSelfInference,
-  calculatePaymentAmount,
-} from "./services/x402.service.js";
-import {
   listExamples as studioListExamples,
   saveExample as studioSaveExample,
   deleteExample as studioDeleteExample,
   exportDataset as studioExportDataset,
 } from "./scripts/dataset-studio.js";
+import { RobinhoodMcpManager } from "./main/robinhood-mcp.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -728,6 +724,153 @@ if (process.platform === "win32") {
 // Store helpers
 // ─────────────────────────────────────────────────────────────────────────────
 const store = new Store();
+const robinhoodMcp = new RobinhoodMcpManager({
+  store,
+  safeStorage,
+  shell,
+  onState: (state) => mainWindow?.webContents.send("robinhood-mcp:state", state),
+});
+
+ipcMain.handle("robinhood-mcp:connect", () => robinhoodMcp.connect());
+ipcMain.handle("robinhood-mcp:status", () => robinhoodMcp.publicState());
+ipcMain.handle("robinhood-mcp:call-tool", (_event, request) => robinhoodMcp.callTool(request));
+ipcMain.handle("robinhood-mcp:disconnect", () => robinhoodMcp.disconnect());
+
+const connectorSecretKey = (companyId, connectorId) => `company-connector:${companyId}:${connectorId}`;
+
+const CONNECTOR_HOSTS = Object.freeze({
+  stripe: ["api.stripe.com"],
+  hubspot: ["api.hubapi.com"],
+  quickbooks: ["quickbooks.api.intuit.com", "sandbox-quickbooks.api.intuit.com"],
+  sage_accounting: ["api.accounting.sage.com"],
+  google_calendar: ["www.googleapis.com"],
+  sendgrid: ["api.sendgrid.com"],
+  notion: ["api.notion.com"],
+  slack: ["slack.com"],
+  twilio: ["api.twilio.com"],
+});
+
+function shopifyHost(accountIdentifier) {
+  const raw = String(accountIdentifier || "").trim().toLowerCase();
+  const host = raw.replace(/^https?:\/\//, "").split("/")[0];
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(host)) {
+    throw new Error("A valid store.myshopify.com domain is required");
+  }
+  return host;
+}
+
+function connectorHostAllowed(kind, hostname, accountIdentifier) {
+  if (kind === "shopify") return hostname === shopifyHost(accountIdentifier);
+  return (CONNECTOR_HOSTS[kind] || []).includes(hostname);
+}
+
+function readConnectorCredential(companyId, connectorId) {
+  const stored = store.get(connectorSecretKey(companyId, connectorId), null);
+  if (!stored?.encrypted) throw new Error("Connector credential is unavailable or locked");
+  const bytes = Buffer.from(stored.encrypted, "base64");
+  const raw = stored.protected ? safeStorage.decryptString(bytes) : bytes.toString("utf8");
+  let credential;
+  try { credential = JSON.parse(raw); } catch { credential = { accessToken: raw, apiKey: raw, token: raw }; }
+  return { stored, credential };
+}
+
+async function performConnectorRequest(request) {
+  const { companyId, connectorId, connectorKind, accountIdentifier: requestAccount, url, method = "GET", headers = {}, body, idempotencyKey } = request || {};
+  const { stored, credential } = readConnectorCredential(companyId, connectorId);
+  const kind = stored.kind || connectorKind;
+  const accountIdentifier = stored.accountIdentifier || requestAccount;
+  if (!kind) throw new Error("Connector kind is unavailable; reconnect this integration");
+  const target = new URL(url);
+  if (target.protocol !== "https:" || !connectorHostAllowed(kind, target.hostname, accountIdentifier)) {
+    throw new Error(`Connector host is not allowed for ${kind}: ${target.hostname}`);
+  }
+
+  const token = credential.accessToken || credential.apiKey || credential.token;
+  if (!token) throw new Error("Connector credential does not contain an access token or API key");
+  const safeHeaders = { ...headers };
+  for (const name of Object.keys(safeHeaders)) {
+    if (["authorization", "host", "x-shopify-access-token"].includes(name.toLowerCase())) delete safeHeaders[name];
+  }
+  const authHeaders = kind === "shopify"
+    ? { "X-Shopify-Access-Token": token }
+    : kind === "twilio"
+      ? { Authorization: `Basic ${Buffer.from(`${accountIdentifier}:${token}`).toString("base64")}` }
+      : kind === "stripe"
+        ? { Authorization: `Basic ${Buffer.from(`${token}:`).toString("base64")}` }
+        : { Authorization: `Bearer ${token}` };
+
+  const response = await fetch(target, {
+    method,
+    headers: {
+      Accept: "application/json",
+      ...safeHeaders,
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      ...authHeaders,
+    },
+    body: body == null ? undefined : body,
+  });
+  const responseText = await response.text();
+  let data;
+  try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { text: responseText }; }
+  if (!response.ok) {
+    const error = new Error(data?.error?.message || data?.Fault?.Error?.[0]?.Message || data?.message || `Connector request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return { ok: true, status: response.status, data };
+}
+
+function connectorValidationRequest(companyId, connectorId, stored) {
+  const base = { companyId, connectorId, method: "GET" };
+  switch (stored.kind) {
+    case "stripe": return { ...base, url: "https://api.stripe.com/v1/account" };
+    case "hubspot": return { ...base, url: "https://api.hubapi.com/crm/v3/objects/contacts?limit=1" };
+    case "quickbooks": {
+      if (!stored.accountIdentifier) throw new Error("QuickBooks Realm ID is required");
+      return { ...base, url: `https://quickbooks.api.intuit.com/v3/company/${encodeURIComponent(stored.accountIdentifier)}/companyinfo/${encodeURIComponent(stored.accountIdentifier)}?minorversion=75` };
+    }
+    case "sage_accounting": return { ...base, url: "https://api.accounting.sage.com/v3.1/businesses" };
+    case "google_calendar": return { ...base, url: "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1" };
+    case "sendgrid": return { ...base, url: "https://api.sendgrid.com/v3/scopes" };
+    case "shopify": return { ...base, url: `https://${shopifyHost(stored.accountIdentifier)}/admin/api/2026-07/shop.json` };
+    case "notion": return { ...base, url: "https://api.notion.com/v1/users/me", headers: { "Notion-Version": "2022-06-28" } };
+    case "slack": return { ...base, url: "https://slack.com/api/auth.test", method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } };
+    case "twilio": {
+      if (!stored.accountIdentifier) throw new Error("Twilio Account SID is required");
+      return { ...base, url: `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(stored.accountIdentifier)}.json` };
+    }
+    default: throw new Error(`Unsupported connector: ${stored.kind}`);
+  }
+}
+
+ipcMain.handle("company-connector:set-secret", (_event, { companyId, connectorId, secret, kind, accountIdentifier }) => {
+  if (!companyId || !connectorId || !secret) throw new Error("Connector identity and secret are required");
+  if (!kind) throw new Error("Connector kind is required");
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable on this device");
+  const plain = Buffer.from(String(secret), "utf8");
+  const encrypted = safeStorage.encryptString(plain.toString("utf8")).toString("base64");
+  store.set(connectorSecretKey(companyId, connectorId), {
+    encrypted,
+    protected: true,
+    kind,
+    accountIdentifier: accountIdentifier || "",
+    updatedAt: Date.now(),
+  });
+  return { ok: true };
+});
+ipcMain.handle("company-connector:delete-secret", (_event, { companyId, connectorId }) => {
+  store.delete(connectorSecretKey(companyId, connectorId));
+  return { ok: true };
+});
+ipcMain.handle("company-connector:request", async (_event, request) => {
+  return performConnectorRequest(request);
+});
+ipcMain.handle("company-connector:validate", async (_event, { companyId, connectorId }) => {
+  const { stored } = readConnectorCredential(companyId, connectorId);
+  const result = await performConnectorRequest(connectorValidationRequest(companyId, connectorId, stored));
+  if (stored.kind === "slack" && result.data?.ok === false) throw new Error(result.data.error || "Slack rejected the token");
+  return { ok: true, status: result.status };
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JWT Secret - persisted so tokens survive server restarts
@@ -1320,39 +1463,9 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
         return { ok: false, error: "provider_busy", detail: "Provider is currently serving another consumer. Try again shortly." };
       }
 
-      // ── Determine payment requirements ──
+      // Inference is free to consumers. Provider compensation is accounted
+      // separately through BonzaiServiceTime and MintPool reward epochs.
       const node = getP2PNode();
-      const isFreeRequest = isSelfInference(remotePeer, localPeerId)
-        || node.isLANPeer(remotePeer)
-        || store.get("p2p.pricingCurrency", "ETH") === "FREE";
-
-      // Paid request — validate payment before proceeding
-      let paymentInfo = null;
-      if (!isFreeRequest) {
-        const providerId = store.get("p2p.providerId", null);
-        const pricePerToken = store.get("p2p.pricePerToken", "1000000000000");
-
-        if (!request.payment) {
-          const requiredAmount = calculatePaymentAmount(request, pricePerToken);
-          return {
-            ok: false,
-            error: "payment_required",
-            status: 402,
-            payment: createPaymentRequest({ provider: providerId, amount: requiredAmount, service: request.pipeline }),
-          };
-        }
-
-        const validation = await validatePayment(request.payment, {
-          expectedProviderId: providerId,
-          minAmount: calculatePaymentAmount(request, pricePerToken),
-          pipeline: request.pipeline,
-        });
-
-        if (!validation.valid) {
-          return { ok: false, error: "payment_invalid", detail: validation.error, status: 402 };
-        }
-        paymentInfo = { consumer: validation.consumer, amount: validation.amount };
-      }
 
       // ── Acquire lock and process ──
       _providerBusy = true;
@@ -1394,9 +1507,8 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
 
         const response = { ok: true, result };
         if (node.isLANPeer(remotePeer)) response.lanInference = true;
-        if (isSelfInference(remotePeer, localPeerId)) response.selfInference = true;
-        if (paymentInfo) response.payment = paymentInfo;
-        if (isFreeRequest) response.freeInference = true;
+        if (remotePeer === localPeerId) response.selfInference = true;
+        response.freeInference = true;
         return response;
       } catch (err) {
         return { ok: false, error: "inference_failed", detail: err.message };
@@ -1408,7 +1520,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     // Register health handler
     await startedNode.onHealthRequest(async (request, remotePeer) => {
       const pipelines = store.get("p2p.pipelines", []);
-      const pricingCurrency = store.get("p2p.pricingCurrency", "ETH");
+      const pricingCurrency = "FREE";
       const FLASK_PORT = process.env.BONZAI_SERVER_PORT || 65000;
 
       // Scan MODEL_DIR for available LLM models (.gguf files)
@@ -1938,6 +2050,8 @@ ipcMain.handle("broadcast-model-state", () => {
     parameters: currentLoadedModel.parameters,
     context: currentLoadedModel.context,
     isMultimodal: !!currentLoadedModel.isMultimodal,
+    model_provenance: currentLoadedModel.model_provenance || currentLoadedModel.provenance || null,
+    provenance: currentLoadedModel.provenance || currentLoadedModel.model_provenance || null,
     pipelineMode,
   });
   return true;
@@ -3312,6 +3426,229 @@ ipcMain.handle("agent-save-video", async (_event, defaultName, sourcePath) => {
   }
 });
 
+function resolveFfmpegPath() {
+  const exe = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const arch = process.arch;
+  const platform = process.platform;
+  const candidates = [
+    process.env.FFMPEG_BIN,
+    path.join(app.getAppPath(), "node_modules", "ffmpeg-static-electron-forge", "dist", "bin", platform, arch, exe),
+    path.join(app.getAppPath(), "app.asar.unpacked", "node_modules", "ffmpeg-static-electron-forge", "dist", "bin", platform, arch, exe),
+    path.join(process.resourcesPath || "", exe),
+    path.join(process.resourcesPath || "", "app.asar.unpacked", "node_modules", "ffmpeg-static-electron-forge", "dist", "bin", platform, arch, exe),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      try {
+        fs.chmodSync(candidate, 0o755);
+      } catch {}
+      return candidate;
+    }
+  }
+  return exe;
+}
+
+function sourceExtension(source, fallback) {
+  const value = String(source || "");
+  const dataMatch = value.match(/^data:([^;,]+)/i);
+  if (dataMatch) {
+    if (dataMatch[1].includes("png")) return "png";
+    if (dataMatch[1].includes("jpeg") || dataMatch[1].includes("jpg")) return "jpg";
+    if (dataMatch[1].includes("mpeg")) return "mp3";
+    if (dataMatch[1].includes("wav")) return "wav";
+    if (dataMatch[1].includes("mp4")) return "mp4";
+  }
+  try {
+    const pathname = value.startsWith("http") ? new URL(value).pathname : value;
+    const ext = path.extname(pathname).replace(".", "");
+    return ext || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function readMediaSource(source) {
+  const value = String(source || "");
+  if (!value) throw new Error("Missing media source");
+  if (value.startsWith("data:")) {
+    const b64 = value.split(",")[1] || "";
+    return Buffer.from(b64, "base64");
+  }
+  if (/^https?:\/\//i.test(value)) {
+    const response = await fetch(value);
+    if (!response.ok) throw new Error(`Failed to fetch media source: ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+  return fs.promises.readFile(value);
+}
+
+function formatAssTime(seconds) {
+  const safe = Math.max(0, Number(seconds) || 0);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const secs = Math.floor(safe % 60);
+  const centis = Math.floor((safe - Math.floor(safe)) * 100);
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(centis).padStart(2, "0")}`;
+}
+
+function escapeAssText(value) {
+  return String(value || "")
+    .replace(/[{}]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\r?\n/g, " ")
+    .trim();
+}
+
+function splitCaptionLines(script) {
+  const words = String(script || "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+  const lines = [];
+  let line = [];
+  for (const word of words) {
+    line.push(word);
+    const endsPhrase = /[.!?;:]$/.test(word);
+    if (line.length >= 4 || (line.length >= 2 && endsPhrase)) {
+      lines.push(line);
+      line = [];
+    }
+  }
+  if (line.length) lines.push(line);
+  return lines;
+}
+
+function buildKaraokeAss(script, durationSeconds, watermark = "BonzAI") {
+  const lines = splitCaptionLines(script);
+  const totalWords = Math.max(1, lines.reduce((sum, line) => sum + line.length, 0));
+  const totalCentis = Math.max(100, Math.round(Math.max(1, durationSeconds) * 100));
+  const leadSeconds = 0.28;
+  let cursor = 0;
+  const events = lines.map((line) => {
+    const lineCentis = Math.max(80, Math.round((line.length / totalWords) * totalCentis));
+    const start = Math.max(0, (cursor / 100) - leadSeconds);
+    const end = Math.min(durationSeconds, ((cursor + lineCentis + 12) / 100) - leadSeconds);
+    const perWord = Math.max(12, Math.round(lineCentis / Math.max(1, line.length)));
+    cursor += lineCentis;
+    const text = line.map((word) => `{\\k${perWord}}${escapeAssText(word)}`).join(" ");
+    return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Karaoke,,0,0,0,,{\\an2\\pos(540,1450)\\fad(60,90)}${text}`;
+  });
+
+  return `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Karaoke,Fira Sans Condensed,76,&H00FFFFFF,&H008A5CFF,&HCC0B0B12,&H88000000,-1,-1,0,0,100,100,0,0,1,6,0,2,96,96,270,1
+Style: Watermark,Fira Sans Condensed,36,&H44FFFFFF,&H44FFFFFF,&H99000000,&H66000000,-1,-1,0,0,100,100,0,0,1,2,1,3,80,54,58,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${events.join("\n")}
+Dialogue: 1,${formatAssTime(0)},${formatAssTime(durationSeconds)},Watermark,,0,0,0,,${escapeAssText(watermark)}
+`;
+}
+
+function escapeFilterPath(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'");
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = child_process.spawn(resolveFfmpegPath(), args, { windowsHide: true });
+    let stderr = "";
+    ffmpeg.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    ffmpeg.on("error", reject);
+    ffmpeg.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(stderr.slice(-3000) || `ffmpeg exited with code ${code}`));
+      }
+    });
+  });
+}
+
+ipcMain.handle("meditation-export-video", async (_event, payload = {}) => {
+  const defaultName = payload.defaultName || "bonzai-meditation.mp4";
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultName,
+    filters: [{ name: "Video", extensions: ["mp4"] }],
+  });
+  if (canceled || !filePath) return { success: false };
+
+  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "bonzai-meditation-"));
+  try {
+    const imageExt = sourceExtension(payload.imageSource, "png");
+    const audioExt = sourceExtension(payload.audioSource, "wav");
+    const imagePath = path.join(tmpDir, `scene.${imageExt}`);
+    const audioPath = path.join(tmpDir, `narration.${audioExt}`);
+    const assPath = path.join(tmpDir, "karaoke.ass");
+
+    await fs.promises.writeFile(imagePath, await readMediaSource(payload.imageSource));
+    await fs.promises.writeFile(audioPath, await readMediaSource(payload.audioSource));
+
+    const durationSeconds = Math.max(1, Math.round(Number(payload.durationSeconds) || 30));
+    await fs.promises.writeFile(assPath, buildKaraokeAss(payload.script || "", durationSeconds, payload.watermark || "BonzAI"), "utf8");
+
+    const ass = escapeFilterPath(assPath);
+    const frameCount = Math.max(30, durationSeconds * 30);
+    const filter = [
+      "scale=1080:1920:force_original_aspect_ratio=increase",
+      "crop=1080:1920",
+      `zoompan=z='1+0.055*on/${frameCount}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frameCount}:s=1080x1920:fps=30`,
+      "format=yuv420p",
+      `subtitles='${ass}'`,
+    ].join(",");
+
+    await runFfmpeg([
+      "-y",
+      "-loop", "1",
+      "-framerate", "30",
+      "-t", String(durationSeconds),
+      "-i", imagePath,
+      "-i", audioPath,
+      "-vf", filter,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-c:v", "libx264",
+      "-profile:v", "baseline",
+      "-level", "4.0",
+      "-pix_fmt", "yuv420p",
+      "-preset", "veryfast",
+      "-crf", "19",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-ar", "48000",
+      "-ac", "2",
+      "-shortest",
+      "-movflags", "+faststart",
+      "-brand", "mp42",
+      filePath,
+    ]);
+
+    return { success: true, path: filePath };
+  } catch (e) {
+    console.error("[meditation-export-video] Error:", e);
+    return { success: false, error: e.message };
+  } finally {
+    try {
+      await fs.promises.rm(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Polymarket API Proxy (bypasses CORS for renderer process)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3854,6 +4191,8 @@ ipcMain.handle("model-get-loaded", () => {
     parameters: currentLoadedModel.parameters,
     context: currentLoadedModel.context,
     isMultimodal: currentLoadedModel.isMultimodal || false,
+    model_provenance: currentLoadedModel.model_provenance || currentLoadedModel.provenance || null,
+    provenance: currentLoadedModel.provenance || currentLoadedModel.model_provenance || null,
   };
 });
 ipcMain.handle("model-get-always-loaded", () => alwaysLoadedEnabled);
@@ -3911,8 +4250,10 @@ ipcMain.handle("model-download-mmproj", downloadMmproj);
 let _pool = null;
 async function _getPool() {
   if (_pool) return _pool;
-  _pool = await import(path.join(__dirname, "..", "src", "services", "llamaServer.pool.js"))
-    .catch(() => import("file:///" + path.resolve("src/services/llamaServer.pool.js")));
+  const poolPath = app.isPackaged
+    ? path.join(app.getAppPath(), "src", "services", "llamaServer.pool.js")
+    : path.resolve("src/services/llamaServer.pool.js");
+  _pool = await import(pathToFileURL(poolPath).href);
   if (_pool?.configure) _pool.configure({ resourcesPath: app.isPackaged ? process.resourcesPath : null });
   return _pool;
 }
@@ -4827,7 +5168,139 @@ function getActiveDownloads() {
   }));
 }
 
+function customModelCatalogPath() {
+  return path.join(MODEL_DIR, "custom-models.json");
+}
+
+function readCustomModelCatalog() {
+  try {
+    const file = customModelCatalogPath();
+    if (!fs.existsSync(file)) return [];
+    const rows = JSON.parse(fs.readFileSync(file, "utf8"));
+    return Array.isArray(rows) ? rows : [];
+  } catch (error) {
+    console.warn("[Custom GGUF] Failed to read catalog:", error.message);
+    return [];
+  }
+}
+
+function writeCustomModelCatalog(rows) {
+  fs.mkdirSync(MODEL_DIR, { recursive: true });
+  fs.writeFileSync(customModelCatalogPath(), JSON.stringify(rows, null, 2));
+}
+
+function listCustomModels() {
+  return readCustomModelCatalog().map((model) => ({
+    ...model,
+    available: fs.existsSync(path.join(MODEL_DIR, normalizeModelFilename(model.filename))),
+  }));
+}
+
+function removeCustomModelFromCatalog(filename) {
+  const normalized = normalizeModelFilename(filename);
+  const rows = readCustomModelCatalog();
+  const next = rows.filter((model) => normalizeModelFilename(model.filename) !== normalized);
+  if (next.length !== rows.length) writeCustomModelCatalog(next);
+}
+
+function isLikelyGGUF(filePath) {
+  try {
+    const fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+    return buf.toString("utf8") === "GGUF";
+  } catch {
+    return false;
+  }
+}
+
+function guessCustomModelParameters(name) {
+  const match = String(name || "").match(/(\d+(?:\.\d+)?)\s*b/i);
+  if (!match) return null;
+  return Number(match[1]) * 1e9;
+}
+
+function customModelNameFromFilename(filename) {
+  return path
+    .basename(filename, path.extname(filename))
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+async function importLocalGGUF() {
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const picked = await dialog.showOpenDialog(win, {
+    title: "Import local LLM GGUF model",
+    properties: ["openFile"],
+    filters: [{ name: "GGUF models", extensions: ["gguf"] }],
+  });
+
+  if (picked.canceled || !picked.filePaths?.[0]) return { canceled: true };
+
+  const sourcePath = picked.filePaths[0];
+  if (path.extname(sourcePath).toLowerCase() !== ".gguf") {
+    return { error: "Choose a .gguf LLM model file." };
+  }
+  if (!isLikelyGGUF(sourcePath)) {
+    return { error: "This file does not look like a valid GGUF LLM model." };
+  }
+
+  fs.mkdirSync(MODEL_DIR, { recursive: true });
+  const stat = fs.statSync(sourcePath);
+  const hash = crypto
+    .createHash("sha256")
+    .update(`${sourcePath}:${stat.size}:${stat.mtimeMs}`)
+    .digest("hex")
+    .slice(0, 10);
+
+  let filename = normalizeModelFilename(path.basename(sourcePath));
+  let destPath = path.join(MODEL_DIR, filename);
+  if (fs.existsSync(destPath)) {
+    const existing = fs.statSync(destPath);
+    const sameFile = fs.realpathSync(destPath) === fs.realpathSync(sourcePath);
+    if (!sameFile && existing.size !== stat.size) {
+      filename = normalizeModelFilename(`custom-${hash}-${path.basename(sourcePath)}`);
+      destPath = path.join(MODEL_DIR, filename);
+    }
+  }
+
+  if (!fs.existsSync(destPath) || fs.realpathSync(sourcePath) !== fs.realpathSync(destPath)) {
+    fs.copyFileSync(sourcePath, destPath);
+  }
+
+  const parameters = guessCustomModelParameters(filename);
+  const spec = {
+    key: `custom_${hash}`,
+    custom: true,
+    type: "llm",
+    source: "local",
+    sourcePath,
+    filename,
+    modelname: customModelNameFromFilename(filename),
+    name: customModelNameFromFilename(filename),
+    filesize: stat.size >= 1e9 ? `${(stat.size / 1e9).toFixed(1)} GB` : `${Math.round(stat.size / 1e6)} MB`,
+    filesizeBytes: stat.size,
+    size: stat.size >= 1e9 ? `${(stat.size / 1e9).toFixed(1)} GB` : `${Math.round(stat.size / 1e6)} MB`,
+    parameters,
+    context: 32768,
+    isMoE: false,
+    license: "User-supplied; governed by the original model license",
+    licenseUrl: "",
+    importedAt: new Date().toISOString(),
+  };
+
+  const rows = readCustomModelCatalog();
+  const next = rows.filter((model) => normalizeModelFilename(model.filename) !== filename);
+  next.unshift(spec);
+  writeCustomModelCatalog(next);
+
+  return spec;
+}
+
 ipcMain.handle("get-active-downloads", () => getActiveDownloads());
+ipcMain.handle("model-list-custom", () => listCustomModels());
+ipcMain.handle("model-import-gguf", importLocalGGUF);
 
 ipcMain.handle("model-download-cancel", (_event, filename) => {
   const normalizedFilename = normalizeModelFilename(filename);
@@ -5136,6 +5609,7 @@ function deleteModel(_event, modelname) {
       try {
         fs.unlinkSync(mergedPath);
         console.log("Merged model deleted:", mergedPath);
+        removeCustomModelFromCatalog(mergedFilename);
         return true;
       } catch (e) {
         console.error("Delete merged file failed:", e);
@@ -5152,6 +5626,7 @@ function deleteModel(_event, modelname) {
       if (err) throw err;
       console.log("Model deleted:", modelPath);
     });
+    removeCustomModelFromCatalog(normalizedName);
     return true;
   } catch (e) {
     console.error("Delete failed:", e);
@@ -5308,6 +5783,11 @@ const MODEL_SPECS = {
   "kimi-k2.6":                      { parameters: 1000e9, activeParameters: 32e9, isMoE: true, context: 256000 },
   "minimax-m2.5":                   { parameters: 229e9, activeParameters: 10e9, isMoE: true, context: 205000 },
   "minimax-m2.7":                   { parameters: 229e9, activeParameters: 10e9, isMoE: true, context: 205000 },
+  "minimax-m3":                     { parameters: 229e9, activeParameters: 10e9, isMoE: true, context: 205000 },
+  "glm-5.2":                        { parameters: 355e9, activeParameters: 32e9, isMoE: true, context: 131072 },
+  "diffusiongemma-26b-a4b":         { parameters: 26e9, activeParameters: 4e9, isMoE: true, context: 32768 },
+  "ornith-1.0-9b":                  { parameters: 9e9, context: 131072 },
+  "ornith-1.0-35b":                 { parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 131072 },
   "gpt-oss-120b":                   { parameters: 120e9, activeParameters: 5.1e9, isMoE: true, context: 131072 },
   "llama-4-scout-17b-16e":          { parameters: 109e9, activeParameters: 17e9, isMoE: true, context: 10000000 },
   "llama-4-maverick-17b-128e":      { parameters: 400e9, activeParameters: 17e9, isMoE: true, context: 1000000 },
@@ -5365,6 +5845,11 @@ const MODEL_NAMES = {
   "kimi-k2.6":                     "Kimi K2.6",
   "minimax-m2.5":                  "MiniMax M2.5 Q4",
   "minimax-m2.7":                  "MiniMax M2.7",
+  "minimax-m3":                    "MiniMax M3",
+  "glm-5.2":                       "GLM 5.2",
+  "diffusiongemma-26b-a4b":        "DiffusionGemma 26B A4B",
+  "ornith-1.0-9b":                 "Ornith 1.0 9B",
+  "ornith-1.0-35b":                "Ornith 1.0 35B",
   "mistral-small-3.2-24b":         "Mistral Small 3.2 24B",
   "devstral-small-2-24b":          "Devstral Small 2 24B",
   "ministral-3-3b":                "Ministral 3 3B",
@@ -5721,6 +6206,8 @@ async function loadModel(_event, currentModel) {
       parameters: currentModel.parameters,
       context: currentModel.context,
       isMultimodal: !!mmprojPath,
+      model_provenance: currentModel.model_provenance || currentModel.provenance || null,
+      provenance: currentModel.provenance || currentModel.model_provenance || null,
       pipelineMode,
     });
   }

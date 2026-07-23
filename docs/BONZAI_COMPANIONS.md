@@ -41,7 +41,7 @@ Users can also create fully custom companions with their own personalities.
 
 1. **Chat**: Pick a companion and a scenario. Talk to them in character. They generate text, images of themselves, voice responses, and even video clips — all locally on your machine.
 
-2. **Mint**: Turn your companion into an NFT on Base for 0.25 ETH (discounts for BONZAI holders). This gives them an on-chain identity and an agent wallet.
+2. **Mint and launch**: Turn your companion into an on-chain agent for 0.30 ETH. The same transaction issues its companion token and provisions 0.05 ETH of permanent Uniswap liquidity when production factories are wired.
 
 3. **Earn**: Register your companion as a co-owner of relevant skills. They earn ETH whenever someone buys those skills.
 

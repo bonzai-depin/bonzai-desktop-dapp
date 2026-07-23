@@ -25,7 +25,7 @@ const BUILTIN_SELLERS = [
     type: 'content_nft_mint',
     description: 'Mint roleplay images as on-chain content NFTs on Base',
     endpoint: null,
-    contractAddress: null, // Uses CONFIG.contentNFT.base.contractAddress
+    contractAddress: null, // Uses CONFIG.contentNFT.economy.contractAddress
     chainId: 8453,
     priceRange: '0.0025 ETH',
     enabled: true,

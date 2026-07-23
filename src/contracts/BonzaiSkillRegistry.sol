@@ -2,296 +2,75 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
-interface IBonzaiUnlock {
-    function hasUnlocked(address user) external view returns (bool);
+interface IBonzaiSkillTokenAccess {
+    function hasTokenAccess(address user, bytes32 skillId) external view returns (bool);
 }
 
 /**
  * @title BonzaiSkillRegistry
- * @author BonzAI Team
- * @notice On-chain registry for decentralized AI skills (packaged prompts + tools)
- * @dev Deployed on Arbitrum. Handles skill registration, purchases, and execution fees.
+ * @notice Registry and access control for BonzAI workflow skills.
  *
- * Skills are defined off-chain (IPFS/Pinata) and referenced by hash. This contract
- * manages:
- *   - Skill registration with author address and pricing (ETH-denominated)
- *   - One-time skill purchases in native ETH
- *   - Per-execution running fees in native ETH
- *   - Revenue split: 80% to co-owners (via BonzaiSkillOwnership), 20% to platform
- *     treasury. The author earns through co-ownership registration, not a
- *     dedicated cut here.
+ * Skills are free to execute. A skill may be public or gated by ownership of
+ * any companion token registered as an owner of that skill. Hiring a companion
+ * into a BonzAI Company is handled by the Company charter and grants the same
+ * specialized workflows to that role.
  */
-interface IBonzaiSkillOwnership {
-    function distributeRevenue(bytes32 skillId, uint256 amount) external payable;
-}
-
-contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CONSTANTS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// @notice Basis points for percentage calculations (100% = 10000)
-    uint256 private constant BASIS_POINTS = 10000;
-
-    /// @notice Co-owner share in basis points (80%)
-    uint256 private constant CO_OWNER_SHARE_BPS = 8000;
-
-    /// @notice Treasury (platform) share in basis points (20%)
-    uint256 private constant TREASURY_SHARE_BPS = 2000;
-
-    /// @notice Maximum skills per author (spam prevention)
+contract BonzaiSkillRegistry is Ownable, Pausable {
     uint256 public constant MAX_SKILLS_PER_AUTHOR = 100;
 
-    /// @notice Maximum running fee per execution in ETH (sanity cap)
-    uint256 public constant MAX_RUNNING_FEE = 0.5 ether;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // STRUCTS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// @notice Skill metadata stored on-chain
     struct Skill {
-        bytes32 id;                  // Keccak256 hash of name+version
-        address author;              // Creator's wallet
-        string name;                 // Skill name
-        string version;              // Semantic version
-        string category;             // Skill category
-        string ipfsHash;             // IPFS/Pinata hash of full definition
-        uint256 purchasePrice;       // One-time purchase price in wei
-        uint256 runningFee;          // Per-execution fee in wei
-        bool isActive;               // Can be purchased/executed
-        bool isVerified;             // Verified by BonzAI team
-        bool adminDeactivated;       // Admin-deactivated (cannot be reactivated by author)
-        uint256 totalPurchases;      // Total number of purchases
-        uint256 totalExecutions;     // Total number of executions
-        uint256 totalRevenue;        // Total wei revenue collected
-        uint256 createdAt;           // Registration timestamp
-        uint256 updatedAt;           // Last update timestamp
+        bytes32 id;
+        address author;
+        string name;
+        string version;
+        string category;
+        string ipfsHash;
+        bool tokenGated;
+        bool isActive;
+        bool isVerified;
+        bool adminDeactivated;
+        uint256 totalExecutions;
+        uint256 createdAt;
+        uint256 updatedAt;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // STATE VARIABLES
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// @notice Platform treasury for fee collection (receives the 20% share)
-    address public treasury;
-
-    /// @notice Skill ownership contract
     address public skillOwnershipContract;
-
-    /// @notice BonzaiUnlock contract — unlocked users get skills for free
-    address public unlockContract;
-
-    /// @notice Mapping of skill ID => Skill data
     mapping(bytes32 => Skill) public skills;
-
-    /// @notice Mapping of user => skill ID => purchased
-    mapping(address => mapping(bytes32 => bool)) public hasPurchased;
-
-    /// @notice Mapping of author => skill IDs
     mapping(address => bytes32[]) public authorSkills;
-
-    /// @notice Array of all skill IDs (for enumeration)
+    mapping(string => bool) public validCategories;
     bytes32[] public allSkillIds;
 
-    /// @notice Valid spending profile category names (matching BonzaiCompanions.sol 12 categories)
-    mapping(string => bool) public validCategories;
-
-    /// @notice Total ETH collected as treasury share across all purchases
-    uint256 public totalTreasuryFees;
-
-    /// @notice Total ETH collected as treasury share from running fees
-    uint256 public totalTreasuryRunningFees;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EVENTS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// @notice Emitted when a new skill is registered
     event SkillRegistered(
         bytes32 indexed skillId,
         address indexed author,
         string name,
         string version,
         string category,
-        string ipfsHash,
-        uint256 purchasePrice,
-        uint256 runningFee,
-        uint256 timestamp
+        bool tokenGated
     );
+    event SkillUpdated(bytes32 indexed skillId, string ipfsHash, bool tokenGated);
+    event SkillExecuted(bytes32 indexed skillId, address indexed user, uint256 executionNumber);
+    event SkillVerified(bytes32 indexed skillId, bool verified);
+    event SkillStatusChanged(bytes32 indexed skillId, bool active);
+    event SkillOwnershipContractUpdated(address indexed previousContract, address indexed newContract);
 
-    /// @notice Emitted when a skill is updated
-    event SkillUpdated(
-        bytes32 indexed skillId,
-        string ipfsHash,
-        uint256 purchasePrice,
-        uint256 runningFee,
-        uint256 timestamp
-    );
-
-    /// @notice Emitted when a skill is purchased
-    event SkillPurchased(
-        bytes32 indexed skillId,
-        address indexed buyer,
-        address indexed author,
-        uint256 price,
-        uint256 coOwnerShare,
-        uint256 authorShare,
-        address paymentToken,
-        uint256 timestamp
-    );
-
-    /// @notice Emitted when a skill execution fee is paid
-    event SkillExecuted(
-        bytes32 indexed skillId,
-        address indexed executor,
-        address indexed author,
-        uint256 fee,
-        uint256 coOwnerShare,
-        uint256 authorShare,
-        uint256 timestamp
-    );
-
-    /// @notice Emitted when a skill is verified/unverified
-    event SkillVerificationChanged(
-        bytes32 indexed skillId,
-        bool isVerified,
-        uint256 timestamp
-    );
-
-    /// @notice Emitted when a skill is activated/deactivated
-    event SkillStatusChanged(
-        bytes32 indexed skillId,
-        bool isActive,
-        uint256 timestamp
-    );
-
-    /// @notice Emitted when co-owner share falls back to treasury
-    event CoOwnerShareFallbackToTreasury(bytes32 indexed skillId, uint256 amount);
-
-    /// @notice Emitted when treasury is updated
-    event TreasuryUpdated(
-        address indexed oldTreasury,
-        address indexed newTreasury
-    );
-
-    /// @notice Emitted when skill ownership contract is updated
-    event SkillOwnershipContractUpdated(
-        address indexed oldContract,
-        address indexed newContract
-    );
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ERRORS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// @notice Thrown when skill already exists
-    error SkillAlreadyExists(bytes32 skillId);
-
-    /// @notice Thrown when skill does not exist
-    error SkillNotFound(bytes32 skillId);
-
-    /// @notice Thrown when skill is not active
-    error SkillNotActive(bytes32 skillId);
-
-    /// @notice Thrown when user already purchased the skill
-    error AlreadyPurchased(address user, bytes32 skillId);
-
-    /// @notice Thrown when user has not purchased the skill
-    error NotPurchased(address user, bytes32 skillId);
-
-    /// @notice Thrown when incorrect ETH amount is sent
-    error IncorrectPayment(uint256 sent, uint256 required);
-
-    /// @notice Thrown when a zero address is provided
     error ZeroAddress();
+    error EmptyField();
+    error InvalidCategory();
+    error SkillAlreadyExists();
+    error SkillNotFound();
+    error SkillInactive();
+    error NotAuthor();
+    error TooManySkills();
+    error AdminDeactivated();
+    error CompanionTokenRequired();
+    error DirectPaymentsDisabled();
 
-    /// @notice Thrown when caller is not the skill author
-    error NotAuthor(address caller, address author);
-
-    /// @notice Thrown when running fee exceeds maximum
-    error RunningFeeTooHigh(uint256 fee, uint256 max);
-
-    /// @notice Thrown when author has too many skills
-    error TooManySkills(address author, uint256 count);
-
-    /// @notice Thrown when name or version is empty
-    error EmptyString();
-
-    /// @notice Thrown when IPFS hash is invalid
-    error InvalidIPFSHash();
-
-    /// @notice Thrown when ETH transfer fails
-    error TransferFailed(address recipient);
-
-    /// @notice Thrown when category index is out of range (0-11)
-    error InvalidCategory(string category);
-
-    /// @notice Thrown when direct ETH transfer is attempted
-    error UseCorrectFunction();
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // MODIFIERS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Ensures the address is not zero
-     */
-    modifier notZeroAddress(address addr) {
-        if (addr == address(0)) revert ZeroAddress();
-        _;
-    }
-
-    /**
-     * @notice Ensures the skill exists
-     */
-    modifier skillExists(bytes32 skillId) {
-        if (skills[skillId].author == address(0)) revert SkillNotFound(skillId);
-        _;
-    }
-
-    /**
-     * @notice Ensures the skill is active
-     */
-    modifier skillActive(bytes32 skillId) {
-        if (!skills[skillId].isActive) revert SkillNotActive(skillId);
-        _;
-    }
-
-    /**
-     * @notice Ensures caller is the skill author
-     */
-    modifier onlyAuthor(bytes32 skillId) {
-        if (skills[skillId].author != msg.sender) {
-            revert NotAuthor(msg.sender, skills[skillId].author);
-        }
-        _;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CONSTRUCTOR
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Initialize the registry (ETH-only — no token references).
-     * @param _treasury Platform treasury address (receives the 20% share)
-     * @param _skillOwnershipContract Skill ownership contract address
-     */
-    constructor(
-        address _treasury,
-        address _skillOwnershipContract
-    ) Ownable(msg.sender) {
-        if (_treasury == address(0)) revert ZeroAddress();
-        // _skillOwnershipContract can be zero — wired post-deploy via
-        // setSkillOwnershipContract().
-
-        treasury = _treasury;
+    constructor(address _skillOwnershipContract) Ownable(msg.sender) {
         skillOwnershipContract = _skillOwnershipContract;
 
-        // Initialize valid categories (12 spending profile categories)
         validCategories["education"] = true;
         validCategories["entertainment"] = true;
         validCategories["fashion"] = true;
@@ -306,45 +85,25 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
         validCategories["sports"] = true;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SKILL REGISTRATION
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Register a new skill
-     * @param name Skill name
-     * @param version Semantic version (e.g., "1.0.0")
-     * @param ipfsHash IPFS/Pinata hash of skill definition JSON
-     * @param purchasePrice One-time purchase price in USDC (6 decimals, 0 for free skills)
-     * @param runningFee Per-execution fee in USDC (6 decimals, 0 for no fee)
-     * @return skillId The generated skill ID
-     */
     function registerSkill(
         string calldata name,
         string calldata version,
         string calldata category,
         string calldata ipfsHash,
-        uint256 purchasePrice,
-        uint256 runningFee
-    ) external nonReentrant whenNotPaused returns (bytes32 skillId) {
-        // Validate inputs
-        if (bytes(name).length == 0 || bytes(version).length == 0 || bytes(category).length == 0) revert EmptyString();
-        if (!validCategories[category]) revert InvalidCategory(category);
-        if (bytes(ipfsHash).length < 10) revert InvalidIPFSHash();
-        if (runningFee > MAX_RUNNING_FEE) revert RunningFeeTooHigh(runningFee, MAX_RUNNING_FEE);
+        bool tokenGated
+    ) external whenNotPaused returns (bytes32 skillId) {
+        if (
+            bytes(name).length == 0 ||
+            bytes(version).length == 0 ||
+            bytes(category).length == 0 ||
+            bytes(ipfsHash).length == 0
+        ) revert EmptyField();
+        if (!validCategories[category]) revert InvalidCategory();
+        if (authorSkills[msg.sender].length >= MAX_SKILLS_PER_AUTHOR) revert TooManySkills();
 
-        // Check author skill limit
-        if (authorSkills[msg.sender].length >= MAX_SKILLS_PER_AUTHOR) {
-            revert TooManySkills(msg.sender, authorSkills[msg.sender].length);
-        }
-
-        // Generate skill ID
         skillId = keccak256(abi.encode(name, version, msg.sender));
+        if (skills[skillId].author != address(0)) revert SkillAlreadyExists();
 
-        // Check for duplicate
-        if (skills[skillId].author != address(0)) revert SkillAlreadyExists(skillId);
-
-        // Create skill
         skills[skillId] = Skill({
             id: skillId,
             author: msg.sender,
@@ -352,550 +111,140 @@ contract BonzaiSkillRegistry is Ownable, ReentrancyGuard, Pausable {
             version: version,
             category: category,
             ipfsHash: ipfsHash,
-            purchasePrice: purchasePrice,
-            runningFee: runningFee,
+            tokenGated: tokenGated,
             isActive: true,
             isVerified: false,
             adminDeactivated: false,
-            totalPurchases: 0,
             totalExecutions: 0,
-            totalRevenue: 0,
             createdAt: block.timestamp,
             updatedAt: block.timestamp
         });
-
-        // Track skill
         authorSkills[msg.sender].push(skillId);
         allSkillIds.push(skillId);
 
-        emit SkillRegistered(
-            skillId,
-            msg.sender,
-            name,
-            version,
-            category,
-            ipfsHash,
-            purchasePrice,
-            runningFee,
-            block.timestamp
-        );
-
-        return skillId;
+        emit SkillRegistered(skillId, msg.sender, name, version, category, tokenGated);
     }
 
-    /**
-     * @notice Update an existing skill (author only)
-     * @param skillId Skill to update
-     * @param ipfsHash New IPFS hash (can be same)
-     * @param purchasePrice New purchase price
-     * @param runningFee New running fee
-     */
-    function updateSkill(
-        bytes32 skillId,
-        string calldata ipfsHash,
-        uint256 purchasePrice,
-        uint256 runningFee
-    ) external nonReentrant skillExists(skillId) onlyAuthor(skillId) {
-        if (bytes(ipfsHash).length < 10) revert InvalidIPFSHash();
-        if (runningFee > MAX_RUNNING_FEE) revert RunningFeeTooHigh(runningFee, MAX_RUNNING_FEE);
+    function updateSkill(bytes32 skillId, string calldata ipfsHash, bool tokenGated) external whenNotPaused {
+        Skill storage skill = _existingSkill(skillId);
+        if (skill.author != msg.sender) revert NotAuthor();
+        if (bytes(ipfsHash).length == 0) revert EmptyField();
 
-        Skill storage skill = skills[skillId];
         skill.ipfsHash = ipfsHash;
-        skill.purchasePrice = purchasePrice;
-        skill.runningFee = runningFee;
+        skill.tokenGated = tokenGated;
         skill.updatedAt = block.timestamp;
-
-        emit SkillUpdated(skillId, ipfsHash, purchasePrice, runningFee, block.timestamp);
+        emit SkillUpdated(skillId, ipfsHash, tokenGated);
     }
 
-    /**
-     * @notice Deactivate a skill (author only)
-     * @param skillId Skill to deactivate
-     */
-    function deactivateSkill(bytes32 skillId)
-        external
-        skillExists(skillId)
-        onlyAuthor(skillId)
-    {
-        skills[skillId].isActive = false;
-        skills[skillId].updatedAt = block.timestamp;
-
-        emit SkillStatusChanged(skillId, false, block.timestamp);
-    }
-
-    /**
-     * @notice Reactivate a skill (author only)
-     * @param skillId Skill to reactivate
-     */
-    function reactivateSkill(bytes32 skillId)
-        external
-        skillExists(skillId)
-        onlyAuthor(skillId)
-    {
-        require(!skills[skillId].adminDeactivated, "Admin deactivated");
-        skills[skillId].isActive = true;
-        skills[skillId].updatedAt = block.timestamp;
-
-        emit SkillStatusChanged(skillId, true, block.timestamp);
-    }
-
-    /**
-     * @notice Forfeit a previously-claimed (free) purchase if the skill
-     *         transitioned from free to paid. The user must call this to
-     *         release their stale claim before they can re-purchase at the
-     *         new price; otherwise `purchaseSkill` reverts with
-     *         AlreadyPurchased.
-     * @dev Only callable by the original purchaser. Refunds nothing — the
-     *      original purchase was free. Resets `hasPurchased`. The skill's
-     *      totalPurchases is NOT decremented (historical metric).
-     */
-    function forfeitPurchase(bytes32 skillId)
-        external
-        skillExists(skillId)
-    {
-        require(hasPurchased[msg.sender][skillId], "Not purchased");
-        // Only allow forfeit when the skill is now paid — protects against
-        // griefing that wastes an existing legitimate paid purchase.
-        require(skills[skillId].purchasePrice > 0, "Skill is free; nothing to forfeit");
-        hasPurchased[msg.sender][skillId] = false;
-        emit PurchaseForfeited(skillId, msg.sender, block.timestamp);
-    }
-
-    event PurchaseForfeited(bytes32 indexed skillId, address indexed user, uint256 timestamp);
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SKILL PURCHASE
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Purchase a skill (one-time USDC payment)
-     * @param skillId Skill to purchase
-     * @dev Caller must approve USDC spending before calling. 80% to co-owners, 20% to treasury.
-     */
-    function purchaseSkill(bytes32 skillId, uint256 maxPrice)
-        external
-        payable
-        nonReentrant
-        whenNotPaused
-        skillExists(skillId)
-        skillActive(skillId)
-    {
-        Skill storage skill = skills[skillId];
-        uint256 price = skill.purchasePrice;
-
-        // Unlocked users get skills for free
-        bool isUnlocked = false;
-        if (unlockContract != address(0)) {
-            try IBonzaiUnlock(unlockContract).hasUnlocked(msg.sender) returns (bool result) {
-                isUnlocked = result;
-            } catch {}
-        }
-        if (isUnlocked) {
-            price = 0;
+    function recordExecution(bytes32 skillId) external whenNotPaused {
+        Skill storage skill = _existingSkill(skillId);
+        if (!skill.isActive) revert SkillInactive();
+        if (skill.tokenGated) {
+            if (
+                skillOwnershipContract == address(0) ||
+                !IBonzaiSkillTokenAccess(skillOwnershipContract).hasTokenAccess(msg.sender, skillId)
+            ) revert CompanionTokenRequired();
         }
 
-        // Slippage + payment validation (skip for free/unlocked)
-        if (price > 0) {
-            require(price <= maxPrice, "Price exceeds maximum");
-            require(msg.value >= price, "Insufficient ETH");
-        }
-
-        // Check not already purchased
-        if (hasPurchased[msg.sender][skillId]) {
-            revert AlreadyPurchased(msg.sender, skillId);
-        }
-
-        // Mark as purchased + update stats
-        hasPurchased[msg.sender][skillId] = true;
         unchecked {
-            skill.totalPurchases += 1;
-            skill.totalRevenue += price;
+            skill.totalExecutions += 1;
         }
-
-        if (price > 0) {
-            uint256 coOwnerShare = (price * CO_OWNER_SHARE_BPS) / BASIS_POINTS;
-            uint256 treasuryShare = price - coOwnerShare;
-
-            // 80% co-owner share via BonzaiSkillOwnership. On failure, the
-            // share falls back to the platform treasury so the purchase
-            // never blocks. (We do NOT send to the author — author earns by
-            // registering as a co-owner.)
-            bool dispatched = false;
-            try IBonzaiSkillOwnership(skillOwnershipContract).distributeRevenue{value: coOwnerShare}(skillId, coOwnerShare) {
-                dispatched = true;
-            } catch {
-                emit CoOwnerShareFallbackToTreasury(skillId, coOwnerShare);
-            }
-            uint256 toTreasury = treasuryShare + (dispatched ? 0 : coOwnerShare);
-
-            // 20% (or full price on co-owner failure) to platform treasury
-            (bool sent, ) = treasury.call{value: toTreasury}("");
-            require(sent, "Treasury transfer failed");
-
-            // Track the actual amount sent — when co-owner dispatch failed,
-            // the fallback share also went to treasury and must be counted.
-            unchecked { totalTreasuryFees += toTreasury; }
-
-            // Refund any excess ETH to the buyer
-            uint256 excess = msg.value - price;
-            if (excess > 0) {
-                (bool refunded, ) = msg.sender.call{value: excess}("");
-                require(refunded, "Refund failed");
-            }
-
-            emit SkillPurchased(
-                skillId,
-                msg.sender,
-                skill.author,
-                price,
-                coOwnerShare,
-                treasuryShare,
-                address(0),
-                block.timestamp
-            );
-        } else {
-            // Free path: refund any ETH the user sent by mistake
-            if (msg.value > 0) {
-                (bool refunded, ) = msg.sender.call{value: msg.value}("");
-                require(refunded, "Refund failed");
-            }
-            emit SkillPurchased(
-                skillId,
-                msg.sender,
-                skill.author,
-                0,
-                0,
-                0,
-                address(0),
-                block.timestamp
-            );
-        }
+        emit SkillExecuted(skillId, msg.sender, skill.totalExecutions);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // SKILL EXECUTION
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Record a skill execution and deduct running fee (USDC)
-     * @param skillId Skill being executed
-     * @dev Caller must have purchased the skill and approved USDC spending.
-     *      Running fee is in USDC (6 decimals). 80% to co-owners, 20% to author.
-     */
-    function recordExecution(bytes32 skillId)
-        external
-        payable
-        nonReentrant
-        whenNotPaused
-        skillExists(skillId)
-        skillActive(skillId)
-    {
+    function userHasAccess(address user, bytes32 skillId) public view returns (bool) {
         Skill storage skill = skills[skillId];
-
-        // Check purchased (unlocked users and free skills skip this)
-        bool isUnlocked = false;
-        if (unlockContract != address(0)) {
-            try IBonzaiUnlock(unlockContract).hasUnlocked(msg.sender) returns (bool result) {
-                isUnlocked = result;
-            } catch {}
-        }
-        if (!isUnlocked && skill.purchasePrice > 0 && !hasPurchased[msg.sender][skillId]) {
-            revert NotPurchased(msg.sender, skillId);
-        }
-
-        unchecked { skill.totalExecutions += 1; }
-
-        if (skill.runningFee > 0 && !isUnlocked) {
-            require(msg.value >= skill.runningFee, "Insufficient ETH for running fee");
-
-            uint256 coOwnerShare = (skill.runningFee * CO_OWNER_SHARE_BPS) / BASIS_POINTS;
-            uint256 treasuryShare = skill.runningFee - coOwnerShare;
-
-            bool dispatched = false;
-            try IBonzaiSkillOwnership(skillOwnershipContract).distributeRevenue{value: coOwnerShare}(skillId, coOwnerShare) {
-                dispatched = true;
-            } catch {
-                emit CoOwnerShareFallbackToTreasury(skillId, coOwnerShare);
-            }
-            uint256 toTreasury = treasuryShare + (dispatched ? 0 : coOwnerShare);
-
-            (bool sent, ) = treasury.call{value: toTreasury}("");
-            require(sent, "Treasury transfer failed");
-
-            // Track actual amount sent (includes fallback portion when co-owner dispatch failed).
-            unchecked { totalTreasuryRunningFees += toTreasury; }
-
-            uint256 excess = msg.value - skill.runningFee;
-            if (excess > 0) {
-                (bool refunded, ) = msg.sender.call{value: excess}("");
-                require(refunded, "Refund failed");
-            }
-
-            emit SkillExecuted(
-                skillId,
-                msg.sender,
-                skill.author,
-                skill.runningFee,
-                coOwnerShare,
-                treasuryShare,
-                block.timestamp
-            );
-        } else {
-            // Free / unlocked path — refund any accidental msg.value
-            if (msg.value > 0) {
-                (bool refunded, ) = msg.sender.call{value: msg.value}("");
-                require(refunded, "Refund failed");
-            }
-            emit SkillExecuted(
-                skillId,
-                msg.sender,
-                skill.author,
-                0,
-                0,
-                0,
-                block.timestamp
-            );
-        }
+        if (skill.author == address(0) || !skill.isActive) return false;
+        if (!skill.tokenGated) return true;
+        if (skillOwnershipContract == address(0)) return false;
+        return IBonzaiSkillTokenAccess(skillOwnershipContract).hasTokenAccess(user, skillId);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ADMIN FUNCTIONS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Verify a skill (admin only)
-     * @param skillId Skill to verify
-     */
-    function verifySkill(bytes32 skillId)
-        external
-        onlyOwner
-        skillExists(skillId)
-    {
-        skills[skillId].isVerified = true;
-        skills[skillId].updatedAt = block.timestamp;
-
-        emit SkillVerificationChanged(skillId, true, block.timestamp);
+    function deactivateSkill(bytes32 skillId) external {
+        Skill storage skill = _existingSkill(skillId);
+        if (skill.author != msg.sender) revert NotAuthor();
+        skill.isActive = false;
+        skill.updatedAt = block.timestamp;
+        emit SkillStatusChanged(skillId, false);
     }
 
-    /**
-     * @notice Remove verification from a skill (admin only)
-     * @param skillId Skill to unverify
-     */
-    function unverifySkill(bytes32 skillId)
-        external
-        onlyOwner
-        skillExists(skillId)
-    {
-        skills[skillId].isVerified = false;
-        skills[skillId].updatedAt = block.timestamp;
-
-        emit SkillVerificationChanged(skillId, false, block.timestamp);
+    function reactivateSkill(bytes32 skillId) external {
+        Skill storage skill = _existingSkill(skillId);
+        if (skill.author != msg.sender) revert NotAuthor();
+        if (skill.adminDeactivated) revert AdminDeactivated();
+        skill.isActive = true;
+        skill.updatedAt = block.timestamp;
+        emit SkillStatusChanged(skillId, true);
     }
 
-    /**
-     * @notice Force deactivate a skill (admin only, for policy violations)
-     * @param skillId Skill to deactivate
-     */
-    function adminDeactivateSkill(bytes32 skillId)
-        external
-        onlyOwner
-        skillExists(skillId)
-    {
-        skills[skillId].adminDeactivated = true;
-        skills[skillId].isActive = false;
-        skills[skillId].isVerified = false;
-        skills[skillId].updatedAt = block.timestamp;
-
-        emit SkillStatusChanged(skillId, false, block.timestamp);
+    function adminDeactivateSkill(bytes32 skillId) external onlyOwner {
+        Skill storage skill = _existingSkill(skillId);
+        skill.isActive = false;
+        skill.adminDeactivated = true;
+        skill.updatedAt = block.timestamp;
+        emit SkillStatusChanged(skillId, false);
     }
 
-    /**
-     * @notice Admin reactivate a skill that was admin-deactivated
-     * @param skillId Skill to reactivate
-     */
-    function adminReactivateSkill(bytes32 skillId)
-        external
-        onlyOwner
-        skillExists(skillId)
-    {
-        skills[skillId].adminDeactivated = false;
-        skills[skillId].isActive = true;
-        skills[skillId].updatedAt = block.timestamp;
-
-        emit SkillStatusChanged(skillId, true, block.timestamp);
+    function setSkillVerified(bytes32 skillId, bool verified) external onlyOwner {
+        Skill storage skill = _existingSkill(skillId);
+        skill.isVerified = verified;
+        skill.updatedAt = block.timestamp;
+        emit SkillVerified(skillId, verified);
     }
 
-    /**
-     * @notice Update treasury address
-     * @param _treasury New treasury address
-     */
-    function setTreasury(address _treasury)
-        external
-        onlyOwner
-        notZeroAddress(_treasury)
-    {
-        address oldTreasury = treasury;
-        treasury = _treasury;
-
-        emit TreasuryUpdated(oldTreasury, _treasury);
+    function setSkillOwnershipContract(address newContract) external onlyOwner {
+        if (newContract == address(0)) revert ZeroAddress();
+        address previous = skillOwnershipContract;
+        skillOwnershipContract = newContract;
+        emit SkillOwnershipContractUpdated(previous, newContract);
     }
 
-    /**
-     * @notice Update skill ownership contract address
-     * @param _skillOwnershipContract New ownership contract address
-     */
-    function setSkillOwnershipContract(address _skillOwnershipContract)
-        external
-        onlyOwner
-        notZeroAddress(_skillOwnershipContract)
-    {
-        address old = skillOwnershipContract;
-        skillOwnershipContract = _skillOwnershipContract;
-        emit SkillOwnershipContractUpdated(old, _skillOwnershipContract);
+    function setCategoryValidity(string calldata category, bool valid) external onlyOwner {
+        if (bytes(category).length == 0) revert EmptyField();
+        validCategories[category] = valid;
     }
 
-    /**
-     * @notice Set the BonzaiUnlock contract — unlocked users get skills for free
-     */
-    function setUnlockContract(address _unlock) external onlyOwner {
-        unlockContract = _unlock;
-    }
-
-    /**
-     * @notice Pause the registry (emergency stop)
-     */
     function pause() external onlyOwner {
         _pause();
     }
 
-    /**
-     * @notice Unpause the registry
-     */
     function unpause() external onlyOwner {
         _unpause();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // VIEW FUNCTIONS
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Get full skill details
-     * @param skillId Skill ID to query
-     * @return Skill struct
-     */
     function getSkill(bytes32 skillId) external view returns (Skill memory) {
+        if (skills[skillId].author == address(0)) revert SkillNotFound();
         return skills[skillId];
     }
 
-    /**
-     * @notice Check if user has purchased a skill
-     * @param user User address
-     * @param skillId Skill ID
-     * @return True if purchased
-     */
-    function userHasPurchased(address user, bytes32 skillId) external view returns (bool) {
-        return hasPurchased[user][skillId];
+    function getSkillsPaginated(uint256 offset, uint256 limit) external view returns (bytes32[] memory page) {
+        if (offset >= allSkillIds.length || limit == 0) return new bytes32[](0);
+        uint256 end = offset + limit;
+        if (end > allSkillIds.length) end = allSkillIds.length;
+        page = new bytes32[](end - offset);
+        for (uint256 i = offset; i < end; i++) {
+            page[i - offset] = allSkillIds[i];
+        }
     }
 
-    /**
-     * @notice Get all skills by an author
-     * @param author Author address
-     * @return Array of skill IDs
-     */
-    function getSkillsByAuthor(address author) external view returns (bytes32[] memory) {
+    function getAuthorSkills(address author) external view returns (bytes32[] memory) {
         return authorSkills[author];
     }
 
-    /**
-     * @notice Get total number of skills
-     * @return Count of all registered skills
-     */
-    function getTotalSkills() external view returns (uint256) {
+    function totalSkills() external view returns (uint256) {
         return allSkillIds.length;
     }
 
-    /**
-     * @notice Get skills with pagination
-     * @param offset Starting index
-     * @param limit Number of skills to return
-     * @return Array of skill IDs
-     */
-    function getSkillsPaginated(uint256 offset, uint256 limit)
-        external
-        view
-        returns (bytes32[] memory)
-    {
-        uint256 total = allSkillIds.length;
-
-        if (offset >= total) {
-            return new bytes32[](0);
-        }
-
-        uint256 end = offset + limit;
-        if (end > total) {
-            end = total;
-        }
-
-        bytes32[] memory result = new bytes32[](end - offset);
-        for (uint256 i = offset; i < end; ) {
-            result[i - offset] = allSkillIds[i];
-            unchecked {
-                i += 1;
-            }
-        }
-
-        return result;
+    function _existingSkill(bytes32 skillId) internal view returns (Skill storage skill) {
+        skill = skills[skillId];
+        if (skill.author == address(0)) revert SkillNotFound();
     }
 
-    /**
-     * @notice Generate skill ID from name, version, and author
-     * @param name Skill name
-     * @param version Skill version
-     * @param author Author address
-     * @return Skill ID
-     */
-    function generateSkillId(
-        string calldata name,
-        string calldata version,
-        address author
-    ) external pure returns (bytes32) {
-        return keccak256(abi.encode(name, version, author));
-    }
-
-    /**
-     * @notice Get platform statistics
-     * @return _totalSkills Total registered skills
-     * @return _totalTreasuryFees Total ETH treasury fees from purchases (wei)
-     * @return _totalTreasuryRunningFees Total ETH treasury fees from executions (wei)
-     */
-    function getStats() external view returns (
-        uint256 _totalSkills,
-        uint256 _totalTreasuryFees,
-        uint256 _totalTreasuryRunningFees
-    ) {
-        return (
-            allSkillIds.length,
-            totalTreasuryFees,
-            totalTreasuryRunningFees
-        );
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // RECEIVE / FALLBACK
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Reject direct ETH transfers - must use purchaseSkill()
-     */
     receive() external payable {
-        revert UseCorrectFunction();
+        revert DirectPaymentsDisabled();
     }
 
-    /**
-     * @notice Reject calls to non-existent functions
-     */
     fallback() external payable {
-        revert UseCorrectFunction();
+        revert DirectPaymentsDisabled();
     }
 }

@@ -3,6 +3,17 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  robinhood: {
+    connect: () => ipcRenderer.invoke("robinhood-mcp:connect"),
+    status: () => ipcRenderer.invoke("robinhood-mcp:status"),
+    callTool: (request) => ipcRenderer.invoke("robinhood-mcp:call-tool", request),
+    disconnect: () => ipcRenderer.invoke("robinhood-mcp:disconnect"),
+    onState: (cb) => {
+      const handler = (_event, state) => cb(state);
+      ipcRenderer.on("robinhood-mcp:state", handler);
+      return () => ipcRenderer.removeListener("robinhood-mcp:state", handler);
+    },
+  },
   // App version for window title
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   // Platform info (exposed synchronously from preload context)
@@ -24,6 +35,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("download-progress", handler);
   },
   getActiveDownloads: () => ipcRenderer.invoke("get-active-downloads"),
+  listCustomModels: () => ipcRenderer.invoke("model-list-custom"),
+  importLocalModel: () => ipcRenderer.invoke("model-import-gguf"),
   deleteModel: (modelname) => ipcRenderer.invoke("model-delete", modelname),
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
   unloadModel: () => ipcRenderer.invoke("model-unload"),
@@ -252,6 +265,33 @@ contextBridge.exposeInMainWorld("electronAPI", {
         return () => ipcRenderer.removeListener("db:companions:changed", h);
       },
     },
+    memory: {
+      exists: (scope, id) => ipcRenderer.invoke("db:memory:exists", scope, id),
+      load: (scope, id) => ipcRenderer.invoke("db:memory:load", scope, id),
+      save: (memory) => ipcRenderer.invoke("db:memory:save", memory),
+      recall: (scope, id, query, limit) => ipcRenderer.invoke("db:memory:recall", scope, id, query, limit),
+      onChanged: (cb) => {
+        const h = (_e, payload) => cb(payload);
+        ipcRenderer.on("db:memory:changed", h);
+        return () => ipcRenderer.removeListener("db:memory:changed", h);
+      },
+    },
+    jobs: {
+      create: (input) => ipcRenderer.invoke("db:jobs:create", input),
+      list: (filter) => ipcRenderer.invoke("db:jobs:list", filter),
+      get: (id) => ipcRenderer.invoke("db:jobs:get", id),
+      setStatus: (id, status) => ipcRenderer.invoke("db:jobs:setStatus", id, status),
+      apply: (jobId, input) => ipcRenderer.invoke("db:jobs:apply", jobId, input),
+      applications: (jobId) => ipcRenderer.invoke("db:jobs:applications", jobId),
+      hire: (jobId, applicationId) => ipcRenderer.invoke("db:jobs:hire", jobId, applicationId),
+      contract: (jobId) => ipcRenderer.invoke("db:jobs:contract", jobId),
+      addMilestone: (contractId, input) => ipcRenderer.invoke("db:jobs:addMilestone", contractId, input),
+      milestones: (contractId) => ipcRenderer.invoke("db:jobs:milestones", contractId),
+      submitEvidence: (id, evidence) => ipcRenderer.invoke("db:jobs:submitEvidence", id, evidence),
+      approveMilestone: (id) => ipcRenderer.invoke("db:jobs:approveMilestone", id),
+      review: (contractId, input) => ipcRenderer.invoke("db:jobs:review", contractId, input),
+      reputation: (companionId) => ipcRenderer.invoke("db:jobs:reputation", companionId),
+    },
     /**
      * Cross-app semantic search via sqlite-vec. The renderer hands us
      * an already-embedded query vector (Phase 5b: the renderer can
@@ -367,6 +407,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     set: (key, value) => ipcRenderer.invoke("store-set", key, value),
     delete: (key) => ipcRenderer.invoke("store-delete", key),
   },
+  companyConnector: {
+    setSecret: (companyId, connectorId, secret, metadata = {}) => ipcRenderer.invoke("company-connector:set-secret", { companyId, connectorId, secret, ...metadata }),
+    deleteSecret: (companyId, connectorId) => ipcRenderer.invoke("company-connector:delete-secret", { companyId, connectorId }),
+    request: (request) => ipcRenderer.invoke("company-connector:request", request),
+    validate: (companyId, connectorId) => ipcRenderer.invoke("company-connector:validate", { companyId, connectorId }),
+  },
   // Agent wallet transaction confirmation (P0 Security)
   confirmTransaction: (details) =>
     ipcRenderer.invoke("confirm-transaction", details),
@@ -431,6 +477,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("agent-save-audio", defaultName, sourcePath),
   saveVideo: (defaultName, sourcePath) =>
     ipcRenderer.invoke("agent-save-video", defaultName, sourcePath),
+  exportMeditationVideo: (payload) =>
+    ipcRenderer.invoke("meditation-export-video", payload),
   // File existence check (for media validation)
   fileExists: (filePath) => ipcRenderer.invoke("file-exists", filePath),
   // Get home directory for file paths
@@ -537,7 +585,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * @param {Object} request Inference request with pipeline and params
    * @param {string} request.pipeline - Pipeline name (e.g. 'image_turbo', 'llm')
    * @param {Record<string, unknown>} request.params - Pipeline-specific parameters
-   * @param {string} [request.paymentTxHash] - x402 payment transaction hash
    * @returns {Promise<{ok: boolean, result?: Record<string, unknown>, error?: string}>}
    */
   p2pInference: (peerId, request) =>

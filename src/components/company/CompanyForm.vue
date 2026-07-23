@@ -3,18 +3,13 @@
     <div class="form-header">
       <h1 class="fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined is-size-1 mr-2">add_business</span>
-        Form a Zero-Human Company
+        Create a Workflow Team
       </h1>
       <button class="bz-btn is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
         <span class="material-symbols-outlined is-size-3 mr-2">close</span>
         Cancel
       </button>
     </div>
-
-    <p class="form-intro">
-      Create a company charter by hand. Pick a CEO and at least one producer;
-      every other role can be added later from the agentic team.
-    </p>
 
     <hr />
 
@@ -25,7 +20,7 @@
         Identity
       </h2>
       <div class="field">
-        <label class="label fira-sans-condensed-black-italic">Company name</label>
+        <label class="label fira-sans-condensed-black-italic">Team name</label>
         <input
           v-model.trim="form.name"
           class="input is-medium"
@@ -60,7 +55,7 @@
           </div>
         </div>
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Per-tick spend cap</label>
+          <label class="label fira-sans-condensed-black-italic">Per-run spend cap</label>
           <input
             v-model.number="form.perHeartbeatSpendCap"
             class="input is-medium"
@@ -78,11 +73,11 @@
       </div>
       <div class="field-row">
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">CEO heartbeat (min)</label>
+          <label class="label fira-sans-condensed-black-italic">Coordinator cadence (min)</label>
           <input v-model.number="form.ceoMin" class="input is-medium" type="number" min="1" step="1" />
         </div>
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Role heartbeat (min)</label>
+          <label class="label fira-sans-condensed-black-italic">Teammate cadence (min)</label>
           <input v-model.number="form.roleMin" class="input is-medium" type="number" min="1" step="1" />
         </div>
       </div>
@@ -108,12 +103,6 @@
         <span class="material-symbols-outlined">stacks</span>
         Execution mode
       </h2>
-      <p class="section-intro">
-        Choose how concurrently the company can drive each task class.
-        Parallel LLM mode spawns a separate <code>llama-server</code>
-        instance per role-assigned model — bounded by the memory budget.
-      </p>
-
       <div class="field-row">
         <div class="field">
           <label class="label fira-sans-condensed-black-italic">LLM execution</label>
@@ -160,31 +149,18 @@
         </div>
       </div>
 
-      <div class="hint">
-        <span class="material-symbols-outlined">tips_and_updates</span>
-        Recommended: <strong>LLM in parallel</strong> if you have ≥ 22 GB
-        free memory and want roles using different models to truly run
-        simultaneously. <strong>Diffusion sequential</strong> is usually
-        right — the GPU serializes diffusion anyway.
-      </div>
     </section>
 
-    <!-- ── Agentic team + per-role LLM ─────────────────────────── -->
+    <!-- ── Team + per-teammate LLM ─────────────────────────── -->
     <section class="form-section models__activity--payouts">
       <h2 class="section-title fira-sans-condensed-black-italic">
-        <span class="material-symbols-outlined">schema</span>
-        Agentic Team
+        <span class="material-symbols-outlined">groups</span>
+        Teammates
       </h2>
-      <p class="section-intro">
-        Pick which companion fills each role and which LLM they prefer.
-        Empty companion = inherit from parent role (CEO is the terminal
-        fallback). Empty LLM = use whichever model is currently loaded.
-      </p>
-
       <div class="role-table">
         <div class="role-row role-row--header">
-          <div class="col-role">Role</div>
-          <div class="col-companion">Companion</div>
+          <div class="col-role">Function</div>
+          <div class="col-companion">Hire companion</div>
           <div class="col-llm">Preferred LLM</div>
         </div>
         <div
@@ -194,14 +170,13 @@
         >
           <div class="col-role">
             <strong>{{ roleDisplayName(roleKey) }}</strong>
-            <div class="role-desc">{{ roleLibrary[roleKey].description }}</div>
           </div>
           <div class="col-companion">
             <div class="select skill-fullwidth is-small">
               <select v-model="form.companions[roleKey]">
                 <option :value="null">— inherit —</option>
                 <option v-for="comp in companions" :key="comp.id" :value="comp.id">
-                  {{ comp.name }}
+                  {{ comp.name }} · {{ comp.title }}
                 </option>
               </select>
             </div>
@@ -220,11 +195,11 @@
       </div>
 
       <div class="advanced-toggle">
-        <button class="bz-btn bz-btn--sm bz-btn--ghost is-info fira-sans-condensed-black-italic" @click="showAdvanced = !showAdvanced">
+        <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="showAdvanced = !showAdvanced">
           <span class="material-symbols-outlined is-size-3 mr-1">
             {{ showAdvanced ? 'expand_less' : 'expand_more' }}
           </span>
-          {{ showAdvanced ? "Hide" : "Show" }} advanced roles ({{ advancedRoleKeys.length }})
+          {{ showAdvanced ? "Hide" : "Show" }} advanced functions ({{ advancedRoleKeys.length }})
         </button>
       </div>
     </section>
@@ -238,13 +213,13 @@
     </div>
     <div class="submit-row">
       <button
-        class="bz-btn bz-btn--lg is-success fira-sans-condensed-black-italic mr-5"
+        class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic mr-5"
         :class="{ 'bz-btn--running': busy }"
         :disabled="busy"
         @click="submit"
       >
         <span class="material-symbols-outlined is-size-3 mr-2">add_business</span>
-        Form Company
+        Create Team
       </button>
       <button class="bz-btn bz-btn--lg is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
         <span class="material-symbols-outlined is-size-3 mr-2">close</span>
@@ -258,6 +233,7 @@
 import { ref, reactive, computed } from "vue";
 import companyStore from "../../stores/companyStore.js";
 import { DEFAULT_COMPANIONS, LLM_BASE_MODELS, listAllLLMs } from "../../skills/flagship.js";
+import { getCompanionCareer, getCompanySkillsForCompanion } from "../../skills/companionSkillRoadmap.js";
 
 const QUICK_ROLES = ["CEO", "CFO", "CMO", "CPO", "Producer:text", "GeneralCounsel"];
 
@@ -272,7 +248,11 @@ export default {
 
     const roleLibrary = store.state.roleLibrary;
     const currencies = store.state.currencies;
-    const companions = DEFAULT_COMPANIONS.map((c) => ({ id: c.id, name: c.name }));
+    const companions = DEFAULT_COMPANIONS.map((c) => ({
+      id: c.id,
+      name: c.name,
+      title: getCompanionCareer(c.id)?.title || "Agentic specialist",
+    }));
 
     // Build a flat list of (key,label) from LLM_BASE_MODELS for the picker.
     // Sort by parameter count for readability.
@@ -328,7 +308,11 @@ export default {
           const llm = form.llms[key];
           if (!companion && !llm) continue; // truly empty row
           if (!companion) continue;          // companion required to fill a role
-          roles[key] = { companion };
+          roles[key] = {
+            companion,
+            grantedSkills: getCompanySkillsForCompanion(companion),
+            employment: { type: "companion-hire", companionId: companion },
+          };
           if (llm) roles[key].llm = llm;
         }
         const cfg = {
@@ -371,8 +355,8 @@ export default {
         return `${label} Producer`;
       }
       const TITLES = {
-        CEO: "CEO", CFO: "CFO", CPO: "CPO", CMO: "CMO",
-        CSO: "CSO", COO: "COO",
+        CEO: "Coordinator", CFO: "Finance", CPO: "Product", CMO: "Marketing",
+        CSO: "Sales", COO: "Operations",
         GeneralCounsel: "General Counsel", RnDLead: "R&D Lead",
       };
       return TITLES[roleKey] || roleKey;

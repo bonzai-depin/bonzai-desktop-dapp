@@ -176,6 +176,7 @@
 
 <script setup>
 import { ref, computed } from "vue";
+import { i18n } from "../../i18n/index.js";
 
 const props = defineProps({
   /** "user" | "assistant" | "tool" | "system" */
@@ -227,7 +228,7 @@ const tsLabel = computed(() => {
   if (ms < 60_000) return `${Math.max(1, Math.floor(ms / 1000))}s ago`;
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
   if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-  return new Date(props.ts).toLocaleDateString();
+  return new Date(props.ts).toLocaleDateString(i18n.state.locale);
 });
 
 const ATTACHMENT_ICON = {

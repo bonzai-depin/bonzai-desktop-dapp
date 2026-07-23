@@ -128,3 +128,9 @@ export async function tick() {
 export function stats() {
   return { ..._stats, hasAdapter: !!_adapter, queueDepth: embeddings.pendingCount() };
 }
+
+export async function embedQuery(text) {
+  if (!_adapter || !String(text || "").trim()) return null;
+  const vectors = await _adapter.embed([String(text).trim()]);
+  return vectors?.[0] ? Array.from(vectors[0]) : null;
+}

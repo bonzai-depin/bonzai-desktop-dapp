@@ -12,7 +12,7 @@
 
 import { ethers } from "ethers";
 import { reactive, readonly, computed } from "vue";
-import { CONFIG } from "../config/web3.config.js";
+import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { authService } from "./auth.service.js";
 import { authVault } from "./authVault.service.js";
 import { registerWeb3Service } from "./walletProvider.service.js";
@@ -21,7 +21,17 @@ import { registerWeb3ServiceForLukso } from "./lukso.service.js";
 // Reown AppKit - official WalletConnect integration
 import { createAppKit } from "@reown/appkit/vue";
 import { EthersAdapter } from "@reown/appkit-adapter-ethers";
-import { mainnet, lukso } from "@reown/appkit/networks";
+import { mainnet, arbitrum, base, lukso, defineChain } from "@reown/appkit/networks";
+
+const robinhood = defineChain({
+  id: 4663,
+  caipNetworkId: "eip155:4663",
+  chainNamespace: "eip155",
+  name: "Robinhood Chain",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
+  blockExplorers: { default: { name: "Robinhood Chain Explorer", url: "https://robinhoodchain.blockscout.com" } },
+});
 
 
 // Universal Profile custom wallet for LUKSO network
@@ -89,6 +99,7 @@ const state = reactive({
     ethereum: 0,
     arbitrum: 0,
     base: 0,
+    robinhood: 0,
     total: 0,
   },
 
@@ -143,14 +154,16 @@ const createProviderWithFallback = async (network) => {
 const initRpcProviders = async () => {
   try {
     // Try to connect with fallback support
-    const [ethProvider, arbProvider, baseProvider] = await Promise.all([
+    const [ethProvider, arbProvider, baseProvider, robinhoodProvider] = await Promise.all([
       createProviderWithFallback("ethereum"),
       createProviderWithFallback("arbitrum"),
       createProviderWithFallback("base"),
+      createProviderWithFallback("robinhood"),
     ]);
     rpcProviders.ethereum = ethProvider;
     rpcProviders.arbitrum = arbProvider;
     rpcProviders.base = baseProvider;
+    rpcProviders.robinhood = robinhoodProvider;
   } catch (e) {
     console.error("[Web3] Failed to initialize RPC providers:", e);
     // Fallback to simple initialization
@@ -163,6 +176,7 @@ const initRpcProviders = async () => {
     rpcProviders.base = new ethers.JsonRpcProvider(
       CONFIG.networks.base.rpc
     );
+    rpcProviders.robinhood = new ethers.JsonRpcProvider(CONFIG.networks.robinhood.rpc);
   }
 };
 
@@ -205,10 +219,12 @@ const initAppKit = () => {
   try { localStorage.removeItem('@appkit/recent_wallets'); } catch { /* noop */ }
   try { localStorage.removeItem('@appkit/recent_wallet'); } catch { /* noop */ }
 
+  const appKitNetworks = { ethereum: mainnet, arbitrum, base, robinhood };
+  const defaultNetwork = appKitNetworks[ECONOMY_NETWORK_KEY];
   appKit = createAppKit({
     adapters: [new EthersAdapter()],
-    networks: [mainnet, lukso],
-    defaultNetwork: mainnet,
+    networks: [...new Set([defaultNetwork, robinhood, mainnet, arbitrum, base, lukso])],
+    defaultNetwork,
     metadata,
     projectId,
     features: {
@@ -501,7 +517,7 @@ export const disconnectWallet = async () => {
     state.isAuthenticated = false;
     state.authLevel = null;
     state.authLevelValue = 0;
-    state.balances = { ethereum: 0, arbitrum: 0, base: 0, total: 0 };
+    state.balances = { ethereum: 0, arbitrum: 0, base: 0, robinhood: 0, total: 0 };
     state.lastBalanceCheck = null;
     state.error = null;
 
@@ -556,12 +572,18 @@ export const fetchAllBalances = async () => {
 
   try {
     // Fetch balances in parallel across all chains
-    const ethBalance = await fetchBalanceOnChain("ethereum");
+    const [ethBalance, arbBalance, baseBalance, robinhoodBalance] = await Promise.all([
+      fetchBalanceOnChain("ethereum"),
+      fetchBalanceOnChain("arbitrum"),
+      fetchBalanceOnChain("base"),
+      fetchBalanceOnChain("robinhood"),
+    ]);
 
     state.balances.ethereum = ethBalance;
-    state.balances.arbitrum = 0;
-    state.balances.base = ethBalance;
-    state.balances.total = ethBalance;
+    state.balances.arbitrum = arbBalance;
+    state.balances.base = baseBalance;
+    state.balances.robinhood = robinhoodBalance;
+    state.balances.total = ethBalance + arbBalance + baseBalance + robinhoodBalance;
     state.lastBalanceCheck = Date.now();
 
     return state.balances;
@@ -634,6 +656,8 @@ export const switchToArbitrum = () => switchNetwork("arbitrum");
  * Switch to Ethereum (legacy name retained for old call sites)
  */
 export const switchToBase = () => switchNetwork("base");
+export const switchToRobinhood = () => switchNetwork("robinhood");
+export const switchToEconomy = () => switchNetwork(ECONOMY_NETWORK_KEY);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EVENT HANDLERS
@@ -883,7 +907,7 @@ export const getBrowserProvider = async () => {
 /**
  * Get RPC provider for a specific chain
  */
-export const getProvider = async (chain = "ethereum") => {
+export const getProvider = async (chain = ECONOMY_NETWORK_KEY) => {
   if (!rpcProviders[chain]) await initRpcProviders();
   return rpcProviders[chain];
 };
@@ -926,6 +950,7 @@ export const web3Service = {
 
   // Networks
   switchNetwork,
+  switchToEconomy,
   switchToArbitrum,
   switchToBase,
 

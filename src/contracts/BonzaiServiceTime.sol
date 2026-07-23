@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 interface IBonzaiMintPool {
     function isEpochFinalized(uint256 epochId) external view returns (bool);
     function currentEpoch() external view returns (uint256);
+    function stakingVault() external view returns (address);
     function withdrawProviderShare(
         uint256 epochId,
         uint8 poolIndex,
@@ -16,6 +17,15 @@ interface IBonzaiMintPool {
         uint256 providerTime,
         uint256 totalTime
     ) external returns (uint256 amount);
+}
+
+interface IBonzaiProviderStake {
+    function positions(address user) external view returns (
+        uint256 amount,
+        uint256 lockedUntil,
+        uint256 updatedAt,
+        uint32 contributionScore
+    );
 }
 
 interface IProviderRegistry {
@@ -39,9 +49,8 @@ interface IProviderRegistry {
  *     LVL gate are the only sybil deterrents.
  *
  * Sybil resistance (LVL gate, provider only):
- *   - The reporting provider must hold >= 1000 BONZAI on Arbitrum at the
- *     moment of `recordServiceTime` (and at claim time).
- *   - balanceOf is read locally from the Arbitrum BONZAI contract.
+ *   - The reporting provider must stake >= 1000 BONZAI on the economy chain
+ *     at the moment of `recordServiceTime` (and at claim time).
  *
  * Per-call safety:
  *   - `MAX_RECORD_DURATION` (24h) caps a single record. Honest providers
@@ -64,7 +73,7 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
     ///         calls recordEarnings so per-provider stats stay live.
     IProviderRegistry public providerRegistry;
 
-    /// @notice Provider sybil threshold: must hold >= this BONZAI to record.
+    /// @notice Provider sybil threshold: must stake >= this BONZAI to record.
     uint256 public constant LVL1_THRESHOLD = 1000 * 1e18;
 
     /// @notice Cap on a single recordServiceTime call. Honest providers
@@ -157,7 +166,7 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
         nonReentrant
         whenNotPaused
     {
-        if (bonzaiToken.balanceOf(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
+        if (_providerStake(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
         if (secondsServed == 0 || secondsServed > MAX_RECORD_DURATION) revert InvalidDuration();
 
         uint8 poolIndex = _pipelineToPool(pipelineId);
@@ -182,7 +191,7 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
         nonReentrant
         whenNotPaused
     {
-        if (bonzaiToken.balanceOf(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
+        if (_providerStake(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
         require(records.length > 0, "Empty batch");
 
         uint256 epochId = mintPool.currentEpoch();
@@ -212,7 +221,7 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
         if (poolIndex >= NUM_POOLS) revert InvalidPipeline();
         if (!mintPool.isEpochFinalized(epochId)) revert EpochNotFinalized();
         if (providerClaimed[epochId][poolIndex][msg.sender]) revert AlreadyClaimed();
-        if (bonzaiToken.balanceOf(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
+        if (_providerStake(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
 
         uint256 providerTime = providerServiceTime[epochId][poolIndex][msg.sender];
         uint256 totalTime = totalServiceTime[epochId][poolIndex];
@@ -269,6 +278,13 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
         if (pipelineId == 10) return POOL_IMAGE;                     // VISION
         if (pipelineId == 11) return POOL_TEXT;                      // PIPELINE_SHARD
         revert InvalidPipeline();
+    }
+
+    function _providerStake(address provider) internal view returns (uint256) {
+        address vault = mintPool.stakingVault();
+        if (vault == address(0)) return bonzaiToken.balanceOf(provider);
+        (uint256 amount,,,) = IBonzaiProviderStake(vault).positions(provider);
+        return amount;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

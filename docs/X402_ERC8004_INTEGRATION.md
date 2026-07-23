@@ -79,7 +79,7 @@ registerProvider({
 |----|----------|-------------|
 | 0 | `llm` | All 21 LLM models via OpenClaw |
 | 1 | `image_turbo` | FLUX Klein |
-| 2 | `image_quality` | FLUX Krea |
+| 2 | `image_quality` | Z-Image Turbo |
 | 3 | `image_standard` | SDXL |
 | 4 | `image_advanced` | Z Turbo |
 | 5 | `audio` | Kokoro TTS |

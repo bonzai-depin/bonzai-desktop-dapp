@@ -418,6 +418,7 @@ import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
 import MintModal from "./MintModal.vue";
 import { modelStore } from "../stores/modelStore.js";
+import { memoryService } from "../services/memory.service.js";
 import {
   LLM_BASE_MODELS,
   LLM_TIER_ORDER,
@@ -706,6 +707,8 @@ export default {
           model: inference.model || "llm",
           timestamp: inference.timestamp,
           tokensPerSecond: inference.tokensPerSecond || null,
+          modelProvenance: inference.modelProvenance || activeModelProvenance.value || null,
+          contributionParents: inference.modelProvenance?.dataset?.contributionIds || activeModelProvenance.value?.dataset?.contributionIds || [],
         },
       };
     };
@@ -860,6 +863,13 @@ export default {
     const loadedModel = ref(null);
     const hasUserSelectedModel = ref(false);
     const chatHeaderTitle = computed(() => loadedModel.value?.modelname || (hasUserSelectedModel.value ? currentModel.value?.modelname : "Choose a model"));
+    const activeModelProvenance = computed(() =>
+      currentModel.value?.model_provenance ||
+      currentModel.value?.provenance ||
+      loadedModel.value?.model_provenance ||
+      loadedModel.value?.provenance ||
+      null,
+    );
 
     const sameModelFile = (a, b) =>
       !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
@@ -889,7 +899,7 @@ export default {
         sameModelFile(m.filename, loaded.filename),
       );
       currentModel.value = match
-        ? { ...match }
+        ? { ...match, model_provenance: loaded.model_provenance || loaded.provenance || match.model_provenance || null }
         : { ...currentModel.value, ...loaded };
     };
 
@@ -1156,6 +1166,7 @@ export default {
           ? (isThinkingModel.value ? (reasoningEnabled.value ? "Enabled" : "Disabled") : "Not supported")
           : (inference.reasoningEnabled ? "Enabled" : "Disabled"),
         systemPrompt: String(inference.systemPrompt || chatParams.systemPrompt || "").trim(),
+        modelProvenance: inference.modelProvenance || null,
         mintState: inference.nft || null,
         lineage: {
           parentId: inference.branchParentId || null,
@@ -1677,8 +1688,52 @@ export default {
       };
     };
 
-    const syncSystemPrompt = async () => {
-      const nextPrompt = String(chatParams.systemPrompt || "").trim();
+    const buildProvenanceSystemBlock = (provenance) => {
+      if (!provenance || typeof provenance !== "object") return "";
+      const dataset = provenance.dataset || {};
+      const attribution = provenance.attribution || {};
+      const origins = Array.isArray(provenance.origins) ? provenance.origins : [];
+      const owners = Array.isArray(dataset.dataOwnerWallets)
+        ? dataset.dataOwnerWallets
+        : Array.isArray(attribution.dataOwnerWallets)
+          ? attribution.dataOwnerWallets
+          : [];
+      const revenuePlan = attribution.revenuePlan || {};
+      const participants = Array.isArray(revenuePlan.participants) ? revenuePlan.participants : [];
+      const originLines = origins.slice(0, 12).map((origin, index) => {
+        const title = origin.pageTitle || origin.sourceUrl || `record ${index + 1}`;
+        const owner = origin.dataOwnerWallet || origin.creatorWallet || "unknown owner";
+        const source = origin.sourceUrl ? ` source=${origin.sourceUrl}` : "";
+        const license = origin.license ? ` license=${origin.license}` : "";
+        const tags = Array.isArray(origin.tags) && origin.tags.length ? ` tags=${origin.tags.slice(0, 6).join(", ")}` : "";
+        return `${index + 1}. ${title}; owner=${owner}${source}${license}${tags}`;
+      });
+
+      return [
+        "BonzAI trusted model provenance:",
+        `- Model id: ${provenance.model?.id || "unknown"}`,
+        `- Base model: ${provenance.model?.baseModel || "unknown"}`,
+        `- Dataset: ${dataset.name || dataset.id || "unknown"} (${dataset.type || "unknown"})`,
+        `- Known training records: ${dataset.recordCount || origins.length || "unknown"}`,
+        `- Data-owner wallets: ${owners.length ? owners.slice(0, 30).join(", ") : "not provided"}`,
+        `- Contribution ids: ${Array.isArray(dataset.contributionIds) && dataset.contributionIds.length ? dataset.contributionIds.slice(0, 30).join(", ") : "not provided"}`,
+        participants.length
+          ? `- Downstream revenue route: ${participants.slice(0, 20).map(p => `${p.wallet || p.address}:${p.shareBps || 0}bps`).join(", ")}`
+          : "- Downstream revenue route: not provided",
+        "- If the user asks what this model was trained on, answer from this provenance. Never invent missing origins, owners, licenses, or rights.",
+        originLines.length ? "- Sample origins:" : "",
+        ...originLines,
+      ].filter(Boolean).join("\n");
+    };
+
+    const effectiveSystemPrompt = computed(() => {
+      const userPrompt = String(chatParams.systemPrompt || "").trim();
+      const provenanceBlock = buildProvenanceSystemBlock(activeModelProvenance.value);
+      return [userPrompt, provenanceBlock].filter(Boolean).join("\n\n");
+    });
+
+    const syncSystemPrompt = async (memoryContext = "") => {
+      const nextPrompt = [effectiveSystemPrompt.value, memoryContext].filter(Boolean).join("\n\n");
       if (nextPrompt === appliedSystemPrompt) return;
       await window.electronAPI?.setSystemPrompt?.(nextPrompt);
       appliedSystemPrompt = nextPrompt;
@@ -1897,7 +1952,8 @@ export default {
       if (currentModel.value?.filename) {
         await loadModel(currentModel.value);
       }
-      await syncSystemPrompt();
+      const memoryContext = await memoryService.buildRecallContext(prompt, { includeUser: true });
+      await syncSystemPrompt(memoryContext);
       const chatRequestOptions = getChatRequestOptions();
 
       isLoading.value = true;
@@ -1938,7 +1994,9 @@ export default {
         branchDepth: activeBranch?.depth || 0,
         requestOptions: { ...chatRequestOptions },
         reasoningEnabled: isThinkingModel.value ? reasoningEnabled.value === true : null,
-        systemPrompt: String(chatParams.systemPrompt || "").trim(),
+        systemPrompt: [effectiveSystemPrompt.value, memoryContext].filter(Boolean).join("\n\n"),
+        userSystemPrompt: String(chatParams.systemPrompt || "").trim(),
+        modelProvenance: activeModelProvenance.value,
         timestamp: Date.now(),
         durationMs: null,
       };

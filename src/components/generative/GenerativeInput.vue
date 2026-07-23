@@ -50,7 +50,7 @@
       <textarea
         ref="taEl"
         v-model="text"
-        :placeholder="placeholder"
+        :placeholder="placeholder || i18n.t('workspace.defaultPrompt')"
         :disabled="disabled"
         class="bz-gen-input__field"
         :style="{ height: height + 'px' }"
@@ -69,14 +69,14 @@
         :open="negativePromptOpen"
       >
         <summary class="bz-eyebrow" @click="negativePromptOpen = !negativePromptOpen">
-          Negative prompt
-          <span class="bz-mono bz-meta">(things to avoid)</span>
+          {{ i18n.t('workspace.negative') }}
+          <span class="bz-mono bz-meta">{{ i18n.t('workspace.avoid') }}</span>
         </summary>
         <textarea
           v-model="negativeText"
           class="bz-gen-input__field bz-gen-input__field--neg"
           rows="2"
-          placeholder="blurry, low quality, distorted…"
+          :placeholder="i18n.t('workspace.blurryPrompt')"
           :disabled="disabled"
         ></textarea>
       </details>
@@ -123,12 +123,15 @@
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import BonzaiPulse from "../BonzaiPulse.vue";
+import { useI18n } from "../../i18n/index.js";
+
+const i18n = useI18n();
 
 const props = defineProps({
   // Content
   modelValue:        { type: String, default: "" },
   negativePrompt:    { type: String, default: "" },
-  placeholder:       { type: String, default: "Describe what you want…" },
+  placeholder:       { type: String, default: "" },
 
   // Editorial header (optional)
   eyebrow:           { type: String, default: "" },

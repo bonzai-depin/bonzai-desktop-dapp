@@ -14,7 +14,7 @@ const MINT_FEES_BY_TYPE = [
   ethers.parseEther("0.0035"),   // 4: 3D     (LVL5)
   ethers.parseEther("0.005"),    // 5: training (LVL6)
 ];
-const COMPANION_MINT_PRICE = ethers.parseEther("0.25");
+const COMPANION_MINT_PRICE = ethers.parseEther("0.30");
 const MIN_ETH_LIQUIDITY = ethers.parseEther("0.01");
 
 // ═══════════════════════════════════════════════════════════════════════════

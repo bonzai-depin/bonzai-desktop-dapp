@@ -14,7 +14,7 @@
 
 import { ethers } from 'ethers';
 import { reactive, readonly, computed } from 'vue';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
 import { POOL_LABELS as SHARED_POOL_LABELS } from '../constants/index.js';
 
@@ -104,10 +104,10 @@ async function getPoolContract(withSigner = false) {
 
   let provider;
   try {
-    provider = await web3Service.getProvider('base');
+    provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
   } catch { /* */ }
   if (!provider) {
-    provider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
+    provider = new ethers.JsonRpcProvider(CONFIG.networks[ECONOMY_NETWORK_KEY].rpc);
   }
   return new ethers.Contract(poolAddress, MINT_POOL_ABI, provider);
 }
@@ -164,21 +164,6 @@ async function fetchPoolStats() {
 
     // Fetch user qualification and registration if wallet connected
     if (userAddress) {
-      // Check BonzaiUnlock status — unlocked users qualify for all pools
-      let isUnlocked = false;
-      try {
-        const unlockAddress = CONFIG.levelUnlock?.registryAddress;
-        if (unlockAddress) {
-          const unlockProvider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://mainnet.base.org');
-          const unlockContract = new ethers.Contract(
-            unlockAddress,
-            ['function hasUnlocked(address) view returns (bool)'],
-            unlockProvider,
-          );
-          isUnlocked = await unlockContract.hasUnlocked(userAddress);
-        }
-      } catch { /* unlock contract may not be available */ }
-
       const qualifyPromises = [];
       for (let i = 0; i < 6; i++) {
         qualifyPromises.push(contract.qualifiesForPool(userAddress, i));
@@ -189,10 +174,10 @@ async function fetchPoolStats() {
         contract.registeredBalances(state.currentEpoch, userAddress),
       ]);
 
-      state.allUnlocked = isUnlocked;
+      state.allUnlocked = false;
 
       for (let i = 0; i < 6; i++) {
-        state.userQualifies[i] = isUnlocked || qualResults[i];
+        state.userQualifies[i] = qualResults[i];
       }
       state.isRegisteredCurrentEpoch = isRegistered;
       state.registeredBalance = parseFloat(ethers.formatEther(regBalance));
@@ -220,7 +205,7 @@ async function registerForEpoch() {
   state.error = null;
 
   try {
-    await web3Service.switchNetwork?.('base');
+    await web3Service.switchNetwork?.(ECONOMY_NETWORK_KEY);
 
     const contract = await getPoolContract(true);
 
@@ -277,7 +262,7 @@ async function confirmClaim(epochId) {
   state.error = null;
 
   try {
-    await web3Service.switchNetwork?.('base');
+    await web3Service.switchNetwork?.(ECONOMY_NETWORK_KEY);
 
     const contract = await getPoolContract(true);
 
@@ -315,7 +300,7 @@ async function claimEpoch(epochId, poolIndex) {
   state.error = null;
 
   try {
-    await web3Service.switchNetwork?.('base');
+    await web3Service.switchNetwork?.(ECONOMY_NETWORK_KEY);
 
     const contract = await getPoolContract(true);
 
@@ -347,7 +332,7 @@ async function claimEpoch(epochId, poolIndex) {
     // touching the chain. Best-effort — failures don't break the claim.
     try {
       const wallet = await web3Service.getAddress?.();
-      const chainId = web3Service.state?.chainId || 8453;
+      const chainId = CONFIG.mintPool.chainId;
       await window.electronAPI?.db?.web3?.claimRecord?.({
         chainId,
         poolIndex,
@@ -387,7 +372,7 @@ async function claimEpochBatch(epochId, poolIndices) {
   state.error = null;
 
   try {
-    await web3Service.switchNetwork?.('base');
+    await web3Service.switchNetwork?.(ECONOMY_NETWORK_KEY);
 
     const contract = await getPoolContract(true);
 

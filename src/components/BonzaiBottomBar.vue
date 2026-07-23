@@ -14,7 +14,7 @@
             <!-- Mint Network Indicator -->
             <div class="mint-network-selector">
               <span class="network-icon base"></span>
-              <span class="network-label">Base</span>
+              <span class="network-label">{{ mintNetwork.label }}</span>
             </div>
 
             <button
@@ -110,7 +110,7 @@
             <!-- Mint Network Indicator (connected) -->
             <div class="mint-network-selector">
               <span class="network-icon base"></span>
-              <span class="network-label">Base</span>
+              <span class="network-label">{{ mintNetwork.label }}</span>
             </div>
 
             <button
@@ -671,11 +671,12 @@ const unlockPrice = computed(() => levelService.state.unlockPrice || 1.0);
 const allLevelsUnlocked = computed(() => levelService.state.allLevelsUnlocked);
 
 const buyLink = CONFIG.links.buyBonzai;
+const mintNetwork = mintStore.activeMintNetwork;
 
 // Helpers
 const getLevelConfig = (lvl) => CONFIG.levels[`LVL${lvl}`];
 
-const hasEnoughBonzai = (required) => totalBalance.value >= required;
+const hasEnoughBonzai = (required) => levelService.state.stakedAmount >= required;
 
 // Manual unlock flag (ETH unlock for all levels)
 const isLevelManuallyUnlocked = (levelId) => {
@@ -687,18 +688,10 @@ const isLevelManuallyUnlocked = (levelId) => {
   return false;
 };
 
-// New rule: unlocking is either holdings OR ETH unlock (1 ETH for all levels).
-// Once unlocked => user can use the tier.
+// Minting levels are derived exclusively from BONZAI staked in the economy vault.
 const isLevelUnlockedOrHolding = (levelId) => {
-  // If all levels unlocked via ETH, this level is unlocked
-  if (allLevelsUnlocked.value) return true;
-
-  const cfg = getLevelConfig(levelId);
-  const required = cfg?.holdingRequired || 0;
-  // Check if level is active via the levels state
   const levelKey = `LVL${levelId}`;
-  if (levels.value[levelKey]?.active) return true;
-  return isLevelManuallyUnlocked(levelId) || hasEnoughBonzai(required);
+  return levels.value[levelKey]?.active === true;
 };
 
 // Displayed highest level: LVL1-6

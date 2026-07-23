@@ -187,7 +187,7 @@ Generate images from text prompts using various AI models.
 | **Turbo** | FLUX Klein | Fast | Good | Quick iterations |
 | **Standard** | SDXL 1.0 | Medium | Good | General use |
 | **Advanced** | Z Turbo | Medium | High | Detailed images |
-| **Quality** | FLUX Krea | Slower | Excellent | Final renders |
+| **Quality** | Z-Image Turbo | Slower | Excellent | Final renders |
 | **Edit** | Turbo Edit | Fast | Good | Image modifications |
 
 ### Resolution Options

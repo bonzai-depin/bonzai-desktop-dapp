@@ -29,6 +29,7 @@ export const EMBEDDABLE_SOURCES = [
   "audit_entries",
   "roleplay_messages",
   "companion_memory",
+  "memory_notes",
   "generations",
   "moltbook_posts",         // Phase 7
   "skill_runs",             // Phase 6

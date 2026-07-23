@@ -9,7 +9,7 @@
  */
 
 import { ethers } from 'ethers';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -40,8 +40,8 @@ export const STATE_VIEW_ABI = [
  * @returns {Promise<ethers.Contract|null>}
  */
 export async function getHookContract(withSigner = false) {
-  const hookAddress = CONFIG.uniswap?.base?.feeHook;
-  if (!hookAddress) return null;
+  const hookAddress = CONFIG.uniswap?.[ECONOMY_NETWORK_KEY]?.feeHook;
+  if (!hookAddress || hookAddress === ethers.ZeroAddress) return null;
 
   if (withSigner) {
     const browserProvider = await web3Service.getBrowserProvider();
@@ -49,7 +49,7 @@ export async function getHookContract(withSigner = false) {
     return new ethers.Contract(hookAddress, HOOK_ABI, signer);
   }
 
-  const provider = await web3Service.getProvider('base');
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
   return new ethers.Contract(hookAddress, HOOK_ABI, provider);
 }
 
@@ -65,10 +65,10 @@ export async function getHookContract(withSigner = false) {
  */
 export async function getPoolInfo(poolId, logPrefix = 'UniswapV4') {
   try {
-    const stateViewAddress = CONFIG.uniswap?.base?.stateView;
+    const stateViewAddress = CONFIG.uniswap?.[ECONOMY_NETWORK_KEY]?.stateView;
     if (!stateViewAddress) return null;
 
-    const provider = await web3Service.getProvider('base');
+    const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
     const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI, provider);
 
     const [slot0, liquidity] = await Promise.all([

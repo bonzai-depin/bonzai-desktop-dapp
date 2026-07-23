@@ -20,6 +20,7 @@
  * Output:
  *   bin/{platform}-{arch}/rpc-server
  *   bin/{platform}-{arch}/llama-server
+ *   bin/{platform}-{arch}/llama-quantize       (for abliteration GGUF quantization)
  *   bin/{platform}-{arch}/.llama-source.json   (records ref + commit for staleness detection)
  */
 
@@ -225,11 +226,12 @@ function configure() {
 
 function compile() {
   const cores = os.cpus().length;
-  console.log(`Compiling rpc-server and llama-server (${cores} cores)...`);
+  console.log(`Compiling rpc-server, llama-server, and llama-quantize (${cores} cores)...`);
 
   // Build only the targets we need
   run(`cmake --build "${CMAKE_BUILD_DIR}" --target rpc-server --config Release -j ${cores}`);
   run(`cmake --build "${CMAKE_BUILD_DIR}" --target llama-server --config Release -j ${cores}`);
+  run(`cmake --build "${CMAKE_BUILD_DIR}" --target llama-quantize --config Release -j ${cores}`);
 }
 
 function copyBinaries() {
@@ -241,6 +243,7 @@ function copyBinaries() {
   const binaries = [
     { name: `rpc-server${ext}`, searchDirs: ["bin/Release", "bin", "tools/rpc/Release", "tools/rpc", "."] },
     { name: `llama-server${ext}`, searchDirs: ["bin/Release", "bin", "tools/server/Release", "tools/server", "."] },
+    { name: `llama-quantize${ext}`, searchDirs: ["bin/Release", "bin", "tools/quantize/Release", "tools/quantize", "."] },
   ];
 
   for (const { name, searchDirs } of binaries) {
@@ -265,13 +268,23 @@ function copyBinaries() {
       process.exit(1);
     }
   }
+
+  const converter = path.join(SRC_DIR, "convert_hf_to_gguf.py");
+  if (!fs.existsSync(converter)) {
+    console.error(`ERROR: llama.cpp converter not found at ${converter}`);
+    process.exit(1);
+  }
+  const converterDir = path.join(ROOT, "src", "server", "scripts");
+  fs.mkdirSync(converterDir, { recursive: true });
+  fs.copyFileSync(converter, path.join(converterDir, "convert_hf_to_gguf.py"));
+  console.log(`  convert_hf_to_gguf.py → ${converterDir}`);
 }
 
 function verify() {
   console.log("Verifying binaries...");
   const ext = PLATFORM === "win32" ? ".exe" : "";
 
-  for (const name of [`rpc-server${ext}`, `llama-server${ext}`]) {
+  for (const name of [`rpc-server${ext}`, `llama-server${ext}`, `llama-quantize${ext}`]) {
     const binPath = path.join(BIN_DIR, name);
     if (!fs.existsSync(binPath)) {
       console.error(`ERROR: ${binPath} not found`);
@@ -292,6 +305,12 @@ function verify() {
     }
     console.log(`  ✓ ${name}`);
   }
+  const converter = path.join(ROOT, "src", "server", "scripts", "convert_hf_to_gguf.py");
+  if (!fs.existsSync(converter) || fs.statSync(converter).size === 0) {
+    console.error("ERROR: packaged HF-to-GGUF converter is missing");
+    process.exit(1);
+  }
+  console.log("  ✓ convert_hf_to_gguf.py");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,16 +339,19 @@ if (shouldClean) clean();
 const ext = PLATFORM === "win32" ? ".exe" : "";
 const rpcBin = path.join(BIN_DIR, `rpc-server${ext}`);
 const serverBin = path.join(BIN_DIR, `llama-server${ext}`);
+const quantizeBin = path.join(BIN_DIR, `llama-quantize${ext}`);
+const converterScript = path.join(ROOT, "src", "server", "scripts", "convert_hf_to_gguf.py");
 const prevMarker = readSourceMarker();
 const refMatches = prevMarker && prevMarker.ref === requestedRef;
 const shaMatches = requestedSha && prevMarker?.sha === requestedSha;
 const sourceMatches = requestedSha ? shaMatches : refMatches;
 
-if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !shouldClean && sourceMatches) {
+if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && fs.existsSync(quantizeBin) && fs.existsSync(converterScript) && !shouldClean && sourceMatches) {
   console.log(`Binaries already built from ref '${requestedRef}' (${prevMarker.sha?.slice(0, 12)}).`);
   console.log("Use --clean to force a rebuild, or change --ref to bump the source.");
   console.log(`  ${rpcBin}`);
   console.log(`  ${serverBin}`);
+  console.log(`  ${quantizeBin}`);
   process.exit(0);
 }
 
@@ -351,9 +373,11 @@ try {
 
   console.log();
   console.log("Build complete.");
-  console.log(`  rpc-server:   ${path.join(BIN_DIR, `rpc-server${ext}`)}`);
-  console.log(`  llama-server: ${path.join(BIN_DIR, `llama-server${ext}`)}`);
-  console.log(`  source ref:   ${sourceInfo.ref} (${sourceInfo.sha.slice(0, 12)})`);
+  console.log(`  rpc-server:     ${path.join(BIN_DIR, `rpc-server${ext}`)}`);
+  console.log(`  llama-server:   ${path.join(BIN_DIR, `llama-server${ext}`)}`);
+  console.log(`  llama-quantize: ${path.join(BIN_DIR, `llama-quantize${ext}`)}`);
+  console.log(`  converter:      ${path.join(ROOT, "src", "server", "scripts", "convert_hf_to_gguf.py")}`);
+  console.log(`  source ref:     ${sourceInfo.ref} (${sourceInfo.sha.slice(0, 12)})`);
 } finally {
   // Clean up temp build dir
   if (fs.existsSync(BUILD_DIR)) {

@@ -158,6 +158,7 @@
  */
 import { ref, computed } from "vue";
 import BonzaiEmptyState from "./BonzaiEmptyState.vue";
+import { i18n } from "../i18n/index.js";
 
 const props = defineProps({
   columns: { type: Array, required: true },
@@ -212,13 +213,13 @@ function formatCell(row, col) {
   }
   if (col.type === "timestamp" && val) {
     const d = new Date(val);
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString(i18n.state.locale, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
   if (col.type === "eth" && typeof val === "string") {
     return val + " ETH";
   }
   if (col.type === "bonzai" && typeof val === "number") {
-    return val.toLocaleString("en-US", { maximumFractionDigits: 0 }) + " BONZAI";
+    return val.toLocaleString(i18n.state.locale, { maximumFractionDigits: 0 }) + " BONZAI";
   }
   return val ?? "—";
 }

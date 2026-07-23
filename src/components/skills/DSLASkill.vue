@@ -359,7 +359,7 @@
       <!-- Create Market Button -->
       <div class="control mt-5 has-text-centered">
         <button
-          class="bz-btn bz-btn--success bz-btn--lg"
+          class="bz-btn bz-btn--agent-cta bz-btn--lg"
           @click="createPredictionMarket"
           :disabled="!canCreate || isCreating"
         >
@@ -408,7 +408,7 @@
 
 <script>
 import { ref, reactive, computed } from 'vue';
-import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 
 const SKILL_ID = 'prediction-market-maker-v1.0.0';
 
@@ -684,7 +684,7 @@ export default {
 
     const createPredictionMarket = async () => {
       if (!canCreate.value) return;
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         console.warn('[DSLA] Skill not purchased — execution blocked.');
         return;
       }

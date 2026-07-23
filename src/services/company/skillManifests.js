@@ -6,10 +6,8 @@
  * to its LLM as available actions; the LLM emits structured action
  * calls; the dispatcher routes them through `skillsRegistry.execute()`.
  *
- * For v0 every action is implemented as a *mock execution* that logs
- * to the audit log. Wiring real Twilio / QBO / Stripe APIs is a per-
- * connector follow-up that swaps the mock executor for a real one
- * without changing the manifest or dispatcher contract.
+ * Demo teams use deterministic mock execution. Live teams route the
+ * actions declared here through validated production connectors.
  */
 
 export const SKILL_CATEGORIES = [
@@ -45,9 +43,7 @@ export const SKILL_MANIFESTS = {
     requiredConnectors: ["twilio"],
     suggestedRoles: ["CSO"],
     actions: [
-      { type: "twilio.placeCall",      summary: "Place an outbound call", params: { to: "string", script: "string" } },
-      { type: "twilio.answerCall",     summary: "Configure inbound IVR + greeting", params: { numberId: "string", script: "string" } },
-      { type: "twilio.transcribe",     summary: "Transcribe a recorded call", params: { recordingUrl: "string" } },
+      { type: "twilio.placeCall",      summary: "Place an outbound call", params: { to: "string", from: "string", script: "string" } },
     ],
   },
   "skill.twilio_sms": {
@@ -56,11 +52,11 @@ export const SKILL_MANIFESTS = {
     category: "comms",
     description: "Send / receive SMS. Templated mass-broadcast with rate limits.",
     requiredConnectors: ["twilio"],
-    suggestedRoles: ["CSO", "CMO"],
+    suggestedRoles: ["CSO", "CMO", "BusinessDevelopment", "ClientSuccess"],
     actions: [
-      { type: "twilio.sendSMS",        summary: "Send a single SMS", params: { to: "string", body: "string" }, costEstimate: 0.0079 },
-      { type: "twilio.sendMMS",        summary: "Send an MMS with media", params: { to: "string", body: "string", mediaUrl: "string" } },
-      { type: "twilio.broadcastSMS",   summary: "Send to a recipient list with rate limiting", params: { recipients: "string[]", body: "string" } },
+      { type: "twilio.sendSMS",        summary: "Send a single SMS", params: { to: "string", from: "string", body: "string" }, costEstimate: 0.0079 },
+      { type: "twilio.sendMMS",        summary: "Send an MMS with media", params: { to: "string", from: "string", body: "string", mediaUrl: "string" } },
+      { type: "twilio.broadcastSMS",   summary: "Send to a recipient list with rate limiting", params: { recipients: "string[]", from: "string", body: "string" } },
     ],
   },
   "skill.twilio_whatsapp": {
@@ -71,8 +67,8 @@ export const SKILL_MANIFESTS = {
     requiredConnectors: ["twilio"],
     suggestedRoles: ["CSO"],
     actions: [
-      { type: "whatsapp.sendMessage",  summary: "Send a WhatsApp message", params: { to: "string", body: "string" } },
-      { type: "whatsapp.sendTemplate", summary: "Send an approved template message", params: { to: "string", templateId: "string", vars: "object" } },
+      { type: "whatsapp.sendMessage",  summary: "Send a WhatsApp message", params: { to: "string", from: "string", body: "string" } },
+      { type: "whatsapp.sendTemplate", summary: "Send an approved template message", params: { to: "string", from: "string", templateId: "string", vars: "object" } },
     ],
   },
   "skill.sendgrid_email": {
@@ -85,7 +81,6 @@ export const SKILL_MANIFESTS = {
     actions: [
       { type: "email.send",            summary: "Send a transactional email", params: { to: "string", subject: "string", html: "string" } },
       { type: "email.sendTemplate",    summary: "Send a templated email", params: { to: "string", templateId: "string", vars: "object" } },
-      { type: "email.broadcast",       summary: "Send to a marketing segment", params: { segmentId: "string", templateId: "string" } },
     ],
   },
 
@@ -96,13 +91,25 @@ export const SKILL_MANIFESTS = {
     category: "billing",
     description: "Create + send invoices, track A/R aging, reconcile payments. CFO companion's primary tool.",
     requiredConnectors: ["quickbooks"],
-    suggestedRoles: ["CFO"],
+    suggestedRoles: ["CFO", "InvoicingSpecialist", "PaymentsSpecialist", "AccountingSpecialist"],
     actions: [
       { type: "qbo.createInvoice",     summary: "Create a customer invoice", params: { customerId: "string", lines: "array", dueDate: "string" } },
       { type: "qbo.sendInvoice",       summary: "Email an invoice", params: { invoiceId: "string" } },
       { type: "qbo.recordPayment",     summary: "Record a payment received", params: { invoiceId: "string", amount: "number", method: "string" } },
-      { type: "qbo.payContractor",     summary: "Issue a 1099 payout to a contractor", params: { contractorId: "string", amount: "number", memo: "string" } },
       { type: "qbo.reportAR",          summary: "Generate A/R aging report", params: {} },
+    ],
+  },
+  "skill.sage_accounting": {
+    id: "skill.sage_accounting",
+    name: "Sage Accounting",
+    category: "billing",
+    description: "Create customers and invoices, record payments, and keep the accounting ledger aligned with approved work.",
+    requiredConnectors: ["sage_accounting"],
+    suggestedRoles: ["CFO", "InvoicingSpecialist", "PaymentsSpecialist", "AccountingSpecialist"],
+    actions: [
+      { type: "sage.createContact", summary: "Create an accounting contact", params: { payload: "object" } },
+      { type: "sage.createInvoice", summary: "Create a sales invoice", params: { payload: "object" } },
+      { type: "sage.recordPayment", summary: "Record a customer payment", params: { payload: "object" } },
     ],
   },
   "skill.stripe_checkout": {
@@ -111,7 +118,7 @@ export const SKILL_MANIFESTS = {
     category: "billing",
     description: "Hosted payment pages and digital-product sales. Best for one-shot purchases.",
     requiredConnectors: ["stripe"],
-    suggestedRoles: ["CFO", "CSO"],
+    suggestedRoles: ["CFO", "CSO", "InvoicingSpecialist", "PaymentsSpecialist"],
     actions: [
       { type: "stripe.createCheckout", summary: "Create a Checkout Session URL", params: { priceId: "string", quantity: "number", successUrl: "string", cancelUrl: "string" } },
       { type: "stripe.refund",         summary: "Refund a charge", params: { chargeId: "string", amount: "number" } },
@@ -123,7 +130,7 @@ export const SKILL_MANIFESTS = {
     category: "billing",
     description: "Recurring revenue for PMAs / memberships / SaaS-style plans.",
     requiredConnectors: ["stripe"],
-    suggestedRoles: ["CFO", "CSO"],
+    suggestedRoles: ["CFO", "CSO", "PaymentsSpecialist", "InvoicingSpecialist"],
     actions: [
       { type: "stripe.createSubscription", summary: "Subscribe a customer to a plan", params: { customerId: "string", priceId: "string" } },
       { type: "stripe.cancelSubscription", summary: "Cancel an active subscription", params: { subscriptionId: "string" } },
@@ -138,7 +145,7 @@ export const SKILL_MANIFESTS = {
     category: "calendar",
     description: "Read/write events. COO uses for dispatch, CSO for booking.",
     requiredConnectors: ["google_calendar"],
-    suggestedRoles: ["COO", "CSO"],
+    suggestedRoles: ["COO", "CSO", "BusinessDevelopment", "ClientSuccess", "ProcessAnalyst"],
     actions: [
       { type: "gcal.findSlots",        summary: "List available slots in a window", params: { calendarId: "string", from: "string", to: "string", durationMin: "number" } },
       { type: "gcal.createEvent",      summary: "Create a calendar event", params: { calendarId: "string", title: "string", start: "string", end: "string", attendees: "string[]" } },
@@ -154,7 +161,7 @@ export const SKILL_MANIFESTS = {
     category: "crm",
     description: "Contact + deal management for a lightweight sales pipeline.",
     requiredConnectors: ["hubspot"],
-    suggestedRoles: ["CSO", "CMO"],
+    suggestedRoles: ["CSO", "CMO", "BusinessDevelopment", "ClientSuccess"],
     actions: [
       { type: "hubspot.upsertContact", summary: "Create or update a contact", params: { email: "string", props: "object" } },
       { type: "hubspot.createDeal",    summary: "Add a deal to the pipeline", params: { contactId: "string", amount: "number", stage: "string" } },
@@ -175,7 +182,7 @@ export const SKILL_MANIFESTS = {
       { type: "shopify.updateProduct", summary: "Update an existing product", params: { productId: "string", patch: "object" } },
       { type: "shopify.listOrders",    summary: "List recent orders", params: { since: "string", status: "string" } },
       { type: "shopify.fulfillOrder",  summary: "Mark an order as fulfilled with tracking", params: { orderId: "string", trackingNumber: "string", carrier: "string" } },
-      { type: "shopify.refundOrder",   summary: "Refund an order", params: { orderId: "string", amount: "number", reason: "string" } },
+      { type: "shopify.refundOrder",   summary: "Refund an order", params: { orderId: "string", transactionId: "string", amount: "number", reason: "string" } },
     ],
   },
 
@@ -255,7 +262,7 @@ export const SKILL_MANIFESTS = {
     category: "documents",
     description: "Send contracts for e-signature; track completion.",
     requiredConnectors: ["docusign"],
-    suggestedRoles: ["GeneralCounsel", "CSO"],
+    suggestedRoles: ["GeneralCounsel", "CSO", "BusinessDevelopment", "ProcessAnalyst"],
     actions: [
       { type: "esign.sendEnvelope", summary: "Send a document for signature", params: { templateId: "string", signers: "array" } },
       { type: "esign.checkStatus",  summary: "Check signature status", params: { envelopeId: "string" } },
@@ -379,11 +386,10 @@ export const SKILL_MANIFESTS = {
     category: "comms",
     description: "Internal Slack notifications, customer-support channel routing, daily digests.",
     requiredConnectors: ["slack"],
-    suggestedRoles: ["COO", "CSO", "RnDLead"],
+    suggestedRoles: ["COO", "CSO", "RnDLead", "ProcessAnalyst", "ClientSuccess"],
     actions: [
       { type: "slack.postMessage",  summary: "Post a message to a Slack channel", params: { channel: "string", text: "string" } },
       { type: "slack.dmUser",       summary: "Direct-message a user", params: { userId: "string", text: "string" } },
-      { type: "slack.updateStatus", summary: "Set the workspace status banner", params: { text: "string", emoji: "string" } },
     ],
   },
 
@@ -409,7 +415,7 @@ export const SKILL_MANIFESTS = {
     category: "documents",
     description: "Internal knowledge base. CEO + R&D log decisions, runbooks, post-mortems; CMO drafts campaign briefs.",
     requiredConnectors: ["notion"],
-    suggestedRoles: ["CEO", "RnDLead", "CMO"],
+    suggestedRoles: ["CEO", "RnDLead", "CMO", "ProcessAnalyst", "BusinessDevelopment", "AccountingSpecialist"],
     actions: [
       { type: "notion.createPage",  summary: "Create a new page in a database", params: { databaseId: "string", title: "string", body: "string" } },
       { type: "notion.appendBlock", summary: "Append content to an existing page", params: { pageId: "string", body: "string" } },

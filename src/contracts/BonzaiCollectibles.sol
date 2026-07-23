@@ -41,8 +41,8 @@ interface IBonzaiMintPool {
  * @title IBonzaiUnlock
  * @notice Interface for checking if a user has unlocked all levels
  */
-interface IBonzaiUnlock {
-    function hasUnlocked(address user) external view returns (bool);
+interface IBonzaiStakingVault {
+    function utilityTier(address user) external view returns (uint8);
 }
 
 /**
@@ -55,6 +55,7 @@ interface IBonzaiCollectiblesFactory {
     function mintPool() external view returns (address);
     function royaltySplitter() external view returns (address);
     function unlockContract() external view returns (address);
+    function stakingVault() external view returns (address);
     function originalCreatorRoyaltyBps() external view returns (uint256);
 }
 
@@ -71,9 +72,8 @@ interface IBonzaiCollectiblesFactory {
  *         via Limit Break's Transfer Validator — only whitelisted operators (OpenSea
  *         Seaport, Magic Eden, etc.) can facilitate transfers.
  *
- *         Level checks are NOT on-chain because BONZAI holdings span 3 networks
- *         (Ethereum, Arbitrum, Base) and can't be aggregated without oracles.
- *         Level gating is enforced off-chain in the application layer.
+ *         Minting rights are enforced on-chain from the staking position on the
+ *         single configured BonzAI economy chain.
  */
 contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2981, ICreatorToken {
     uint256 private _tokenIdCounter;
@@ -203,6 +203,10 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         return factory == address(0) ? address(0) : IBonzaiCollectiblesFactory(factory).unlockContract();
     }
 
+    function stakingVault() public view returns (address) {
+        return factory == address(0) ? address(0) : IBonzaiCollectiblesFactory(factory).stakingVault();
+    }
+
     /**
      * @notice Override ERC721 name() to return the custom collection name
      */
@@ -238,22 +242,16 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         require(contentType_ <= 5, "Invalid content type");
 
         // Resolve protocol-level addresses from factory (clone owner cannot
-        // forge these). All three may be address(0) early in deploy.
+        // forge these).
         address poolAddr = mintPool();
-        address unlockAddr = _unlockAddr();
+        address vaultAddr = stakingVault();
+        require(vaultAddr != address(0), "Staking not configured");
+        require(
+            IBonzaiStakingVault(vaultAddr).utilityTier(msg.sender) >= contentType_ + 1,
+            "Insufficient BONZAI stake"
+        );
 
-        // Unlocked users (paid 1 ETH via BonzaiUnlock) mint for free
-        bool isUnlocked = false;
-        if (unlockAddr != address(0)) {
-            try IBonzaiUnlock(unlockAddr).hasUnlocked(msg.sender) returns (bool result) {
-                isUnlocked = result;
-            } catch {
-                // Unlock contract unavailable — charge normal fee
-            }
-        }
-
-        // Per-type fee always seeded in initialize. Unlocked users mint free.
-        uint256 fee = isUnlocked ? 0 : mintFees[contentType_];
+        uint256 fee = mintFees[contentType_];
         require(msg.value >= fee, "Insufficient mint fee");
 
         // ─── STATE CHANGES FIRST ─────────────────────────────────────────

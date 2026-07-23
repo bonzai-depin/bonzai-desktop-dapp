@@ -5,7 +5,7 @@
 ```
 USER WALLET (MetaMask/WalletConnect)
     │
-    ├── Mint Companion NFT (0.25 ETH) ──► BonzaiCompanions.sol (Base 8453)
+    ├── Mint Companion + Token (0.30 ETH) ──► BonzaiCompanions.sol
     │     │                                   ERC-721 + ERC-8004 (Trustless Agent Protocol)
     │     │                                   OASF v0.8.0 metadata on Arweave
     │     │
@@ -49,7 +49,7 @@ USER WALLET (MetaMask/WalletConnect)
 **What it does:**
 - ERC-721 + ERC-8004 (Trustless Agent Protocol), "BonzAI Companions" / "BZCOMP"
 - Max supply: 10,000
-- Base mint price: 0.25 ETH with BONZAI-holder discounts (1%→33%)
+- Default mint price: 0.30 ETH, including 0.05 ETH of atomic token liquidity
 - On-chain: personalityHash, spendingProfile (uint96 bit-packed, 12 categories × 4 bits), gender, chat/message counters
 - ERC-8004 features: agentWallet, metadata key-value store, EIP-712 signed wallet rotation
 - Pausable + ReentrancyGuard
@@ -105,8 +105,8 @@ USER WALLET (MetaMask/WalletConnect)
 - On-chain provenance: Irys transaction ID, AI model, creator, timestamp
 
 **Post-deploy actions:**
-1. Copy deployed address → `CONFIG.contentNFT.base.contractAddress`
-2. Verify on BaseScan
+1. Copy the economy-chain factory address → `CONFIG.contentNFT.economy.contractAddress`
+2. Verify the deployment on the explorer for `VITE_BONZAI_ECONOMY_CHAIN_ID`
 
 ---
 
@@ -215,7 +215,7 @@ What happens when a user clicks "Mint" in the app:
 ### 5. Chain Switch + Discount Calculation
 - Switch to Base (8453) via AppKit
 - Check BONZAI balance on Arbitrum for discount tier
-- Calculate final price: `0.25 ETH × (1 - discount)`
+- Read the current on-chain mint price; the v4 default is `0.30 ETH`.
 
 ### 6. Contract Call
 ```solidity
@@ -291,7 +291,7 @@ Companions can autonomously make small ETH payments via the x402 protocol:
 
 ---
 
-## Skill Ownership & Revenue
+## Skill Ownership & Access
 
 ### Registration Flow
 1. Companion minted on Base (has tokenId + agentWallet)
@@ -301,13 +301,13 @@ Companions can autonomously make small ETH payments via the x402 protocol:
    - Calls `BonzaiSkillOwnership.registerCompanion()`
    - Contract verifies attestation signature
 
-### Revenue Distribution
-When someone purchases a skill:
-1. `BonzaiSkillRegistry.purchaseSkill()` receives ETH
-2. 80% sent to `BonzaiSkillOwnership.distributeRevenue()`
-3. For each registered companion: `weight = max(BONZAI_balance, 1e18) × profileScore`
-4. ETH credited to `unclaimedRevenue[companionWallet]`
-5. Owner calls `claimRevenue()` to withdraw
+### Access
+
+1. The cold-start roadmap maps compatible default companions to each skill.
+2. The companion's spending profile must score at least 5 in the skill category.
+3. Holding one whole token for any registered owner unlocks the skill.
+4. `BonzaiSkillRegistry.recordExecution()` enforces that access on-chain.
+5. Skill execution is free; there is no individual skill purchase.
 
 ### Category Mapping (12 categories)
 

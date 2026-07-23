@@ -522,13 +522,8 @@ async function main() {
   const skillRegistry = await deployContract(
     signer, 'BonzaiSkillRegistry',
     skillRegistryCompiled.BonzaiSkillRegistry,
-    [
-      DEPLOY_CONFIG.bonzaiTokenBase,
-      DEPLOY_CONFIG.treasury,
-      ethers.ZeroAddress, // skillOwnership set after deployment
-      DEPLOY_CONFIG.usdcBase,
-    ],
-    'BonzaiSkillRegistry (skill marketplace)',
+    [ethers.ZeroAddress], // skillOwnership set after deployment
+    'BonzaiSkillRegistry (token-gated skill access)',
   );
 
   // 2j. BonzaiSkillOwnership — Companion co-ownership + revenue distribution
@@ -639,6 +634,12 @@ async function main() {
     'setCompanionContract', [deployedAddresses.BonzaiCompanions],
     'CompanionTokenFactory.setCompanionContract(companions)',
   );
+  const companionsAbiForFactory = companionsCompiled.BonzaiCompanions.abi;
+  await wireContract(
+    signer, deployedAddresses.BonzaiCompanions, companionsAbiForFactory,
+    'setCompanionTokenFactory', [deployedAddresses.CompanionTokenFactory],
+    'BonzaiCompanions.setCompanionTokenFactory(companionFactory)',
+  );
 
   // Wire FineTuneTokenFactory → BonzaiCollectibles implementation (NFT ownership check)
   // TODO: FineTuneTokenFactory.setContentContract should point to CollectiblesFactory,
@@ -651,6 +652,11 @@ async function main() {
     signer, deployedAddresses.FineTuneTokenFactory, fineTuneFactoryAbi,
     'setContentContract', [deployedAddresses.BonzaiCollectibles],
     'FineTuneTokenFactory.setContentContract(collectiblesImpl)',
+  );
+  await wireContract(
+    signer, deployedAddresses.FineTuneTokenFactory, fineTuneFactoryAbi,
+    'disableLegacyLaunch', [],
+    'FineTuneTokenFactory.disableLegacyLaunch()',
   );
 
   // Wire BonzaiSkillRegistry ↔ BonzaiSkillOwnership (bidirectional)
@@ -667,18 +673,17 @@ async function main() {
     'BonzaiSkillOwnership.setSkillRegistry(registry)',
   );
 
+  await wireContract(
+    signer, deployedAddresses.BonzaiSkillOwnership, skillOwnershipAbi,
+    'setCompanionTokenFactory', [deployedAddresses.CompanionTokenFactory],
+    'BonzaiSkillOwnership.setCompanionTokenFactory(companionFactory)',
+  );
+
   // Set USDC token on SkillOwnership for USDC revenue distribution
   await wireContract(
     signer, deployedAddresses.BonzaiSkillOwnership, skillOwnershipAbi,
     'setUsdcToken', [DEPLOY_CONFIG.usdcBase],
     'BonzaiSkillOwnership.setUsdcToken(usdc)',
-  );
-
-  // Wire BonzaiSkillRegistry → BonzaiUnlock (unlocked users get skills for free)
-  await wireContract(
-    signer, deployedAddresses.BonzaiSkillRegistry, skillRegistryAbi,
-    'setUnlockContract', [deployedAddresses.BonzaiUnlock],
-    'BonzaiSkillRegistry.setUnlockContract(unlock)',
   );
 
   // Level gating removed — BONZAI holdings span 3 networks and can't be aggregated on-chain.

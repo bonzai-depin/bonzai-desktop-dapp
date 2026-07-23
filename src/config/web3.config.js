@@ -11,21 +11,85 @@ const ETHEREUM_EXPLORER = "https://etherscan.io";
 const ETHEREUM_RPC = env.VITE_ETHEREUM_RPC_URL || "https://ethereum.publicnode.com";
 const BONZAI_ETHEREUM = "0xDdA9Ff241C7160be8295EF9Eca2e782361467666";
 const USDC_ETHEREUM = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+const BONZAI_BASE = "0xc4d137def384ee0f8857887f5950669ba04984ec";
+const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const USDC_ARBITRUM = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+export const ROBINHOOD_CHAIN_ID = 4663;
+export const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
+const ROBINHOOD_RPC = env.VITE_ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
+const ROBINHOOD_TESTNET_RPC = env.VITE_ROBINHOOD_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com";
+const BONZAI_ROBINHOOD = env.VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS || null;
+const USDG_ROBINHOOD = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+const WETH_ROBINHOOD = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
+const ECONOMY_CHAIN_ID = Number(env.VITE_BONZAI_ECONOMY_CHAIN_ID || ROBINHOOD_CHAIN_ID);
+const ECONOMY_NETWORK_KEYS = { 1: 'ethereum', 42161: 'arbitrum', 8453: 'base', 4663: 'robinhood' };
+export const ECONOMY_NETWORK_KEY = ECONOMY_NETWORK_KEYS[ECONOMY_CHAIN_ID];
+if (!ECONOMY_NETWORK_KEY) {
+  throw new Error(`Unsupported VITE_BONZAI_ECONOMY_CHAIN_ID: ${ECONOMY_CHAIN_ID}`);
+}
+export const networkKeyForChainId = (chainId) => ({
+  ...ECONOMY_NETWORK_KEYS,
+  42: 'lukso',
+  46630: 'robinhoodTestnet',
+})[Number(chainId)] || null;
+const BONZAI_ECONOMY = {
+  1: BONZAI_ETHEREUM,
+  42161: "0x0a84edf70f30325151631ce7a61307d1f4d619a3",
+  8453: BONZAI_BASE,
+  4663: BONZAI_ROBINHOOD,
+}[ECONOMY_CHAIN_ID];
 
-const ETHEREUM_CONTRACTS = {
-  unlock: env.VITE_BONZAI_UNLOCK_ETHEREUM_ADDRESS || null,
-  skillRegistry: env.VITE_BONZAI_SKILL_REGISTRY_ETHEREUM_ADDRESS || null,
-  skillOwnership: env.VITE_BONZAI_SKILL_OWNERSHIP_ETHEREUM_ADDRESS || null,
-  collectibles: env.VITE_BONZAI_COLLECTIBLES_ETHEREUM_ADDRESS || null,
-  collectiblesFactory: env.VITE_BONZAI_COLLECTIBLES_FACTORY_ETHEREUM_ADDRESS || null,
-  mintPool: env.VITE_BONZAI_MINT_POOL_ETHEREUM_ADDRESS || null,
-  royaltySplitter: env.VITE_BONZAI_ROYALTY_SPLITTER_ETHEREUM_ADDRESS || null,
-  fineTuneTokenFactory: env.VITE_BONZAI_FINE_TUNE_TOKEN_FACTORY_ETHEREUM_ADDRESS || null,
-  companions: env.VITE_BONZAI_COMPANIONS_ETHEREUM_ADDRESS || null,
-  providerRegistry: env.VITE_BONZAI_PROVIDER_REGISTRY_ETHEREUM_ADDRESS || null,
-  p2pPayment: env.VITE_BONZAI_P2P_PAYMENT_ETHEREUM_ADDRESS || null,
-  pipelinePayment: env.VITE_BONZAI_PIPELINE_PAYMENT_ETHEREUM_ADDRESS || null,
-  companionTokenFactory: env.VITE_BONZAI_COMPANION_TOKEN_FACTORY_ETHEREUM_ADDRESS || null,
+const economyAddress = (name, ...legacyKeys) => {
+  const chainKey = `VITE_BONZAI_${name}_${ECONOMY_NETWORK_KEY.toUpperCase()}_ADDRESS`;
+  const genericKey = `VITE_BONZAI_${name}_ADDRESS`;
+  return env[chainKey] || env[genericKey] || legacyKeys.map((key) => env[key]).find(Boolean) || null;
+};
+
+const ECONOMY_CONTRACTS = {
+  unlock: economyAddress('UNLOCK', 'VITE_BONZAI_UNLOCK_ETHEREUM_ADDRESS'),
+  skillRegistry: economyAddress('SKILL_REGISTRY', 'VITE_BONZAI_SKILL_REGISTRY_ETHEREUM_ADDRESS'),
+  skillOwnership: economyAddress('SKILL_OWNERSHIP', 'VITE_BONZAI_SKILL_OWNERSHIP_ETHEREUM_ADDRESS'),
+  collectibles: economyAddress('COLLECTIBLES', 'VITE_BONZAI_COLLECTIBLES_ETHEREUM_ADDRESS'),
+  collectiblesFactory: economyAddress('COLLECTIBLES_FACTORY', 'VITE_BONZAI_COLLECTIBLES_FACTORY_ETHEREUM_ADDRESS'),
+  mintPool: economyAddress('MINT_POOL', 'VITE_BONZAI_MINT_POOL_ETHEREUM_ADDRESS'),
+  royaltySplitter: economyAddress('ROYALTY_SPLITTER', 'VITE_BONZAI_ROYALTY_SPLITTER_ETHEREUM_ADDRESS'),
+  fineTuneTokenFactory: economyAddress('FINE_TUNE_TOKEN_FACTORY'),
+  companions: economyAddress('COMPANIONS'),
+  providerRegistry: economyAddress('PROVIDER_REGISTRY', 'VITE_BONZAI_PROVIDER_REGISTRY_ETHEREUM_ADDRESS'),
+  serviceTime: economyAddress('SERVICE_TIME'),
+  stakingVault: economyAddress('STAKING_VAULT'),
+  revenueRouter: economyAddress('REVENUE_ROUTER'),
+  contributionRegistry: economyAddress('CONTRIBUTION_REGISTRY'),
+  datasetRegistry: economyAddress('DATASET_REGISTRY'),
+  modelRegistry: economyAddress('MODEL_REGISTRY'),
+  evaluationRegistry: economyAddress('EVALUATION_REGISTRY'),
+  contributionScoreOracle: economyAddress('CONTRIBUTION_SCORE_ORACLE'),
+  jobEscrow: economyAddress('JOB_ESCROW'),
+  p2pPayment: economyAddress('P2P_PAYMENT', 'VITE_BONZAI_P2P_PAYMENT_ETHEREUM_ADDRESS'),
+  pipelinePayment: economyAddress('PIPELINE_PAYMENT', 'VITE_BONZAI_PIPELINE_PAYMENT_ETHEREUM_ADDRESS'),
+  companionTokenFactory: economyAddress('COMPANION_TOKEN_FACTORY'),
+};
+
+const parseSkillIdMap = () => {
+  if (!env.VITE_BONZAI_SKILL_ID_MAP_JSON) return {};
+  try {
+    const parsed = JSON.parse(env.VITE_BONZAI_SKILL_ID_MAP_JSON);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    console.error('[Web3Config] VITE_BONZAI_SKILL_ID_MAP_JSON is not valid JSON');
+    return {};
+  }
+};
+
+const parseCompanionTokens = () => {
+  if (!env.VITE_DEFAULT_COMPANION_TOKENS_JSON) return {};
+  try {
+    const parsed = JSON.parse(env.VITE_DEFAULT_COMPANION_TOKENS_JSON);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    console.error('[Web3Config] VITE_DEFAULT_COMPANION_TOKENS_JSON is not valid JSON');
+    return {};
+  }
 };
 
 export const CONFIG = {
@@ -70,20 +134,38 @@ export const CONFIG = {
       explorer: "https://explorer.lukso.network",
       currency: { name: "LYX", symbol: "LYX", decimals: 18 },
     },
-    // Legacy compatibility key. Existing services still call
-    // switchNetwork("base"), but RC Web3 operations must land on Ethereum.
     base: {
-      chainId: ETHEREUM_CHAIN_ID,
-      chainIdHex: ETHEREUM_CHAIN_ID_HEX,
-      name: "Ethereum Mainnet",
-      rpc: ETHEREUM_RPC,
+      chainId: 8453,
+      chainIdHex: "0x2105",
+      name: "Base Mainnet",
+      rpc: env.VITE_BASE_RPC_URL || "https://mainnet.base.org",
       rpcFallbacks: [
-        "https://rpc.ankr.com/eth",
-        "https://cloudflare-eth.com",
-        "https://eth.drpc.org",
+        "https://base.publicnode.com",
+        "https://base.llamarpc.com",
       ],
-      explorer: ETHEREUM_EXPLORER,
+      explorer: "https://basescan.org",
       currency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    },
+    robinhood: {
+      chainId: ROBINHOOD_CHAIN_ID,
+      chainIdHex: "0x1237",
+      name: "Robinhood Chain",
+      rpc: ROBINHOOD_RPC,
+      rpcFallbacks: ["https://rpc.mainnet.chain.robinhood.com"],
+      explorer: "https://robinhoodchain.blockscout.com",
+      currency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      canonicalBridge: "https://bridge.arbitrum.io",
+      isEconomyDefault: true,
+    },
+    robinhoodTestnet: {
+      chainId: ROBINHOOD_TESTNET_CHAIN_ID,
+      chainIdHex: "0xb626",
+      name: "Robinhood Chain Testnet",
+      rpc: ROBINHOOD_TESTNET_RPC,
+      rpcFallbacks: ["https://rpc.testnet.chain.robinhood.com"],
+      explorer: "https://explorer.testnet.chain.robinhood.com",
+      currency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      testnet: true,
     },
   },
 
@@ -95,19 +177,25 @@ export const CONFIG = {
       // Token addresses with proper checksum format
       ethereum: "0xDdA9Ff241C7160be8295EF9Eca2e782361467666",
       arbitrum: "0x0a84edf70f30325151631ce7a61307d1f4d619a3",
-      base: BONZAI_ETHEREUM,
+      base: BONZAI_BASE,
+      robinhood: BONZAI_ROBINHOOD,
       decimals: 18,
       symbol: "BONZAI",
     },
     usdc: {
-      base: USDC_ETHEREUM,
+      ethereum: USDC_ETHEREUM,
+      arbitrum: USDC_ARBITRUM,
+      base: USDC_BASE,
+      robinhood: USDG_ROBINHOOD,
     },
+    USDG: { robinhood: USDG_ROBINHOOD },
+    WETH: { robinhood: WETH_ROBINHOOD },
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LEVEL SYSTEM CONFIGURATION (6 Levels)
   // ═══════════════════════════════════════════════════════════════════════════
-  // Access via: BONZAI token holding OR 1 ETH one-time payment (unlocks ALL levels)
+  // Access is derived exclusively from BONZAI staked on the economy chain.
   levels: {
     LVL1: {
       id: 1,
@@ -160,20 +248,6 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // LEVEL UNLOCK CONTRACT (Single 1 ETH payment unlocks ALL levels)
-  // ═══════════════════════════════════════════════════════════════════════════
-  levelUnlock: {
-    // BonzaiUnlock contract on Ethereum.
-    registryAddress: ETHEREUM_CONTRACTS.unlock,
-    chainId: ETHEREUM_CHAIN_ID,
-    // Fixed price: 1 ETH unlocks all 6 levels permanently
-    unlockPrice: "1.0", // ETH
-    // Proceeds split (configured in contract):
-    // - 50% to Foundation: 0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89
-    // - 50% to Liquidity:  0x4135d59f0BfF96560b7aD5cfCe81154AB1810B93
-  },
-
-  // ═══════════════════════════════════════════════════════════════════════════
   // TREASURY & WALLETS
   // ═══════════════════════════════════════════════════════════════════════════
   treasury: {
@@ -195,33 +269,16 @@ export const CONFIG = {
   // SKILL REGISTRY (Decentralized Claude Skills)
   // ═══════════════════════════════════════════════════════════════════════════
   skillRegistry: {
-    contractAddress: ETHEREUM_CONTRACTS.skillRegistry,
-    ownershipContractAddress: ETHEREUM_CONTRACTS.skillOwnership,
-    chainId: ETHEREUM_CHAIN_ID,
-
-    // Revenue split (configured in contract)
-    authorShareBps: 8000, // 80% to co-owners (via BonzaiSkillOwnership)
-    platformShareBps: 2000, // 20% to platform
-
-    // Default skill price in USDC (6 decimals)
-    defaultSkillPrice: 9_990_000, // 9.99 USDC
-    paymentToken: 'USDC',
+    contractAddress: ECONOMY_CONTRACTS.skillRegistry,
+    ownershipContractAddress: ECONOMY_CONTRACTS.skillOwnership,
+    chainId: ECONOMY_CHAIN_ID,
 
     // Mapping: local skill ID → on-chain bytes32 skill ID
     // Populated by scripts/register-skills.js after on-chain registration
-    skillIdMap: {
-      // 'polymarket-top-performers-v1.0.0': '0x...',
-      // 'prediction-market-maker-v1.0.0': '0x...',
-      // 'meditation-forge-v1.0.0': '0x...',
-      // 'tcg-analysis-v1.0.0': '0x...',
-      // 'live-streaming-v1.0.0': '0x...',
-    },
+    skillIdMap: parseSkillIdMap(),
 
-    // Default pricing for new skills
-    defaultPricing: {
-      purchasePrice: 9.99, // USDC (one-time lifetime fee)
-      runningFee: 0, // No per-execution fee
-    },
+    accessModel: 'companion-token',
+    executionPrice: 0,
 
     // Skill categories (12 spending profile categories, matching BonzaiCompanions.sol packing order)
     // IMPORTANT: Order must match uint96 nibble layout in BonzaiCompanions.sol.
@@ -258,22 +315,23 @@ export const CONFIG = {
     ],
   },
 
+  companionTokens: {
+    byCompanionId: parseCompanionTokens(),
+    tradeUrlTemplate:
+      env.VITE_COMPANION_TOKEN_TRADE_URL_TEMPLATE ||
+      'https://app.uniswap.org/swap?chain=robinhood&outputCurrency={tokenAddress}',
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════
-  // CONTENT NFT MINTING (Ethereum ERC-721 + optional LUKSO UP attachment)
+  // CONTENT NFT MINTING (canonical economy chain only)
   // ═══════════════════════════════════════════════════════════════════════════
   contentNFT: {
-    base: {
-      contractAddress: ETHEREUM_CONTRACTS.collectibles,
-      factoryAddress: ETHEREUM_CONTRACTS.collectiblesFactory,
-      chainId: ETHEREUM_CHAIN_ID,
+    economy: {
+      contractAddress: ECONOMY_CONTRACTS.collectibles,
+      factoryAddress: ECONOMY_CONTRACTS.collectiblesFactory,
+      chainId: ECONOMY_CHAIN_ID,
       standard: 'ERC-721',
-      mintFee: '0.0025', // ETH
-    },
-    lukso: {
-      contractAddress: null, // Will be set after deployment (uses lsp8Collection)
-      chainId: 42,
-      standard: 'LSP8',
-      mintFee: '15', // LYX
+      mintFees: ['0.0005', '0.001', '0.0015', '0.0025', '0.0035', '0.005'],
     },
   },
 
@@ -305,16 +363,16 @@ export const CONFIG = {
   // MINT POOL & REVENUE CONTRACTS (Ethereum)
   // ═══════════════════════════════════════════════════════════════════════════
   mintPool: {
-    contractAddress: ETHEREUM_CONTRACTS.mintPool,
-    chainId: ETHEREUM_CHAIN_ID,
+    contractAddress: ECONOMY_CONTRACTS.mintPool,
+    chainId: ECONOMY_CHAIN_ID,
   },
   royaltySplitter: {
-    contractAddress: ETHEREUM_CONTRACTS.royaltySplitter,
-    chainId: ETHEREUM_CHAIN_ID,
+    contractAddress: ECONOMY_CONTRACTS.royaltySplitter,
+    chainId: ECONOMY_CHAIN_ID,
   },
   fineTuneTokenFactory: {
-    contractAddress: ETHEREUM_CONTRACTS.fineTuneTokenFactory,
-    chainId: ETHEREUM_CHAIN_ID,
+    contractAddress: ECONOMY_CONTRACTS.fineTuneTokenFactory,
+    chainId: ECONOMY_CHAIN_ID,
     totalSupply: '1000000000', // 1 billion tokens per model
     minEthLiquidity: '0.01',
     lpLocked: true,
@@ -331,22 +389,80 @@ export const CONFIG = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // PROOF-OF-CONTRIBUTION REGISTRIES (Ethereum)
+  // ═══════════════════════════════════════════════════════════════════════════
+  contributionEconomy: {
+    chainId: ECONOMY_CHAIN_ID,
+    stakingVaultAddress: ECONOMY_CONTRACTS.stakingVault,
+    revenueRouterAddress: ECONOMY_CONTRACTS.revenueRouter,
+    contributionRegistryAddress: ECONOMY_CONTRACTS.contributionRegistry,
+    datasetRegistryAddress: ECONOMY_CONTRACTS.datasetRegistry,
+    modelRegistryAddress: ECONOMY_CONTRACTS.modelRegistry,
+    evaluationRegistryAddress: ECONOMY_CONTRACTS.evaluationRegistry,
+    contributionScoreOracleAddress: ECONOMY_CONTRACTS.contributionScoreOracle,
+    jobEscrowAddress: ECONOMY_CONTRACTS.jobEscrow,
+    defaultLicenseURI: 'https://bonzai.sh/licenses/contribution-v1',
+    visibility: {
+      private: 0,
+      desktop: 1,
+      publishable: 2,
+      public: 3,
+    },
+    contributionTypes: {
+      dataset_text: 0,
+      dataset_image: 1,
+      dataset_video: 2,
+      appraisal: 3,
+      generation: 4,
+      model_adapter: 5,
+      skill: 6,
+      evaluation: 7,
+      provider_time: 8,
+      companion_action: 9,
+    },
+  },
+
+  stakingEconomy: {
+    chainId: ECONOMY_CHAIN_ID,
+    stakingVaultAddress: ECONOMY_CONTRACTS.stakingVault,
+    revenueRouterAddress: ECONOMY_CONTRACTS.revenueRouter,
+    tokenAddress: BONZAI_ECONOMY,
+    utilityTiers: [
+      { tier: 1, label: 'Contributor', amount: 1000, rights: ['Publish basic contribution packs', 'Mint text assets', 'Join contribution routes'] },
+      { tier: 2, label: 'Curator', amount: 5000, rights: ['Publish curated datasets', 'Boost curation weight', 'Mint audio assets'] },
+      { tier: 3, label: 'Builder', amount: 10000, rights: ['Publish image/model assets', 'Boost marketplace trust', 'Mint image assets'] },
+      { tier: 4, label: 'Producer', amount: 25000, rights: ['Back fine-tune campaigns', 'Boost provider routing', 'Mint video assets'] },
+      { tier: 5, label: 'Operator', amount: 33000, rights: ['Launch companions and advanced skills', 'Boost company reputation', 'Mint 3D assets'] },
+      { tier: 6, label: 'Sovereign', amount: 50000, rights: ['Launch high-value model tokens', 'Create Zero-Human Companies', 'Mint training assets'] },
+    ],
+    lockOptions: [
+      { label: 'Flexible', seconds: 0, multiplierBps: 10000 },
+      { label: '30 days', seconds: 2592000, multiplierBps: 11000 },
+      { label: '90 days', seconds: 7776000, multiplierBps: 12500 },
+      { label: '180 days', seconds: 15552000, multiplierBps: 14500 },
+      { label: '365 days', seconds: 31536000, multiplierBps: 17000 },
+    ],
+    formula: 'utility_weight = staked_BONZAI * lock_multiplier * contribution_multiplier',
+    description: 'Stake BONZAI to publish, curate, back, serve, and earn from contribution-backed AI assets.',
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // COMPANION NFT CONTRACT (Ethereum - ERC-8004 + self-custody agent wallet)
   // ═══════════════════════════════════════════════════════════════════════════
   companionNFT_BASE: {
     // BonzaiCompanions contract on Ethereum
-    contractAddress: ETHEREUM_CONTRACTS.companions,
-    chainId: ETHEREUM_CHAIN_ID,
+    contractAddress: ECONOMY_CONTRACTS.companions,
+    chainId: ECONOMY_CHAIN_ID,
     standard: 'ERC-8004',
 
     // Flat mint price in ETH (no rarity tiers)
-    mintPrice: "0.25", // 0.25 ETH
+    mintPrice: "0.30", // 0.25 ETH protocol fee + 0.05 ETH permanent token liquidity
 
     // Metadata gateway (IPFS via Pinata)
     metadataGateway: "https://gateway.pinata.cloud/ipfs/",
 
     // ERC-8004 specific
-    x402Support: true, // Companions can have agent wallets for x402 payments
+    x402Support: false,
 
     // Self-custody agent wallet
     agentWalletProvider: 'local',
@@ -393,22 +509,20 @@ export const CONFIG = {
   // x402 PAYMENT CONFIGURATION (ETH-Only)
   // ═══════════════════════════════════════════════════════════════════════════
   x402: {
+    enabled: false,
     // Payment token (native ETH - no USDC, no ERC-3009)
     paymentToken: "ETH",
     version: "x402-eth/1.0",
 
     // Supported chains for x402 ETH payments
     supportedChains: {
-      1: {
-        name: "Ethereum",
-        rpc: ETHEREUM_RPC,
-        explorer: ETHEREUM_EXPLORER,
-        enabled: true,
-      },
+      1: { name: 'Ethereum', rpc: ETHEREUM_RPC, explorer: ETHEREUM_EXPLORER, usdc: USDC_ETHEREUM, enabled: ECONOMY_CHAIN_ID === 1 },
+      42161: { name: 'Arbitrum', rpc: 'https://arbitrum.publicnode.com', explorer: 'https://arbiscan.io', usdc: USDC_ARBITRUM, enabled: ECONOMY_CHAIN_ID === 42161 },
+      8453: { name: 'Base', rpc: env.VITE_BASE_RPC_URL || 'https://mainnet.base.org', explorer: 'https://basescan.org', usdc: USDC_BASE, enabled: ECONOMY_CHAIN_ID === 8453 },
     },
 
     // Default chain for x402 payments
-    defaultChainId: ETHEREUM_CHAIN_ID,
+    defaultChainId: ECONOMY_CHAIN_ID,
 
     // EIP-712 signature parameters
     signatureValidityPeriod: 300, // 5 minutes
@@ -418,20 +532,18 @@ export const CONFIG = {
   // AGENT WALLET CONFIGURATION (Local Self-Custody)
   // ═══════════════════════════════════════════════════════════════════════════
   // Note: We use local deterministic wallets derived from a master secret.
-  // No CDP, no Coinbase API - full self-custody with ETH-only payments.
+  // No CDP or Coinbase API. Wallets are receive-only in this release.
   agentWallet: {
     // Default network for agent wallets
-    defaultNetwork: 'ethereum',
-    defaultChainId: ETHEREUM_CHAIN_ID,
+    defaultNetwork: ECONOMY_NETWORK_KEY,
+    defaultChainId: ECONOMY_CHAIN_ID,
 
-    // Spending limits (ETH)
-    defaultMaxTransaction: "0.001", // ~$2 per transaction
-    defaultDailyLimit: "0.005",     // ~$10 per day
+    defaultMaxTransaction: "0",
+    defaultDailyLimit: "0",
 
     // Supported operations
     enabledOperations: [
-      'send',      // Send ETH
-      'x402',      // Machine-to-machine payments
+      'receive',   // Revenue capture only; companions cannot initiate payments
     ],
   },
 
@@ -439,22 +551,11 @@ export const CONFIG = {
   // P2P DISTRIBUTED INFERENCE NETWORK
   // ═══════════════════════════════════════════════════════════════════════════
   p2pNetwork: {
-    providerRegistryAddress: ETHEREUM_CONTRACTS.providerRegistry,
-    paymentContractAddress: ETHEREUM_CONTRACTS.p2pPayment,
-    pipelinePaymentAddress: ETHEREUM_CONTRACTS.pipelinePayment,
-    chainId: ETHEREUM_CHAIN_ID,
-
-    // USDC on Ethereum (Circle native)
-    usdcAddress: USDC_ETHEREUM,
-
-    // Default payment token: ETH (providers can also accept USDC)
-    paymentToken: "ETH",
-
-    // Default pricing (ETH in wei per 1000 tokens)
-    defaultPricePerToken: "1000000000000", // 0.000001 ETH per 1000 tokens (~$0.002)
-
-    // Platform fee (basis points, 250 = 2.5%)
-    platformFeeBps: 250,
+    providerRegistryAddress: ECONOMY_CONTRACTS.providerRegistry,
+    serviceTimeAddress: ECONOMY_CONTRACTS.serviceTime,
+    chainId: ECONOMY_CHAIN_ID,
+    pricing: 'free',
+    rewardSource: 'mint-pool-service-time',
 
     // Bootstrap nodes (public relays)
     bootstrapNodes: [
@@ -547,8 +648,8 @@ export const CONFIG = {
   // WalletConnect (needed for Electron; MetaMask mobile works via QR)
   walletconnect: {
     projectId: (import.meta?.env?.VITE_WALLETCONNECT_PROJECT_ID || '844c2e04d27062b198ef7306820a2ff8'),
-    chains: [1], // Ethereum mainnet
-    optionalChains: [42], // LUKSO is retained for Universal Profile attachment
+    chains: [ECONOMY_CHAIN_ID],
+    optionalChains: [...new Set([1, 42161, 8453, 42].filter((id) => id !== ECONOMY_CHAIN_ID))],
   },
 
   // Wallet addresses reference
@@ -562,8 +663,8 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   companionTokenFactory: {
     // CompanionTokenFactory contract on Ethereum
-    contractAddress: ETHEREUM_CONTRACTS.companionTokenFactory,
-    chainId: ETHEREUM_CHAIN_ID,
+    contractAddress: ECONOMY_CONTRACTS.companionTokenFactory,
+    chainId: ECONOMY_CHAIN_ID,
 
     // Token settings
     totalSupply: "1000000000", // 1 billion tokens per companion
@@ -573,11 +674,12 @@ export const CONFIG = {
     lpLocked: true,
     deadAddress: "0x000000000000000000000000000000000000dEaD",
 
-    // Hook fee split for companion tokens: 34% wallet, 33% owner, 33% LVL6 pool
+    // Hook fee split: 40% agent wallet, 40% owner, 10% treasury, 10% pools
     hookFeeBps: 100, // 1% total swap fee
-    companionWalletBps: 3400,       // 34% companion wallet (agent wallet)
-    companionOwnerBps: 3300,        // 33% companion owner (NFT holder)
-    companionPoolBps: 3300,         // 33% LVL6 (training) pool
+    companionWalletBps: 4000,
+    companionOwnerBps: 4000,
+    treasuryShareBps: 1000,
+    companionPoolBps: 1000,
 
     // Description
     description: "Launch burnable ERC-20 tokens with V4 LP (unruggable, hook fees)",
@@ -598,6 +700,15 @@ export const CONFIG = {
   // here for any legacy reads but should not be used by new code.
   // ═══════════════════════════════════════════════════════════════════════════
   uniswap: {
+    ethereum: {
+      poolManager: env.VITE_UNISWAP_V4_POOL_MANAGER || null,
+      positionManager: env.VITE_UNISWAP_V4_POSITION_MANAGER || null,
+      universalRouter: env.VITE_UNISWAP_V4_UNIVERSAL_ROUTER || null,
+      quoter: env.VITE_UNISWAP_V4_QUOTER || null,
+      stateView: env.VITE_UNISWAP_V4_STATE_VIEW || null,
+      permit2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+      feeHook: env.VITE_BONZAI_UNISWAP_HOOK_ADDRESS || null,
+    },
     arbitrum: {
       // Source: Uniswap V4 official deployments
       // https://docs.uniswap.org/contracts/v4/deployments

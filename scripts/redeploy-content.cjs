@@ -89,7 +89,7 @@ async function main() {
   console.log("BonzaiContent (BonzAI Collectibles):", contentAddress);
   console.log("");
   console.log("Update web3.config.js:");
-  console.log(`  contentNFT.base.contractAddress: '${contentAddress}'`);
+  console.log(`  contentNFT.economy.contractAddress: '${contentAddress}'`);
   console.log("═══════════════════════════════════════════════════════════");
 }
 

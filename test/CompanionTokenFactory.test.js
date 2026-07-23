@@ -106,6 +106,35 @@ describe("CompanionTokenFactory", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("launchToken()", function () {
+    it("mints the companion identity, ERC-20, and permanent liquidity atomically", async function () {
+      const fixture = await loadFixture(deployCompanionTokenFactory);
+      const { factory, user1, agentWallet, owner } = fixture;
+      const Companions = await ethers.getContractFactory("BonzaiCompanions");
+      const companions = await Companions.deploy(owner.address);
+      await companions.setCompanionTokenFactory(await factory.getAddress());
+      await factory.setCompanionContract(await companions.getAddress());
+
+      const profile = 0x357926548375n;
+      const tx = await companions.connect(user1).mintCompanionWithToken(
+        "ipfs://atomic-agent",
+        ethers.id("atomic-personality"),
+        profile,
+        1,
+        agentWallet.address,
+        "Aurore",
+        "AURORE",
+        { value: ethers.parseEther("0.30") },
+      );
+      const receipt = await tx.wait();
+      const event = receipt.logs.map((log) => {
+        try { return companions.interface.parseLog(log); } catch { return null; }
+      }).find((entry) => entry?.name === "CompanionEconomyLaunched");
+
+      expect(event.args.tokenId).to.equal(1n);
+      expect(event.args.token).to.equal(await factory.getToken(1n));
+      expect(event.args.liquidity).to.equal(ethers.parseEther("0.05"));
+    });
+
     it("should deploy a CompanionToken and return its address", async function () {
       const fixture = await loadFixture(deployCompanionTokenFactory);
       const { tokenAddr } = await mintAndLaunch(fixture);

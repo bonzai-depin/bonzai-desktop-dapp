@@ -2,21 +2,29 @@
   <Transition name="notif">
     <div v-if="authState.isAwaitingSignature" key="auth" class="bz-notif bz-notif--warning">
       <div class="bz-notif__body">
-        <span class="bz-notif__title">Awaiting signature</span>
-        <span class="bz-notif__desc">Please sign the message in your wallet to authenticate.</span>
+        <span class="bz-notif__title">{{ i18n.t('auth.awaiting') }}</span>
+        <span class="bz-notif__desc">{{ i18n.t('auth.signMessage') }}</span>
       </div>
       <BonzaiPulse variant="dot" />
     </div>
 
     <div v-else-if="skillStore.autonomousMode && skillStore.isIdle" key="companion" class="bz-notif bz-notif--info" @click="goToCompanionChat" style="cursor:pointer">
       <div class="bz-notif__body">
-        <span class="bz-notif__title">{{ skillStore.autonomousSession?.companion?.name || 'Companion' }} is active</span>
+        <span class="bz-notif__title">{{ i18n.t('companion.active', { name: skillStore.autonomousSession?.companion?.name || 'Companion' }) }}</span>
         <span class="bz-notif__desc">
-          Continuing while you're away.
-          <strong v-if="skillStore.missedMessages > 0">({{ skillStore.missedMessages }} new message{{ skillStore.missedMessages > 1 ? 's' : '' }})</strong>
+          {{ i18n.t('companion.continuing') }}
+          <strong v-if="skillStore.missedMessages > 0">({{ i18n.tc('companion.newMessages', skillStore.missedMessages) }})</strong>
         </span>
       </div>
-      <BzCloseButton size="sm" variant="subtle" aria-label="Dismiss" @click.stop="skillStore.updateActivity()" />
+      <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click.stop="skillStore.updateActivity()" />
+    </div>
+
+    <div v-else-if="generationToast.show" key="generation" class="bz-notif bz-notif--success">
+      <div class="bz-notif__body">
+        <span class="bz-notif__title">{{ generationToast.title }}</span>
+        <span class="bz-notif__desc">{{ generationToast.desc }}</span>
+      </div>
+      <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click="generationToast.show = false" />
     </div>
 
     <div v-else-if="serverStatus.show" key="server" class="bz-notif bz-notif--server" :class="notifClass">
@@ -31,9 +39,9 @@
       <div style="display:flex; align-items:center; gap:var(--bz-space-2)">
         <button v-if="serverStatus.canRetry" class="bz-btn bz-btn--ghost" style="font-size:var(--bz-size-micro); padding:4px var(--bz-space-3)" @click="handleServerRestart">
           <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
-          Retry
+          {{ i18n.t('common.retry') }}
         </button>
-        <BzCloseButton size="sm" variant="subtle" aria-label="Dismiss" @click="serverStatus.show = false" />
+        <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click="serverStatus.show = false" />
       </div>
     </div>
 
@@ -41,13 +49,13 @@
   </Transition>
 
   <div id="bonzai">
-    <nav class="bz-sidebar" aria-label="Primary">
+    <nav class="bz-sidebar" :aria-label="i18n.t('nav.primary')">
       <div class="bz-sidebar__brand">
         <span class="bz-sidebar__wordmark">BonzAI</span>
         <div v-if="!isConnected && !isConnecting" class="bz-sidebar__auth">
-          <a href="#" class="bz-sidebar__auth-link" @click.prevent="connect">Connect</a>
-          <span class="bz-sidebar__auth-sep"> or </span>
-          <a href="#" class="bz-sidebar__auth-link" @click.prevent="openPrivyWallet">Sign in</a>
+          <a href="#" class="bz-sidebar__auth-link" @click.prevent="connect">{{ i18n.t('auth.connectWallet') }}</a>
+          <span class="bz-sidebar__auth-sep"> {{ i18n.t('auth.or') }} </span>
+          <a href="#" class="bz-sidebar__auth-link" @click.prevent="openPrivyWallet">{{ i18n.t('auth.signIn') }}</a>
         </div>
         <div v-if="isConnected && walletAddress" class="bz-sidebar__wallet bz-sidebar__wallet--top">
           <div class="bz-sidebar__wallet-info" @click="copyAddress">
@@ -60,65 +68,71 @@
             <span class="bz-sidebar__balance-token">BONZAI</span>
           </div>
           <div class="bz-sidebar__wallet-actions">
-            <button class="bz-sidebar__wallet-btn" @click="refresh" title="Refresh">
+            <button class="bz-sidebar__wallet-btn" @click="refresh" :title="i18n.t('common.refresh')">
               <span class="material-symbols-outlined" :class="{ spinning: isRefreshing }">sync</span>
             </button>
-            <button class="bz-sidebar__wallet-btn" @click="disconnect" title="Disconnect">
+            <button class="bz-sidebar__wallet-btn" @click="disconnect" :title="i18n.t('common.disconnect')">
               <span class="material-symbols-outlined">logout</span>
             </button>
           </div>
         </div>
       </div>
 
-      <div class="bz-sidebar__nav">
+      <div class="bz-sidebar__nav-shell" :class="{ 'has-more': sidebarCanScroll && !sidebarAtBottom }">
+      <div ref="sidebarNav" class="bz-sidebar__nav" @scroll="updateSidebarScrollState">
         <div class="bz-sidebar__group">
-          <span class="bz-sidebar__label">Create</span>
-          <button v-for="t in createItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+          <span class="bz-sidebar__label">{{ i18n.t('nav.create') }}</span>
+          <button v-for="t in createItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
             <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
-          <span class="bz-sidebar__label">Earn</span>
-          <button v-for="t in earnItems" :key="t.id" class="bz-sidebar__item" @click="handleEarnAction(t.id)">
+          <span class="bz-sidebar__label">{{ i18n.t('nav.earn') }}</span>
+          <button v-for="t in earnItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="handleEarnAction(t.id)" :aria-pressed="modelMode === t.id">
             <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
-          <span class="bz-sidebar__label">Automate</span>
-          <button v-for="t in automateItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+          <span class="bz-sidebar__label">{{ i18n.t('nav.automate') }}</span>
+          <button v-for="t in automateItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
             <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
-          <span class="bz-sidebar__label">Train</span>
-          <button v-for="t in trainItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+          <span class="bz-sidebar__label">{{ i18n.t('nav.train') }}</span>
+          <button v-for="t in trainItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
             <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
-          <span class="bz-sidebar__label">Help</span>
-          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'faq' }" @click="modelMode = 'faq'" :aria-pressed="modelMode === 'faq'">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">help_outline</span>
-            <span class="bz-sidebar__item-label">FAQ</span>
+          <span class="bz-sidebar__label">{{ i18n.t('nav.help') }}</span>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'memory' }" :title="i18n.t('nav.memory')" @click="modelMode = 'memory'" :aria-pressed="modelMode === 'memory'">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">neurology</span>
+            <span class="bz-sidebar__item-label">{{ i18n.t('nav.memory') }}</span>
           </button>
-          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'harness' }" @click="modelMode = 'harness'" :aria-pressed="modelMode === 'harness'">
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'harness' }" :title="i18n.t('nav.harness')" @click="modelMode = 'harness'" :aria-pressed="modelMode === 'harness'">
             <span class="bz-sidebar__item-icon material-symbols-outlined">device_hub</span>
-            <span class="bz-sidebar__item-label">Harness</span>
+            <span class="bz-sidebar__item-label">{{ i18n.t('nav.harness') }}</span>
+          </button>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'licenses' }" :title="i18n.t('nav.licenses')" @click="modelMode = 'licenses'" :aria-pressed="modelMode === 'licenses'">
+            <span class="bz-sidebar__item-icon material-symbols-outlined">article</span>
+            <span class="bz-sidebar__item-label">{{ i18n.t('nav.licenses') }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group bz-sidebar__group--settings">
-          <span class="bz-sidebar__label">Settings</span>
+          <span class="bz-sidebar__label">{{ i18n.t('nav.settings') }}</span>
+          <LanguageSelector class="bz-sidebar__language" />
           <div class="bz-sidebar__theme-picker">
-            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(-1)" title="Previous theme">
+            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(-1)" :title="i18n.t('theme.previous')">
               <span class="material-symbols-outlined">chevron_left</span>
             </button>
             <div class="bz-sidebar__theme-display">
@@ -127,11 +141,22 @@
               </div>
               <span class="bz-sidebar__theme-name">{{ currentTheme.name }}</span>
             </div>
-            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(1)" title="Next theme">
+            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(1)" :title="i18n.t('theme.next')">
               <span class="material-symbols-outlined">chevron_right</span>
             </button>
           </div>
         </div>
+      </div>
+      <button
+        type="button"
+        class="bz-sidebar__scroll-hint"
+        :class="{ 'is-hidden': !sidebarCanScroll || sidebarAtBottom }"
+        :title="i18n.t('nav.moreBelow')"
+        :aria-label="i18n.t('nav.moreBelow')"
+        @click="scrollSidebarForward"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
+      </button>
       </div>
 
       <div class="bz-sidebar__footer">
@@ -140,10 +165,10 @@
           <span class="bz-sidebar__serve-label">{{ p2pModeLabel }}</span>
         </button>
 
-        <div class="bz-sidebar__footer-action bz-sidebar__model" @click="openBrowseModels" title="Click to browse models">
+        <div class="bz-sidebar__footer-action bz-sidebar__model" @click="openBrowseModels" :title="i18n.t('network.browseModels')">
           <span class="material-symbols-outlined bz-sidebar__model-icon">neurology</span>
-          <span class="bz-sidebar__model-name">{{ sidebarModelName || "No Model" }}</span>
-          <span v-if="alwaysLoaded" class="bz-sidebar__model-lock material-symbols-outlined" title="Always loaded">lock</span>
+          <span class="bz-sidebar__model-name">{{ sidebarModelName || i18n.t('network.noModel') }}</span>
+          <span v-if="alwaysLoaded" class="bz-sidebar__model-lock material-symbols-outlined" :title="i18n.t('network.alwaysLoaded')">lock</span>
         </div>
 
         <button v-if="systemValues?.memBudget" class="bz-sidebar__footer-action bz-sidebar__specs" @click="openSpecsModal" :title="(systemValues.memBudget / 1024**3).toFixed(0) + ' GB'">
@@ -159,11 +184,21 @@
       <GenerativeImage v-if="modelMode == 'image'" key="image" />
       <GenerativeVideo v-if="modelMode == 'video'" key="video" :existing-image-base64="videoImageBase64" />
       <Generative3D v-if="modelMode == 'game'" key="game" />
-      <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" />
+      <GenerativeTraining v-if="modelMode == 'tune'" key="tune" mode="tune" />
+      <GenerativeTraining v-if="modelMode == 'uncensor'" key="uncensor" mode="uncensor" />
+      <GenerativeTraining v-if="modelMode == 'datasets'" key="datasets" mode="tune" />
+      <GenerativeTraining v-if="modelMode == 'finetune'" key="finetune" mode="tune" />
+      <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" mode="tune" />
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
-      <Company v-if="modelMode == 'company'" key="company" />
+      <ContributionOwnershipDashboard v-if="modelMode == 'economy'" key="economy" />
+      <Markets v-if="modelMode == 'markets'" key="markets" />
+      <AgentJobBoard v-if="jobsEnabled && modelMode == 'jobs'" key="jobs" />
+      <MemoryGraph v-if="modelMode == 'memory'" key="memory" />
+      <KeepAlive>
+        <Company v-if="modelMode == 'company'" key="company" />
+      </KeepAlive>
       <HarnessView v-if="modelMode == 'harness'" key="harness" />
-      <FAQ v-if="modelMode == 'faq'" key="faq" />
+      <ModelLicenses v-if="modelMode == 'licenses'" key="licenses" />
     </main>
   </div>
 
@@ -181,15 +216,13 @@
             <div class="network-titleblock">
               <p class="bz-eyebrow">Network</p>
               <h2 class="bz-h2">
-                <span class="material-symbols-outlined">hub</span>
-                Peer-to-Peer Network
+                <span class="material-symbols-outlined">{{ p2pModeIcon }}</span>
+                Network Settings
               </h2>
             </div>
             <BzCloseButton size="md" aria-label="Close network settings" @click="showNetworkModal = false" />
           </div>
-          <div class="network-modal-body">
-            <NetworkSettings />
-          </div>
+          <div class="network-modal-body"><NetworkSettings /></div>
         </div>
       </div>
     </Transition>
@@ -285,22 +318,26 @@
 </template>
 
 <script>
-import { ref, reactive, provide, computed, onMounted, onUnmounted, watch } from "vue";
+import { defineAsyncComponent, ref, reactive, provide, computed, onMounted, onUnmounted, watch } from "vue";
 import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
 import GenerativeVideo from "./components/GenerativeVideo.vue";
 import GenerativeAudio from "./components/GenerativeAudio.vue";
 import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
+import ContributionOwnershipDashboard from "./components/ContributionOwnershipDashboard.vue";
+import Markets from "./components/Markets.vue";
 import Company from "./components/Company.vue";
 import HarnessView from "./components/HarnessView.vue";
+import ModelLicenses from "./components/ModelLicenses.vue";
 import SmartAgent from "./components/SmartAgent.vue";
-import FAQ from "./components/FAQ.vue";
 import BonzaiPulse from "./components/BonzaiPulse.vue";
 import BzCloseButton from "./components/BzCloseButton.vue";
 import LlmModelPickerModal from "./components/LlmModelPickerModal.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import GenerationInspector from "./components/GenerationInspector.vue";
+import AgentJobBoard from "./components/AgentJobBoard.vue";
+import LanguageSelector from "./components/LanguageSelector.vue";
 import RewardsModal from "./components/RewardsModal.vue";
 import NetworkSettings from "./components/NetworkSettings.vue";
 import { authService, userInitiatedReAuth, refreshToken } from "./services/auth.service.js";
@@ -310,45 +347,69 @@ import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
 import { modelStore } from "./stores/modelStore.js";
 import companyStore from "./stores/companyStore.js";
+import generationStore from "./stores/generationStore.js";
 import { modelPicker } from "./services/modelPicker.service.js";
 import { getPerformanceStats, getHardwareSpecs, initializeStore } from "./stores/inferenceStore.js";
 import { useBonzaiWeb3 } from "./composables/useBonzaiWeb3.js";
 import { CONFIG } from "./config/web3.config.js";
 import { levelService, checkAllLevels } from "./services/level.service.js";
-import { listAllLLMs } from "./skills/flagship.js";
+import { useI18n } from "./i18n/index.js";
+
+const MemoryGraph = defineAsyncComponent(() => import("./components/MemoryGraph.vue"));
 
 export default {
   name: "App",
   components: {
     GenerativeText, GenerativeImage, GenerativeVideo, GenerativeAudio,
-    Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView, FAQ,
+    Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView,
+    ContributionOwnershipDashboard, Markets, MemoryGraph, ModelLicenses, AgentJobBoard, LanguageSelector,
     BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
     GenerationInspector, RewardsModal, NetworkSettings,
   },
   setup() {
+    const i18n = useI18n();
+    const jobsEnabled = import.meta.env.VITE_ENABLE_EXPERIMENTAL_JOB_BOARD === "1";
     const modelMode = ref("chat");
+    const sidebarNav = ref(null);
+    const sidebarCanScroll = ref(false);
+    const sidebarAtBottom = ref(true);
+    let sidebarResizeObserver = null;
 
-    const createItems = [
-      { id: "chat",  label: "Chat",  icon: "chat" },
-      { id: "image", label: "Image", icon: "image" },
-      { id: "music", label: "Audio", icon: "headphones" },
-      { id: "video", label: "Video", icon: "movie" },
-      { id: "game",  label: "Game",  icon: "sports_esports" },
-    ];
-    const earnItems = [
-      { id: "rewards",      label: "Rewards",      icon: "trophy" },
-    ];
-    const automateItems = [
-      { id: "agent",   label: "Agents",   icon: "automation" },
-      { id: "company", label: "Company",  icon: "storefront" },
-    ];
-    const trainItems = [
-      { id: "robot-train-chat", label: "Chat", icon: "chat" },
-    ];
-    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "robot-train-chat", "company", "harness", "faq"]);
+    const updateSidebarScrollState = () => {
+      const element = sidebarNav.value;
+      if (!element) return;
+      sidebarCanScroll.value = element.scrollHeight > element.clientHeight + 2;
+      sidebarAtBottom.value = !sidebarCanScroll.value || element.scrollTop + element.clientHeight >= element.scrollHeight - 2;
+    };
 
+    const scrollSidebarForward = () => {
+      const element = sidebarNav.value;
+      if (!element) return;
+      element.scrollBy({ top: Math.max(120, element.clientHeight * 0.65), behavior: "smooth" });
+    };
+
+    const createItems = computed(() => [
+      { id: "chat", label: i18n.t('nav.chat'), icon: "chat" }, { id: "image", label: i18n.t('nav.image'), icon: "image" },
+      { id: "music", label: i18n.t('nav.audio'), icon: "headphones" }, { id: "video", label: i18n.t('nav.video'), icon: "movie" },
+      { id: "game", label: i18n.t('nav.game'), icon: "sports_esports" },
+    ]);
+    const earnItems = computed(() => [
+      { id: "economy", label: i18n.t('nav.ownership'), icon: "account_tree" }, { id: "markets", label: i18n.t('nav.markets'), icon: "monitoring" },
+      { id: "rewards", label: i18n.t('nav.rewards'), icon: "trophy" },
+    ]);
+    const automateItems = computed(() => [
+      { id: "agent", label: i18n.t('nav.agents'), icon: "automation" }, { id: "company", label: i18n.t('nav.company'), icon: "storefront" },
+      ...(jobsEnabled ? [{ id: "jobs", label: i18n.t('nav.jobs'), icon: "work" }] : []),
+    ]);
+    const trainItems = computed(() => [
+      { id: "tune", label: i18n.t('nav.tune'), icon: "tune" }, { id: "uncensor", label: i18n.t('nav.uncensor'), icon: "lock_open" },
+    ]);
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "memory", "licenses"]);
     const handleEarnAction = (id) => {
       if (id === "rewards") showRewardsModal.value = true;
+      if (id === "economy") modelMode.value = "economy";
+      if (id === "markets") modelMode.value = "markets";
+      if (id === "memory") modelMode.value = "memory";
     };
 
     const onSetModeEvent = (e) => {
@@ -375,11 +436,11 @@ export default {
       return "dns";
     });
     const serverStatusDescription = computed(() => {
-      if (serverStatus.type === "starting") return "Bringing local inference online: Flask media pipelines, OpenClaw API, and desktop IPC.";
-      if (serverStatus.type === "restarting") return "Restarting the local runtime and reconnecting generation routes.";
-      if (serverStatus.type === "ready") return "Local inference is available.";
-      if (serverStatus.type === "stopped") return "Generation services are paused.";
-      return "The runtime needs attention before local generation can continue.";
+      if (serverStatus.type === "starting") return i18n.t('server.starting');
+      if (serverStatus.type === "restarting") return i18n.t('server.restarting');
+      if (serverStatus.type === "ready") return i18n.t('server.ready');
+      if (serverStatus.type === "stopped") return i18n.t('server.stopped');
+      return i18n.t('server.attention');
     });
 
     const p2pMode = ref("local");
@@ -501,20 +562,15 @@ const {
     const isRefreshingToken = ref(false);
     const showPrivyLogin = ref(false);
     const privyError = ref("");
+    const generationToast = reactive({ show: false, title: "", desc: "" });
+    let generationToastTimer = null;
 
-    const llmNameLookup = Object.fromEntries(listAllLLMs().map((model) => [model.key, model.name]));
     const currentModelName = computed(() => modelStore.state.current?.modelname || null);
     const companyModelSummary = computed(() => {
       if (modelMode.value !== "company") return null;
       const charter = companyStore.activeCompany?.value;
       if (!charter) return null;
-      const keys = new Set();
-      for (const role of Object.values(charter.roles || {})) {
-        if (role?.llm) keys.add(role.llm);
-      }
-      if (!keys.size) return "Company: current chat model";
-      const names = [...keys].map((key) => llmNameLookup[key] || key.replace(/^llm_/, "").replace(/_/g, " "));
-      return names.length === 1 ? `Company: ${names[0]}` : `Company: ${names.length} LLMs`;
+      return "Company Settings";
     });
     const sidebarModelName = computed(() => companyModelSummary.value || currentModelName.value || null);
     const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
@@ -644,7 +700,16 @@ const {
 
     onMounted(() => {
       themeService.init();
+      requestAnimationFrame(() => {
+        updateSidebarScrollState();
+        if (sidebarNav.value && typeof ResizeObserver !== "undefined") {
+          sidebarResizeObserver = new ResizeObserver(updateSidebarScrollState);
+          sidebarResizeObserver.observe(sidebarNav.value);
+        }
+      });
       initializeStore();
+      companyStore.init().catch((e) => console.warn("Failed to boot companies:", e?.message || e));
+      generationStore.ensureGenerationSocket();
 
       const loadSystemInfo = async () => {
         try { systemValues.value = await window.electronAPI.systemInformation(); }
@@ -703,10 +768,12 @@ const {
     });
 
     onUnmounted(() => {
+      sidebarResizeObserver?.disconnect();
       if (unsubscribeServerStatus) unsubscribeServerStatus();
       if (autoHideTimeout) clearTimeout(autoHideTimeout);
       if (sysInfoInterval) clearInterval(sysInfoInterval);
       if (p2pStatusInterval) clearInterval(p2pStatusInterval);
+      if (generationToastTimer) clearTimeout(generationToastTimer);
       modelStore.stopListening();
       window.removeEventListener("bonzai:open-browse-models", showBrowseModels);
       window.removeEventListener("bonzai:set-mode", onSetModeEvent);
@@ -718,10 +785,38 @@ const {
 
     watch([isConnected, walletAddress], async ([connected, addr]) => {
       if (connected && addr) await checkAllLevels();
+      requestAnimationFrame(updateSidebarScrollState);
     });
 
+    watch(() => i18n.state.locale, () => requestAnimationFrame(updateSidebarScrollState));
+
+    const generationLabels = computed(() => ({ image: i18n.t('generation.imageComplete'), video: i18n.t('generation.videoComplete'), audio: i18n.t('generation.audioComplete'), text: i18n.t('generation.textComplete'), "3d": i18n.t('generation.threeComplete') }));
+    const generationSnapshot = () => ["image", "video", "audio", "text", "3d"].map((key) => ({
+      key,
+      active: generationStore.state[key]?.active === true,
+      stage: generationStore.state[key]?.stage || "idle",
+    }));
+    watch(
+      generationSnapshot,
+      (next, prev) => {
+        if (!prev) return;
+        for (const current of next) {
+          const previous = prev.find((item) => item.key === current.key);
+          if (previous?.active && !current.active && current.stage === "finished") {
+            generationToast.title = generationLabels.value[current.key];
+            generationToast.desc = i18n.t('generation.resultReady');
+            generationToast.show = true;
+            if (generationToastTimer) clearTimeout(generationToastTimer);
+            generationToastTimer = setTimeout(() => { generationToast.show = false; }, 6000);
+            break;
+          }
+        }
+      },
+    );
+
     return {
-      modelMode, createItems, earnItems, automateItems, trainItems,
+      i18n, modelMode, jobsEnabled, createItems, earnItems, automateItems, trainItems,
+      sidebarNav, sidebarCanScroll, sidebarAtBottom, updateSidebarScrollState, scrollSidebarForward,
       handleEarnAction,
       systemValues, videoImageBase64, goAnimateToVideo, goToCompanionChat,
       serverStatus, notifClass, serverStatusIcon, serverStatusDescription, handleServerRestart,
@@ -738,6 +833,7 @@ const {
       formatExpiry, handleReauth, handleRefreshToken,
       connect, disconnect, cancelConnection,
       openPrivyWallet, closePrivyLogin, privyError, refresh, copyAddress,
+      generationToast,
     };
   },
 };
@@ -850,7 +946,7 @@ html, body {
 /* ─── APP SHELL ─────────────────────────────────────────────────── */
 #bonzai {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 240px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
   background: var(--bz-canvas);
@@ -879,8 +975,8 @@ html, body {
   background: var(--bz-panel);
   border-right: 1px solid var(--bz-border);
   height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .bz-sidebar__brand {
@@ -889,6 +985,7 @@ html, body {
   flex-direction: column;
   align-items: flex-start;
   gap: var(--bz-space-2);
+  flex: 0 0 auto;
 }
 
 .bz-sidebar__wordmark {
@@ -905,10 +1002,12 @@ html, body {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 .bz-sidebar__auth-link {
   color: var(--bz-fg-low);
   font-size: var(--bz-size-meta);
+  white-space: nowrap;
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
@@ -922,12 +1021,82 @@ html, body {
   font-size: var(--bz-size-meta);
 }
 
-.bz-sidebar__nav {
+.bz-sidebar__nav-shell {
   flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bz-sidebar__nav {
   display: flex;
   flex-direction: column;
   gap: var(--bz-space-4);
+  height: 100%;
   padding: var(--bz-space-3) var(--bz-space-3) var(--bz-space-2);
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bz-border) transparent;
+}
+
+.bz-sidebar__nav::-webkit-scrollbar { width: 4px; }
+.bz-sidebar__nav::-webkit-scrollbar-track { background: transparent; }
+.bz-sidebar__nav::-webkit-scrollbar-thumb { background: var(--bz-border); border-radius: 4px; }
+
+.bz-sidebar__nav-shell.has-more::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 44px;
+  pointer-events: none;
+  background: linear-gradient(transparent, var(--bz-panel));
+}
+
+.bz-sidebar__scroll-hint {
+  position: absolute;
+  z-index: 2;
+  right: 10px;
+  bottom: 12px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--bz-purple-300);
+  cursor: pointer;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--bz-dur-fast), visibility var(--bz-dur-fast), border-color var(--bz-dur-fast), color var(--bz-dur-fast);
+}
+
+.bz-sidebar__scroll-hint.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.bz-sidebar__scroll-hint:hover {
+  color: var(--bz-fg);
+}
+
+.bz-sidebar__scroll-hint .material-symbols-outlined {
+  font-size: 17px !important;
+  animation: bz-scroll-hint-bounce 1.4s ease-in-out infinite;
+}
+
+@keyframes bz-scroll-hint-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bz-sidebar__scroll-hint .material-symbols-outlined { animation: none; }
 }
 
 .bz-sidebar__group {
@@ -938,6 +1107,10 @@ html, body {
 
 .bz-sidebar__group--settings {
   margin-top: auto;
+}
+
+.bz-sidebar__language {
+  margin-bottom: var(--bz-space-1);
 }
 
 .bz-sidebar__label {
@@ -995,6 +1168,88 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: var(--bz-space-2);
+  flex: 0 0 auto;
+}
+
+@media (max-height: 900px) and (min-width: 1025px) {
+  .bz-sidebar__brand {
+    padding: var(--bz-space-3) var(--bz-space-4) var(--bz-space-2);
+    gap: var(--bz-space-1);
+  }
+
+  .bz-sidebar__wallet--top {
+    margin-top: var(--bz-space-1);
+  }
+
+  .bz-sidebar__nav {
+    gap: 2px;
+    padding: var(--bz-space-1) var(--bz-space-2);
+  }
+
+  .bz-sidebar__group:not(.bz-sidebar__group--settings) {
+    display: flex;
+    gap: 0;
+  }
+
+  .bz-sidebar__label {
+    padding: 1px var(--bz-space-2) 2px;
+    font-size: 10px;
+  }
+
+  .bz-sidebar__item {
+    min-height: 24px;
+    gap: 6px;
+    padding: 2px var(--bz-space-2);
+    font-size: var(--bz-size-meta);
+    line-height: 1.15;
+  }
+
+  .bz-sidebar__item-icon {
+    font-size: 15px !important;
+  }
+
+  .bz-sidebar__group--settings {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 0;
+  }
+
+  .bz-sidebar__group--settings > .bz-sidebar__label {
+    grid-column: 1 / -1;
+  }
+
+  .bz-sidebar__language {
+    margin-bottom: 0;
+  }
+
+  .bz-sidebar__footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--bz-space-1);
+    padding: var(--bz-space-1) var(--bz-space-2) var(--bz-space-2);
+  }
+
+  .bz-sidebar__specs {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-height: 680px) and (min-width: 1025px) {
+  .bz-sidebar__brand {
+    padding: var(--bz-space-2) var(--bz-space-3);
+  }
+  .bz-sidebar__nav {
+    gap: 0;
+  }
+  .bz-sidebar__label {
+    padding-block: 0 1px;
+    font-size: 9px;
+  }
+  .bz-sidebar__item {
+    min-height: 22px;
+    padding-block: 1px;
+    font-size: var(--bz-size-micro);
+  }
 }
 
 .bz-sidebar__footer-action {
@@ -1092,6 +1347,7 @@ html, body {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px var(--bz-fg-low);
 }
 
 .bz-sidebar__theme-name {
@@ -1492,16 +1748,47 @@ html, body {
 .fade-enter-from,
 .fade-leave-to { opacity: 0; }
 
+/* Height-constrained overrides live after the base control rules. */
+@media (max-height: 900px) and (min-width: 1025px) {
+  .bz-sidebar__theme-picker {
+    padding: 2px 3px;
+  }
+
+  .bz-sidebar__theme-arrow {
+    width: 21px;
+    height: 21px;
+  }
+
+  .bz-sidebar__theme-name {
+    max-width: 54px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bz-sidebar__footer-action {
+    min-height: 31px;
+    padding: 4px var(--bz-space-2);
+  }
+}
+
 /* ─── COMPACT VIEWPORT ──────────────────────────────────────────── */
 @media (max-width: 1024px) {
-  #bonzai { grid-template-columns: 56px minmax(0, 1fr); }
+  #bonzai { grid-template-columns: 72px minmax(0, 1fr); }
   .bz-sidebar__wordmark { display: none; }
-  .bz-sidebar__brand { padding: var(--bz-space-3); justify-content: center; }
+  .bz-sidebar__brand { padding: var(--bz-space-2); justify-content: center; }
   .bz-sidebar__label { display: none; }
-  .bz-sidebar__item { justify-content: center; padding: var(--bz-space-2); }
+  .bz-sidebar__item { justify-content: center; min-height: 25px; padding: 3px; }
   .bz-sidebar__item-label { display: none; }
   .bz-sidebar__footer { display: none; }
-  .bz-sidebar__nav { align-items: center; padding: var(--bz-space-3); }
+  .bz-sidebar__nav { align-items: stretch; gap: 1px; padding: var(--bz-space-1); }
+  .bz-sidebar__group { gap: 0; }
+  .bz-sidebar__group--settings { margin-top: 0; }
+  .bz-sidebar__theme-picker { width: 100%; padding: 1px; }
+  .bz-sidebar__theme-arrow { width: 18px; height: 18px; }
+  .bz-sidebar__theme-display { min-width: 24px; }
+  .bz-sidebar__theme-name { display: none; }
+  .bz-sidebar__language { margin: 0; }
 }
 
 /* ─── SUPPRESS SCROLLBARS ───────────────────────────────────────── */

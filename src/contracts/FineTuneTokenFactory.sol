@@ -81,8 +81,13 @@ contract FineTuneToken is ERC20, ERC20Burnable {
     /// @notice Content NFT token ID that this model token represents
     uint256 public immutable contentTokenId;
 
-    /// @notice IPFS/Pinata hash of the model weights
+    /// @notice Local/IPFS metadata reference retained under the legacy getter name.
     string public modelIrysHash;
+    string public metadataURI;
+    string public description;
+    string public imageURI;
+    string public modelKind;
+    bytes32 public validationHash;
 
     /// @notice Creator address
     address public immutable creator;
@@ -100,18 +105,37 @@ contract FineTuneToken is ERC20, ERC20Burnable {
         address recipient,
         uint256 _contentTokenId,
         string memory _modelIrysHash,
-        address _creator
+        address _creator,
+        string memory _description,
+        string memory _imageURI,
+        string memory _modelKind,
+        bytes32 _validationHash
     ) ERC20(name, symbol) {
         require(recipient != address(0), "Invalid recipient");
         require(_creator != address(0), "Invalid creator");
 
         contentTokenId = _contentTokenId;
         modelIrysHash = _modelIrysHash;
+        metadataURI = _modelIrysHash;
+        description = _description;
+        imageURI = _imageURI;
+        modelKind = _modelKind;
+        validationHash = _validationHash;
         creator = _creator;
         factory = msg.sender;
         deployedAt = block.timestamp;
 
         _mint(recipient, totalSupply);
+    }
+
+    function getModelProfile() external view returns (
+        string memory metadataURI_,
+        string memory description_,
+        string memory imageURI_,
+        string memory modelKind_,
+        bytes32 validationHash_
+    ) {
+        return (metadataURI, description, imageURI, modelKind, validationHash);
     }
 
     function getTokenInfo()
@@ -208,6 +232,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
 
     /// @notice BonzaiContent NFT contract (for ownership verification)
     address public contentContract;
+    bool public legacyLaunchEnabled = true;
 
     /// @notice Mapping from content NFT tokenId to model token address
     mapping(uint256 => address) public modelTokens;
@@ -233,6 +258,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
 
     /// @notice Emitted when minimum ETH liquidity is updated
     event MinEthLiquidityUpdated(uint256 oldMin, uint256 newMin);
+    event LegacyLaunchDisabled();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR
@@ -287,6 +313,47 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         string calldata modelIrysHash,
         address creator
     ) external payable nonReentrant returns (address token, bytes32 poolId) {
+        require(legacyLaunchEnabled, "Use validated model launch");
+        return _launchToken(
+            contentTokenId, name, symbol, modelIrysHash, "", "", "fine_tuned", bytes32(0), creator
+        );
+    }
+
+    function launchValidatedToken(
+        uint256 contentTokenId,
+        string calldata name,
+        string calldata symbol,
+        string calldata metadataURI,
+        string calldata description,
+        string calldata imageURI,
+        string calldata modelKind,
+        bytes32 validationHash,
+        address creator
+    ) external payable nonReentrant returns (address token, bytes32 poolId) {
+        require(validationHash != bytes32(0), "Validation required");
+        require(bytes(description).length > 0, "Description required");
+        require(bytes(imageURI).length > 0, "Image required");
+        require(
+            keccak256(bytes(modelKind)) == keccak256("fine_tuned") ||
+            keccak256(bytes(modelKind)) == keccak256("abliterated"),
+            "Invalid model kind"
+        );
+        return _launchToken(
+            contentTokenId, name, symbol, metadataURI, description, imageURI, modelKind, validationHash, creator
+        );
+    }
+
+    function _launchToken(
+        uint256 contentTokenId,
+        string memory name,
+        string memory symbol,
+        string memory metadataURI,
+        string memory description,
+        string memory imageURI,
+        string memory modelKind,
+        bytes32 validationHash,
+        address creator
+    ) internal returns (address token, bytes32 poolId) {
         require(msg.value >= minEthLiquidity, "Insufficient ETH for liquidity");
         require(modelTokens[contentTokenId] == address(0), "Token already launched for this model");
         require(creator != address(0), "Invalid creator address");
@@ -306,8 +373,12 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
             TOTAL_SUPPLY,
             address(this),
             contentTokenId,
-            modelIrysHash,
-            creator
+            metadataURI,
+            creator,
+            description,
+            imageURI,
+            modelKind,
+            validationHash
         );
         token = address(newToken);
 
@@ -378,6 +449,11 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         );
 
         return (token, poolId);
+    }
+
+    function disableLegacyLaunch() external onlyOwner {
+        legacyLaunchEnabled = false;
+        emit LegacyLaunchDisabled();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

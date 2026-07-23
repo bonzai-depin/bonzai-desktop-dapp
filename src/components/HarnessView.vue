@@ -2,12 +2,9 @@
   <div class="bz-tab-shell harness-view">
     <header class="harness-hero">
       <div>
-        <p class="bz-eyebrow">Harness</p>
-        <h1 class="bz-display">Gateway control</h1>
-        <p class="harness-hero__copy">
-          OpenClaw and Hermes expose BonzAI to messaging apps, external tools,
-          local skills, model control, minting, and peer-to-peer routing.
-        </p>
+        <p class="bz-eyebrow">External access</p>
+        <h1 class="bz-h1">Harness</h1>
+        <p class="harness-hero__copy">Manage messaging gateways and command access.</p>
       </div>
       <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="refreshAll">
         <span class="material-symbols-outlined" :class="{ spinning: refreshing }">sync</span>
@@ -62,7 +59,7 @@
       <div class="harness-section-head">
         <div>
           <p class="bz-eyebrow">Command surface</p>
-          <h2 class="bz-h1 fira-sans-condensed-black-italic">Messaging commands</h2>
+          <h2 class="bz-h2 fira-sans-condensed-black-italic">Commands</h2>
         </div>
         <p>Use <code>!bonzai</code> in OpenClaw channels or <code>/bonzai</code> in Hermes.</p>
       </div>
@@ -199,17 +196,15 @@ onMounted(refreshAll);
 .harness-view {
   overflow-y: auto;
   padding: var(--bz-space-6);
-  gap: var(--bz-space-4);
+  gap: var(--bz-space-5);
 }
 .harness-hero {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: var(--bz-space-6);
-  padding: var(--bz-space-6);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r);
-  background: var(--bz-panel);
+  padding-bottom: var(--bz-space-4);
+  border-bottom: 1px solid var(--bz-border);
 }
 .harness-hero__copy {
   max-width: 72ch;
@@ -225,14 +220,14 @@ onMounted(refreshAll);
 .harness-gateway,
 .harness-panel,
 .harness-runtime {
-  padding: var(--bz-space-5);
+  padding: var(--bz-space-4);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r-sm);
   background: var(--bz-panel);
 }
 .harness-gateway {
   display: grid;
-  gap: var(--bz-space-4);
+  gap: var(--bz-space-3);
 }
 .harness-gateway__head {
   display: grid;
@@ -286,10 +281,10 @@ onMounted(refreshAll);
   display: grid;
   gap: var(--bz-space-1);
   padding: var(--bz-space-3);
-  background: var(--bz-canvas);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-sm);
+  background: transparent;
+  border-right: 1px solid var(--bz-border);
 }
+.runtime-item:last-child { border-right: 0; }
 .runtime-item strong {
   color: var(--bz-fg);
   overflow: hidden;
@@ -316,9 +311,7 @@ onMounted(refreshAll);
 .command-group {
   min-width: 0;
   padding: var(--bz-space-4);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-sm);
-  background: var(--bz-canvas);
+  border-top: 1px solid var(--bz-border);
 }
 .command-group h3 {
   margin: 0 0 var(--bz-space-3);
@@ -330,24 +323,33 @@ onMounted(refreshAll);
 .command-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 1fr);
   gap: var(--bz-space-3);
   align-items: start;
   padding: var(--bz-space-3);
-  background: var(--bz-card);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-sm);
+  background: transparent;
+  border-top: 1px solid var(--bz-border);
 }
+.command-row:first-child { border-top: 0; }
 .command-row span {
   color: var(--bz-fg-mid);
   font-size: var(--bz-size-meta);
   line-height: 1.4;
 }
 code {
-  color: var(--bz-purple-300);
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+  color: var(--bz-fg);
   font-family: var(--bz-font-mono);
-  font-size: var(--bz-size-meta);
+  font-size: 13px;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+  user-select: text;
 }
 @media (max-width: 980px) {
   .harness-status-grid,

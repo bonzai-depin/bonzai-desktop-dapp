@@ -112,7 +112,7 @@ BonzAI organizes its capabilities into seven modalities. **All AI generation is 
 | Turbo | FLUX Klein 4B | Fast | Good | Quick iterations |
 | Standard | SDXL + LoRA | Medium | Great | Uncensored content |
 | Advanced | Z-Image Turbo | Fast | Great | Artistic styles |
-| Quality | FLUX Krea | Slow | Excellent | Final renders |
+| Quality | Z-Image Turbo | Slow | Excellent | Final renders |
 
 **Features:**
 - **Readiness System**: Auto-validates and downloads required models

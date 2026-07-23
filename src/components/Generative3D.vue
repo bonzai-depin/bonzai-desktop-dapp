@@ -7,7 +7,7 @@
         <div class="column is-12">
           <header class="bz-screen-header">
             <div class="bz-screen-titleblock">
-              <p class="bz-eyebrow">Create</p>
+              <p class="bz-eyebrow">{{ $t('create.eyebrow') }}</p>
                 <h1 class="bz-h1 fira-sans-condensed-black-italic">
                   <span
                     class="material-symbols-outlined bz-title-icon"
@@ -15,7 +15,7 @@
                   >
                     3d_rotation
                   </span>
-                  Generative 3D
+                  {{ $t('create.threeTitle') }}
                 </h1>
             </div>
             <div class="bz-screen-actions">
@@ -30,7 +30,7 @@
                   {{ showExamples ? "Hide" : "Examples" }}
                 </button>
                 <button
-                  class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                  class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
                   :disabled="isLoading"
                   @click="clearScene"
                   title="Clear scene"
@@ -154,7 +154,7 @@
                     </ul>
                   </div>
                   <button
-                    class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                    class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
                     @click="downloadAllModels"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">download</span>
@@ -350,26 +350,32 @@
             <div class="level-right">
               <div class="level-item buttons">
                 <button
-                  class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                  type="button"
+                  class="bz-iconbtn"
+                  title="Import history"
+                  aria-label="Import history"
                   @click="importHistory()"
                 >
-                  <span class="material-symbols-outlined mr-2">upload</span>
-                  Import
+                  <span class="material-symbols-outlined">upload</span>
                 </button>
                 <button
-                  class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                  type="button"
+                  class="bz-iconbtn"
+                  title="Export history"
+                  aria-label="Export history"
                   @click="exportHistory()"
                   :disabled="objectInferences.length === 0"
                 >
-                  <span class="material-symbols-outlined mr-2">download</span>
-                  Export
+                  <span class="material-symbols-outlined">download</span>
                 </button>
                 <button
-                  class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
+                  type="button"
+                  class="bz-iconbtn bz-iconbtn--danger"
+                  title="Clear history"
+                  aria-label="Clear history"
                   @click="clearHistory()"
                 >
-                  <span class="material-symbols-outlined mr-2">ink_eraser</span>
-                  Clear
+                  <span class="material-symbols-outlined">ink_eraser</span>
                 </button>
               </div>
             </div>

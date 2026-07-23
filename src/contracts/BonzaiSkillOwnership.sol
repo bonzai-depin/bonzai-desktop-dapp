@@ -9,12 +9,16 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
+interface ICompanionTokenFactoryAccess {
+    function companionTokens(uint256 companionTokenId) external view returns (address);
+}
+
 /**
  * @title BonzaiSkillOwnership
  * @author BonzAI Team
  * @notice Co-ownership contract for BonzAI skills. Companions register as co-owners
  *         and earn BONZAI-weighted revenue when skills are purchased.
- * @dev Deployed on Arbitrum One. Receives ETH from BonzaiSkillRegistry.purchaseSkill()
+ * @dev Registers companion owners for token-gated skill access.
  *      and distributes 80% of purchase price to registered companion co-owners.
  *
  * Architecture:
@@ -80,6 +84,10 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Trusted signer for cross-chain attestation (verifies Base chain data)
     address public attestationSigner;
+
+    ICompanionTokenFactoryAccess public companionTokenFactory;
+
+    uint256 public minimumAccessBalance = 1 ether;
 
     /// @notice Skill ID => array of registered companions
     mapping(bytes32 => CompanionRegistration[]) public skillCompanions;
@@ -166,6 +174,8 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
     event BonzaiTokenUpdated(address indexed oldToken, address indexed newToken);
     event CompanionNFTUpdated(address indexed oldNFT, address indexed newNFT);
+    event CompanionTokenFactoryUpdated(address indexed oldFactory, address indexed newFactory);
+    event MinimumAccessBalanceUpdated(uint256 oldBalance, uint256 newBalance);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -359,7 +369,7 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
      * @notice Distribute ETH purchase revenue to registered companion co-owners.
      * @param skillId The skill being purchased
      * @param amount The ETH amount to distribute (must equal msg.value)
-     * @dev Called by BonzaiSkillRegistry.purchaseSkill() with msg.value == amount.
+     * @dev Optional distribution hook for protocol-funded companion rewards.
      *      Distribution is weighted by: BONZAI_balance(companionWallet) * profileScore.
      *      If no co-owners registered or all weights are zero, revenue goes to treasury.
      */
@@ -618,6 +628,20 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         return _companionSkillIndex[companionTokenId][skillId] != 0;
     }
 
+    function hasTokenAccess(address user, bytes32 skillId) external view returns (bool) {
+        if (user == address(0) || address(companionTokenFactory) == address(0)) return false;
+
+        CompanionRegistration[] storage companions = skillCompanions[skillId];
+        for (uint256 i = 0; i < companions.length; ) {
+            address token = companionTokenFactory.companionTokens(companions[i].companionTokenId);
+            if (token != address(0) && IERC20(token).balanceOf(user) >= minimumAccessBalance) {
+                return true;
+            }
+            unchecked { ++i; }
+        }
+        return false;
+    }
+
     /**
      * @notice Get a companion's registration details for a skill
      * @param companionTokenId The companion token ID
@@ -724,6 +748,23 @@ contract BonzaiSkillOwnership is Ownable, ReentrancyGuard, Pausable {
         address old = address(companionNFT);
         companionNFT = IERC721(_companionNFT);
         emit CompanionNFTUpdated(old, _companionNFT);
+    }
+
+    function setCompanionTokenFactory(address _factory)
+        external
+        onlyOwner
+        notZeroAddress(_factory)
+    {
+        address old = address(companionTokenFactory);
+        companionTokenFactory = ICompanionTokenFactoryAccess(_factory);
+        emit CompanionTokenFactoryUpdated(old, _factory);
+    }
+
+    function setMinimumAccessBalance(uint256 _minimumAccessBalance) external onlyOwner {
+        require(_minimumAccessBalance > 0, "Zero access balance");
+        uint256 old = minimumAccessBalance;
+        minimumAccessBalance = _minimumAccessBalance;
+        emit MinimumAccessBalanceUpdated(old, _minimumAccessBalance);
     }
 
     /**

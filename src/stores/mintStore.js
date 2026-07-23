@@ -1,24 +1,26 @@
 /**
  * BonzAI — Mint Store
- * Tracks mint network (Base-only) and modal state.
+ * Tracks the canonical economy-chain mint target and modal state.
  */
 
 import { reactive, readonly, computed } from 'vue';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
+const economyNetwork = CONFIG.networks[ECONOMY_NETWORK_KEY];
 const MINT_NETWORKS = {
-  base: {
-    key: 'base',
-    chainId: 8453,
+  [ECONOMY_NETWORK_KEY]: {
+    key: ECONOMY_NETWORK_KEY,
+    chainId: economyNetwork.chainId,
     standard: 'ERC-721',
     currency: 'ETH',
-    fee: '0.0025',
-    explorer: 'basescan.org',
-    explorerUrl: 'https://basescan.org',
-    label: 'Base',
+    fees: CONFIG.contentNFT.economy.mintFees,
+    explorer: new URL(economyNetwork.explorer).hostname,
+    explorerUrl: economyNetwork.explorer,
+    label: economyNetwork.name,
   },
 };
 
@@ -29,7 +31,7 @@ const STORE_KEY = 'mintNetwork';
 // ═══════════════════════════════════════════════════════════════════════════
 
 const state = reactive({
-  network: 'base',
+  network: ECONOMY_NETWORK_KEY,
   isMinting: false,
   showModal: false,
   mintTarget: null,        // { inferenceType, inferenceId, content, contentType, prompt, generation }
@@ -49,12 +51,11 @@ const getStore = () => window.electronAPI?.store;
  * Initialize store
  */
 async function init() {
-  // Network is always Base — no persistence needed
-  state.network = 'base';
+  state.network = ECONOMY_NETWORK_KEY;
 }
 
 /**
- * Set the active mint network (Base only)
+ * Set the active mint network (economy chain only)
  */
 async function setMintNetwork(key) {
   if (!MINT_NETWORKS[key]) return;
@@ -82,7 +83,7 @@ function closeMintModal() {
 // COMPUTED
 // ═══════════════════════════════════════════════════════════════════════════
 
-const activeMintNetwork = computed(() => MINT_NETWORKS[state.network] || MINT_NETWORKS.base);
+const activeMintNetwork = computed(() => MINT_NETWORKS[state.network] || MINT_NETWORKS[ECONOMY_NETWORK_KEY]);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXPORT

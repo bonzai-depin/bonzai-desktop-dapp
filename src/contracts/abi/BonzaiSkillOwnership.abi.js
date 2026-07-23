@@ -459,6 +459,44 @@ export const BonzaiSkillOwnershipABI = [
       {
         "indexed": true,
         "internalType": "address",
+        "name": "oldFactory",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newFactory",
+        "type": "address"
+      }
+    ],
+    "name": "CompanionTokenFactoryUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldBalance",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newBalance",
+        "type": "uint256"
+      }
+    ],
+    "name": "MinimumAccessBalanceUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "previousOwner",
         "type": "address"
       },
@@ -722,6 +760,19 @@ export const BonzaiSkillOwnershipABI = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "companionTokenFactory",
+    "outputs": [
+      {
+        "internalType": "contract ICompanionTokenFactoryAccess",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "bytes32",
@@ -899,6 +950,30 @@ export const BonzaiSkillOwnershipABI = [
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "skillId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "hasTokenAccess",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "uint256",
         "name": "companionTokenId",
         "type": "uint256"
@@ -915,6 +990,19 @@ export const BonzaiSkillOwnershipABI = [
         "internalType": "bool",
         "name": "",
         "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "minimumAccessBalance",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -1033,6 +1121,32 @@ export const BonzaiSkillOwnershipABI = [
       }
     ],
     "name": "setCompanionNFT",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_factory",
+        "type": "address"
+      }
+    ],
+    "name": "setCompanionTokenFactory",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_minimumAccessBalance",
+        "type": "uint256"
+      }
+    ],
+    "name": "setMinimumAccessBalance",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

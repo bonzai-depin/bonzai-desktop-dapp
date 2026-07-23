@@ -57,6 +57,12 @@ export function backfillAll() {
     WHERE content IS NOT NULL AND length(content) >= 5
   `, "companion_memory");
 
+  counts.memory_notes = _enqueueFromQuery(db, `
+    SELECT id AS sourceId, text_content AS sourceText
+    FROM memory_notes
+    WHERE text_content IS NOT NULL AND length(text_content) >= 5
+  `, "memory_notes");
+
   // ─── generations — prompt + output (truncated) ────────────────────
   counts.generations = _enqueueFromQuery(db, `
     SELECT id AS sourceId,

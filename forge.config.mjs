@@ -149,7 +149,7 @@ export default {
           const llamaDestDir = path.join(serverDir, "llama-runtime", `${platformKey}-${arch}`);
           fs.mkdirSync(llamaDestDir, { recursive: true });
           const ext = platform === "win32" ? ".exe" : "";
-          for (const bin of [`rpc-server${ext}`, `llama-server${ext}`]) {
+          for (const bin of [`rpc-server${ext}`, `llama-server${ext}`, `llama-quantize${ext}`]) {
             const src = path.join(llamaBinDir, bin);
             if (fs.existsSync(src)) {
               copyRecursive(src, path.join(llamaDestDir, bin));

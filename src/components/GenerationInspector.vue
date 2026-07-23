@@ -150,6 +150,7 @@
 import { computed, onMounted, onUnmounted } from "vue";
 import { inspector } from "../services/generationInspector.service.js";
 import BzCloseButton from "./BzCloseButton.vue";
+import { i18n } from "../i18n/index.js";
 
 const g = computed(() => inspector.state.generation);
 
@@ -207,7 +208,7 @@ const formatDate = (value) => {
   if (!value) return "";
   const date = typeof value === "number" ? new Date(value) : new Date(String(value));
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return date.toLocaleString(i18n.state.locale);
 };
 
 const runRows = computed(() => {

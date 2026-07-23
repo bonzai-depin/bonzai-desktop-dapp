@@ -31,6 +31,13 @@ describe("BonzaiServiceTime (recordServiceTime API)", function () {
     );
     await time.increaseTo(await mintPool.genesisTime());
 
+    const BonzaiStakingVault = await ethers.getContractFactory("BonzaiStakingVault");
+    const stakingVault = await BonzaiStakingVault.deploy(
+      await bonzai.getAddress(),
+      POOL_THRESHOLDS.map((value) => ethers.parseEther(String(value))),
+    );
+    await mintPool.setStakingVault(await stakingVault.getAddress());
+
     const BonzaiServiceTime = await ethers.getContractFactory("BonzaiServiceTime");
     const serviceTime = await BonzaiServiceTime.deploy(
       await bonzai.getAddress(),
@@ -38,14 +45,16 @@ describe("BonzaiServiceTime (recordServiceTime API)", function () {
     );
     await mintPool.setServiceTimeContract(await serviceTime.getAddress());
 
-    // Provider holds LVL1 BONZAI by default
+    // Provider stakes LVL1 BONZAI by default.
     await bonzai.mint(provider.address, PROVIDER_LVL1);
+    await bonzai.connect(provider).approve(await stakingVault.getAddress(), PROVIDER_LVL1);
+    await stakingVault.connect(provider).stake(PROVIDER_LVL1, 0);
 
     // Pre-fund the provider side of pool 0
     await mintPool.setContentContract(treasury.address);
     await mintPool.connect(treasury).depositForPool(POOL_TEXT, { value: ethers.parseEther("1") });
 
-    return { serviceTime, mintPool, bonzai, owner, treasury, provider, consumer };
+    return { serviceTime, mintPool, stakingVault, bonzai, owner, treasury, provider, consumer };
   }
 
   describe("Deployment", function () {
@@ -84,9 +93,9 @@ describe("BonzaiServiceTime (recordServiceTime API)", function () {
       expect(await serviceTime.totalServiceTime(0, POOL_TEXT)).to.equal(600);
     });
 
-    it("rejects when provider holds < LVL1", async function () {
-      const { serviceTime, bonzai, provider } = await loadFixture(deployServiceTimeFixture);
-      await bonzai.connect(provider).transfer("0x000000000000000000000000000000000000dEaD", PROVIDER_LVL1);
+    it("rejects when provider stake drops below LVL1", async function () {
+      const { serviceTime, stakingVault, provider } = await loadFixture(deployServiceTimeFixture);
+      await stakingVault.connect(provider).unstake(PROVIDER_LVL1);
       await expect(serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 60))
         .to.be.revertedWithCustomError(serviceTime, "ProviderBelowLvl1");
     });
@@ -138,8 +147,8 @@ describe("BonzaiServiceTime (recordServiceTime API)", function () {
     });
 
     it("checks LVL1 once for the whole batch", async function () {
-      const { serviceTime, bonzai, provider } = await loadFixture(deployServiceTimeFixture);
-      await bonzai.connect(provider).transfer("0x000000000000000000000000000000000000dEaD", PROVIDER_LVL1);
+      const { serviceTime, stakingVault, provider } = await loadFixture(deployServiceTimeFixture);
+      await stakingVault.connect(provider).unstake(PROVIDER_LVL1);
       await expect(serviceTime.connect(provider).recordServiceTimeBatch([{ pipelineId: 0, secondsServed: 60 }]))
         .to.be.revertedWithCustomError(serviceTime, "ProviderBelowLvl1");
     });

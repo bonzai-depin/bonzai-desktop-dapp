@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "companion-experience",
+  "title": "Companion Experience",
+  "surface": "desktop",
+  "viewport": { "width": 1920, "height": 1080 },
+  "capture": {
+    "steps": [
+      { "action": "loadDemoState", "state": "companion-experience" },
+      { "action": "clickRole", "role": "button", "name": "Agents", "exact": false },
+      { "action": "waitForText", "text": "Agentic Skills", "exact": false },
+      { "action": "clickRole", "role": "button", "name": "Open runner" },
+      { "action": "waitForText", "text": "Select Companion", "exact": false },
+      { "action": "scrollToText", "text": "Aurore", "exact": false },
+      { "action": "wait", "ms": 1200 },
+      { "action": "screenshot", "name": "companion-cast" },
+      { "action": "clickText", "text": "Aurore", "exact": false },
+      { "action": "scrollToText", "text": "Select Scenario", "exact": false },
+      { "action": "wait", "ms": 400 },
+      { "action": "screenshot", "name": "scenario-library" },
+      { "action": "clickText", "text": "The Midnight Installation" },
+      { "action": "scrollToText", "text": "Start Roleplay", "exact": false },
+      { "action": "wait", "ms": 400 },
+      { "action": "screenshot", "name": "session-ready" },
+      { "action": "loadDemoState", "state": "companion-chat" },
+      { "action": "clickRole", "role": "button", "name": "Agents", "exact": false },
+      { "action": "clickRole", "role": "button", "name": "Open runner" },
+      { "action": "waitForText", "text": "The Midnight Installation", "exact": false },
+      { "action": "clickRole", "role": "button", "name": "fullscreen" },
+      { "action": "scrollToText", "text": "Done. I moved it to the final room", "exact": false },
+      { "action": "wait", "ms": 800 },
+      { "action": "screenshot", "name": "companion-conversation" }
+    ]
+  },
+  "film": {
+    "transition": 0.4,
+    "segments": [
+      { "type": "cinematic", "start": 0, "duration": 4.5 },
+      {
+        "type": "capture",
+        "capture": "companion-cast",
+        "duration": 6
+      },
+      { "type": "cinematic", "start": 85, "duration": 2.5 },
+      { "type": "capture", "capture": "scenario-library", "duration": 7 },
+      { "type": "cinematic", "start": 70, "duration": 2 },
+      { "type": "capture", "capture": "companion-conversation", "duration": 8 },
+      { "type": "cinematic", "start": 102, "duration": 8 }
+    ]
+  }
+}

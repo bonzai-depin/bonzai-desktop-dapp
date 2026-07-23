@@ -6,7 +6,7 @@
         <div class="column is-12">
           <header class="bz-screen-header">
             <div class="bz-screen-titleblock">
-              <p class="bz-eyebrow">Create</p>
+              <p class="bz-eyebrow">{{ $t('create.eyebrow') }}</p>
                 <h1 class="bz-h1 fira-sans-condensed-black-italic">
                   <span
                     class="material-symbols-outlined bz-title-icon"
@@ -14,7 +14,7 @@
                   >
                     movie
                   </span>
-                  Generative Video
+                  {{ $t('create.videoTitle') }}
                 </h1>
             </div>
           </header>
@@ -25,7 +25,7 @@
             class="video-progress-card"
           >
             <div class="video-progress-card__head">
-              <span class="video-progress-card__title fira-sans-condensed-black-italic">
+              <span class="video-progress-card__title video-progress-card__title--pill fira-sans-condensed-black-italic">
                 <BonzaiPulse variant="dot" />
                 Crafting...
               </span>
@@ -41,19 +41,19 @@
               <div class="column is-12">
                 <div class="video-control-stack">
                   <div class="video-control-row">
-                    <span class="bz-eyebrow">Quality</span>
+                    <span class="bz-eyebrow">{{ $t('create.quality') }}</span>
                     <ModeChipBar v-model="videoModel" :items="videoModelItems" compact />
                   </div>
                   <div v-if="videoModel === 'fast'" class="video-control-row">
-                    <span class="bz-eyebrow">Mode</span>
+                    <span class="bz-eyebrow">{{ $t('create.mode') }}</span>
                     <ModeChipBar v-model="mode" :items="videoModeItems" compact />
                   </div>
                   <div v-else class="video-control-row">
-                    <span class="bz-eyebrow">Mode</span>
+                    <span class="bz-eyebrow">{{ $t('create.mode') }}</span>
                     <span class="bz-pill">Image to video only</span>
                   </div>
                   <div class="video-control-row">
-                    <span class="bz-eyebrow">Duration</span>
+                    <span class="bz-eyebrow">{{ $t('create.duration') }}</span>
                     <ModeChipBar v-model="duration" :items="durationItems" compact />
                   </div>
                   <div class="video-control-row">
@@ -113,7 +113,7 @@
                     </span>
                   </div>
                   <button
-                    class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                    class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
                     @click="prefetchForMode"
                     :disabled="downloads.active || readiness.authRequired"
                     title="(Re)download required files"
@@ -141,7 +141,7 @@
                   class="video-progress-card"
                 >
                   <div class="video-progress-card__head">
-                    <span class="video-progress-card__title fira-sans-condensed-black-italic">
+                    <span class="video-progress-card__title video-progress-card__title--pill fira-sans-condensed-black-italic">
                       <BonzaiPulse variant="dot" />
                       Downloading
                     </span>
@@ -152,7 +152,7 @@
                   <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
                   <div
                     v-if="downloadTaskList.length"
-                    style="max-height: 180px; overflow: auto"
+                    class="video-download-taskwrap"
                   >
                     <ul>
                       <li
@@ -230,7 +230,21 @@
                   :disabled="!canGenerate || !hasAccess"
                   shortcut-hint="⌘⏎"
                   @submit="sendMessage(form.prompt)"
-                />
+                >
+                  <template #tools>
+                    <button
+                      type="button"
+                      class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                      :class="{ 'bz-btn--running': isEnhancingPrompt }"
+                      :disabled="isEnhancingPrompt || !form.prompt.trim()"
+                      title="Rewrite prompt for LTX/Wan video models"
+                      @click="enrichPrompt"
+                    >
+                      <span class="material-symbols-outlined" aria-hidden="true">auto_fix_high</span>
+                      {{ isEnhancingPrompt ? 'Enriching' : 'Enrich prompt' }}
+                    </button>
+                  </template>
+                </GenerativeInput>
               </div>
             </div>
             <hr class="mt-5" />
@@ -250,28 +264,34 @@
               <div class="level-right">
                 <div class="level-item buttons">
                   <button
-                    class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                    type="button"
+                    class="bz-iconbtn"
+                    title="Import history"
+                    aria-label="Import history"
                     @click="importHistory()"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">upload</span>
-                    Import
                   </button>
                   <button
-                    class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+                    type="button"
+                    class="bz-iconbtn"
+                    title="Export history"
+                    aria-label="Export history"
                     @click="exportHistory()"
                     :disabled="!inferences || inferences.length === 0"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">download</span>
-                    Export
                   </button>
                   <button
-                    class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
+                    type="button"
+                    class="bz-iconbtn bz-iconbtn--danger"
+                    title="Clear history"
+                    aria-label="Clear history"
                     @click="clearHistory()"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">
                       ink_eraser
                     </span>
-                    Clear
                   </button>
                 </div>
               </div>
@@ -557,6 +577,7 @@ export default {
       videoModel.value === "quality" ? qualityQualityItems : fastQualityItems,
     );
     const isLoading = ref(false);
+    const isEnhancingPrompt = ref(false);
     const form = reactive({ prompt: "" });
     const pendingDelete = ref(null);
     let pendingDeleteTimer = null;
@@ -1414,6 +1435,33 @@ export default {
         reader.readAsDataURL(file);
       });
 
+    const stripReasoningTags = (value) =>
+      String(value || "")
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/<\/?(?:think|thinking|reasoning|analysis|reflection)\b[^>]*>/gi, "")
+        .trim();
+
+    const enrichPrompt = async () => {
+      const promptText = form.prompt.trim();
+      if (!promptText || isEnhancingPrompt.value) return;
+      isEnhancingPrompt.value = true;
+      const modelName = videoModel.value === "quality" ? "Wan 2.2 image-to-video" : "LTX-2";
+      try {
+        const instruction = `Rewrite this video prompt for ${modelName}. Return only the final prompt, no markdown, no commentary. Make it concrete, cinematic, chronological, and compatible with diffusion video generation. Include subject, setting, camera motion, physical motion, lighting, duration pacing, and avoid contradictory actions.\n\nPrompt: ${promptText}`;
+        const response = await window.electronAPI.chat(instruction, {
+          maxTokens: 280,
+          temperature: 0.35,
+          enableThinking: false,
+        });
+        const enriched = stripReasoningTags(typeof response === "string" ? response : response?.text || "");
+        if (enriched) form.prompt = enriched.replace(/^["']|["']$/g, "");
+      } catch (err) {
+        console.warn("[Video] Prompt enrichment failed:", err?.message || err);
+      } finally {
+        isEnhancingPrompt.value = false;
+      }
+    };
+
     let _lastRoutingMode = 'local';
 
     // /video/enhance is gated by the same _ensure_files_present_or_start
@@ -2048,6 +2096,8 @@ export default {
       generation,
       generationPctRounded,
       generationPctClamped,
+      isEnhancingPrompt,
+      enrichPrompt,
       downloads,
       downloadTaskList,
       onImagePicked,
@@ -2155,6 +2205,13 @@ h2.bz-h2 {
   color: var(--bz-fg);
 }
 
+.video-progress-card {
+  position: sticky;
+  bottom: var(--bz-space-4);
+  z-index: 20;
+  box-shadow: var(--bz-elev-2);
+}
+
 .video-progress-card__head,
 .video-notice {
   display: flex;
@@ -2172,14 +2229,43 @@ h2.bz-h2 {
   line-height: 1;
 }
 
+.video-progress-card__title--pill {
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--bz-fg) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bz-panel) 82%, var(--bz-accent) 18%);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--bz-accent) 24%, transparent);
+  animation: bz-progress-pill-pulse 1.8s ease-in-out infinite;
+}
+
 .video-progress-card__pct {
   color: var(--bz-fg);
+  font-family: "Fira Sans Condensed", var(--bz-font-body);
+  font-weight: 900;
+  font-style: italic;
   font-size: 1.45rem;
   line-height: 1;
 }
 
 .video-progress-card :deep(.bz-pulse-wrap--bar) {
   margin-top: 12px;
+}
+
+@keyframes bz-progress-pill-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--bz-accent) 18%, transparent);
+    transform: translateY(0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--bz-accent) 0%, transparent);
+    transform: translateY(-1px);
+  }
+}
+
+.video-download-taskwrap {
+  max-height: 180px;
+  overflow: auto;
+  margin-top: var(--bz-space-4);
 }
 
 .video-notice--danger {

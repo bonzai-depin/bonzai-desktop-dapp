@@ -13,67 +13,59 @@
 
       <!-- ════════════ Welcome (zero companies) ════════════ -->
       <template v-else-if="!store.state.companies.length">
-        <div class="welcome-header">
-          <h1 class="fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined" aria-hidden="true">storefront</span>
-            Companies
-          </h1>
-        </div>
-
         <div class="company-welcome">
-          <span class="material-symbols-outlined welcome-icon">storefront</span>
-          <h2 class="fira-sans-condensed-black-italic">
-            Zero-Human Companies
-          </h2>
-          <p>
-            Turn a mission into delegated work, deliverables, approvals, and an
-            audit trail without building the operating system by hand.
-          </p>
-
-          <hr />
-
-          <div class="welcome-features">
-            <div class="welcome-feature">
-              <span class="material-symbols-outlined">memory</span>
-              <span>Runs from an editable company charter.</span>
-            </div>
-            <div class="welcome-feature">
-              <span class="material-symbols-outlined">schema</span>
-              <span>Staff roles and adjust the org chart anytime.</span>
-            </div>
-            <div class="welcome-feature">
-              <span class="material-symbols-outlined">rule</span>
-              <span>Review sensitive actions before they run.</span>
-            </div>
-            <div class="welcome-feature">
-              <span class="material-symbols-outlined">account_balance</span>
-              <span>Track money, work, and deliverables in one place.</span>
+          <div class="welcome-hero">
+            <p class="bz-eyebrow">Company</p>
+            <h1 class="fira-sans-condensed-black-italic">
+              Agentic teams
+            </h1>
+            <p class="welcome-lede">Automate one recurring workflow at a time.</p>
+            <div class="welcome-actions">
+              <button class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic" @click="openWizard">
+                <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+                Create first team
+              </button>
+              <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="openForm">
+                <span class="material-symbols-outlined" aria-hidden="true">tune</span>
+                Advanced setup
+              </button>
+              <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="triggerImport">
+                <span class="material-symbols-outlined" aria-hidden="true">upload</span>
+                Import bundle
+              </button>
             </div>
           </div>
 
-          <hr />
-
-          <div class="welcome-actions">
-            <button class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic" @click="openWizard">
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome_motion</span>
-              Form from a template
-            </button>
-            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="openForm">
-              <span class="material-symbols-outlined" aria-hidden="true">edit</span>
-              Advanced form
-            </button>
-            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="triggerImport">
-              <span class="material-symbols-outlined" aria-hidden="true">upload</span>
-              Import bundle
-            </button>
-            <input
-              ref="importInput"
-              type="file"
-              accept=".json"
-              style="display: none"
-              @change="onImportFile"
-            />
+          <div class="welcome-workflows" aria-label="Starter workflows">
+            <article class="welcome-workflow">
+              <span class="welcome-workflow__label">Invoice</span>
+              <strong>Draft invoices from approved work.</strong>
+            </article>
+            <article class="welcome-workflow">
+              <span class="welcome-workflow__label">Collect</span>
+              <strong>Find overdue money.</strong>
+            </article>
+            <article class="welcome-workflow">
+              <span class="welcome-workflow__label">Leads</span>
+              <strong>Revive follow-ups.</strong>
+            </article>
+            <article class="welcome-workflow">
+              <span class="welcome-workflow__label">Payments</span>
+              <strong>Reconcile exceptions.</strong>
+            </article>
+            <article class="welcome-workflow">
+              <span class="welcome-workflow__label">Report</span>
+              <strong>Prepare the weekly brief.</strong>
+            </article>
           </div>
+
+          <input
+            ref="importInput"
+            type="file"
+            accept=".json"
+            style="display: none"
+            @change="onImportFile"
+          />
         </div>
       </template>
 
@@ -81,25 +73,32 @@
       <template v-else>
         <div class="company-toolbar" aria-label="Company controls">
           <div class="company-toolbar__left">
-            <div class="company-toolbar__meta">
-              <span class="company-toolbar__eyebrow">Company workspace</span>
-              <span class="company-toolbar__hint">Build, staff, run, and export agentic work.</span>
-            </div>
-            <div v-if="store.state.companies.length > 1" class="company-switcher">
+            <div class="company-team-nav" aria-label="Team navigation">
+              <button
+                class="company-switcher__chip company-switcher__chip--all"
+                :class="{ 'is-active': teamView === 'all' }"
+                @click="showAllTeams"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">dashboard</span>
+                <span class="company-switcher__name fira-sans-condensed-black-italic">All teams</span>
+              </button>
               <button
                 v-for="c in store.state.companies"
                 :key="c.id"
                 class="company-switcher__chip"
-                :class="{ 'is-active': c.id === store.state.activeId }"
-                @click="store.setActive(c.id)"
+                :class="{ 'is-active': teamView === 'team' && c.id === store.state.activeId }"
+                @click="selectTeam(c.id)"
               >
                 <span class="status-dot" :class="`status-${c.status}`"></span>
                 <span class="company-switcher__name fira-sans-condensed-black-italic">{{ companyName(c) }}</span>
               </button>
-            </div>
-            <div v-else-if="active" class="company-toolbar__current">
-              <span class="status-dot" :class="`status-${active.status}`"></span>
-              <span class="company-toolbar__name fira-sans-condensed-black-italic">{{ companyName(active) }}</span>
+              <span
+                class="company-team-nav__state"
+                title="While BonzAI is open, each active team follows its own schedule. Model and GPU work may queue when the device reaches capacity."
+              >
+                <span class="status-dot" :class="activeTeamCount ? 'status-active' : 'status-paused'"></span>
+                {{ activeTeamCount ? `${activeTeamCount} active` : 'Paused' }}
+              </span>
             </div>
           </div>
           <div class="company-toolbar__actions">
@@ -111,14 +110,19 @@
               class="bz-iconbtn bz-iconbtn--danger company-toolbar__delete"
               :disabled="!active"
               @click="requestDeleteCompany(active)"
-              title="Delete company"
-              aria-label="Delete company"
+              title="Delete team"
+              aria-label="Delete team"
             >
               <span class="material-symbols-outlined" aria-hidden="true">delete</span>
             </button>
-            <button class="bz-btn bz-btn--primary fira-sans-condensed-black-italic" @click="openWizard">
-              <span class="material-symbols-outlined" aria-hidden="true">add_business</span>
-              New company
+            <button
+              class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+              :class="{ 'bz-btn--running': newTeamPaymentBusy }"
+              :disabled="newTeamPaymentBusy"
+              @click="openNewTeam"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">group_add</span>
+              {{ newTeamPaymentBusy ? 'Confirming fee...' : newTeamLabel }}
             </button>
             <input
               ref="importInput"
@@ -131,12 +135,65 @@
         </div>
 
         <!-- Main dashboard for the active company -->
+        <section v-if="teamView === 'all'" class="all-teams-view models__activity--payouts">
+          <div class="all-teams-view__head">
+            <div>
+              <h2 class="fira-sans-condensed-black-italic">All teams</h2>
+            </div>
+            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" :class="{ 'bz-btn--running': allTeamsLoading }" @click="loadAllTeams">
+              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+              Refresh
+            </button>
+          </div>
+          <div class="all-teams-kpis">
+            <article>
+              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.teams }}</strong>
+              <span>teams</span>
+            </article>
+            <article>
+              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.open }}</strong>
+              <span>open</span>
+            </article>
+            <article>
+              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.blocked }}</strong>
+              <span>blocked</span>
+            </article>
+            <article>
+              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.approvals }}</strong>
+              <span>approvals</span>
+            </article>
+          </div>
+          <div class="work-status-tabs all-teams-filters" aria-label="All team work filter">
+            <button
+              v-for="filter in allTeamFilters"
+              :key="filter.id"
+              class="issue-filter__chip"
+              :class="{ 'is-active': allTeamStatus === filter.id }"
+              @click="allTeamStatus = filter.id"
+            >
+              {{ filter.label }}
+            </button>
+          </div>
+          <div v-if="allTeamRows.length" class="all-team-todos">
+            <article v-for="row in allTeamRows" :key="row.team.id + ':' + row.issue.id" class="all-team-todo">
+              <span class="company-pill" :class="statusChip(row.issue.status)">{{ row.issue.status.replace('_', ' ') }}</span>
+              <div>
+                <strong class="fira-sans-condensed-black-italic">{{ row.issue.title }}</strong>
+                <small>{{ companyName(row.team) }} · {{ row.issue.assigneeRole || 'Unassigned' }}</small>
+              </div>
+              <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="selectTeam(row.team.id)">
+                Open
+              </button>
+            </article>
+          </div>
+          <div v-else class="empty">No work matches this filter.</div>
+        </section>
         <CompanyDashboard
-          v-if="active"
+          v-if="active && teamView === 'team'"
           :charter="active"
           :state="store.state"
           @edit="onEdit"
-          @new-company="openWizard"
+          @new-company="openNewTeam"
           @delete-company="requestDeleteCompany(active)"
           @reload="store.refreshActive()"
         />
@@ -174,10 +231,13 @@
 
 <script>
 import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ethers } from "ethers";
 import companyStore from "../stores/companyStore.js";
 import CompanyForm from "./company/CompanyForm.vue";
 import CompanyDashboard from "./company/CompanyDashboard.vue";
 import CompanyIntakeWizard from "./company/CompanyIntakeWizard.vue";
+import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
+import { web3Service } from "../services/web3.service.js";
 
 export default {
   name: "Company",
@@ -188,8 +248,41 @@ export default {
     const showWizard = ref(false);
     const importInput = ref(null);
     const pendingDeleteCompany = ref(null);
+    const teamView = ref("team");
+    const allTeamBundles = ref([]);
+    const allTeamsLoading = ref(false);
+    const allTeamStatus = ref("open");
+    const newTeamPaymentBusy = ref(false);
 
     const active = computed(() => store.activeCompany.value);
+    const activeTeamCount = computed(() =>
+      store.state.companies.filter((company) => company.status === "active").length,
+    );
+    const newTeamLabel = computed(() => store.state.companies.length ? "New team · 0.1 ETH" : "New team · free");
+    const allTeamFilters = [
+      { id: "open", label: "Open" },
+      { id: "in_progress", label: "In Progress" },
+      { id: "blocked", label: "Blocked" },
+      { id: "done", label: "Done" },
+      { id: "cancelled", label: "Cancelled" },
+      { id: "all", label: "All" },
+    ];
+    const allTeamRows = computed(() => {
+      const rows = allTeamBundles.value.flatMap((bundle) =>
+        (bundle.issues || []).map((issue) => ({ team: bundle.company, issue })),
+      );
+      if (allTeamStatus.value === "all") return rows;
+      return rows.filter((row) => row.issue.status === allTeamStatus.value);
+    });
+    const allTeamStats = computed(() => {
+      const rows = allTeamBundles.value.flatMap((bundle) => bundle.issues || []);
+      return {
+        teams: allTeamBundles.value.length,
+        open: rows.filter((issue) => issue.status === "open").length,
+        blocked: rows.filter((issue) => issue.status === "blocked").length,
+        approvals: allTeamBundles.value.reduce((sum, bundle) => sum + (bundle.approvals?.length || 0), 0),
+      };
+    });
 
     onMounted(async () => {
       await store.init();
@@ -201,6 +294,38 @@ export default {
 
     function openForm() { showForm.value = true; }
     function openWizard() { showWizard.value = true; }
+    async function openNewTeam() {
+      if (store.state.companies.length) {
+        const ok = confirm("Adding another workflow team costs a flat 0.1 ETH setup. Continue?");
+        if (!ok) return;
+        newTeamPaymentBusy.value = true;
+        try {
+          await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
+          const signer = await web3Service.getSigner();
+          const tx = await signer.sendTransaction({
+            to: CONFIG.treasury.foundationWallet || CONFIG.treasury.address,
+            value: ethers.parseEther("0.1"),
+          });
+          const receipt = await tx.wait();
+          const receipts = await window.electronAPI?.store?.get?.("company-team-fee-receipts", []) || [];
+          await window.electronAPI?.store?.set?.("company-team-fee-receipts", [
+            ...receipts,
+            {
+              txHash: receipt.hash,
+              amountEth: "0.1",
+              paidAt: new Date().toISOString(),
+              teamIndex: store.state.companies.length + 1,
+            },
+          ]);
+        } catch (err) {
+          alert("Team setup fee was not completed: " + (err.message || err));
+          newTeamPaymentBusy.value = false;
+          return;
+        }
+        newTeamPaymentBusy.value = false;
+      }
+      openWizard();
+    }
     function onFormed() { showForm.value = false; }
     function onEdit() { showForm.value = true; }
     async function onWizardDone(/* charterId */) {
@@ -210,6 +335,31 @@ export default {
     function onWizardCancel() { showWizard.value = false; }
     function companyName(company) {
       return (company?.name || "Untitled Company").replace(/\s+\(Draft\)$/i, "");
+    }
+    async function selectTeam(id) {
+      teamView.value = "team";
+      await store.setActive(id);
+    }
+    async function loadAllTeams() {
+      allTeamsLoading.value = true;
+      try {
+        allTeamBundles.value = await store.loadAllTeamWork();
+      } finally {
+        allTeamsLoading.value = false;
+      }
+    }
+    async function showAllTeams() {
+      teamView.value = "all";
+      await loadAllTeams();
+    }
+    function statusChip(status) {
+      return ({
+        open: "company-pill--info",
+        in_progress: "company-pill--warning",
+        blocked: "company-pill--danger",
+        done: "company-pill--success",
+        cancelled: "company-pill--neutral",
+      })[status] || "company-pill--neutral";
     }
     function requestDeleteCompany(company) {
       if (!company) return;
@@ -244,9 +394,11 @@ export default {
 
     return {
       store, active, showForm, showWizard,
-      openForm, openWizard, onFormed, onEdit, onWizardDone, onWizardCancel,
+      openForm, openWizard, openNewTeam, onFormed, onEdit, onWizardDone, onWizardCancel,
       triggerImport, onImportFile, importInput, companyName,
       pendingDeleteCompany, requestDeleteCompany, dismissDeleteCompany, confirmDeleteCompany,
+      teamView, selectTeam, showAllTeams, loadAllTeams, allTeamsLoading, activeTeamCount,
+      allTeamFilters, allTeamStatus, allTeamRows, allTeamStats, statusChip, newTeamLabel, newTeamPaymentBusy,
     };
   },
 };
@@ -368,6 +520,142 @@ hr {
 }
 .company-toolbar__delete {
   flex: 0 0 auto;
+}
+.company-team-nav {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+}
+.company-team-nav__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  min-height: 32px;
+  padding: 0 var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: help;
+}
+.company-switcher__chip--all .material-symbols-outlined {
+  font-size: 17px !important;
+  color: var(--bz-purple-300);
+  -webkit-text-fill-color: currentColor;
+  background: none;
+}
+.all-teams-view {
+  flex: 1;
+  min-height: 0;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-card);
+  overflow: auto;
+}
+.all-teams-view__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+.all-teams-view__head h2 {
+  margin: 0 !important;
+  color: var(--bz-fg) !important;
+  font-size: 30px !important;
+  line-height: 1;
+  text-align: left !important;
+}
+.all-teams-view__head p {
+  margin: var(--bz-space-1) 0 0 !important;
+  color: var(--bz-fg-mid) !important;
+  font-size: 13px !important;
+  line-height: 1.45;
+  text-align: left !important;
+}
+.all-teams-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+  margin: var(--bz-space-3) 0;
+}
+.all-teams-kpis article {
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.all-teams-kpis strong,
+.all-teams-kpis span {
+  display: block;
+}
+.all-teams-kpis strong {
+  color: var(--bz-fg);
+  font-size: 24px;
+  line-height: 1;
+}
+.all-teams-kpis span {
+  margin-top: 4px;
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.all-teams-filters,
+.work-status-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+  margin-bottom: var(--bz-space-3);
+}
+.issue-filter__chip {
+  min-height: 32px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.issue-filter__chip:hover,
+.issue-filter__chip.is-active {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-soft);
+  color: var(--bz-fg);
+}
+.all-team-todos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+}
+.all-team-todo {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--bz-space-3);
+  align-items: center;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.all-team-todo strong,
+.all-team-todo small {
+  display: block;
+}
+.all-team-todo strong {
+  color: var(--bz-fg);
+  font-size: 17px;
+  line-height: 1;
+}
+.all-team-todo small {
+  margin-top: 4px;
+  color: var(--bz-fg-low);
+  font-size: 12px;
 }
 .company-shell :deep(.dash) {
   flex: 1;
@@ -691,62 +979,141 @@ hr {
 
 /* ───────── Welcome panel ───────── */
 .company-welcome {
-  text-align: center;
-  padding: var(--bz-space-8) var(--bz-space-7) !important;
-  margin-top: 2em;
+  width: min(1180px, 100%);
+  margin: var(--bz-space-6) auto 0;
   color: var(--bz-fg);
+}
+.welcome-hero {
   max-width: 760px;
-  margin-left: auto;
-  margin-right: auto;
-  background: var(--bz-card);
+  padding: var(--bz-space-4) 0 var(--bz-space-5);
+}
+.welcome-eyebrow {
+  margin: 0 0 var(--bz-space-2) !important;
+  color: var(--bz-purple-100) !important;
+  font-family: var(--bz-font-ui);
+  font-size: 11px !important;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-align: left !important;
+  text-transform: uppercase;
+}
+.welcome-hero h1 {
+  max-width: 100%;
+  margin: 0 !important;
+  color: var(--bz-fg) !important;
+  font-size: var(--bz-size-h1) !important;
+  line-height: var(--bz-line-tight);
+  text-align: left !important;
+}
+.welcome-lede {
+  max-width: 720px;
+  margin: var(--bz-space-2) 0 0 !important;
+  color: var(--bz-fg-mid) !important;
+  font-size: var(--bz-size-body) !important;
+  line-height: 1.45;
+  text-align: left !important;
+}
+.welcome-workflows {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  margin-top: var(--bz-space-4);
+  border-block: 1px solid var(--bz-border);
+}
+.welcome-workflow {
+  min-width: 0;
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-2);
+  justify-content: center;
+  padding: var(--bz-space-3);
+  border-right: 1px solid var(--bz-border);
+  background: transparent;
+}
+.welcome-workflow:last-child { border-right: 0; }
+.welcome-workflow__label {
+  width: fit-content;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--bz-space-2);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--bz-fg-low);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.welcome-workflow strong {
+  color: var(--bz-fg);
+  font-size: 14px;
+  line-height: 1.2;
+}
+.welcome-workflow p {
+  margin: 0 !important;
+  color: var(--bz-fg-mid) !important;
+  font-size: 13px !important;
+  line-height: 1.42;
+  text-align: left !important;
+}
+.welcome-trust {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-3);
+}
+.welcome-trust__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3) var(--bz-space-4);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r);
-  backdrop-filter: blur(18px);
+  background: color-mix(in srgb, var(--bz-card) 72%, transparent);
+  color: var(--bz-fg-mid);
+  font-size: 14px;
+  line-height: 1.35;
 }
-.welcome-icon {
-  font-size: 96px !important;
-  opacity: 0.5;
-  margin-bottom: 0.5em;
-}
-.company-welcome h2 {
-  font-size: 42px !important;
-  margin-bottom: 0.5em !important;
-  color: var(--bz-fg) !important;
-  text-align: center !important;
-}
-.company-welcome p {
-  font-size: 18px !important;
-  margin-bottom: 1em !important;
-  text-align: center !important;
-  color: var(--bz-fg) !important;
-}
-.welcome-features {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.85em 1.5em;
-  text-align: left;
-  margin: 0 auto;
-  max-width: 540px;
-}
-.welcome-feature {
-  display: flex;
-  align-items: center;
-  gap: 0.6em;
-  font-size: 16px;
-  color: var(--bz-fg);
-}
-.welcome-feature .material-symbols-outlined {
-  font-size: 24px;
+.welcome-trust__item .material-symbols-outlined {
   color: var(--bz-emerald-500);
-  flex-shrink: 0;
+  font-size: 20px;
 }
 .welcome-actions {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--bz-space-3);
-  margin-top: 1em;
+  margin-top: var(--bz-space-5);
+}
+
+@media (max-width: 1180px) {
+  .welcome-workflows {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .company-shell {
+    padding: var(--bz-space-3) !important;
+  }
+  .welcome-hero h1 {
+    max-width: 100%;
+    font-size: 42px !important;
+  }
+  .welcome-workflows,
+  .welcome-trust {
+    grid-template-columns: 1fr;
+  }
+  .welcome-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .bz-iconbtn--warning {

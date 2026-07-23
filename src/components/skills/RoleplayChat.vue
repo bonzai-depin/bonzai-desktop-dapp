@@ -36,40 +36,28 @@
           <div class="import-export-buttons">
             <!-- Create button always visible - generation is gated -->
             <button
-              class="bz-btn bz-btn--success is-small mr-5"
+              class="bz-iconbtn"
               @click="openCustomCompanion"
+              title="Create companion"
+              aria-label="Create companion"
             >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                add
-              </span>
-              Create
+              <span class="material-symbols-outlined">add</span>
             </button>
             <button
-              class="bz-btn bz-btn--primary is-small mr-5"
+              class="bz-iconbtn"
               @click="triggerCompanionImport"
+              title="Import companions"
+              aria-label="Import companions"
             >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                upload
-              </span>
-              Import
+              <span class="material-symbols-outlined">upload</span>
             </button>
             <button
-              class="bz-btn bz-btn--warning is-small"
+              class="bz-iconbtn"
               @click="exportCompanions"
+              title="Export companions"
+              aria-label="Export companions"
             >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                download
-              </span>
-              Export
+              <span class="material-symbols-outlined">download</span>
             </button>
           </div>
         </div>
@@ -400,7 +388,7 @@
                   <span
                     v-if="companion.agentWallet"
                     class="skill-chip skill-chip--success ml-2"
-                    title="Agent wallet enabled for x402 payments"
+                    title="Companion revenue wallet"
                   >
                     <span
                       class="material-symbols-outlined"
@@ -514,7 +502,7 @@
                     </div>
                     <div class="control is-expanded">
                       <button
-                        class="bz-btn bz-btn--warning is-small skill-fullwidth"
+                        class="bz-btn bz-btn--agent-cta is-small skill-fullwidth"
                         :class="{
                           'bz-btn--running':
                             isLaunchingToken &&
@@ -555,7 +543,7 @@
                   <!-- Connect Wallet first if not connected -->
                   <button
                     v-if="!isConnected"
-                    class="bz-btn bz-btn--success is-medium skill-fullwidth"
+                    class="bz-btn bz-btn--agent-cta is-medium skill-fullwidth"
                     @click.stop="connectWallet"
                     title="Connect wallet to mint"
                   >
@@ -565,7 +553,7 @@
                   <!-- Mint Button (always Base) -->
                   <button
                     v-else
-                    class="bz-btn bz-btn--warning is-medium skill-fullwidth"
+                    class="bz-btn bz-btn--agent-cta is-medium skill-fullwidth"
                     :class="{
                       'bz-btn--running':
                         isMintingNFT && mintingCompanionId === companion.id,
@@ -584,7 +572,7 @@
                     >
                       token
                     </span>
-                    Mint 0.25 ETH
+                    Mint + launch token · 0.30 ETH
                   </button>
                 </div>
               </div>
@@ -623,7 +611,7 @@
             <!-- Generate button - gated by access level -->
             <template v-if="hasAccess">
               <button
-                class="bz-btn bz-btn--success is-medium mt-2 mr-5"
+                class="bz-btn bz-btn--agent-cta is-medium mt-2 mr-5"
                 @click="generateCustomCompanion"
                 :disabled="!customCompanionPrompt || isGenerating"
               >
@@ -641,7 +629,7 @@
             </template>
             <button
               v-else
-              class="bz-btn bz-btn--warning is-medium mt-2 mr-5 fira-sans-condensed-black-italic"
+              class="bz-btn bz-btn--agent-cta is-medium mt-2 mr-5 fira-sans-condensed-black-italic"
               @click="openUnlockModal"
             >
               <span
@@ -841,7 +829,7 @@
                   class="buttons mt-3"
                 >
                   <button
-                    class="bz-btn bz-btn--success is-medium mr-3"
+                    class="bz-btn bz-btn--agent-cta is-medium mr-3"
                     @click="useCustomCompanion"
                   >
                     <span class="material-symbols-outlined mr-2">check</span>
@@ -861,7 +849,7 @@
                   </button>
                   <button
                     v-if="!customCompanion.image"
-                    class="bz-btn bz-btn--warning is-medium"
+                    class="bz-btn bz-btn--agent-cta is-medium"
                     @click="regenerateCompanionImage(customCompanion)"
                     :disabled="isRegeneratingImage"
                   >
@@ -903,29 +891,21 @@
           </h3>
           <div class="sessions-actions">
             <button
-              class="bz-btn bz-btn--primary is-small mr-5"
+              class="bz-iconbtn"
               @click="triggerImportSession"
+              title="Import sessions"
+              aria-label="Import sessions"
             >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                upload
-              </span>
-              Import
+              <span class="material-symbols-outlined">upload</span>
             </button>
             <button
-              class="bz-btn bz-btn--warning is-small"
+              class="bz-iconbtn"
               @click="exportAllSessions"
               :disabled="Object.keys(savedSessions).length === 0"
+              title="Export sessions"
+              aria-label="Export sessions"
             >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                download
-              </span>
-              Export
+              <span class="material-symbols-outlined">download</span>
             </button>
           </div>
         </div>
@@ -972,16 +952,17 @@
             </div>
             <div class="session-actions">
               <button
-                class="bz-btn bz-btn--primary is-medium mr-5"
+                class="bz-btn bz-btn--agent-cta is-medium mr-5"
                 @click="resumeSession(session.key)"
               >
                 <span class="material-symbols-outlined mr-1">play_arrow</span>
                 Resume
               </button>
               <button
-                class="bz-btn bz-btn--warning is-medium mr-5"
+                class="bz-iconbtn mr-5"
                 @click="exportSession(session.key)"
                 title="Export session"
+                aria-label="Export session"
               >
                 <span class="material-symbols-outlined">download</span>
               </button>
@@ -1014,37 +995,28 @@
           <div class="import-export-buttons">
             <!-- Create button always visible - generation is gated -->
             <button
-              class="bz-btn bz-btn--success is-small mr-5"
+              class="bz-iconbtn"
               @click="openCustomScenario"
+              title="Create scenario"
+              aria-label="Create scenario"
             >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                add
-              </span>
-              Create
+              <span class="material-symbols-outlined">add</span>
             </button>
             <button
-              class="bz-btn bz-btn--primary is-small mr-5"
+              class="bz-iconbtn"
               @click="triggerScenarioImport"
+              title="Import scenarios"
+              aria-label="Import scenarios"
             >
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                upload
-              </span>
-              Import
+              <span class="material-symbols-outlined">upload</span>
             </button>
-            <button class="bz-btn bz-btn--warning is-small" @click="exportScenarios">
-              <span
-                class="material-symbols-outlined mr-2"
-                style="font-size: 14px"
-              >
-                download
-              </span>
-              Export
+            <button
+              class="bz-iconbtn"
+              @click="exportScenarios"
+              title="Export scenarios"
+              aria-label="Export scenarios"
+            >
+              <span class="material-symbols-outlined">download</span>
             </button>
           </div>
         </div>
@@ -1239,7 +1211,7 @@
             </template>
             <button
               v-else
-              class="bz-btn bz-btn--warning is-medium fira-sans-condensed-black-italic mr-5"
+              class="bz-btn bz-btn--agent-cta is-medium fira-sans-condensed-black-italic mr-5"
               @click="openUnlockModal"
             >
               <span
@@ -1386,7 +1358,7 @@
                 class="buttons mt-4"
               >
                 <button
-                  class="bz-btn bz-btn--success is-medium"
+                  class="bz-btn bz-btn--agent-cta is-medium"
                   @click="useCustomScenario"
                 >
                   <span class="material-symbols-outlined mr-1">check</span>
@@ -1429,12 +1401,12 @@
       </div>
 
       <!-- Settings -->
-      <div class="models__activity--payouts mb-5">
-        <div class="columns">
+      <div class="models__activity--payouts roleplay-settings mb-5">
+        <div class="columns roleplay-settings__grid">
           <div class="column is-6">
-            <div class="field has-text-left">
+            <div class="field has-text-left roleplay-settings__panel">
               <label
-                class="label has-text-white fira-sans-condensed-black-italic is-size-3"
+                class="label roleplay-settings__label fira-sans-condensed-black-italic"
               >
                 <span class="material-symbols-outlined mr-2 is-size-1">
                   mode_heat
@@ -1466,9 +1438,9 @@
           </div>
 
           <div class="column is-6">
-            <div class="field has-text-left">
+            <div class="field has-text-left roleplay-settings__panel">
               <label
-                class="label has-text-white fira-sans-condensed-black-italic is-size-3"
+                class="label roleplay-settings__label fira-sans-condensed-black-italic"
               >
                 <span class="material-symbols-outlined mr-2 is-size-1">
                   chat
@@ -1607,9 +1579,10 @@
         </div>
 
         <!-- User Profile (global — applies to all companions and sessions) -->
-        <div class="user-profile-section mt-4">
-          <h4 class="fira-sans-condensed-black-italic is-size-3 mb-4">
-            <span class="has-text-brand">Your Profile</span>
+        <div class="user-profile-section roleplay-settings__panel mt-4">
+          <h4 class="roleplay-settings__label fira-sans-condensed-black-italic mb-4">
+            <span class="material-symbols-outlined mr-2 is-size-2">badge</span>
+            <span>Your Profile</span>
           </h4>
           <!-- User Info -->
           <div class="user-info">
@@ -1692,22 +1665,11 @@
                 </button>
               </div>
 
-              <p
-                v-if="parseFloat(agentWalletBalance || 0) < 0.001"
-                class="is-size-7 has-text-warning mt-2"
-              >
-                <span
-                  class="material-symbols-outlined"
-                  style="font-size: 12px; vertical-align: middle"
-                >
-                  info
-                </span>
-                Low balance - send ETH to fund purchases
-              </p>
+              <p class="is-size-7 has-text-grey mt-2">Revenue received by this companion remains in its wallet.</p>
             </div>
 
             <!-- Daily Spending Stats -->
-            <div class="spending-stats skill-card mt-3">
+            <div v-if="companionPaymentsEnabled" class="spending-stats skill-card mt-3">
               <div class="spending-stats-header">
                 <span class="material-symbols-outlined">trending_up</span>
                 <span>Today's Spending</span>
@@ -1719,7 +1681,7 @@
                     class="progress-bar-fill"
                     :style="{ width: dailySpendingPercentage + '%' }"
                     :class="{
-                      'bz-btn--warning': dailySpendingPercentage > 75,
+                      'bz-btn--agent-cta': dailySpendingPercentage > 75,
                       'bz-btn--destructive': dailySpendingPercentage >= 100,
                     }"
                   ></div>
@@ -1746,7 +1708,7 @@
           <!-- Right column: Spending Limits & Preferences -->
           <div class="column is-6">
             <!-- Spending Limits -->
-            <div class="spending-limits skill-card">
+            <div v-if="companionPaymentsEnabled" class="spending-limits skill-card">
               <div class="spending-limits-header">
                 <span class="material-symbols-outlined">tune</span>
                 <span>Spending Controls</span>
@@ -1766,7 +1728,7 @@
               <!-- Max per Transaction -->
               <div
                 class="field mb-3"
-                v-if="settings.autonomous.enablePurchases"
+                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
               >
                 <label class="label has-text-grey-light is-size-7">
                   Max per transaction
@@ -1787,7 +1749,7 @@
               <!-- Daily Limit -->
               <div
                 class="field mb-3"
-                v-if="settings.autonomous.enablePurchases"
+                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
               >
                 <label class="label has-text-grey-light is-size-7">
                   Daily spending limit
@@ -1859,10 +1821,10 @@
       <!-- Autonomous Mode Integration (only shown when user has access) -->
       <div
         v-if="selectedCompanion && hasAccess"
-        class="models__activity--payouts mb-5"
+        class="models__activity--payouts roleplay-settings roleplay-away-mode mb-5"
       >
         <h3
-          class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
+          class="roleplay-settings__label fira-sans-condensed-black-italic has-text-left mb-4"
         >
           <span class="material-symbols-outlined mr-2 is-size-2">autoplay</span>
           Away Mode
@@ -1940,13 +1902,14 @@
 
               <!-- x402 Autonomous Purchases Section -->
               <label
+                v-if="companionPaymentsEnabled"
                 class="label has-text-white is-size-5 mb-3 mt-5 fira-sans-condensed-black-italic"
               >
                 <span class="has-text-brand">Autonomous Purchases</span>
               </label>
 
               <!-- Enable Autonomous Purchases -->
-              <div class="field mb-4">
+              <div v-if="companionPaymentsEnabled" class="field mb-4">
                 <label class="checkbox has-text-grey-light is-size-7">
                   <input
                     type="checkbox"
@@ -1962,7 +1925,7 @@
               <!-- Max Purchase Amount -->
               <div
                 class="field mb-4"
-                v-if="settings.autonomous.enablePurchases"
+                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
               >
                 <label
                   class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
@@ -1984,7 +1947,7 @@
               <!-- Daily Spending Limit -->
               <div
                 class="field mb-4"
-                v-if="settings.autonomous.enablePurchases"
+                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
               >
                 <label
                   class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
@@ -2006,7 +1969,7 @@
               <!-- Purchase Mode -->
               <div
                 class="field mb-4"
-                v-if="settings.autonomous.enablePurchases"
+                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
               >
                 <label
                   class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
@@ -2029,7 +1992,7 @@
 
               <!-- Seller Registry Panel -->
               <div
-                v-if="settings.autonomous.enablePurchases"
+                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
                 class="skill-card p-3 mb-4"
               >
                 <p
@@ -2117,7 +2080,7 @@
                       </div>
 
                       <button
-                        class="bz-btn bz-btn--sm is-success skill-float-right"
+                        class="bz-btn bz-btn--sm bz-btn--agent-cta skill-float-right"
                         style="position: relative; right: -18px;"
                         @click="addCustomSellerEntry"
                         :disabled="
@@ -2134,7 +2097,7 @@
               <!-- Agent Wallet Status -->
               <div
                 class="field"
-                v-if="settings.autonomous.enablePurchases && selectedCompanion"
+                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases && selectedCompanion"
               >
                 <div class="agent-wallet-status skill-card p-3">
                   <div
@@ -2237,7 +2200,7 @@
                   <div>
                     <button
                       v-if="!socialConnected[platform.id]"
-                      class="bz-btn bz-btn--sm is-success"
+                      class="bz-btn bz-btn--sm bz-btn--agent-cta"
                       :class="{
                         'bz-btn--running': isConnectingSocial === platform.id,
                       }"
@@ -2275,7 +2238,7 @@
                 </div>
                 <div class="buttons are-small">
                   <button
-                    class="bz-btn bz-btn--success is-small"
+                    class="bz-btn bz-btn--agent-cta is-small"
                     @click="saveMoltbookCredentials"
                     :disabled="!moltbookApiKey"
                     :class="{ 'bz-btn--running': isSavingMoltbook }"
@@ -2386,11 +2349,11 @@
       </div>
 
       <!-- Start Button (gated by access level) -->
-      <div class="control has-text-center models__activity--payouts">
+      <div class="control has-text-centered models__activity--payouts roleplay-start-panel">
         <!-- Show unlock button if user doesn't have access -->
         <button
           v-if="!hasAccess"
-          class="bz-btn bz-btn--warning is-large fira-sans-condensed-black-italic"
+          class="bz-btn bz-btn--agent-cta is-large fira-sans-condensed-black-italic"
           @click="openUnlockModal"
         >
           <span class="material-symbols-outlined mr-2" style="font-size: 24px">
@@ -2413,7 +2376,7 @@
           <template
             v-if="missingMandatory.length > 0 && modelAvailabilityChecked"
           >
-            <button class="bz-btn bz-btn--success is-large" disabled>
+            <button class="bz-btn bz-btn--agent-cta is-large roleplay-primary-start" disabled>
               <span class="material-symbols-outlined mr-2">play_arrow</span>
               {{ matchingSession ? "Start New / Resume" : "Start Roleplay" }}
             </button>
@@ -2432,7 +2395,7 @@
             v-else-if="missingOptional.length > 0 && modelAvailabilityChecked"
           >
             <button
-              class="bz-btn bz-btn--warning is-large"
+              class="bz-btn bz-btn--agent-cta is-large roleplay-primary-start"
               @click="downloadMissingOptional"
             >
               <span class="material-symbols-outlined mr-2">download</span>
@@ -2445,7 +2408,7 @@
               needed for selected media
             </p>
             <button
-              class="bz-btn bz-btn--success is-medium mt-2"
+              class="bz-btn bz-btn--agent-cta is-medium mt-2"
               :disabled="!canStart"
               @click="startNewChat"
             >
@@ -2456,7 +2419,7 @@
           <!-- Case 3: All ready → normal start -->
           <template v-else>
             <button
-              class="bz-btn bz-btn--success is-large"
+              class="bz-btn bz-btn--agent-cta is-large roleplay-primary-start"
               :disabled="!canStart"
               @click="startNewChat"
             >
@@ -2501,14 +2464,14 @@
             </p>
             <div class="buttons is-centered">
               <button
-                class="bz-btn bz-btn--primary is-medium"
+                class="bz-btn bz-btn--agent-cta is-medium"
                 @click="resumeMatchingSession"
               >
                 <span class="material-symbols-outlined mr-2">replay</span>
                 Resume Session
               </button>
               <button
-                class="bz-btn bz-btn--warning is-medium"
+                class="bz-btn bz-btn--agent-cta is-medium"
                 @click="forceStartNewChat"
               >
                 <span class="material-symbols-outlined mr-2">add</span>
@@ -2850,6 +2813,7 @@
                       :progress="messageAudioProgress[messageAudioId(msg, idx)] || 0"
                       :bars="64"
                       :height="64"
+                      @seek="(progress) => seekMessageAudio(msg, idx, progress)"
                     />
                   </div>
                 </div>
@@ -2898,6 +2862,7 @@
               <!-- Purchase Intent (when companion expresses interest in something user recommended) -->
               <div
                 v-if="
+                  companionPaymentsEnabled &&
                   msg.purchaseIntent &&
                   !msg.purchaseApproved &&
                   !msg.purchaseRejected
@@ -2933,7 +2898,7 @@
                 </div>
                 <div class="purchase-intent-actions">
                   <button
-                    class="bz-btn bz-btn--sm is-success"
+                    class="bz-btn bz-btn--sm bz-btn--agent-cta"
                     @click="approvePurchase(idx)"
                     :disabled="!agentWalletAddress"
                   >
@@ -3113,7 +3078,7 @@
           <!-- Image Upload Button -->
           <div class="control">
             <button
-              class="bz-btn bz-btn--lg is-success"
+              class="bz-btn bz-btn--lg bz-btn--agent-cta"
               @click="triggerImageUpload"
               :disabled="isAnalyzingImage"
               :class="{ 'bz-btn--primary': uploadedImage }"
@@ -3153,7 +3118,7 @@
           </div>
           <div class="control">
             <button
-              class="bz-btn bz-btn--success is-large"
+              class="bz-btn bz-btn--agent-cta is-large"
               @click="sendMessage()"
               :disabled="
                 isInitializingSession || (!userMessage.trim() && !uploadedImage)
@@ -3343,7 +3308,7 @@
                     {{ tx.service || "Unknown Service" }}
                   </p>
                   <p class="has-text-grey-light is-size-7">
-                    {{ new Date(tx.timestamp).toLocaleString() }}
+                    {{ $d(tx.timestamp) }}
                   </p>
                   <p class="has-text-grey is-size-7" v-if="tx.provider">
                     Provider: {{ truncateAddress(tx.provider) }}
@@ -3461,14 +3426,13 @@ import { io } from "socket.io-client";
 import { ethers } from "ethers";
 import { agentWalletService } from "../../services/agentWallet.service.js";
 import { walletProviderService } from "../../services/walletProvider.service.js";
-import { x402Service } from "../../services/x402.service.js";
-import { x402ExecutorService } from "../../services/x402Executor.service.js";
 import { purchaseExecutorService } from "../../services/purchaseExecutor.service.js";
 import { sellerRegistryService } from "../../services/sellerRegistry.service.js";
 import { useBonzaiWeb3 } from "../../composables/useBonzaiWeb3.js";
 import { requestOpenLevelModal } from "../../services/level.service.js";
 import { companionTokenService } from "../../services/companionToken.service.js";
 import { storageService } from "../../services/storage.service.js";
+import { memoryService } from "../../services/memory.service.js";
 import {
   getEip1193Provider,
   switchNetwork,
@@ -3699,8 +3663,8 @@ export default {
         idleTimeout: 5, // Minutes before considering user idle
         messageInterval: 15, // Minutes between autonomous messages
         maxMessages: 12, // Max messages before auto mode stops
-        // x402 Payment settings (ETH-only)
-        enablePurchases: false, // Allow autonomous x402 payments
+        // Companion wallets receive revenue but cannot initiate payments.
+        enablePurchases: false,
         purchaseMode: "default", // 'default' or 'specialized'
         maxPurchaseAmount: "0.001", // Max ETH per transaction (~$2)
         dailySpendingLimit: "0.005", // Max ETH per day (~$10)
@@ -3725,6 +3689,7 @@ export default {
         moltbook: { enabled: false },
       },
     });
+    const companionPaymentsEnabled = false;
 
     // Message queue for handling messages during generation
     const pendingMessage = ref(null); // Stores the latest pending message (only keeps one)
@@ -4306,13 +4271,13 @@ export default {
         case "ethereum":
           return "is-primary";
         case "arbitrum":
-          return "bz-btn--warning";
+          return "bz-btn--agent-cta";
         case "base":
           return "is-link"; // Blue for Base/Coinbase
         case "lukso":
           return "bz-btn--primary";
         default:
-          return "bz-btn--warning";
+          return "bz-btn--agent-cta";
       }
     };
 
@@ -5156,7 +5121,7 @@ export default {
       try {
         const balance = await walletProviderService.getAgentWalletBalance(
           selectedCompanion.value.id,
-          8453, // Base
+          CONFIG.agentWallet.defaultChainId,
         );
         agentWalletBalance.value = balance;
         console.log(`[x402] Balance updated: ${balance} ETH`);
@@ -5231,137 +5196,15 @@ export default {
     /**
      * Check if a purchase is allowed based on settings (ETH amounts)
      */
-    const canMakePurchase = (amountEth) => {
-      if (!settings.value.autonomous.enablePurchases) {
-        return { allowed: false, reason: "Purchases disabled" };
-      }
+    const canMakePurchase = () => ({
+      allowed: false,
+      reason: 'Companion wallets are revenue-only',
+    });
 
-      const maxTx = parseFloat(
-        settings.value.autonomous.maxPurchaseAmount || "0.001",
-      );
-      if (amountEth > maxTx) {
-        return {
-          allowed: false,
-          reason: `Exceeds max per transaction (${maxTx} ETH)`,
-        };
-      }
-
-      const dailyLimit = parseFloat(
-        settings.value.autonomous.dailySpendingLimit || "0.005",
-      );
-      if (dailySpentAmount.value + amountEth > dailyLimit) {
-        return {
-          allowed: false,
-          reason: `Exceeds daily limit (${dailyLimit} ETH)`,
-        };
-      }
-
-      if (!agentWalletAddress.value) {
-        return {
-          allowed: false,
-          reason: "No agent wallet - mint to blockchain first",
-        };
-      }
-
-      const balance = parseFloat(agentWalletBalance.value || "0");
-      if (balance < amountEth) {
-        return {
-          allowed: false,
-          reason: `Insufficient balance (${balance.toFixed(6)} ETH)`,
-        };
-      }
-
-      return { allowed: true };
-    };
-
-    /**
-     * Execute an x402 ETH payment
-     */
-    const executeX402Payment = async (paymentRequest) => {
-      const { provider, service, amountEth, endpoint, params } = paymentRequest;
-
-      // Validate purchase
-      const check = canMakePurchase(parseFloat(amountEth));
-      if (!check.allowed) {
-        console.warn(`[x402] Payment blocked: ${check.reason}`);
-        return { success: false, error: check.reason };
-      }
-
-      try {
-        // Get agent wallet signer
-        const signer = await walletProviderService.getAgentWalletSigner(
-          selectedCompanion.value.id,
-          8453, // Base
-        );
-
-        // Send ETH directly
-        const amountWei = ethers.parseEther(amountEth.toString());
-        const paymentResult = await x402Service.sendPayment(
-          signer,
-          provider,
-          amountWei.toString(),
-        );
-
-        if (!paymentResult.success) {
-          throw new Error("ETH transfer failed");
-        }
-
-        // Make request with payment proof (if endpoint provided)
-        let result = { txHash: paymentResult.txHash };
-        let responseOk = true;
-
-        if (endpoint) {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Payment-Proof": JSON.stringify({
-                version: "x402-eth/1.0",
-                txHash: paymentResult.txHash,
-                from: paymentResult.from,
-                to: provider,
-                amountEth,
-                chainId: 8453,
-              }),
-            },
-            body: JSON.stringify(params),
-          });
-          result = await response.json();
-          responseOk = response.ok;
-        }
-
-        // Log successful transaction
-        await logTransaction({
-          type: "x402-eth",
-          service: service,
-          amountEth: amountEth,
-          provider: provider,
-          chainId: 8453,
-          txHash: paymentResult.txHash,
-          status: responseOk ? "success" : "failed",
-        });
-
-        // Refresh balance after payment
-        refreshAgentWalletBalance();
-
-        return { success: responseOk, result };
-      } catch (e) {
-        console.error("[x402] Payment failed:", e);
-
-        // Log failed transaction
-        await logTransaction({
-          type: "x402-eth",
-          service: service,
-          amountEth: amountEth,
-          provider: provider,
-          chainId: 8453,
-          status: "error",
-          error: e.message,
-        });
-
-        return { success: false, error: e.message };
-      }
-    };
+    const executeX402Payment = async () => ({
+      success: false,
+      error: 'Companion wallets are revenue-only',
+    });
 
     /**
      * Parse a cost string (from LLM purchaseIntent) into an ETH amount
@@ -5886,11 +5729,14 @@ export default {
           companion.txHash = result.txHash;
           companion.network = "base";
           companion.standard = result.standard || "ERC-8004";
+          companion.tokenAddress = result.tokenAddress;
+          companion.poolId = result.poolId;
+          companion.tokenSymbol = result.tokenSymbol;
 
           // Store agent wallet info for ERC-8004 mints
           if (result.agentWallet) {
             companion.agentWallet = result.agentWallet;
-            companion.x402Support = true;
+            companion.x402Support = false;
             companion.agentWalletProvider =
               result.agentWalletProvider || "local";
             console.log(
@@ -5911,9 +5757,12 @@ export default {
             companions.value[idx].txHash = result.txHash;
             companions.value[idx].network = "base";
             companions.value[idx].standard = companion.standard;
+            companions.value[idx].tokenAddress = result.tokenAddress;
+            companions.value[idx].poolId = result.poolId;
+            companions.value[idx].tokenSymbol = result.tokenSymbol;
             if (result.agentWallet) {
               companions.value[idx].agentWallet = result.agentWallet;
-              companions.value[idx].x402Support = true;
+              companions.value[idx].x402Support = false;
               companions.value[idx].agentWalletProvider =
                 result.agentWalletProvider || "local";
             }
@@ -6633,8 +6482,8 @@ export default {
             .map((c) => c.tokenId),
         );
 
-        const newCompanions = nftCompanions.filter(
-          (c) => !existingTokenIds.has(c.tokenId),
+        const newCompanions = nftCompanions.filter((c) =>
+          !existingTokenIds.has(c.tokenId) && validateCompanionAge(c).valid,
         );
 
         if (newCompanions.length > 0) {
@@ -6682,26 +6531,15 @@ export default {
           const defaultIds = DEFAULT_SCENARIOS.map((s) => s.id);
 
           if (stored && stored.length > 0) {
-            // Check if any default scenarios are missing (migration after update)
-            const storedIds = stored.map((s) => s.id);
-            const missingDefaults = DEFAULT_SCENARIOS.filter(
-              (ds) => !storedIds.includes(ds.id),
-            );
-
-            if (missingDefaults.length > 0) {
-              // Add missing defaults (preserving user's existing scenarios)
-              console.log(
-                `[Roleplay] Adding ${missingDefaults.length} new default scenarios`,
-              );
-              const newDefaults = missingDefaults.map((s) => ({
+            const customScenarios = stored.filter((s) => !defaultIds.includes(s.id));
+            scenarios.value = [
+              ...DEFAULT_SCENARIOS.map((s) => ({
                 ...s,
                 image: resolveBundledAsset(s.defaultImage),
-              }));
-              scenarios.value = [...stored, ...newDefaults];
-              await saveScenarios();
-            } else {
-              scenarios.value = stored;
-            }
+              })),
+              ...customScenarios,
+            ];
+            await saveScenarios();
 
             console.log(
               `[Roleplay] Loaded ${scenarios.value.length} scenarios`,
@@ -6839,7 +6677,7 @@ export default {
       if (!scenarioBackgroundImage.value) return {};
       const imageSrc = getImageSrc(scenarioBackgroundImage.value);
       return {
-        backgroundImage: `linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.6)), url(${imageSrc})`,
+        backgroundImage: `url("${imageSrc}")`,
         backgroundSize: "cover",
         backgroundPosition: "center",
       };
@@ -6870,11 +6708,7 @@ export default {
     };
 
     const getAvatarIcon = (avatar, gender) => {
-      // Robot/android companions use agender icon
-      if (avatar === "android" || avatar === "smart_toy") {
-        return "agender";
-      }
-      // Use gender-based icons for human-like companions
+      // Use gender-based icons for human companions.
       if (gender === "female" || avatar === "woman") {
         return "female";
       }
@@ -8251,6 +8085,7 @@ export default {
       // <id>.<ext> to the on-disk file.
       if (image.startsWith("bonzai-blob://")) return image;
       if (image.startsWith("http")) return image;
+      if (image.startsWith("file:") || image.startsWith("blob:")) return image;
       // Vite-resolved asset URLs (dev: /src/assets/..., prod: ./assets/...)
       // These are served by the dev server or bundled — return as-is
       if (image.startsWith("/assets/") || image.startsWith("/src/assets/") || image.startsWith("./assets/")) {
@@ -8269,6 +8104,7 @@ export default {
       if (audio.startsWith("data:")) return audio;
       if (audio.startsWith("bonzai-blob://")) return audio;
       if (audio.startsWith("http")) return audio;
+      if (audio.startsWith("file:") || audio.startsWith("blob:")) return audio;
       // Local file path - use Flask media stream endpoint
       if (audio.startsWith("/")) {
         const port = window.BONZAI_SERVER_PORT || 65000;
@@ -8322,6 +8158,14 @@ export default {
     const onMessageAudioPaused = (msg, idx) => {
       const id = messageAudioId(msg, idx);
       if (activeMessageAudioId.value === id) activeMessageAudioId.value = null;
+    };
+    const seekMessageAudio = (msg, idx, progress) => {
+      const id = messageAudioId(msg, idx);
+      const audio = messageAudioElements.get(id);
+      if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      const clamped = Math.max(0, Math.min(1, progress));
+      audio.currentTime = clamped * audio.duration;
+      messageAudioProgress.value = { ...messageAudioProgress.value, [id]: clamped };
     };
 
     const getVideoSrc = (video) => {
@@ -8496,11 +8340,6 @@ export default {
           msg.purchaseDetails = payResult.details || null;
           msg.purchaseError = payResult.success ? null : payResult.error;
           // Refresh daily spending after payment
-          dailySpentAmount.value = parseFloat(
-            await x402ExecutorService.getDailySpending(
-              selectedCompanion.value.id,
-            ),
-          );
         }
 
         // Update transaction status from 'pending' to result
@@ -8697,6 +8536,11 @@ export default {
     // Process a single message (internal function)
     const processMessage = async (messageData) => {
       const { messageContent, visionData } = messageData;
+      const recalledMemory = await memoryService.buildRecallContext(messageContent, {
+        companion: selectedCompanion.value,
+        includeUser: true,
+        limit: 10,
+      });
 
       // Generate response
       isTyping.value = true;
@@ -8741,6 +8585,7 @@ export default {
             sceneState: {
               ...sceneState.value,
               userAppearance: userProfile.value.userDescription || "a man",
+              memorySummary: [sceneState.value.memorySummary, recalledMemory].filter(Boolean).join("\n\n"),
             },
             visionData, // Pass vision analysis to LLM
           },
@@ -8892,6 +8737,7 @@ export default {
 
           // Handle purchase intent if detected
           if (
+            companionPaymentsEnabled &&
             result.response.purchaseIntent &&
             settings.value.autonomous.enablePurchases
           ) {
@@ -8918,11 +8764,6 @@ export default {
                 msg.purchaseType = payResult.type || null;
                 msg.purchaseDetails = payResult.details || null;
                 msg.purchaseError = payResult.success ? null : payResult.error;
-                dailySpentAmount.value = parseFloat(
-                  await x402ExecutorService.getDailySpending(
-                    selectedCompanion.value.id,
-                  ),
-                );
               }
             }
           }
@@ -9085,6 +8926,35 @@ export default {
 
       // Load NFT companions after local companions are ready
       await loadNFTCompanions();
+
+      // Deterministic, synthetic state used only by the local product-film harness.
+      if (new URLSearchParams(window.location.search).get("demo") === "companion-chat") {
+        selectedCompanion.value = companions.value.find((companion) => companion.id === "aurore") || companions.value[0];
+        selectedScenario.value = scenarios.value.find((scenario) => scenario.id === "art_gallery_after_dark") || scenarios.value[0];
+        scenarioBackgroundImage.value = selectedScenario.value?.image || resolveBundledAsset(selectedScenario.value?.defaultImage);
+        chatHistory.value = [
+          {
+            id: "demo-companion-1",
+            ts: Date.now() - 120000,
+            role: "assistant",
+            content: "The centerpiece is too tall for the planned wall. We can lower the sightline, or let it anchor the final room. What should visitors carry with them when they leave?",
+          },
+          {
+            id: "demo-user-1",
+            ts: Date.now() - 60000,
+            role: "user",
+            content: "Make it the final reveal. Rework the route and flag anything conservation needs to approve.",
+          },
+          {
+            id: "demo-companion-2",
+            ts: Date.now() - 30000,
+            role: "assistant",
+            content: "Done. I moved it to the final room, adjusted the lighting sequence, and marked two handling decisions for conservation review. The route now builds toward one deliberate reveal.",
+          },
+        ];
+        phase.value = "chat";
+        return;
+      }
 
       // Render spending charts after companions are loaded
       setTimeout(() => {
@@ -9453,6 +9323,7 @@ export default {
       getMintedBadgeTitle,
       getMintedExplorerUrl,
       // x402 Agent Wallet
+      companionPaymentsEnabled,
       agentWalletAddress,
       agentWalletBalance,
       isRefreshingBalance,
@@ -9524,6 +9395,7 @@ export default {
       onMessageAudioTimeUpdate,
       onMessageAudioEnded,
       onMessageAudioPaused,
+      seekMessageAudio,
       sendMessage,
       isNewMessage,
       downloadImage,
@@ -9685,12 +9557,7 @@ export default {
   margin-top: 0.5rem;
 }
 
-.import-export-buttons .button {
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-}
-
-.import-export-buttons .button:disabled {
+.import-export-buttons .bz-iconbtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -11040,8 +10907,8 @@ hr {
   overflow-y: auto;
   padding: var(--bz-space-5) var(--bz-space-6);
   background:
-    linear-gradient(180deg, var(--bz-scrim-soft), transparent 34%),
-    var(--bz-scrim-soft);
+    linear-gradient(180deg, color-mix(in srgb, var(--bz-canvas) 62%, transparent), transparent 38%),
+    color-mix(in srgb, var(--bz-canvas) 18%, transparent);
 }
 
 /* Empty chat prompt - centered pulsating message */
@@ -11111,13 +10978,15 @@ hr {
   background-repeat: no-repeat;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.28;
+  opacity: 0.74;
 }
 .chat-background::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: var(--bz-overlay);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bz-canvas) 18%, transparent), color-mix(in srgb, var(--bz-canvas) 56%, transparent)),
+    color-mix(in srgb, var(--bz-purple-900) 24%, transparent);
 }
 
 /* Background fade transition */
@@ -12132,6 +12001,156 @@ hr {
   color: var(--bz-fg);
 }
 
+.roleplay-settings {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bz-raised) 42%, transparent), transparent),
+    var(--bz-card);
+}
+
+.roleplay-settings__grid {
+  align-items: stretch;
+  margin-bottom: 0;
+}
+
+.roleplay-settings__panel {
+  height: 100%;
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+
+.roleplay-settings__label {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  margin: 0 0 var(--bz-space-4);
+  color: var(--bz-fg);
+  font-size: 1.45rem;
+  line-height: 1.1;
+}
+
+.roleplay-settings__label .material-symbols-outlined {
+  color: var(--bz-purple-100);
+}
+
+.roleplay-settings hr,
+.roleplay-away-mode > hr {
+  display: none;
+}
+
+.roleplay-settings .textarea,
+.roleplay-settings .select select {
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-fg);
+  box-shadow: none;
+}
+
+.roleplay-settings .textarea:focus,
+.roleplay-settings .select select:focus {
+  border-color: var(--bz-border-brand);
+  box-shadow: var(--bz-elev-brand);
+}
+
+.content-level-selector,
+.media-selector {
+  gap: var(--bz-space-3);
+}
+
+.content-level-option,
+.media-option {
+  min-height: 72px;
+  padding: var(--bz-space-4);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+  border-color: var(--bz-border);
+}
+
+.content-level-option:hover,
+.media-option:hover {
+  background: var(--bz-raised);
+  border-color: var(--bz-border-brand);
+}
+
+.content-level-option.is-selected,
+.media-option.is-selected {
+  background: var(--bz-purple-soft);
+  border-color: var(--bz-border-brand);
+  box-shadow: inset 0 0 0 1px var(--bz-border-brand);
+}
+
+.content-level-icon,
+.media-icon {
+  width: 36px;
+  height: 36px;
+  margin-right: var(--bz-space-3);
+  border-radius: var(--bz-r-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bz-card);
+  color: var(--bz-purple-100);
+  flex: 0 0 auto;
+}
+
+.content-level-text strong,
+.media-option strong {
+  color: var(--bz-fg);
+  font-size: var(--bz-size-body);
+}
+
+.content-level-text p,
+.media-option p {
+  margin-top: var(--bz-space-1);
+  color: var(--bz-fg-mid);
+  line-height: 1.35;
+}
+
+.user-profile-section {
+  margin-top: var(--bz-space-5) !important;
+}
+
+.roleplay-away-mode .columns {
+  margin-top: 0 !important;
+}
+
+.roleplay-away-mode > .columns > .column > .field {
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+}
+
+.roleplay-away-mode .field {
+  margin-bottom: var(--bz-space-4);
+}
+
+.roleplay-away-mode .label {
+  color: var(--bz-fg-mid) !important;
+}
+
+.roleplay-start-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bz-space-3);
+}
+
+.roleplay-primary-start {
+  min-width: min(420px, 100%);
+  min-height: 72px;
+  padding: 0 var(--bz-space-7) !important;
+  justify-content: center;
+  font-size: 1.35rem !important;
+  border-radius: var(--bz-r) !important;
+}
+
+.roleplay-primary-start .material-symbols-outlined {
+  font-size: 28px !important;
+}
+
 /* Sessions header with import/export */
 .sessions-header {
   display: flex;
@@ -12147,6 +12166,11 @@ hr {
 .sessions-actions {
   display: flex;
   gap: 0.5rem;
+}
+
+.sessions-actions .bz-iconbtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Model Requirements Section */

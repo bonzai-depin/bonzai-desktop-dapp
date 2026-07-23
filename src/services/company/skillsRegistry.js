@@ -4,14 +4,15 @@
  * Wraps the static manifests in `skillManifests.js` with a runtime
  * `execute()` API that the dispatcher calls when a role's LLM emits a
  * skill-action call. v0 ships with mock executors that log + return
- * structured stub results; per-connector real implementations swap in
- * later without touching the manifest contract or the dispatcher.
+ * deterministic stub results in demo mode and validated connector
+ * executors in live mode.
  */
 
 import * as connectors from "./connectors.js";
 import * as treasury from "./treasury.solo.js";
 import { append } from "./auditLog.js";
 import { SKILL_MANIFESTS, getManifest } from "./skillManifests.js";
+import { executeConnectorAction } from "./connectorExecutors.js";
 
 /**
  * Find the manifest that owns an action type. Returns the manifest, or
@@ -38,8 +39,8 @@ export function actionGranted(grantedSkills, actionType) {
 
 /**
  * Execute a skill action. Routes to the right executor based on the
- * owning skill's required connectors. v0: every executor is a mock that
- * logs the call and returns a structured stub result.
+ * owning skill's required connectors. Demo mode logs deterministic
+ * results; live mode calls the production executor.
  *
  * @param {string} companyId
  * @param {string} actionType — e.g. "twilio.sendSMS"
@@ -64,9 +65,9 @@ export async function execute(companyId, actionType, params, ctx = {}) {
     }
   }
 
-  // v0 mock executor. Simulates a successful call + optional shareLink.
-  // Real Twilio / QBO / Stripe wiring lands here, dispatched by manifest.id.
-  const result = await _mockExecute(manifest, actionType, params);
+  const result = ctx.charter?.demoMode
+    ? await _mockExecute(manifest, actionType, params)
+    : await executeConnectorAction(companyId, actionType, params, ctx.idempotencyKey || `${companyId}:${actionType}:${ctx.issueId || Date.now()}`);
 
   // Bridge money-movement skill actions to the local treasury. Without
   // this, "$180 paid to Carlos" appears in the audit log but the

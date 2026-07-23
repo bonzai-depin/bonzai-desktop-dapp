@@ -11,29 +11,26 @@
  * 4. Consumer resubmits request with tx hash
  * 5. Provider validates tx and processes request
  *
- * Supported Chain: Base (8453) - cheap gas, fast finality
+ * Supported chain: CONFIG.x402.defaultChainId
  */
 
 import { ethers } from 'ethers';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, networkKeyForChainId } from '../config/web3.config.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Base is the primary chain - cheap gas (~$0.001)
-const BASE_CONFIG = {
-  chainId: 8453,
-  name: 'Base',
-  rpc: CONFIG?.networks?.base?.rpc || 'https://mainnet.base.org',
-  explorer: 'https://basescan.org',
-};
+const PAYMENT_CHAIN_ID = Number(CONFIG.x402.defaultChainId);
+const PAYMENT_NETWORK_KEY = networkKeyForChainId(PAYMENT_CHAIN_ID);
+const PAYMENT_CHAIN = PAYMENT_NETWORK_KEY ? CONFIG.networks[PAYMENT_NETWORK_KEY] : null;
+if (!PAYMENT_CHAIN) throw new Error(`Unsupported x402 chain: ${PAYMENT_CHAIN_ID}`);
 
 // EIP-712 domain for signed payment authorizations
 const EIP712_DOMAIN = {
   name: 'BonzAI x402',
   version: '2',
-  chainId: BASE_CONFIG.chainId,
+  chainId: PAYMENT_CHAIN_ID,
 };
 
 // Payment authorization types (must match BonzaiPayment.sol PAYMENT_TYPEHASH)
@@ -67,6 +64,7 @@ let _nonceEntries = null; // Array<{key: string, ts: number}> | null
 let _nonceSet = null;     // Set<string> | null  (fast lookup mirror)
 let _loadPromise = null;  // deduplicates concurrent init calls
 let _mainProcessStore = null; // electron-store instance (main process only)
+const _pendingTransactionProofs = new Set();
 
 /**
  * Resolve a reference to the Electron Store, regardless of process context.
@@ -212,6 +210,9 @@ function _addNonce(key) {
  * @returns {Object} Payment request to include in 402 response
  */
 export function createPaymentRequest({ provider, amount, service, paymentToken = PaymentToken.ETH }) {
+  if (!ethers.isAddress(provider) || provider === ethers.ZeroAddress) {
+    throw new Error('A valid provider payment address is required');
+  }
   return {
     version: 'x402-eth/1.0',
     provider,
@@ -219,8 +220,8 @@ export function createPaymentRequest({ provider, amount, service, paymentToken =
     amountEth: ethers.formatEther(amount),
     service,
     paymentToken,
-    chainId: BASE_CONFIG.chainId,
-    chainName: BASE_CONFIG.name,
+    chainId: PAYMENT_CHAIN_ID,
+    chainName: PAYMENT_CHAIN.name,
   };
 }
 
@@ -263,7 +264,7 @@ export async function signPayment(signer, paymentRequest) {
     expiry,
     service,
     paymentToken,
-    chainId: BASE_CONFIG.chainId,
+    chainId: PAYMENT_CHAIN_ID,
     signature,
   };
 }
@@ -390,10 +391,15 @@ export async function validateSignedPayment(payment, options = {}) {
  * @returns {Promise<Object>} Verification result
  */
 export async function verifyTransaction(txHash, options = {}) {
-  const { expectedTo, minAmount = '0', provider } = options;
+  const { expectedTo, expectedFrom, expectedChainId = PAYMENT_CHAIN_ID, minAmount = '0', provider } = options;
 
   try {
-    const rpcProvider = provider || new ethers.JsonRpcProvider(BASE_CONFIG.rpc);
+    if (!ethers.isHexString(txHash, 32)) return { valid: false, error: 'invalid_tx_hash' };
+    const rpcProvider = provider || new ethers.JsonRpcProvider(PAYMENT_CHAIN.rpc);
+    const network = await rpcProvider.getNetwork();
+    if (Number(network.chainId) !== Number(expectedChainId)) {
+      return { valid: false, error: 'wrong_chain' };
+    }
     const receipt = await rpcProvider.getTransactionReceipt(txHash);
 
     if (!receipt) {
@@ -408,6 +414,10 @@ export async function verifyTransaction(txHash, options = {}) {
 
     if (expectedTo && tx.to?.toLowerCase() !== expectedTo.toLowerCase()) {
       return { valid: false, error: 'wrong_recipient' };
+    }
+
+    if (expectedFrom && tx.from?.toLowerCase() !== expectedFrom.toLowerCase()) {
+      return { valid: false, error: 'wrong_sender' };
     }
 
     if (BigInt(tx.value) < BigInt(minAmount)) {
@@ -521,13 +531,44 @@ export function isSelfInference(remotePeer, localPeerId) {
  * @returns {Object} Validation result
  */
 export async function validatePayment(payment, options = {}) {
-  const { expectedProviderId, minAmount, pipeline } = options;
+  const { expectedProviderId, minAmount, pipeline, provider } = options;
+  if (!payment?.txHash) {
+    return { valid: false, error: 'payment_not_settled' };
+  }
+  if (payment.version !== 'x402-eth/1.0') {
+    return { valid: false, error: 'invalid_version' };
+  }
+  if (Number(payment.chainId) !== PAYMENT_CHAIN_ID) {
+    return { valid: false, error: 'wrong_chain' };
+  }
 
-  // Map P2P options to validateSignedPayment options
-  return validateSignedPayment(payment, {
-    expectedProvider: expectedProviderId,
-    minAmount,
-  });
+  await _loadNonces();
+  const proofKey = `tx:${payment.txHash.toLowerCase()}`;
+  if (_hasNonce(proofKey) || _pendingTransactionProofs.has(proofKey)) {
+    return { valid: false, error: 'transaction_reused' };
+  }
+
+  _pendingTransactionProofs.add(proofKey);
+  try {
+    const validation = await verifyTransaction(payment.txHash, {
+      expectedTo: expectedProviderId,
+      expectedFrom: payment.consumer,
+      expectedChainId: PAYMENT_CHAIN_ID,
+      minAmount,
+      provider,
+    });
+    if (!validation.valid) return validation;
+    _addNonce(proofKey);
+    return {
+      valid: true,
+      consumer: validation.from,
+      amount: validation.amount,
+      txHash: payment.txHash,
+      pipeline,
+    };
+  } finally {
+    _pendingTransactionProofs.delete(proofKey);
+  }
 }
 
 /**
@@ -607,7 +648,7 @@ export async function signPipelinePayment(signer, { providers, amounts, service,
     expiry,
     service,
     sessionId: sessionIdBytes32,
-    chainId: BASE_CONFIG.chainId,
+    chainId: PAYMENT_CHAIN_ID,
     signature,
   };
 }
@@ -740,7 +781,7 @@ export function calculatePipelinePaymentSplit(totalCostWei, shards) {
 
 export const x402Service = {
   // Config
-  BASE_CONFIG,
+  paymentChain: PAYMENT_CHAIN,
   EIP712_DOMAIN,
   PaymentToken,
 

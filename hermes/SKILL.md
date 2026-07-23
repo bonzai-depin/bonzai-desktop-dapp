@@ -92,7 +92,7 @@ Content-Type: application/json
 
 **Generation:**
 - `!generate image <prompt>` - Fast image (FLUX Klein)
-- `!generate image_quality <prompt>` - Quality image (FLUX Krea)
+- `!generate image_quality <prompt>` - Quality image (Z-Image Turbo)
 - `!generate image_standard <prompt>` - Standard image (SDXL, uncensored)
 - `!generate image_advanced <prompt>` - Advanced image (Z-Image)
 - `!generate video <prompt>` - Video (LTX-2)
@@ -162,7 +162,7 @@ This provides access to whichever local LLM model is currently loaded in BonzAI 
 |----------|----------|-------------|
 | `llm` | `/v1/chat/completions` | Local LLM (38 models) |
 | `image_turbo` | Flask `:65000/image/turbo` | Fast image (FLUX Klein) |
-| `image_quality` | Flask `:65000/image/quality` | Quality image (FLUX Krea) |
+| `image_quality` | Flask `:65000/image/quality` | Quality image (Z-Image Turbo) |
 | `image_standard` | Flask `:65000/image/standard` | Standard image (SDXL) |
 | `image_advanced` | Flask `:65000/image/advanced` | Advanced image (Z-Image) |
 | `audio_turbo` | Flask `:65000/audio/turbo` | Fast TTS (Kokoro) |

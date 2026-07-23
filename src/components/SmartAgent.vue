@@ -106,7 +106,8 @@
                 :key="skill.id"
                 class="agent-market-card"
                 :class="{
-                  'is-owned': canRunSkill(skill.id).canRun,
+                  'is-owned': (!isTokenGated(skill) && canRunSkill(skill.id).canRun) || hasSkillAccess(skill.id),
+                  'is-featured': skill.featured,
                 }"
               >
                 <div class="agent-market-card__main">
@@ -127,9 +128,17 @@
                   <p class="agent-market-card__description">{{ skill.description }}</p>
 
                   <div class="agent-market-card__badges">
+                    <span v-if="skill.featured" class="agent-market-pill agent-market-pill--featured">Featured</span>
                     <span v-if="skill.author?.verified" class="agent-market-pill">Verified</span>
                     <span v-if="skill.tags?.includes('demo')" class="agent-market-pill">Demo</span>
-                    <span v-if="isSkillPurchased(skill.id)" class="agent-market-pill agent-market-pill--success">Purchased</span>
+                    <span v-if="hasSkillAccess(skill.id)" class="agent-market-pill agent-market-pill--success">Token access</span>
+                  </div>
+                  <div v-if="skillTokenOptions(skill).length" class="agent-market-card__owners">
+                    <span
+                      v-for="owner in skillTokenOptions(skill)"
+                      :key="owner.id"
+                      class="agent-market-owner"
+                    >{{ owner.firstName }} <b>${{ owner.tokenSymbol }}</b></span>
                   </div>
                 </div>
 
@@ -143,7 +152,7 @@
                     <dd>{{ skillRequirementLabel(skill) }}</dd>
                   </div>
                   <div>
-                    <dt>Output</dt>
+                    <dt>Execution</dt>
                     <dd>{{ skillRoiLabel(skill) }}</dd>
                   </div>
                 </dl>
@@ -156,9 +165,10 @@
                     <span class="material-symbols-outlined" aria-hidden="true">laptop_mac</span>
                     Requires Apple Silicon
                   </span>
-                  <template v-else-if="isFreeSkill(skill) || isSkillPurchased(skill.id)">
+                  <template v-else-if="!isTokenGated(skill) || hasSkillAccess(skill.id)">
                       <button
-                        class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+                        class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
+                        :aria-label="`Run ${skill.name}`"
                         @click="runSkill(skill)"
                       >
                       <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
@@ -174,13 +184,11 @@
                         Preview
                       </button>
                       <button
-                      class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-                        :class="{ 'bz-btn--running': purchasingSkillId === skill.id }"
-                        :disabled="purchasingSkillId === skill.id"
-                        @click.stop="purchaseSkill(skill)"
+                        class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+                        @click="buyCompanionToken(skillTokenOptions(skill)[0])"
                       >
-                      <span class="material-symbols-outlined" aria-hidden="true">shopping_cart</span>
-                      {{ skillPriceLabel(skill) }}
+                        <span class="material-symbols-outlined" aria-hidden="true">token</span>
+                        Buy ${{ skillTokenOptions(skill)[0]?.tokenSymbol }}
                       </button>
                     </template>
                 </div>
@@ -208,6 +216,7 @@
               <!-- DOWNLOAD REQUIRED (only when not actively downloading and check is complete) -->
               <div
                 v-if="
+                  !isCompanionDemo &&
                   modelAvailabilityChecked &&
                   skillModelRequirements.length > 0 &&
                   hasMissingModels &&
@@ -284,7 +293,7 @@
                   </ul>
                 </div>
                 <button
-                  class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
+                  class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
                   @click="downloadAllMissingModels"
                   :disabled="downloads.active"
                 >
@@ -332,9 +341,9 @@
                 </div>
               </div>
 
-              <!-- PURCHASE GATE (preview mode for unpurchased paid skills) -->
+              <!-- COMPANION TOKEN GATE -->
               <div
-                v-if="isPreviewMode && selectedSkill && !isFreeSkill(selectedSkill) && !isSkillPurchased(selectedSkill.id)"
+                v-if="isPreviewMode && selectedSkill && isTokenGated(selectedSkill) && !hasSkillAccess(selectedSkill.id)"
                 class="preview-purchase-gate"
               >
                 <div class="preview-gate-content">
@@ -343,22 +352,17 @@
                     Preview Mode
                   </h3>
                   <p class="preview-gate-desc">
-                    Purchase this skill to unlock full access.
+                    Own one specialist token to unlock this workflow.
                   </p>
                   <div class="preview-gate-actions">
-                      <button
-                        class="bz-btn bz-btn--warning fira-sans-condensed-black-italic"
-                        :class="{ 'bz-btn--running': purchasingSkillId === selectedSkill.id }"
-                        :disabled="purchasingSkillId === selectedSkill.id"
-                        @click="purchaseSkill(selectedSkill)"
-                      >
-                        <span class="material-symbols-outlined mr-1">shopping_cart</span>
-                        Purchase
-                      </button>
-                    <span class="skill-price-tag ml-3">
-                      <span class="skill-price-amount">{{ selectedSkill.price }}</span>
-                      <span class="skill-price-currency">USDC</span>
-                    </span>
+                    <button
+                      v-for="owner in skillTokenOptions(selectedSkill)"
+                      :key="owner.id"
+                      class="bz-btn bz-btn--primary"
+                      @click="buyCompanionToken(owner)"
+                    >
+                      Buy ${{ owner.tokenSymbol }}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -430,7 +434,17 @@
 
               <!-- POLYMARKET SKILL (modular component) -->
               <div
-                v-if="selectedSkillId === 'polymarket-top-performers-v1.0.0'"
+                v-if="selectedSkillId === 'robinhood-portfolio-council-v1.0.0'"
+                class="agent-skill-runtime agent-skill-runtime--flush"
+              >
+                <RobinhoodCouncil
+                  :locked="isTokenGated(selectedSkill) && !hasSkillAccess(selectedSkill.id)"
+                />
+              </div>
+
+              <!-- POLYMARKET SKILL (modular component) -->
+              <div
+                v-else-if="selectedSkillId === 'polymarket-top-performers-v1.0.0'"
                 class="agent-skill-runtime"
               >
                 <PolymarketSkill
@@ -544,6 +558,7 @@
 
       <template #input>
         <ChatInput
+          v-if="!isAgentCommandBarCollapsed"
           v-model="agentPrompt"
           :placeholder="agentCommandPlaceholder"
           :enable-attachments="false"
@@ -556,6 +571,16 @@
           @run-command="runAgentSlashCommand"
         >
           <template #tools>
+            <button
+              type="button"
+              class="agent-command-tool"
+              title="Collapse command bar"
+              aria-label="Collapse command bar"
+              @click="toggleAgentCommandBar"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
+              Collapse
+            </button>
             <button type="button" class="agent-command-tool" @click="selectAgentMode('browseSkills')">
               <span class="material-symbols-outlined" aria-hidden="true">search</span>
               Search workflows
@@ -570,6 +595,16 @@
             </button>
           </template>
         </ChatInput>
+        <div v-else class="agent-command-bar-collapsed">
+          <button
+            type="button"
+            class="agent-command-bar-collapsed__button fira-sans-condensed-black-italic"
+            @click="toggleAgentCommandBar"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span>
+            Search workflows
+          </button>
+        </div>
       </template>
     </ChatLayout>
 
@@ -921,7 +956,7 @@
               <strong>{{ tokenIssuanceModal.tokenSymbol }}</strong>
               token will be created with
               <strong>
-                {{ Number(tokenIssuanceModal.totalSupply).toLocaleString() }}
+                {{ $n(Number(tokenIssuanceModal.totalSupply)) }}
               </strong>
               total supply.
               <br />
@@ -935,11 +970,7 @@
                   "
                 >
                   + SKILL/DSLA pool with
-                  {{
-                    Number(
-                      tokenIssuanceModal.initialLiquidityDsla,
-                    ).toLocaleString()
-                  }}
+                  {{ $n(Number(tokenIssuanceModal.initialLiquidityDsla)) }}
                   DSLA
                 </span>
               </span>
@@ -1003,8 +1034,10 @@ import ChatLayout from "./chat/ChatLayout.vue";
 import ModeChipBar from "./generative/ModeChipBar.vue";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
-import { purchaseSkillUSDC, loadPurchasedSkillsOnChain, isDevMode } from "../services/agent.service.js";
+import { loadSkillTokenAccessOnChain, isDevMode } from "../services/agent.service.js";
 import { requestOpenLevelModal } from "../services/level.service.js";
+import { CONFIG } from "../config/web3.config.js";
+import { getMarketplaceSkillOwners } from "../skills/companionSkillRoadmap.js";
 import SkillRunner from "./skills/SkillRunner.vue";
 import RoleplayChat from "./skills/RoleplayChat.vue";
 import SkillDownloader from "./skills/SkillDownloader.vue";
@@ -1017,6 +1050,7 @@ import VideoCaptioningSkill from "./skills/VideoCaptioningSkill.vue";
 import TCGScannerSkill from "./skills/TCGScannerSkill.vue";
 import LiveStreamerSkill from "./skills/LiveStreamerSkill.vue";
 import BrowseAgents from "./skills/BrowseAgents.vue";
+import RobinhoodCouncil from "./RobinhoodCouncil.vue";
 import {
   getSkillModelRequirements,
   MODEL_REQUIREMENTS,
@@ -1198,6 +1232,18 @@ const SKILL_RUNNER_PROFILES = {
     steps: ["Select asset", "Fetch history", "Forecast", "Explain"],
     outcomes: ["TimesFM 2.0", "Crypto + equities", "Narrative summary"],
   },
+  "robinhood-portfolio-council-v1.0.0": {
+    tone: "signal",
+    workspace: "Portfolio Council",
+    mode: "Policy-Gated MCP",
+    promise: "A local investment team researches, challenges, previews, and executes within a mandate you control.",
+    icon: "candlestick_chart",
+    primaryOutput: "Reviewed decisions",
+    cadence: "On demand",
+    confidenceLabel: "Control",
+    steps: ["Connect", "Set mandate", "Convene", "Confirm"],
+    outcomes: ["Five specialist roles", "Runtime tool discovery", "Fresh trade approval"],
+  },
 };
 
 export default {
@@ -1216,6 +1262,7 @@ export default {
     TCGScannerSkill,
     LiveStreamerSkill,
     BrowseAgents,
+    RobinhoodCouncil,
     BonzaiEmptyState,
     BonzaiPulse,
     BzCloseButton,
@@ -1230,7 +1277,9 @@ export default {
 
     // Tab state
     const activeTab = ref("browseSkills");
+    const isCompanionDemo = new URLSearchParams(window.location.search).get("demo")?.startsWith("companion-") || false;
     const isAgentRailCollapsed = ref(false);
+    const isAgentCommandBarCollapsed = ref(false);
     const agentPrompt = ref("");
     const agentCommandMode = ref("search");
     const agentTabs = [
@@ -2186,7 +2235,7 @@ Return ONLY the JSON, no explanation.`;
         value: "my-skills",
         label: "Runner",
         icon: "play_arrow",
-        count: hasMissingModels.value ? missingModels.value.length : null,
+        count: !isCompanionDemo && hasMissingModels.value ? missingModels.value.length : null,
       },
     ]);
     const activeAgentTab = computed(() => agentTabs.find((tab) => tab.value === activeTab.value) || agentTabs[0]);
@@ -2223,6 +2272,7 @@ Return ONLY the JSON, no explanation.`;
     }));
     const selectedSkillModelCount = computed(() => skillModelRequirements.value.length || 0);
     const selectedSkillReadiness = computed(() => {
+      if (isCompanionDemo) return "Ready";
       if (!modelAvailabilityChecked.value && selectedSkillModelCount.value > 0) return "Checking";
       if (hasMissingModels.value) return String(Math.max(0, selectedSkillModelCount.value - missingModels.value.length)) + "/" + selectedSkillModelCount.value;
       return selectedSkillModelCount.value > 0 ? "Ready" : "Native";
@@ -2260,6 +2310,10 @@ Return ONLY the JSON, no explanation.`;
 
     const toggleAgentRail = () => {
       isAgentRailCollapsed.value = !isAgentRailCollapsed.value;
+    };
+
+    const toggleAgentCommandBar = () => {
+      isAgentCommandBarCollapsed.value = !isAgentCommandBarCollapsed.value;
     };
 
     const selectAgentMode = (mode) => {
@@ -2312,12 +2366,8 @@ Return ONLY the JSON, no explanation.`;
       return SKILL_CATEGORY_META[categoryKey]?.icon || "extension";
     };
 
-    const skillPriceLabel = (skill) => {
-      if (isFreeSkill(skill)) return "Free";
-      return `${skill.price || 0} USDC`;
-    };
-
     const skillRequirementLabel = (skill) => {
+      if (isTokenGated(skill)) return hasSkillAccess(skill.id) ? "Ready" : "Companion token";
       const access = canRunSkill(skill.id);
       if (access.canRun) return "Ready";
       return getRequiredLevel(skill) || "Locked";
@@ -2429,62 +2479,44 @@ Return ONLY the JSON, no explanation.`;
       showNotification("Skills refreshed!", "success");
     };
 
-    // Skill purchase state. `purchasedSkillIds` is populated from the
-    // on-chain BonzaiSkillRegistry at mount + on wallet change — no
-    // localStorage fallback (previous fallback was a trust boundary the user
-    // could bypass by injecting the cache).
-    const purchasingSkillId = ref(null);
-    const purchasedSkillIds = ref(new Set());
+    // Token access is rebuilt from the on-chain registry whenever the wallet changes.
+    const accessibleSkillIds = ref(new Set());
 
-    const isSkillPurchased = (skillId) => {
-      // Dev mode: all skills considered purchased locally.
+    const hasSkillAccess = (skillId) => {
       if (isDevMode()) return true;
-      return purchasedSkillIds.value.has(skillId);
+      return accessibleSkillIds.value.has(skillId);
     };
 
-    const isFreeSkill = (skill) => !skill.price || skill.price === 0;
+    const isTokenGated = (skill) => skill?.access?.type === "companion-token";
+    const isFreeSkill = (skill) => !isTokenGated(skill);
+    const skillTokenOptions = (skill) => getMarketplaceSkillOwners(skill?.id).map((career) => ({
+      ...career,
+      ...(CONFIG.companionTokens.byCompanionId[career.id] || {}),
+    }));
 
-    // Rehydrate purchase set from on-chain. Call on mount and whenever the
-    // wallet address changes.
-    const syncPurchasedSkills = async () => {
+    const buyCompanionToken = (owner) => {
+      if (!owner) return;
+      if (!owner.address) {
+        showNotification(`$${owner.tokenSymbol} launches with the default companion cold start.`, "info", 5000);
+        return;
+      }
+      const url = CONFIG.companionTokens.tradeUrlTemplate.replace(
+        "{tokenAddress}",
+        encodeURIComponent(owner.address),
+      );
+      if (window.electronAPI?.openExternal) window.electronAPI.openExternal(url);
+      else window.open(url, "_blank", "noopener,noreferrer");
+    };
+
+    const syncSkillAccess = async () => {
       const paidIds = (skillStore.skills || [])
-        .filter((s) => !isFreeSkill(s))
+        .filter(isTokenGated)
         .map((s) => s.id);
       if (!paidIds.length) return;
       try {
-        purchasedSkillIds.value = await loadPurchasedSkillsOnChain(paidIds);
+        accessibleSkillIds.value = await loadSkillTokenAccessOnChain(paidIds);
       } catch (e) {
-        console.warn("[SmartAgent] Failed to sync purchased skills:", e.message);
-      }
-    };
-
-    const purchaseSkill = (skill) => handlePurchaseSkill(skill);
-
-    const handlePurchaseSkill = async (skill) => {
-      if (purchasingSkillId.value) return;
-
-      // If not connected, prompt connection first
-      if (!web3Store.isConnected) {
-        showNotification("Sign in or connect wallet to purchase", "info");
-        // Emit event to open connection UI in bottom bar
-        window.dispatchEvent(new CustomEvent("bonzai:open-connect"));
-        return;
-      }
-
-      purchasingSkillId.value = skill.id;
-      try {
-        const priceUsdc = (skill.price || 10) * 1_000_000;
-        const result = await purchaseSkillUSDC(skill.id, priceUsdc);
-        if (result.success) {
-          purchasedSkillIds.value = new Set([...purchasedSkillIds.value, skill.id]);
-          showNotification(`Purchased ${skill.name}!`, "success");
-        } else {
-          showNotification(result.error || "Purchase failed", "danger");
-        }
-      } catch (e) {
-        showNotification(e.message || "Purchase failed", "danger");
-      } finally {
-        purchasingSkillId.value = null;
+        console.warn("[SmartAgent] Failed to sync companion-token access:", e.message);
       }
     };
 
@@ -2494,12 +2526,14 @@ Return ONLY the JSON, no explanation.`;
       isPreviewMode.value = false;
       selectSkillById(skill.id);
       activeTab.value = "my-skills";
+      isAgentCommandBarCollapsed.value = true;
     };
 
     const previewSkill = (skill) => {
       isPreviewMode.value = true;
       selectSkillById(skill.id);
       activeTab.value = "my-skills";
+      isAgentCommandBarCollapsed.value = true;
     };
 
     const selectSkillById = (skillId) => {
@@ -3018,7 +3052,7 @@ Provide a concise analysis covering:
         checkModelAvailability(),
         checkPolymarketModelAvailability(),
         resumeActiveDownloadIfAny(),
-        syncPurchasedSkills(),
+        syncSkillAccess(),
       ]);
 
       // Set default skill to Roleplay on load
@@ -3034,10 +3068,10 @@ Provide a concise analysis covering:
       }
     });
 
-    // Re-sync purchase state when the wallet address changes.
+    // Re-sync companion-token access when the wallet address changes.
     watch(
       () => web3Store.walletAddress,
-      () => { syncPurchasedSkills(); }
+      () => { syncSkillAccess(); }
     );
 
     onBeforeUnmount(() => {
@@ -3096,8 +3130,10 @@ Provide a concise analysis covering:
       agentTabs,
       activeAgentTab,
       isAgentRailCollapsed,
+      isAgentCommandBarCollapsed,
       agentPrompt,
       agentRailItems,
+      isCompanionDemo,
       agentModeEyebrow,
       agentModeIcon,
       agentModeTitle,
@@ -3109,6 +3145,7 @@ Provide a concise analysis covering:
       selectedSkillReadiness,
       selectedSkillStageIndex,
       toggleAgentRail,
+      toggleAgentCommandBar,
       selectAgentMode,
       submitAgentCommand,
       runAgentSlashCommand,
@@ -3127,7 +3164,6 @@ Provide a concise analysis covering:
       marketplaceSkills,
       getCategoryLabel,
       getCategoryIcon,
-      skillPriceLabel,
       skillRequirementLabel,
       skillCompatibilityLabel,
       skillRoiLabel,
@@ -3149,11 +3185,11 @@ Provide a concise analysis covering:
       previewSkill,
       isPreviewMode,
       availableSkills,
-      isSkillPurchased,
+      hasSkillAccess,
       isFreeSkill,
-      handlePurchaseSkill,
-      purchasingSkillId,
-      purchaseSkill,
+      isTokenGated,
+      skillTokenOptions,
+      buyCompanionToken,
       web3Store,
 
       // Skill execution
@@ -3433,6 +3469,45 @@ Provide a concise analysis covering:
 
 .agent-command-tool .material-symbols-outlined {
   font-size: 16px !important;
+}
+
+.agent-command-bar-collapsed {
+  display: flex;
+  justify-content: center;
+  padding: var(--bz-space-2) var(--bz-space-3);
+  border-top: 1px solid var(--bz-border);
+  background: var(--bz-panel);
+}
+
+.agent-command-bar-collapsed__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  height: 32px;
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta);
+  font-weight: 400;
+  font-style: normal;
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast),
+    color var(--bz-dur-fast),
+    border-color var(--bz-dur-fast);
+}
+
+.agent-command-bar-collapsed__button:hover {
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.agent-command-bar-collapsed__button .material-symbols-outlined {
+  font-size: 18px !important;
 }
 
 .agent-mode-surface,
@@ -3855,9 +3930,9 @@ h1.bz-h1 {
 
 .agent-market-card {
   min-width: 0;
-  min-height: 156px;
+  min-height: 128px;
   display: grid;
-  grid-template-columns: minmax(320px, 1.25fr) minmax(300px, 0.9fr) minmax(152px, auto);
+  grid-template-columns: minmax(320px, 1.35fr) minmax(270px, 0.85fr) minmax(236px, auto);
   grid-template-areas: "main facts actions";
   align-items: stretch;
   gap: var(--bz-space-4);
@@ -3870,6 +3945,16 @@ h1.bz-h1 {
 .agent-market-card:hover {
   border-color: var(--bz-border-brand);
   background: var(--bz-card);
+}
+
+.agent-market-card.is-featured {
+  border-color: var(--bz-border-brand);
+  background: color-mix(in srgb, var(--bz-card) 90%, var(--bz-purple-soft));
+}
+
+.agent-market-pill--featured {
+  border-color: var(--bz-border-brand);
+  color: var(--bz-purple-100);
 }
 
 
@@ -3931,23 +4016,23 @@ h1.bz-h1 {
 
 .agent-market-card__description {
   line-height: var(--bz-line-body);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-market-card__facts {
   grid-area: facts;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-content: stretch;
+  align-content: center;
   gap: var(--bz-space-2);
   margin: 0;
 }
 
 .agent-market-card__facts div {
   min-width: 0;
+  height: 58px;
   padding: var(--bz-space-2);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r-sm);
@@ -3977,12 +4062,30 @@ h1.bz-h1 {
   gap: var(--bz-space-2);
 }
 
+.agent-market-card__owners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
+  margin-top: var(--bz-space-3);
+}
+
+.agent-market-owner {
+  color: var(--bz-fg-mid);
+  font-size: var(--bz-size-meta);
+}
+
+.agent-market-owner b {
+  color: var(--bz-fg);
+  font-family: var(--bz-font-mono);
+  font-weight: 600;
+}
+
 .agent-market-card__actions {
   grid-area: actions;
-  align-self: end;
+  align-self: center;
   justify-self: end;
   justify-content: flex-end;
-  min-width: 148px;
+  min-width: 236px;
 }
 
 .agent-market-card__actions .bz-btn {
@@ -4434,13 +4537,15 @@ p {
 
 .preview-gate-desc {
   font-size: 13px;
-  color: var(--bz-fg-low);
+  color: var(--bz-fg);
   margin: 0;
 }
 
 .preview-gate-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
   margin-left: auto;
 }
 

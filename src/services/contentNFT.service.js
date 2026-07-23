@@ -1,7 +1,7 @@
 /**
  * BonzAI — Content NFT Minting Service
  *
- * Orchestrates minting on Base (ERC-721).
+ * Orchestrates ERC-721 minting on the configured BonzAI economy chain.
  * 4 stages: upload content → upload metadata → mint on-chain → update store.
  */
 
@@ -10,8 +10,12 @@ import { storageService } from './storage.service.js';
 import { getEip1193Provider, switchNetwork, getSigner } from './web3.service.js';
 import { markAsMinted } from '../stores/inferenceStore.js';
 import { mintStore } from '../stores/mintStore.js';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { canMintContentType, checkAllLevels } from './level.service.js';
+import {
+  buildBonzaiUtilitySnapshot,
+  buildContributionManifest,
+} from './bonzaiUtility.service.js';
 import { CONTENT_TYPE_MAP, COLLECTIBLES_CLONE_ABI } from '../constants/index.js';
 
 // Branded fallback images per content type (Vite asset imports → bundled URLs)
@@ -30,6 +34,74 @@ const BRAND_IMAGE_URLS = {
   object:   brand3DUrl,
   training: brandTextUrl,
 };
+
+function hasNsfwSignal(value) {
+  return /\b(nsfw|adult|explicit|porn|erotic|nude|nudity|sex|sexual|gore)\b/i.test(String(value || ''));
+}
+
+function inferContentSafety({ generation = {}, prompt = '', title = '', description = '' } = {}) {
+  const tags = Array.isArray(generation.tags) ? generation.tags.join(' ') : generation.tags || '';
+  const nsfw = generation.nsfw === true
+    || generation.isNsfw === true
+    || generation.contentLevel === 'adult'
+    || generation.safety?.nsfw === true
+    || hasNsfwSignal(tags)
+    || hasNsfwSignal(prompt)
+    || hasNsfwSignal(title)
+    || hasNsfwSignal(description);
+  return {
+    nsfw,
+    discoverabilityAllowed: !nsfw,
+    reason: nsfw ? 'NSFW/adult generations are excluded from marketplace discoverability.' : '',
+  };
+}
+
+function openseaAssetUrl(chainId, contractAddress, tokenId) {
+  if (!contractAddress || tokenId === undefined || tokenId === null) return null;
+  const chainSlug = { 1: 'ethereum', 42161: 'arbitrum', 8453: 'base' }[Number(chainId)];
+  return chainSlug ? `https://opensea.io/assets/${chainSlug}/${contractAddress}/${tokenId}` : null;
+}
+
+function normalizeRoyaltyRoute(route) {
+  if (!Array.isArray(route)) return [];
+  return route
+    .filter(item => item && typeof item === 'object')
+    .map(item => ({
+      wallet: item.wallet || item.address || null,
+      role: item.role || 'data_owner',
+      weight: Number(item.weight || 1),
+      contributionId: item.contributionId || item.contribution_id || null,
+      contributionHash: item.contributionHash || item.contribution_hash || null,
+    }))
+    .filter(item => /^0x[a-fA-F0-9]{40}$/.test(item.wallet || ''));
+}
+
+function buildTrainingMaterialPolicy({ requested, contributionManifest, creator }) {
+  const route = normalizeRoyaltyRoute(contributionManifest.royaltyRoute || contributionManifest.royalty_route);
+  const fallbackRoute = creator
+    ? [{
+      wallet: creator,
+      role: 'creator_data_owner',
+      weight: 1,
+      contributionId: contributionManifest.id || contributionManifest.contributionId || null,
+      contributionHash: contributionManifest.contentHash || null,
+    }]
+    : [];
+
+  return {
+    eligible: requested === true,
+    trainingAllowed: requested === true,
+    commercialAllowed: contributionManifest.permissions?.commercialAllowed === true,
+    royaltyBearing: requested === true,
+    sourceContributionId: contributionManifest.id || contributionManifest.contributionId || null,
+    sourceContentHash: contributionManifest.contentHash || null,
+    downstreamRevenue: {
+      mode: 'proof-of-contribution',
+      allocationBasis: 'fine-tune revenue routes to royalty-bearing data owners referenced by the training asset',
+      dataOwners: route.length ? route : fallbackRoute,
+    },
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BASE ERC-721 ABI (BonzaiCollectibles clone)
@@ -215,6 +287,7 @@ export async function mintContent({
   inferenceType,
   inferenceId,
   customThumbnail,
+  marketplacePolicy = {},
   onProgress = () => {},
 }) {
   const network = mintStore.state.network;
@@ -230,7 +303,7 @@ export async function mintContent({
 
     // ─── Pre-flight: ensure we're on Ethereum ─────────────────────
     onProgress('upload', 'Preparing...', 5);
-    await switchNetwork('base');
+    await switchNetwork(ECONOMY_NETWORK_KEY);
 
     // ─── Stage 1: Upload content to IPFS ──────────────────────────────
     onProgress('upload', 'Uploading content to IPFS...', 10);
@@ -245,10 +318,77 @@ export async function mintContent({
     await storageService.initStorage(provider);
 
     const promptHash = ethers.keccak256(ethers.toUtf8Bytes(prompt || ''));
+    const contentSafety = inferContentSafety({ generation, prompt, title, description });
+    const modelProvenance = generation.modelProvenance || generation.model_provenance || generation.provenance || null;
+    const modelDataset = modelProvenance?.dataset || {};
+    const modelAttribution = modelProvenance?.attribution || {};
+    const modelDataOwners = Array.isArray(modelDataset.dataOwnerWallets)
+      ? modelDataset.dataOwnerWallets
+      : Array.isArray(modelAttribution.dataOwnerWallets)
+        ? modelAttribution.dataOwnerWallets
+        : [];
+    const marketplace = {
+      discoverable: marketplacePolicy.discoverable === true && contentSafety.discoverabilityAllowed,
+      requestedDiscoverable: marketplacePolicy.discoverable === true,
+      blockedReason: marketplacePolicy.discoverable === true && !contentSafety.discoverabilityAllowed
+        ? contentSafety.reason
+        : '',
+      purchaseChannels: ['opensea'],
+    };
+    const rawContributionManifest = generation.contribution || buildContributionManifest({
+      id: inferenceId || `mint-${Date.now()}`,
+      assetType: inferenceType || generation.type || 'content',
+      role: 'creator',
+      prompt,
+      output: typeof content === 'string' ? content.slice(0, 1000) : `${contentType || 'binary'} content`,
+      parents: generation.contributionParents || generation.parents || [],
+      metadata: {
+        model: generation.model || null,
+        pipeline: generation.pipeline || null,
+        source: generation.source || null,
+      },
+    });
+    const contributionManifest = {
+      ...rawContributionManifest,
+      visibility: marketplace.discoverable ? 'publishable' : rawContributionManifest.visibility || 'private',
+      permissions: {
+        ...(rawContributionManifest.permissions || {}),
+        publishable: marketplace.discoverable,
+        trainingAllowed: marketplacePolicy.trainingMaterial === true,
+        commercialAllowed: rawContributionManifest.permissions?.commercialAllowed === true,
+        royaltyBearing: marketplacePolicy.trainingMaterial === true || rawContributionManifest.permissions?.royaltyBearing === true,
+      },
+    };
+    const bonzaiUtility = generation.bonzaiUtility || buildBonzaiUtilitySnapshot({
+      assetType: inferenceType || generation.type || 'content',
+      role: contributionManifest.role || 'creator',
+      contribution: contributionManifest,
+      parents: contributionManifest.parents,
+      action: 'mint',
+    });
     const attribution = {
       creator: (await (new ethers.BrowserProvider(provider)).getSigner()).address,
       platform: CONFIG.treasury.address,
     };
+    const trainingMaterial = buildTrainingMaterialPolicy({
+      requested: marketplacePolicy.trainingMaterial === true,
+      contributionManifest: modelProvenance
+        ? {
+          ...contributionManifest,
+          royaltyRoute: modelDataOwners.map((wallet) => ({
+            wallet,
+            role: 'model_training_data_owner',
+            weight: 1,
+          })),
+          permissions: {
+            ...(contributionManifest.permissions || {}),
+            royaltyBearing: true,
+            trainingAllowed: marketplacePolicy.trainingMaterial === true,
+          },
+        }
+        : contributionManifest,
+      creator: attribution.creator,
+    });
 
     let contentReceipt;
     onProgress('upload', 'Uploading content to IPFS...', 12);
@@ -421,8 +561,16 @@ export async function mintContent({
         ...(generation.tokensPerSecond ? [{ trait_type: 'Tokens Per Second', value: String(generation.tokensPerSecond) }] : []),
         ...(generation.elapsedMs ? [{ trait_type: 'Generation Time (ms)', value: String(generation.elapsedMs) }] : []),
         ...(generation.hfRepo ? [{ trait_type: 'HuggingFace Repository', value: generation.hfRepo }] : []),
+        ...(modelProvenance ? [{ trait_type: 'Model Provenance', value: 'BonzAI Proof-of-Contribution' }] : []),
+        ...(modelDataOwners.length ? [{ trait_type: 'Training Data Owners', value: String(modelDataOwners.length) }] : []),
+        { trait_type: 'Marketplace Discoverable', value: marketplace.discoverable ? 'Yes' : 'No' },
+        { trait_type: 'Training Material', value: trainingMaterial.eligible ? 'Yes' : 'No' },
+        { trait_type: 'Content Safety', value: contentSafety.nsfw ? 'NSFW' : 'SFW' },
       ],
       properties: {
+        marketplace,
+        trainingMaterial,
+        contentSafety,
         provenance: {
           transactionId: contentReceipt.transactionId,
           contentUrl: contentReceipt.url,
@@ -431,6 +579,18 @@ export async function mintContent({
           generationType: generation.type,
           timestamp: generation.timestamp || Date.now(),
           inspector: inspectorMetadata,
+          contribution: contributionManifest,
+          bonzaiUtility,
+          modelProvenance,
+          collectiveOwnership: modelProvenance
+            ? {
+              mode: 'proof-of-contribution',
+              dataset: modelDataset,
+              attribution: modelAttribution,
+              dataOwnerWallets: modelDataOwners,
+              revenuePlan: modelAttribution.revenuePlan || null,
+            }
+            : null,
           ...(generation.tokensPerSecond ? { tokensPerSecond: String(generation.tokensPerSecond) } : {}),
           ...(generation.elapsedMs ? { elapsedMs: generation.elapsedMs } : {}),
           ...(generation.hfRepo ? { hfRepo: generation.hfRepo } : {}),
@@ -453,10 +613,10 @@ export async function mintContent({
     // ─── Stage 3: Mint on-chain ──────────────────────────────────────
     onProgress('mint', `Minting on ${networkConfig.label}...`, 65);
 
-    const mintResult = await mintOnBase({
+    const mintResult = await mintOnEconomyChain({
       transactionId: contentReceipt.transactionId,
       model: generation.model || 'unknown',
-      tokenURI: metadataReceipt.url,  // ipfs://<cid> — BaseScan resolves via its own gateway
+      tokenURI: metadataReceipt.url,
       onProgress,
       inferenceType,
     });
@@ -477,6 +637,12 @@ export async function mintContent({
       transactionId: contentReceipt.transactionId,
       contentUrl: contentReceipt.gatewayUrl,
       metadataUrl: metadataReceipt.gatewayUrl,
+      marketplaceUrl: openseaAssetUrl(networkConfig.chainId, mintResult.contractAddress, mintResult.tokenId),
+      marketplace,
+      trainingMaterial,
+      contentSafety,
+      contribution: contributionManifest,
+      bonzaiUtility,
     };
 
     if (inferenceType && inferenceId) {
@@ -496,6 +662,11 @@ export async function mintContent({
         generationId: inferenceId || null,
         ipfsCid: contentReceipt.cid || null,
         txHash: mintResult.transactionHash,
+        metadataUrl: metadataReceipt.gatewayUrl,
+        marketplaceUrl: nftData.marketplaceUrl,
+        marketplaceDiscoverable: marketplace.discoverable,
+        trainingAllowed: trainingMaterial.trainingAllowed,
+        contributionHash: contributionManifest.contentHash || null,
         mintedAt: Date.now(),
       });
     } catch (e) { console.warn('[ContentNFT] mint mirror to SQL failed:', e?.message); }
@@ -519,14 +690,14 @@ export async function mintContent({
 // ETHEREUM MINTING (ERC-721)
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenceType }) {
-  const factoryAddress = CONFIG.contentNFT?.base?.factoryAddress;
+async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, inferenceType }) {
+  const factoryAddress = CONFIG.contentNFT?.economy?.factoryAddress;
   if (!factoryAddress) {
     throw new Error('BonzaiCollectiblesFactory not deployed on Ethereum yet. Factory address not configured.');
   }
 
   // Ensure we're on Ethereum (legacy "base" key is mapped to Ethereum in config)
-  await switchNetwork('base');
+  await switchNetwork(ECONOMY_NETWORK_KEY);
 
   onProgress('mint', 'Preparing transaction...', 68);
   const signer = await getSigner();
@@ -555,17 +726,18 @@ async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenc
 
   const contract = new ethers.Contract(collectionAddress, BASE_CONTENT_ABI, signer);
 
-  // Get mint fee from contract
+  const contentType = CONTENT_TYPE_MAP[inferenceType] ?? 0;
+
+  // Read the exact fee for this media type from the collection contract.
   let mintFee;
   try {
-    mintFee = await contract.mintFee();
+    mintFee = await contract.mintFees(contentType);
   } catch {
-    mintFee = ethers.parseEther(CONFIG.contentNFT.base.mintFee);
+    mintFee = ethers.parseEther(CONFIG.contentNFT.economy.mintFees[contentType]);
   }
 
   onProgress('mint', 'Confirm transaction in your wallet...', 72);
 
-  const contentType = CONTENT_TYPE_MAP[inferenceType] ?? 0;
   const tx = await contract.mint(transactionId, model, tokenURI, contentType, { value: mintFee });
   console.log('[ContentNFT] Ethereum mint tx sent:', tx.hash);
 
@@ -590,7 +762,7 @@ async function mintOnBase({ transactionId, model, tokenURI, onProgress, inferenc
     tokenId,
     contractAddress: collectionAddress,
     transactionHash: receipt.hash,
-    explorerUrl: `${CONFIG.networks.base.explorer}/tx/${receipt.hash}`,
+    explorerUrl: `${CONFIG.networks[ECONOMY_NETWORK_KEY].explorer}/tx/${receipt.hash}`,
   };
 }
 
@@ -1143,16 +1315,16 @@ document.getElementById('poster').addEventListener('click',function(){
  * Fetch the Three.js code from a minted 3D NFT's on-chain metadata.
  *
  * @param {string} tokenId - The NFT token ID
- * @param {string} [network='base'] - Network to query ('base' or 'lukso')
+ * Query the configured economy-chain collection.
  * @returns {Object|null} { code, prompt } or null if not found
  */
 export async function fetchNFT3DCode(tokenId) {
   try {
     // ERC-721: call tokenURI on Ethereum
-    const contractAddress = CONFIG.contentNFT?.base?.contractAddress;
+    const contractAddress = CONFIG.contentNFT?.economy?.contractAddress;
     if (!contractAddress) throw new Error('Content NFT contract not configured');
 
-    const provider = new ethers.JsonRpcProvider(CONFIG.networks?.base?.rpc || 'https://ethereum.publicnode.com');
+    const provider = new ethers.JsonRpcProvider(CONFIG.networks[ECONOMY_NETWORK_KEY].rpc);
     const contract = new ethers.Contract(
       contractAddress,
       ['function tokenURI(uint256 tokenId) view returns (string)'],

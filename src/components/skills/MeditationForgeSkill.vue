@@ -31,6 +31,23 @@
         </div>
       </div>
 
+      <div class="duration-panel">
+        <h3 class="duration-panel__title">Duration</h3>
+        <div class="duration-presets" role="radiogroup" aria-label="Meditation duration">
+          <button
+            v-for="preset in durationPresets"
+            :key="preset.minutes"
+            type="button"
+            class="duration-preset"
+            :class="{ 'is-selected': selectedDuration === preset.minutes }"
+            @click="selectedDuration = preset.minutes"
+          >
+            <strong class="duration-preset__value">{{ preset.label }}</strong>
+            <span>{{ preset.description }}</span>
+          </button>
+        </div>
+      </div>
+
       <!-- Scenario Description -->
       <div v-if="selectedScenario" class="bz-notice bz-notice--info scenario-notice">
         <span class="bz-notice__icon"><span class="material-symbols-outlined">spa</span></span>
@@ -53,6 +70,10 @@
       <div class="meditation-session-cell">
         <span>Breath</span>
         <strong>{{ breathingText }}</strong>
+      </div>
+      <div class="meditation-session-cell">
+        <span>Duration</span>
+        <strong>{{ formatDuration(selectedDuration) }}</strong>
       </div>
       <div class="meditation-session-cell">
         <span>Progress</span>
@@ -91,6 +112,7 @@
           </p>
           <BonzaiPulse
             v-if="generationProgress > 0"
+            class="meditation-generation-progress"
             variant="bar"
             :percent="generationProgress"
             width="300px"
@@ -155,6 +177,17 @@
       ></audio>
     </div>
 
+    <section
+      v-if="!isFullscreen && meditationData?.script"
+      class="meditation-transcript skill-panel"
+    >
+      <h2 class="bz-h2 skill-section-title">
+        <span class="material-symbols-outlined">article</span>
+        Transcript
+      </h2>
+      <p>{{ meditationData.script }}</p>
+    </section>
+
     <!-- Controls (hidden in fullscreen) -->
     <section v-if="!isFullscreen" class="meditation-controls meditation-console skill-panel">
       <div class="skill-action-row">
@@ -162,7 +195,7 @@
           <!-- Generate Button -->
           <button
             v-if="!meditationData && !isGenerating"
-            class="bz-btn bz-btn--success bz-btn--lg"
+            class="bz-btn bz-btn--agent-cta bz-btn--lg"
             :disabled="!selectedScenario"
             @click="generateMeditation"
           >
@@ -174,7 +207,7 @@
           <div v-else class="skill-action-row">
             <button
               v-if="!isPlaying"
-              class="bz-btn bz-btn--success bz-btn--lg"
+              class="bz-btn bz-btn--agent-cta bz-btn--lg"
               :disabled="isGenerating || !meditationData"
               @click="playMeditation"
             >
@@ -183,7 +216,7 @@
             </button>
             <button
               v-else
-              class="bz-btn bz-btn--warning bz-btn--lg"
+              class="bz-btn bz-btn--agent-cta bz-btn--lg"
               @click="pauseMeditation"
             >
               <span class="material-symbols-outlined">pause</span>
@@ -197,9 +230,23 @@
               <span class="material-symbols-outlined">stop</span>
               End Session
             </button>
+            <button
+              class="bz-btn bz-btn--primary bz-btn--lg"
+              :disabled="isGenerating || isExportingVideo || !meditationData || !audioSrc || !imageSrc"
+              @click="exportMeditationVideo"
+            >
+              <span class="material-symbols-outlined">
+                {{ isExportingVideo ? 'hourglass_top' : 'movie' }}
+              </span>
+              {{ isExportingVideo ? 'Exporting...' : 'Export Video' }}
+            </button>
           </div>
         </div>
       </div>
+
+      <p v-if="exportStatus" class="meditation-export-status bz-meta">
+        {{ exportStatus }}
+      </p>
 
       <!-- Volume Control -->
       <div v-if="meditationData" class="volume-control volume-row">
@@ -269,17 +316,97 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import BonzaiPulse from '../BonzaiPulse.vue';
 import { getAuthHeaders } from '../../services/auth.service.js';
-import { hasPurchasedSkill, isDevMode } from '../../services/agent.service.js';
+import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
+import { resolveLLM } from '../../skills/flagship.js';
 
 const STORAGE_KEY = 'meditation-forge-sessions';
 const SKILL_ID = 'meditation-forge-v1.0.0';
 
-// Default LLM config - matches GenerativeText.vue structure
-const DEFAULT_LLM = {
-  filename: 'meta-llama-3.1-8b-instruct-q4_k_m.gguf',
-  filesizeBytes: 4.92e9,
-  parameters: 8000000000,
-  context: 131072,
+const DEFAULT_LLM = resolveLLM('qwen3_5_9b', 'q4');
+
+const SCRIPT_SYSTEM_PROMPT = `You are a professional guided meditation writer.
+Write only the spoken transcript that a calm ASMR narrator should read.
+Never include JSON, metadata, variables, labels, scene notes, system prompts, markdown headings, or implementation instructions.`;
+
+const durationPresets = [
+  { minutes: 0.5, label: '30 sec', description: 'TikTok Reset' },
+  { minutes: 3, label: '3 min', description: 'Reset' },
+  { minutes: 5, label: '5 min', description: 'Short practice' },
+  { minutes: 10, label: '10 min', description: 'Deep session' },
+  { minutes: 15, label: '15 min', description: 'Immersive' },
+];
+
+const wordsForDuration = (minutes) => {
+  const n = Number(minutes) || 5;
+  if (n < 1) return 52;
+  return Math.max(320, Math.round(n * 95));
+};
+
+const secondsForDuration = (minutes) => Math.max(1, Math.round((Number(minutes) || 0) * 60));
+
+const isShortFormDuration = (minutes) => secondsForDuration(minutes) <= 45;
+
+const formatDuration = (minutes) => {
+  const n = Number(minutes) || 0;
+  if (n < 1) return `${Math.round(n * 60)} sec`;
+  return `${n} min`;
+};
+
+const formatDurationPrompt = (minutes) => {
+  const n = Number(minutes) || 5;
+  if (n < 1) return `${Math.round(n * 60)}-second`;
+  return `${n}-minute`;
+};
+
+const stripReasoningTags = (value) =>
+  String(value || "")
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?(?:think|thinking|reasoning|analysis|reflection)\b[^>]*>/gi, "")
+    .trim();
+
+const trimScriptToWordBudget = (value, maxWords) => {
+  const words = String(value || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return String(value || "").trim();
+  let trimmed = words.slice(0, maxWords).join(" ");
+  trimmed = trimmed.replace(/[,:;]?\s*$/, ".");
+  if (!/[.!?]$/.test(trimmed)) trimmed += ".";
+  if (!/\bnamaste[.!?]?$/i.test(trimmed)) trimmed += " Namaste.";
+  return trimmed;
+};
+
+const buildShortFormFallbackScript = (scenario) => {
+  const environment = scenario?.environment || "this peaceful place";
+  const intention = String(scenario?.intention || "calm").toLowerCase();
+  return `Welcome to your meditation. Let your eyes soften. Breathe in... hold... breathe out. Picture ${environment} around you, quiet and safe. Drop your shoulders. Unclench your jaw. Let one small layer of tension leave with the next exhale. Return to ${intention}. Breathe in... hold... breathe out. You are here. You are steady. Namaste.`;
+};
+
+const fitScriptToDuration = (value, minutes, fallback) => {
+  const targetWords = wordsForDuration(minutes);
+  const source = String(value || "").trim() || fallback;
+  if (isShortFormDuration(minutes)) {
+    return trimScriptToWordBudget(source, targetWords + 8);
+  }
+  return source;
+};
+
+const cleanMeditationScript = (value, fallback, minutes = 5) => {
+  let text = stripReasoningTags(value)
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```(?:text|markdown|md)?/gi, "").replace(/```/g, ""))
+    .replace(/^(?:transcript|script|meditation script|spoken transcript)\s*:\s*/i, "")
+    .trim();
+
+  const lower = text.toLowerCase();
+  const looksLikePrompt =
+    lower.includes("requirements:") ||
+    lower.includes("output only") ||
+    lower.includes("system prompt") ||
+    lower.includes("session variables") ||
+    lower.includes("environment:") ||
+    lower.startsWith("write a guided meditation");
+
+  const minLength = isShortFormDuration(minutes) ? 120 : 220;
+  if (!text || text.length < minLength || looksLikePrompt) return fallback;
+  return fitScriptToDuration(text, minutes, fallback);
 };
 
 // Load LLM model before generating text
@@ -329,12 +456,15 @@ export default {
     const meditationData = ref(null);
     const audioSrc = ref('');
     const imageSrc = ref('');
+    const isExportingVideo = ref(false);
+    const exportStatus = ref('');
     const volume = ref(0.7);
     const elapsedTime = ref(0);
     const totalDuration = ref(0);
     const breathingPhase = ref('inhale');
     const breathingText = ref('Breathe In');
     const sessionHistory = ref([]);
+    const selectedDuration = ref(5);
 
     // Breathing animation interval
     let breathingInterval = null;
@@ -645,6 +775,144 @@ Take one final, powerful breath. Feel your energy peak. Open your eyes with fire
 Go create something beautiful. Namaste.`,
         breathingPattern: { inhale: 4, hold: 2, exhale: 4 },
       },
+      {
+        id: 'rain-library',
+        name: 'Rainlit Library',
+        icon: 'local_library',
+        description: 'Settle into a candlelit archive while rain traces the windows and every page-turn quiets the mind.',
+        intention: 'Focus & Comfort',
+        environment: 'library',
+        visualPrompt: 'cozy old library during gentle rain, candlelit reading table, tall wooden shelves, rain streaking windows, warm amber lamps, peaceful scholarly atmosphere, photorealistic, 8k',
+        script: `Welcome to your rainlit library meditation. Settle into stillness and let your eyes close.
+
+Breathe in slowly... hold... breathe out.
+
+Imagine yourself in an old library as rain taps softly against tall windows. The room is warm, quiet, and safe. Shelves rise around you like patient guardians.
+
+Breathe in... hold... breathe out.
+
+A candle glows beside an open book. Its small flame moves gently, never rushing. Let your attention rest there. Simple. Steady. Present.
+
+The scent of paper, cedar, and rain fills the air. Each drop on the window reminds you that the outside world can move while you remain calm within.
+
+Breathe in focus... hold... breathe out distraction.
+
+Place one hand over your heart. Feel its rhythm. You do not need to force clarity. You only need to make room for it.
+
+With each breath, your thoughts become like books returned to their shelves. One by one, they find their place.
+
+You are quiet. You are gathered. You are at home inside yourself.
+
+When you are ready, close the book gently in your mind. Bring your awareness back to the room around you. Take one final breath, and open your eyes.
+
+Carry this focused calm with you. Namaste.`,
+        breathingPattern: { inhale: 4, hold: 3, exhale: 6 },
+      },
+      {
+        id: 'desert-stargate',
+        name: 'Desert Stargate',
+        icon: 'nightlight',
+        description: 'Walk beneath a velvet desert sky where cool sand, ancient stone, and constellations restore perspective.',
+        intention: 'Perspective',
+        environment: 'desert',
+        visualPrompt: 'peaceful desert at night, ancient stone arch, cool silver sand, vast starry sky, milky way overhead, soft moonlight, mystical calm atmosphere, photorealistic, 8k',
+        script: `Welcome to your desert stargate meditation. Allow your body to become still and your breath to slow.
+
+Breathe in the cool night air... hold... and release.
+
+You are standing in a quiet desert beneath a sky filled with stars. The sand below your feet is soft and cool. The horizon is wide in every direction.
+
+Breathe in... hold... breathe out.
+
+Ahead of you stands an ancient stone arch. It has weathered wind, time, and silence. It asks nothing from you. It simply remains.
+
+Step beneath the arch and look up. The Milky Way stretches overhead like a river of light. Your worries begin to loosen.
+
+Breathe in space... hold... breathe out pressure.
+
+Feel how vast the night is. Feel how gently it holds you. You are allowed to be small here, and also deeply connected.
+
+Every star is a reminder: perspective can return in a single quiet moment.
+
+Let the desert absorb what you no longer need. Let the sky return what you forgot: patience, wonder, and trust.
+
+When ready, step back through the arch. Feel your breath, your body, your steady presence. Open your eyes softly.
+
+The stars remain within you. Namaste.`,
+        breathingPattern: { inhale: 5, hold: 2, exhale: 7 },
+      },
+      {
+        id: 'glasshouse-dawn',
+        name: 'Glasshouse Dawn',
+        icon: 'psychiatry',
+        description: 'Wake gently in a botanical glasshouse where dew, orchids, and first light invite renewal.',
+        intention: 'Renewal',
+        environment: 'greenhouse',
+        visualPrompt: 'botanical glasshouse at dawn, orchids and tropical plants, dew on leaves, soft golden sunrise through glass panes, misty peaceful air, photorealistic, 8k',
+        script: `Welcome to your glasshouse dawn meditation. Find a comfortable shape and close your eyes.
+
+Breathe in gently... hold... breathe out.
+
+You are inside a quiet botanical glasshouse at first light. Dew rests on broad green leaves. Orchids glow softly in the morning air.
+
+Breathe in... hold... breathe out.
+
+The glass panes above you catch the sunrise. Gold light spills slowly into the room, touching every plant, every petal, every quiet corner.
+
+Feel that same light arriving inside you.
+
+Breathe in renewal... hold... breathe out yesterday.
+
+Notice how nothing here rushes to grow. Each leaf opens in its own time. Each stem reaches toward light without apology.
+
+Let your shoulders soften. Let your breath become warm and easy. You are allowed to begin again without solving everything first.
+
+A fine mist drifts through the glasshouse. It cools your skin and clears your thoughts. You feel refreshed. Rooted. Alive.
+
+Breathe in possibility... hold... breathe out heaviness.
+
+When you are ready, place this dawn inside your heart. Return to your body. Wiggle your fingers and toes. Open your eyes.
+
+May this new beginning stay with you. Namaste.`,
+        breathingPattern: { inhale: 4, hold: 4, exhale: 5 },
+      },
+      {
+        id: 'floating-lanterns',
+        name: 'Floating Lanterns',
+        icon: 'emoji_objects',
+        description: 'Release old weight onto glowing lanterns and watch them drift across a moonlit lake.',
+        intention: 'Letting Go',
+        environment: 'lake',
+        visualPrompt: 'moonlit lake with floating paper lanterns, calm reflective water, distant forest silhouette, soft warm lantern glow, peaceful night ceremony, photorealistic, 8k',
+        script: `Welcome to your floating lantern meditation. Settle in, close your eyes, and let your breath become soft.
+
+Breathe in... hold... breathe out.
+
+You are seated beside a still lake under moonlight. The water is dark and calm, reflecting the stars above.
+
+In your hands is a small paper lantern. It glows with warm golden light.
+
+Breathe in gently... hold... release.
+
+Imagine placing one worry into the lantern. Not to judge it. Not to fight it. Simply to let it be carried.
+
+Set the lantern on the water. Watch it drift away from shore, its light trembling softly across the lake.
+
+Breathe in peace... hold... breathe out attachment.
+
+Another lantern appears. Into this one, place an old expectation. Something you are ready to loosen. Let it float.
+
+The lake receives everything without resistance. The night remains spacious. The moon remains kind.
+
+With each breath, another small light drifts away. You are not losing yourself. You are making space.
+
+Breathe in freedom... hold... breathe out the old weight.
+
+When you are ready, watch the lanterns become stars on the water. Return to your body. Take one final breath. Open your eyes.
+
+You are lighter now. Namaste.`,
+        breathingPattern: { inhale: 4, hold: 2, exhale: 8 },
+      },
     ];
 
     // Computed
@@ -721,7 +989,7 @@ Go create something beautiful. Namaste.`,
 
     const generateMeditation = async () => {
       if (!selectedScenario.value) return;
-      if (!isDevMode() && !(await hasPurchasedSkill(SKILL_ID))) {
+      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
         console.warn('[MeditationForge] Skill not purchased — execution blocked.');
         return;
       }
@@ -739,38 +1007,65 @@ Go create something beautiful. Namaste.`,
         generationProgress.value = 10;
         emit('status-update', generationStatus.value);
 
-        const scriptPrompt = `Write a guided meditation script for: "${scenario.name}"
+        const targetWords = wordsForDuration(selectedDuration.value);
+        const durationText = formatDurationPrompt(selectedDuration.value);
+        const shortFormRules = isShortFormDuration(selectedDuration.value)
+          ? '- Start immediately. No setup sentence beyond "Welcome to your meditation"\n- Use 45-60 words total\n- One breath cycle, one sensory image, one closing line'
+          : '- Include progressive relaxation';
+        const scriptPrompt = `Write the spoken transcript for a ${durationText} guided meditation.
+
+Journey: ${scenario.name}
 Theme: ${scenario.intention}
 Environment: ${scenario.environment}
 Description: ${scenario.description}
 
 Requirements:
-- About 400-500 words
+- About ${targetWords} words
 - Include breathing cues: "breathe in... hold... breathe out"
 - Use sensory descriptions (sight, sound, touch, smell)
 - Gentle, calming ASMR-style tone
 - Start with "Welcome to your meditation" and end with "Namaste"
-- Include progressive relaxation
+${shortFormRules}
+- For sessions under one minute, use one compact breath cycle and no extended intro
+- Do not include labels, JSON, variables, headings, bullet points, or notes
 
 Output ONLY the meditation script text, nothing else.`;
 
         let meditation = {
           title: `${scenario.name} Meditation`,
-          script: scenario.script, // Default fallback
+          script: fitScriptToDuration(
+            isShortFormDuration(selectedDuration.value) ? buildShortFormFallbackScript(scenario) : scenario.script,
+            selectedDuration.value,
+            scenario.script,
+          ),
           breathingPattern: scenario.breathingPattern,
         };
 
         try {
           // Load LLM model
           await loadLLM();
+          try {
+            await window.electronAPI?.setSystemPrompt?.(SCRIPT_SYSTEM_PROMPT);
+            await window.electronAPI?.resetChat?.();
 
-          // Generate meditation script using the chat API
-          const llmResponse = await window.electronAPI.chat(scriptPrompt);
-          if (llmResponse && llmResponse.length > 200) {
-            meditation.script = llmResponse.trim();
-            console.log('[MeditationForge] LLM generated script, length:', meditation.script.length);
-          } else {
-            console.warn('[MeditationForge] LLM response too short, using fallback');
+            // Generate meditation script using the chat API
+            const llmResponse = await window.electronAPI.chat(scriptPrompt, {
+              maxTokens: Math.min(2048, Math.max(700, Math.round(targetWords * 1.7))),
+              temperature: 0.72,
+            });
+            const fallbackScript = isShortFormDuration(selectedDuration.value)
+              ? buildShortFormFallbackScript(scenario)
+              : scenario.script;
+            const cleanScript = cleanMeditationScript(llmResponse, fallbackScript, selectedDuration.value);
+            if (cleanScript && cleanScript.length > (isShortFormDuration(selectedDuration.value) ? 100 : 200)) {
+              meditation.script = cleanScript;
+              console.log('[MeditationForge] LLM generated script, length:', meditation.script.length);
+            } else {
+              console.warn('[MeditationForge] LLM response too short, using fallback');
+            }
+          } finally {
+            await window.electronAPI?.setSystemPrompt?.("");
+            await window.electronAPI?.resetChat?.();
           }
 
           // Unload LLM to free memory for image/audio generation
@@ -821,6 +1116,7 @@ Output ONLY the meditation script text, nothing else.`;
         } catch (imgError) {
           console.warn('[MeditationForge] Image generation error:', imgError);
         }
+        const sessionImageSrc = imageSrc.value;
 
         generationStatus.value = 'Recording ASMR narration...';
         generationProgress.value = 70;
@@ -834,7 +1130,7 @@ Output ONLY the meditation script text, nothing else.`;
             body: JSON.stringify({
               prompt: meditation.script,
               voice: 'af_nicole',
-              speed: 0.85,
+              speed: isShortFormDuration(selectedDuration.value) ? 1.02 : 0.85,
             }),
           });
 
@@ -853,6 +1149,7 @@ Output ONLY the meditation script text, nothing else.`;
         } catch (audioError) {
           console.warn('[MeditationForge] Audio generation error:', audioError);
         }
+        const sessionAudioSrc = audioSrc.value;
 
         generationProgress.value = 100;
         generationStatus.value = 'Meditation ready!';
@@ -862,6 +1159,9 @@ Output ONLY the meditation script text, nothing else.`;
           ...meditation,
           scenarioId: scenario.id,
           scenarioName: scenario.name,
+          duration: selectedDuration.value,
+          audioSrc: sessionAudioSrc,
+          imageSrc: sessionImageSrc,
           createdAt: new Date().toISOString(),
         };
 
@@ -875,10 +1175,12 @@ Output ONLY the meditation script text, nothing else.`;
           scenarioName: meditationData.value.scenarioName,
           duration: meditationData.value.duration,
           voice: meditationData.value.voice,
+          script: meditationData.value.script,
+          audioSrc: sessionAudioSrc,
+          imageSrc: sessionImageSrc,
           createdAt: meditationData.value.createdAt,
-          // Don't store large base64 data - store indicator that media exists
-          hasAudio: !!audioSrc.value,
-          hasImage: !!imageSrc.value,
+          hasAudio: !!sessionAudioSrc,
+          hasImage: !!sessionImageSrc,
         });
 
         // Keep only last 10 sessions
@@ -1003,6 +1305,50 @@ Output ONLY the meditation script text, nothing else.`;
       }
     };
 
+    const exportMeditationVideo = async () => {
+      if (!meditationData.value || !audioSrc.value || !imageSrc.value) return;
+      if (!window.electronAPI?.exportMeditationVideo) {
+        exportStatus.value = 'Video export is only available in the desktop app.';
+        return;
+      }
+
+      isExportingVideo.value = true;
+      exportStatus.value = 'Rendering vertical meditation video with karaoke captions...';
+      emit('status-update', exportStatus.value);
+
+      try {
+        const safeName = String(meditationData.value.scenarioName || 'meditation')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'meditation';
+        const result = await window.electronAPI.exportMeditationVideo({
+          title: meditationData.value.title,
+          script: fitScriptToDuration(
+            meditationData.value.script,
+            meditationData.value.duration || selectedDuration.value,
+            meditationData.value.script,
+          ),
+          durationSeconds: secondsForDuration(meditationData.value.duration || selectedDuration.value),
+          imageSource: imageSrc.value,
+          audioSource: audioSrc.value,
+          defaultName: `bonzai-${safeName}-${formatDuration(meditationData.value.duration || selectedDuration.value).replace(/\s+/g, '-')}.mp4`,
+          watermark: 'BonzAI',
+        });
+
+        if (result?.success) {
+          exportStatus.value = 'Meditation video exported.';
+          emit('status-update', 'Meditation video exported.');
+        } else {
+          exportStatus.value = result?.error || 'Video export cancelled.';
+        }
+      } catch (error) {
+        console.error('[MeditationForge] Video export failed:', error);
+        exportStatus.value = `Video export failed: ${error.message}`;
+      } finally {
+        isExportingVideo.value = false;
+      }
+    };
+
     const formatDate = (dateStr) => {
       return new Date(dateStr).toLocaleDateString();
     };
@@ -1016,15 +1362,17 @@ Output ONLY the meditation script text, nothing else.`;
       const scenario = scenarios.find(s => s.id === session.scenarioId);
       if (scenario) {
         selectedScenario.value = scenario;
+        selectedDuration.value = session.duration || selectedDuration.value;
         meditationData.value = {
           ...session,
-          // Note: Audio and image are not stored to save space
         };
-        // Clear media - user would need to regenerate the meditation
-        audioSrc.value = '';
-        imageSrc.value = '';
+        audioSrc.value = session.audioSrc || '';
+        imageSrc.value = session.imageSrc || '';
         audioEnded.value = false;
-        console.log('[MeditationForge] Loaded session metadata. Click "Begin Session" to regenerate.');
+        elapsedTime.value = 0;
+        totalDuration.value = 0;
+        exportStatus.value = '';
+        console.log('[MeditationForge] Loaded session with available media metadata.');
       }
     };
 
@@ -1052,6 +1400,9 @@ Output ONLY the meditation script text, nothing else.`;
             scenarioName: session.scenarioName,
             duration: session.duration,
             voice: session.voice,
+            script: session.script,
+            audioSrc: session.audioSrc,
+            imageSrc: session.imageSrc,
             createdAt: session.createdAt,
             hasAudio: session.hasAudio,
             hasImage: session.hasImage,
@@ -1104,7 +1455,9 @@ Output ONLY the meditation script text, nothing else.`;
       meditationDisplay,
       // State
       scenarios,
+      durationPresets,
       selectedScenario,
+      selectedDuration,
       isGenerating,
       isPlaying,
       isFullscreen,
@@ -1114,6 +1467,8 @@ Output ONLY the meditation script text, nothing else.`;
       meditationData,
       audioSrc,
       imageSrc,
+      isExportingVideo,
+      exportStatus,
       volume,
       elapsedTime,
       totalDuration,
@@ -1124,11 +1479,13 @@ Output ONLY the meditation script text, nothing else.`;
       backgroundStyle,
       sessionProgress,
       // Methods
+      formatDuration,
       selectScenario,
       generateMeditation,
       playMeditation,
       pauseMeditation,
       resetMeditation,
+      exportMeditationVideo,
       toggleFullscreen,
       updateVolume,
       formatDate,
@@ -1373,6 +1730,10 @@ Output ONLY the meditation script text, nothing else.`;
   text-align: center;
 }
 
+.meditation-generation-progress {
+  margin-top: var(--bz-space-6);
+}
+
 /* Fullscreen Toggle Button */
 .fullscreen-toggle {
   position: absolute;
@@ -1431,6 +1792,7 @@ Output ONLY the meditation script text, nothing else.`;
 
 .breathing-text {
   text-shadow: 0 2px 10px var(--bz-scrim-strong);
+  margin-top: var(--bz-space-6);
 }
 
 /* Controls */
@@ -1555,6 +1917,7 @@ Output ONLY the meditation script text, nothing else.`;
   gap: var(--bz-space-4);
   align-items: center;
   background: var(--bz-panel);
+  margin-top: var(--bz-space-6);
 }
 .meditation-console .skill-action-row {
   justify-content: flex-start;
@@ -1562,6 +1925,10 @@ Output ONLY the meditation script text, nothing else.`;
 .meditation-console .volume-row {
   justify-content: flex-end;
   margin-top: 0;
+}
+.meditation-export-status {
+  margin: var(--bz-space-3) 0 0;
+  color: var(--bz-fg-mid);
 }
 .meditation-history .session-card {
   padding: var(--bz-space-3);
@@ -1579,8 +1946,9 @@ Output ONLY the meditation script text, nothing else.`;
 /* Signature upgrade: meditation session instrument */
 .meditation-session-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
   gap: var(--bz-space-3);
+  margin-top: var(--bz-space-4);
 }
 .meditation-session-cell {
   min-height: 82px;
@@ -1616,9 +1984,96 @@ Output ONLY the meditation script text, nothing else.`;
 .meditation-journey-panel .scenario-notice {
   min-width: 0;
 }
+.meditation-journey-panel .scenario-notice {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+.scenario-tags {
+  margin-top: var(--bz-space-3);
+}
+.duration-panel {
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  background: var(--bz-raised);
+}
+.duration-panel__title {
+  margin: 0 0 var(--bz-space-3);
+  color: var(--bz-fg);
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.duration-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-2);
+}
+.duration-preset {
+  min-height: 68px;
+  padding: var(--bz-space-3);
+  text-align: left;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: var(--bz-r);
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+  cursor: pointer;
+  transition:
+    background var(--bz-dur-fast) var(--bz-ease-out),
+    border-color var(--bz-dur-fast) var(--bz-ease-out);
+}
+.duration-preset strong,
+.duration-preset span {
+  display: block;
+}
+.duration-preset strong {
+  color: var(--bz-fg);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.duration-preset__value {
+  font-family: 'Fira Sans Condensed', sans-serif;
+  font-style: italic;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+.duration-preset span {
+  margin-top: var(--bz-space-1);
+  color: var(--bz-fg-mid);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.duration-preset:hover {
+  background: var(--bz-card);
+  border-color: var(--bz-control-selected-border);
+}
+.duration-preset.is-selected {
+  color: var(--bz-control-selected-fg);
+  border-color: var(--bz-control-selected-border);
+  background: var(--bz-control-selected-bg);
+}
+.duration-preset.is-selected strong {
+  color: var(--bz-control-selected-fg);
+}
+.duration-preset.is-selected span {
+  color: color-mix(in srgb, var(--bz-control-selected-fg) 84%, var(--bz-fg));
+}
+.meditation-transcript {
+  margin-top: var(--bz-space-4);
+}
+.meditation-transcript p {
+  margin: 0;
+  color: var(--bz-fg-mid);
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
 @media (max-width: 980px) {
   .meditation-session-strip,
   .meditation-journey-panel { grid-template-columns: 1fr; }
+  .meditation-journey-panel .scenario-notice { grid-column: auto; }
+  .duration-presets { grid-template-columns: 1fr; }
 }
 
 </style>

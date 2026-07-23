@@ -84,8 +84,7 @@ function compileContract(fileName) {
 compileContract('BonzaiSkillRegistry.sol');
 compileContract('BonzaiSkillOwnership.sol');
 compileContract('BonzaiCompanions.sol');
-compileContract('BonzaiContent.sol');
-compileContract('BonzaiP2PPayment.sol');
+compileContract('BonzaiCollectibles.sol');
 compileContract('BonzaiProviderRegistry.sol');
 compileContract('BonzaiUnlock.sol');
 compileContract('CompanionToken.sol');
@@ -94,4 +93,3 @@ compileContract('BonzaiMintPool.sol');
 compileContract('BonzaiRoyaltySplitter.sol');
 compileContract('BonzaiUniswapHook.sol');
 compileContract('FineTuneTokenFactory.sol');
-

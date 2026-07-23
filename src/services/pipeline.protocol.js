@@ -2,7 +2,7 @@
  * BonzAI Pipeline Protocol
  *
  * JSON-based negotiation layer over /bonzai/v2/pipeline.
- * Handles session setup, shard assignment, payment authorization, and teardown.
+ * Handles free session setup, shard assignment, and teardown.
  *
  * The heavy tensor data flows through the separate /bonzai/v2/rpc-tunnel stream.
  * This protocol handles only the control plane.
@@ -122,12 +122,6 @@ export const SHARD_FRAME_PREAMBLE    = SHARD_FRAME_HEADER_SIZE + SHARD_FRAME_MET
  * @param {string} request.modelId - GGUF model filename or identifier
  * @param {number} request.layerProportion - Fraction of layers assigned to this peer (0.0-1.0)
  * @param {number} request.totalLayers - Total transformer layers in the model
- * @param {Object} request.payment - x402 PipelinePayment authorization
- * @param {string} request.payment.signature - EIP-712 signature
- * @param {string[]} request.payment.providers - Provider addresses
- * @param {string[]} request.payment.amounts - Per-provider amounts (wei strings)
- * @param {string} request.payment.totalAmount - Total payment (wei string)
- * @param {string} request.payment.sessionId - Payment session ID (bytes32)
  * @returns {Promise<Object>} PIPELINE_ACK response
  */
 export async function sendPipelineRequest(peerId, request) {
@@ -255,13 +249,12 @@ export function registerPipelineHandler({
  * @param {string} sessionConfig.sessionId
  * @param {string} sessionConfig.modelId
  * @param {number} sessionConfig.totalLayers
- * @param {Object} sessionConfig.payment - Multi-payee x402 payment
  * @param {number} [timeout=10000] - ACK timeout per peer (ms)
  * @returns {Promise<Object[]>} Array of ACK responses with rpcPort per peer
  * @throws If any peer rejects or times out
  */
 export async function negotiatePipeline(peerAssignments, sessionConfig, timeout = 10000) {
-  const { sessionId, modelId, totalLayers, payment } = sessionConfig;
+  const { sessionId, modelId, totalLayers } = sessionConfig;
 
   const results = await Promise.all(
     peerAssignments.map(async ({ peerId, layerProportion, wallet }) => {
@@ -274,7 +267,6 @@ export async function negotiatePipeline(peerAssignments, sessionConfig, timeout 
         modelId,
         totalLayers,
         layerProportion,
-        payment,
       });
 
       const response = await Promise.race([requestPromise, timeoutPromise]);

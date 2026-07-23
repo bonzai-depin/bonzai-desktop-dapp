@@ -105,6 +105,7 @@
 
 <script setup>
 import { ref, computed } from "vue";
+import { i18n } from "../../i18n/index.js";
 
 const props = defineProps({
   /** Each item: { id, prompt, model, ts, branchParentId, branchDepth } */
@@ -199,7 +200,7 @@ function truncate(s, n = 80) {
 function formatTs(ts) {
   if (!ts) return "";
   const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString(i18n.state.locale, { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatTokens(count) {

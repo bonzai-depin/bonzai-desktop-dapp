@@ -2,7 +2,7 @@
  * Agent Wallet Service (ETH-Only)
  *
  * Manages deterministic wallet generation and storage for AI companion agents.
- * These wallets are used for autonomous x402 ETH payments on supported chains.
+ * These wallets receive protocol revenue for companions.
  *
  * Security:
  * - Master secret is generated once and stored encrypted locally

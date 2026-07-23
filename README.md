@@ -374,7 +374,7 @@ interface IBonzAINFT {
   "external_url": "https://bonzai.ai",
   "attributes": [
     { "trait_type": "Type", "value": "image" },
-    { "trait_type": "Model", "value": "FLUX.1-Krea" },
+    { "trait_type": "Model", "value": "Z-Image Turbo" },
     { "trait_type": "Timestamp", "value": "2025-01-..." },
     { "trait_type": "BonzAI Version", "value": "0.9" }
   ],

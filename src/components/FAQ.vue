@@ -52,7 +52,7 @@ export default {
       {
         id: 4,
         question: "How do P2P modes work?",
-        answer: "Private mode runs all inference locally on your machine. Consumer mode lets you use other providers' GPUs for inference (paid via x402 ETH payments). Provider mode lets you share your GPU with the network and earn ETH in return.",
+        answer: "Private mode runs all inference locally on your machine. Consumer mode uses available peer GPUs at no charge. Provider mode lets you contribute GPU time and earn a share of protocol reward pools.",
       },
       {
         id: 5,

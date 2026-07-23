@@ -34,6 +34,21 @@ module.exports = {
         ? [process.env.DEPLOYER_PRIVATE_KEY]
         : [],
     },
+    arbitrum: {
+      url: process.env.ARBITRUM_RPC_URL || "https://arbitrum-one-rpc.publicnode.com",
+      chainId: 42161,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+    },
+    robinhood: {
+      url: process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com",
+      chainId: 4663,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+    },
+    robinhoodTestnet: {
+      url: process.env.ROBINHOOD_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com",
+      chainId: 46630,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+    },
     // LUKSO Testnet
     luksoTestnet: {
       url: "https://rpc.testnet.lukso.gateway.fm",
@@ -54,6 +69,22 @@ module.exports = {
   etherscan: {
     apiKey: process.env.ETHERSCAN_API_KEY || "",
     customChains: [
+      {
+        network: "robinhood",
+        chainId: 4663,
+        urls: {
+          apiURL: "https://robinhoodchain.blockscout.com/api",
+          browserURL: "https://robinhoodchain.blockscout.com",
+        },
+      },
+      {
+        network: "robinhoodTestnet",
+        chainId: 46630,
+        urls: {
+          apiURL: "https://explorer.testnet.chain.robinhood.com/api",
+          browserURL: "https://explorer.testnet.chain.robinhood.com",
+        },
+      },
       {
         network: "base",
         chainId: 8453,

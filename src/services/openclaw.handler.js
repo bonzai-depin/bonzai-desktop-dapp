@@ -7,7 +7,7 @@
  * Features:
  * - All 11 pipeline categories (LLM, Image, Audio, Music, Video, Vision)
  * - Provider discovery from BonzAI network registry
- * - Remote inference with x402 ETH payments
+ * - Free remote inference with provider rewards funded by MintPool epochs
  * - Self-inference detection (free when consumer === provider)
  * - Zero-knowledge mode for remote requests
  */
@@ -57,8 +57,6 @@ const {
   isBareCompanion,
 } = companionService;
 
-import { walletProviderService } from './walletProvider.service.js';
-import { x402Service } from './x402.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -762,68 +760,11 @@ async function executeRemoteInference(peerId, pipeline, params) {
     const request = {
       pipeline,
       params: requestParams,
-      // Payment will be handled by the P2P layer if needed
     };
 
     const response = await window.electronAPI.p2pInference(peerId, request);
 
     if (!response.ok) {
-      if (response.error === 'payment_required' && response.payment) {
-        console.log('[OpenClaw] Payment required:', response.payment);
-
-        try {
-          // Get agent wallet signer for payment on Base
-          const agentWallet = await walletProviderService.getAgentWallet();
-          if (!agentWallet?.signer) {
-            console.warn('[OpenClaw] No agent wallet available for payment, falling back to local');
-            return executeLocalInference(pipeline, params);
-          }
-
-          // Send ETH payment directly to provider
-          const paymentResult = await x402Service.sendPayment(
-            agentWallet.signer,
-            response.payment.provider,
-            response.payment.amount
-          );
-
-          if (!paymentResult.success) {
-            console.warn('[OpenClaw] Payment failed, falling back to local');
-            return executeLocalInference(pipeline, params);
-          }
-
-          console.log(`[OpenClaw] Payment sent: ${paymentResult.txHash}`);
-
-          // Retry the request with payment proof
-          const retryRequest = {
-            pipeline,
-            params: requestParams,
-            payment: {
-              ...response.payment,
-              txHash: paymentResult.txHash,
-              consumer: paymentResult.from,
-            },
-          };
-
-          const retryResponse = await window.electronAPI.p2pInference(peerId, retryRequest);
-
-          if (retryResponse.ok) {
-            return {
-              ok: true,
-              result: retryResponse.result,
-              local: false,
-              provider: peerId,
-              paid: true,
-              txHash: paymentResult.txHash,
-            };
-          }
-
-          console.warn('[OpenClaw] Retry after payment failed:', retryResponse.error);
-          return executeLocalInference(pipeline, params);
-        } catch (payErr) {
-          console.error('[OpenClaw] Payment flow error:', payErr);
-          return executeLocalInference(pipeline, params);
-        }
-      }
       throw new Error(response.error || 'Remote inference failed');
     }
 
