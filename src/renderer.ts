@@ -30,7 +30,7 @@ import { createApp } from "vue";
 import { createPinia } from 'pinia';
 import axios from 'axios';
 import App from "./App.vue";
-import { authService } from './services/auth.service.js';
+import { authService, initLocalSession } from './services/auth.service.js';
 import { createI18nPlugin } from './i18n/index.js';
 import { installLegacyI18nBridge } from './i18n/legacy.js';
 
@@ -110,3 +110,8 @@ app.use(createI18nPlugin());
 const appRoot = document.querySelector('#app');
 installLegacyI18nBridge(appRoot);
 app.mount(appRoot);
+
+// Obtain the local desktop session credential at startup (wallet-optional):
+// local-first creation works without a wallet once this has run. Never
+// persisted; failure just means the next obtain/rotate call retries.
+initLocalSession().catch(() => {});

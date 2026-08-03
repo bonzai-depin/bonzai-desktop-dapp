@@ -409,6 +409,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { socketAuthPayload } from "../services/auth.service.js";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
@@ -887,6 +888,7 @@ export default {
       reconnectionAttempts: 60,
       reconnectionDelay: 1000,
       path: "/socket.io",
+      auth: socketAuthPayload(),
     };
 
     const mergeTask = (dst, src) => {

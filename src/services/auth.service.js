@@ -17,6 +17,46 @@ const API_BASE =
   "http://127.0.0.1:65000";
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TOKEN TYPES — kept strictly separate so one type cannot masquerade as another
+// ═══════════════════════════════════════════════════════════════════════════
+//   BEARER        — wallet/JWT access token, sent as `Authorization: Bearer`.
+//   LOCAL_SESSION — per-launch desktop credential (P2 registry), sent under a
+//                   dedicated header. Sufficient for local creation on its own.
+//   REFRESH       — HttpOnly cookie ONLY; it must NEVER appear in any
+//                   Authorization / session header, so refresh-token misuse
+//                   (presenting it as a bearer) produces no header and fails.
+export const TOKEN_TYPES = Object.freeze({
+  BEARER: "bearer",
+  LOCAL_SESSION: "local-session",
+  REFRESH: "refresh",
+});
+
+// Dedicated header for the local desktop session credential. Kept distinct
+// from Authorization so local services can require the desktop session even
+// when no wallet bearer is present (wallet-optional local creation, R5).
+const LOCAL_SESSION_HEADER = "x-bonzai-session";
+
+/**
+ * Build an auth header for a token of an explicit type. Bearer tokens go in
+ * Authorization; local-session tokens use LOCAL_SESSION_HEADER; refresh
+ * tokens never produce a header (cookie-only). Returns {} for an unknown
+ * type or empty token, so misuse fails closed instead of sending garbage.
+ */
+export const buildAuthHeader = (token, type) => {
+  if (typeof token !== "string" || token.length === 0) return {};
+  switch (type) {
+    case TOKEN_TYPES.BEARER:
+      return { Authorization: `Bearer ${token}` };
+    case TOKEN_TYPES.LOCAL_SESSION:
+      return { [LOCAL_SESSION_HEADER]: token };
+    case TOKEN_TYPES.REFRESH:
+      return {}; // cookie-only — never serialized as a request header
+    default:
+      return {};
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -35,6 +75,25 @@ const state = reactive({
 let refreshTimer = null;
 let signerGetter = null; // Function to get signer for re-authentication
 let reAuthPromise = null; // Prevent concurrent re-auth attempts
+
+// Local desktop session credential (P2). Held in memory ONLY — never written
+// to electron-store, the auth vault, or any cookie. Obtained from the main
+// process via the scoped `session:obtain-credential` IPC. Sufficient for
+// local creation without a wallet (R5); rotated on logout (R4).
+let localCredential = null; // { token, descriptor } | null
+
+/**
+ * Absent level data maps to NO economy privilege. Never synthesize or
+ * persist a maximum (or any) level when the server returns none — level
+ * gating is derived exclusively from onchain stake (see level.service.js).
+ */
+const normalizeLevel = (data) => ({
+  level: data && data.level != null ? data.level : null,
+  levelValue:
+    data && Number.isFinite(Number(data.level_value))
+      ? Number(data.level_value)
+      : 0,
+});
 
 /**
  * Sync auth state to electron store so main process can enforce access control
@@ -144,8 +203,7 @@ export const authenticate = async (signer) => {
     setAccessToken(data.access_token, data.expires_in);
 
     state.walletAddress = address.toLowerCase();
-    state.level = data.level;
-    state.levelValue = data.level_value;
+    ({ level: state.level, levelValue: state.levelValue } = normalizeLevel(data));
     state.isAuthenticated = true;
 
     // Sync auth state to electron store so main process can check it
@@ -232,8 +290,7 @@ export const authenticateWithVault = async (signer) => {
     setAccessToken(data.access_token, data.expires_in);
 
     state.walletAddress = address.toLowerCase();
-    state.level = data.level;
-    state.levelValue = data.level_value;
+    ({ level: state.level, levelValue: state.levelValue } = normalizeLevel(data));
     state.isAuthenticated = true;
 
     // Sync auth state to electron store so main process can check it
@@ -322,9 +379,13 @@ export const refreshToken = async () => {
   const data = await res.json();
   setAccessToken(data.access_token, data.expires_in);
 
-  // Update level in case it changed
-  state.level = data.level;
-  state.levelValue = data.level_value;
+  // A successful refresh means the user is authenticated.
+  state.isAuthenticated = true;
+
+  // Update level in case it changed (absent level => no privilege)
+  const lvl = normalizeLevel(data);
+  state.level = lvl.level;
+  state.levelValue = lvl.levelValue;
 
   // Sync auth state to electron store so main process can check it
   syncAuthToStore();
@@ -340,9 +401,55 @@ export const refreshToken = async () => {
 /**
  * Get authorization headers for API requests
  */
-export const getAuthHeaders = () => {
-  if (!state.accessToken) return {};
-  return { Authorization: `Bearer ${state.accessToken}` };
+export const getAuthHeaders = () => buildAuthHeader(state.accessToken, TOKEN_TYPES.BEARER);
+
+/**
+ * Headers attaching the in-memory local desktop session credential (P2).
+ * Used ALONGSIDE the wallet bearer for local services — never persisted.
+ * Returns {} when no local session has been obtained yet.
+ */
+export const getLocalSessionHeaders = () =>
+  buildAuthHeader(localCredential?.token, TOKEN_TYPES.LOCAL_SESSION);
+
+/** Test/config seam: hold the local credential obtained from main (memory only). */
+export const setLocalCredential = (cred) => {
+  localCredential =
+    cred && typeof cred.token === "string" && cred.token
+      ? { token: cred.token, descriptor: cred.descriptor }
+      : null;
+};
+
+/** Current local session token (or null). For diagnostics/tests only. */
+export const getLocalCredential = () =>
+  localCredential ? localCredential.token : null;
+
+/**
+ * Pull the current local session credential from the main process and hold
+ * it in memory. Wallet-optional: local-first creation works once this has
+ * run, with no signer and no chain endpoint. Never written to store/vault.
+ */
+export const initLocalSession = async () => {
+  try {
+    const res = await window?.electronAPI?.session?.obtainCredential?.();
+    if (res?.ok && typeof res.token === "string" && res.token) {
+      setLocalCredential({ token: res.token, descriptor: res.descriptor });
+    } else {
+      localCredential = null;
+    }
+  } catch {
+    localCredential = null;
+  }
+  return !!localCredential;
+};
+
+/**
+ * Socket.IO auth payload attaching the local session credential without
+ * persisting it. The wallet bearer (if any) rides on the transport; callers
+ * spread this into the socket's `auth`/`extraHeaders` handshake.
+ */
+export const socketAuthPayload = (extra = {}) => {
+  const tok = localCredential?.token;
+  return tok ? { ...extra, session: tok } : { ...extra };
 };
 
 /**
@@ -355,7 +462,10 @@ export const isAuthenticated = () => {
 /**
  * Logout and clear all auth state
  */
-export const logout = () => {
+export const logout = async () => {
+  // Clear wallet / economy identity. The local desktop session is NOT
+  // dropped here — it is rotated below so local-first creation survives a
+  // wallet disconnect (R4: logout clears wallet state and invokes rotation).
   state.isAuthenticated = false;
   state.accessToken = null;
   state.tokenExpiry = null;
@@ -363,6 +473,17 @@ export const logout = () => {
   state.level = null;
   state.levelValue = 0;
   state.error = null;
+
+  // Invalidate the local session credential SYNCHRONOUSLY (sendSync) so the
+  // old generation dies immediately, before any caller can use it again.
+  // No caller has to await this for the invalidation to take effect.
+  localCredential = null;
+  try {
+    window?.electronAPI?.session?.invalidateCredential?.();
+  } catch {
+    // Fall back to renderer-side clearing only — the rotate below still
+    // bumps the generation.
+  }
 
   // Sync cleared auth state to electron store
   syncAuthToStore();
@@ -377,6 +498,16 @@ export const logout = () => {
     method: "POST",
     credentials: "include",
   }).catch(() => {});
+
+  // Rotate the local session credential (invalidates the old generation and
+  // rekeys dependent local services before returning) then re-obtain the
+  // replacement, so the desktop session stays valid without a wallet.
+  try {
+    await window?.electronAPI?.session?.rotateCredential?.();
+    await initLocalSession();
+  } catch (e) {
+    console.warn("[Auth] Session rotation on logout failed:", e?.message);
+  }
 
   console.log("[Auth] Logged out");
 };
@@ -461,7 +592,8 @@ export const reAuthenticate = async (allowWalletSignature = false) => {
 export const authFetch = async (url, options = {}) => {
   const headers = {
     ...options.headers,
-    ...getAuthHeaders(),
+    ...getLocalSessionHeaders(), // local desktop session (wallet-optional)
+    ...getAuthHeaders(),         // wallet bearer (optional, economy identity only)
   };
 
   const res = await fetch(url, {
@@ -479,6 +611,7 @@ export const authFetch = async (url, options = {}) => {
         ...options,
         headers: {
           ...options.headers,
+          ...getLocalSessionHeaders(),
           ...getAuthHeaders(),
         },
         credentials: "include",
@@ -626,6 +759,15 @@ export const authService = {
   getHttpErrorMessage,
   isAuthenticated,
   authFetch,
+
+  // Local desktop session (P2) — wallet-optional, memory-only credential
+  TOKEN_TYPES,
+  buildAuthHeader,
+  initLocalSession,
+  setLocalCredential,
+  getLocalCredential,
+  getLocalSessionHeaders,
+  socketAuthPayload,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

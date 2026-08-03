@@ -43,6 +43,11 @@ import {
   createCredentialRegistry,
   childEnvSecrets,
 } from "./main/credentialRegistry.js";
+import {
+  createSessionBridge,
+  authorizeSessionSender,
+  normalizeSessionEvent,
+} from "./main/sessionBridge.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -909,6 +914,71 @@ const JWT_SECRET = getOrCreateJwtSecret();
 // ─────────────────────────────────────────────────────────────────────────────
 const credentialRegistry = createCredentialRegistry();
 credentialRegistry.issue();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trusted local-session lifecycle (P2 Security)
+//
+// Narrowly scoped IPC around the registry above. Only the current BonzAI
+// top-level renderer may obtain or rotate the session credential; remote,
+// subframe, stale-window, and origin-mismatched senders are denied (see
+// src/main/sessionBridge.js). Rotation bumps the generation, rekeys the
+// Flask diffuser + rpc-server with the fresh credential, then returns the
+// replacement — so logout / explicit rotation leave the old generation
+// unusable. Results carry the session token + a redacted descriptor only;
+// the Flask signing secret is never disclosed across the bridge.
+// ─────────────────────────────────────────────────────────────────────────────
+const sessionWindowUrl = () =>
+  VITE_DEV_SERVER_URL || `file://${path.join(__dirname, "../renderer/main_window/index.html")}`;
+
+const sessionAuthorize = (sender) =>
+  authorizeSessionSender(sender, {
+    isPackaged: app.isPackaged,
+    mainWindowUrl: sessionWindowUrl(),
+  });
+
+// Rekey every local child that received the old session credential via
+// childEnvSecrets: restart the Flask diffuser (it re-reads the env on
+// spawn) and tear down the on-demand rpc-server so its next start picks
+// up the fresh secret. Called by rotate AFTER the generation is bumped.
+const rekeySessionDependents = async () => {
+  // Fail closed: if the Flask server could not be restarted with the fresh
+  // credential, the rotation MUST fail — handing out a new credential while
+  // dependents still run the old one silently keeps two generations alive.
+  const result = await restartServerManually();
+  if (!result || result.success === false) {
+    throw new Error(result?.error || "Flask rekey failed during session rotation");
+  }
+  try {
+    if (rpcServerProcess && !rpcServerProcess.killed) {
+      rpcServerProcess.kill("SIGTERM");
+      rpcServerProcess = null;
+    }
+  } catch {}
+};
+
+const sessionBridge = createSessionBridge({
+  registry: credentialRegistry,
+  authorize: sessionAuthorize,
+  rekeyDependents: rekeySessionDependents,
+});
+
+ipcMain.handle("session:obtain-credential", async (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  return sessionBridge.obtain(sender);
+});
+
+ipcMain.handle("session:rotate-credential", async (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  return sessionBridge.rotate(sender);
+});
+
+// Synchronous invalidation for logout: kills the current registry generation
+// immediately so previously issued credentials die at once (sendSync — the
+// renderer does not wait for a rotate/rekey round-trip).
+ipcMain.on("session:invalidate-credential", (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  event.returnValue = sessionBridge.invalidate(sender);
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transaction confirmation dialog (P0 Security)

@@ -19,6 +19,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Platform info (exposed synchronously from preload context)
   platform: process.platform,
   arch: process.arch,
+  // Trusted local-session lifecycle (P2 Security). Only these two scoped
+  // operations expose the in-memory credential to the renderer; the Flask
+  // signing secret is never disclosed here. See src/main/sessionBridge.js.
+  session: {
+    /** Obtain the current local session credential (token + descriptor). */
+    obtainCredential: () => ipcRenderer.invoke("session:obtain-credential"),
+    /** Rotate the local session credential (invalidates the old generation). */
+    rotateCredential: () => ipcRenderer.invoke("session:rotate-credential"),
+    /** Synchronously invalidate the current local session credential (logout). */
+    invalidateCredential: () => ipcRenderer.sendSync("session:invalidate-credential"),
+  },
   copyText: (text) => ipcRenderer.invoke("clipboard-copy-text", text),
   startServer: () => ipcRenderer.invoke("start-server"),
   stopServer: () => ipcRenderer.invoke("stop-server"),

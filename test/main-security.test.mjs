@@ -19,9 +19,14 @@ import {
   CREDENTIAL_ENV,
   MAX_LIFETIME_MS,
 } from "../src/main/credentialRegistry.js";
+import {
+  createSessionBridge,
+  authorizeSessionSender,
+} from "../src/main/sessionBridge.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_JS = path.resolve(__dirname, "..", "src", "main.js");
+const PRELOAD_JS = path.resolve(__dirname, "..", "src", "preload.js");
 const REGISTRY_JS = path.resolve(__dirname, "..", "src", "main", "credentialRegistry.js");
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,4 +408,237 @@ test("A2: main.js scopes the signing secret away from the rpc-server spawn", () 
       `rpc-server env must scope out the Flask signing secret: ${line.trim()}`,
     );
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2 — trusted local-session lifecycle: scoped IPC bridge + sender validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Build a fully-trusted sender descriptor for a given main window URL.
+const trustedSender = (url) => ({
+  url,
+  origin: url,
+  windowAlive: true,
+  isMainWindow: true,
+  isMainFrame: true,
+});
+
+const DEV_URL = "http://localhost:5173/";
+const PACKAGED_URL = "file:///app/renderer/main_window/index.html";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC1 (R1): two new IPC operations exist (obtain, rotate) and a test invokes
+// both through the bridge seam.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P2 AC1: main.js wires obtain + rotate ipcMain.handle entries", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.ok(
+    /ipcMain\.handle\(\s*["']session:obtain-credential["']/.test(src),
+    "obtain-credential ipcMain.handle must be registered",
+  );
+  assert.ok(
+    /ipcMain\.handle\(\s*["']session:rotate-credential["']/.test(src),
+    "rotate-credential ipcMain.handle must be registered",
+  );
+});
+
+test("P2 AC1: obtain + rotate invoked through the bridge seam", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(101) });
+  registry.issue();
+  const bridge = createSessionBridge({
+    registry,
+    authorize: () => ({ ok: true }),
+  });
+
+  const obtained = bridge.obtain(trustedSender(DEV_URL));
+  assert.equal(obtained.ok, true, "obtain must succeed for a trusted sender");
+  assert.equal(typeof obtained.token, "string");
+  assert.ok(obtained.token.length > 0);
+  assert.equal(obtained.descriptor.issued, true);
+  assert.equal(obtained.descriptor.generation, 1);
+
+  return bridge.rotate(trustedSender(DEV_URL)).then((rotated) => {
+    assert.equal(rotated.ok, true, "rotate must succeed for a trusted sender");
+    assert.notEqual(rotated.token, obtained.token, "rotation mints a new token");
+    assert.ok(rotated.descriptor.generation > obtained.descriptor.generation);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC2 (R2): packaged + supported dev senders allowed; remote, subframe,
+// stale-window, and origin-mismatched senders denied.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P2 AC2: packaged sender is authorized against file://", () => {
+  const decision = authorizeSessionSender(trustedSender(PACKAGED_URL), {
+    isPackaged: true,
+    mainWindowUrl: PACKAGED_URL,
+  });
+  assert.deepEqual(decision, { ok: true });
+});
+
+test("P2 AC2: supported development sender is authorized", () => {
+  const decision = authorizeSessionSender(trustedSender(DEV_URL), {
+    isPackaged: false,
+    mainWindowUrl: DEV_URL,
+  });
+  assert.deepEqual(decision, { ok: true });
+});
+
+test("P2 AC2: remote, subframe, stale-window, and origin-mismatched senders are denied", () => {
+  const dev = { isPackaged: false, mainWindowUrl: DEV_URL };
+
+  // Remote: not a supported origin for either mode.
+  assert.equal(
+    authorizeSessionSender(trustedSender("https://evil.example.com/"), dev).ok,
+    false,
+    "remote origin denied",
+  );
+  assert.equal(
+    authorizeSessionSender(trustedSender("https://evil.example.com/"), dev).ok,
+    false,
+    "remote origin denied",
+  );
+
+  // Subframe: nested iframe must not reach the bridge.
+  const subframe = { ...trustedSender(DEV_URL), isMainFrame: false };
+  assert.equal(authorizeSessionSender(subframe, dev).ok, false, "subframe denied");
+
+  // Stale window: destroyed or a different (old) window.
+  const destroyed = { ...trustedSender(DEV_URL), windowAlive: false };
+  assert.equal(authorizeSessionSender(destroyed, dev).ok, false, "destroyed window denied");
+  const otherWindow = { ...trustedSender(DEV_URL), isMainWindow: false };
+  assert.equal(authorizeSessionSender(otherWindow, dev).ok, false, "stale (non-main) window denied");
+
+  // Origin mismatch: a supported dev origin that is NOT the main window origin.
+  const mismatch = trustedSender("http://127.0.0.1:5173/");
+  assert.equal(
+    authorizeSessionSender(mismatch, dev).ok,
+    false,
+    "origin-mismatched dev sender denied",
+  );
+});
+
+test("P2 AC2: a packaged build rejects http dev origins and vice versa", () => {
+  // Packaged config must deny an http origin (mode allowlist is file:// only).
+  assert.equal(
+    authorizeSessionSender(trustedSender(DEV_URL), {
+      isPackaged: true,
+      mainWindowUrl: PACKAGED_URL,
+    }).ok,
+    false,
+  );
+  // Dev config must deny a file:// origin.
+  assert.equal(
+    authorizeSessionSender(trustedSender(PACKAGED_URL), {
+      isPackaged: false,
+      mainWindowUrl: DEV_URL,
+    }).ok,
+    false,
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC3 (R3): preload exposes ONLY the new operations (no other new bridge
+// methods in this step).
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P2 AC3: preload exposes exactly obtain + rotate under the session namespace", () => {
+  const src = fs.readFileSync(PRELOAD_JS, "utf8");
+  const sessionInvokes = [...src.matchAll(/ipcRenderer\.invoke\(\s*["']session:([^"']+)["']/g)]
+    .map((m) => `session:${m[1]}`);
+  assert.deepEqual(
+    sessionInvokes.sort(),
+    ["session:obtain-credential", "session:rotate-credential"].sort(),
+    "preload session namespace must expose exactly obtain + rotate",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC4 (R4): rotation rejects the old generation and rekeys dependents before
+// returning; no bridge result leaks the Flask signing secret.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P2 AC4: rotate invalidates the old generation and rekeys dependents before returning", async () => {
+  const clock = makeClock();
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(202), now: clock.now });
+  registry.issue();
+
+  const rekeyCalls = [];
+  const bridge = createSessionBridge({
+    registry,
+    authorize: () => ({ ok: true }),
+    rekeyDependents: async () => { rekeyCalls.push(clock.now()); },
+  });
+
+  const obtained = bridge.obtain(trustedSender(DEV_URL));
+  const oldToken = obtained.token;
+  const oldGen = obtained.descriptor.generation;
+
+  clock.advance(5);
+  const before = clock.now();
+  const rotated = await bridge.rotate(trustedSender(DEV_URL));
+
+  // rekey ran during rotate, before it returned.
+  assert.equal(rekeyCalls.length, 1, "rekeyDependents invoked exactly once");
+  assert.ok(rekeyCalls[0] >= before, "rekey ran after the generation was bumped");
+
+  // The old generation is now rejected by the registry, even with the old token.
+  assert.equal(
+    registry.validate({ token: oldToken, type: "local-session", scope: "local-session", generation: oldGen }),
+    false,
+    "old generation rejected after rotation",
+  );
+  // The fresh generation validates.
+  assert.equal(
+    registry.validate({
+      token: rotated.token,
+      type: "local-session",
+      scope: "local-session",
+      generation: rotated.descriptor.generation,
+    }),
+    true,
+  );
+});
+
+test("P2 AC4: no bridge result (obtain or rotate) leaks the Flask signing secret", async () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(203) });
+  registry.issue();
+  const signingSecret = registry.getFlaskSigningSecret();
+  const bridge = createSessionBridge({ registry, authorize: () => ({ ok: true }) });
+
+  const obtained = bridge.obtain(trustedSender(DEV_URL));
+  const rotated = await bridge.rotate(trustedSender(DEV_URL));
+
+  for (const [label, result] of [["obtain", obtained], ["rotate", rotated]]) {
+    assert.ok(result.ok, `${label} ok`);
+    assert.equal(
+      JSON.stringify(result).includes(signingSecret),
+      false,
+      `${label} result must not contain the Flask signing secret`,
+    );
+  }
+});
+
+test("P2 AC4: an untrusted sender is denied obtain and rotate", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(204) });
+  registry.issue();
+  const bridge = createSessionBridge({
+    registry,
+    authorize: (s) => authorizeSessionSender(s, { isPackaged: false, mainWindowUrl: DEV_URL }),
+  });
+
+  const remote = trustedSender("https://evil.example.com/");
+  assert.deepEqual(bridge.obtain(remote), { ok: false, reason: "remote" });
+  return bridge.rotate(remote).then((r) => {
+    assert.deepEqual(r, { ok: false, reason: "remote" });
+  });
+});
+
+test("P2 AC4: obtain fails closed when no live credential exists", () => {
+  // An invalidated / not-yet-issued registry yields no credential.
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(205) });
+  const bridge = createSessionBridge({ registry, authorize: () => ({ ok: true }) });
+  assert.deepEqual(bridge.obtain(trustedSender(DEV_URL)), { ok: false, reason: "no-credential" });
 });
