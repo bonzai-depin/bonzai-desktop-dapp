@@ -45,6 +45,19 @@ import {
   isWithinRoot,
   VIDEO_EXTENSIONS,
 } from "../src/main/fileAccess.js";
+import {
+  SOCIAL_POLICIES,
+  SOCIAL_PLATFORMS,
+  PROXY_INTEGRATIONS,
+  PROXY_HOSTS,
+  resolveSocialPolicy,
+  resolveProxyPolicy,
+  validateTargetUrl,
+  sanitizeRequestHeaders,
+  isBlockedIpAddress,
+  performEgressRequest,
+  EgressPolicyError,
+} from "../src/main/egressPolicy.js";
 import os from "node:os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1649,4 +1662,576 @@ test("P7: parseLocalVideoUrl strictly decodes exactly once and rejects malformed
   assert.equal(parseLocalVideoUrl("::not a url::"), null);
   assert.equal(parseLocalVideoUrl("local-video:///a%252e%252eb.mp4"), null);
   assert.equal(parseLocalVideoUrl("local-video:///a%20b.mp4"), "/a b.mp4");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P8 — Per-integration outbound egress policy (src/main/egressPolicy.js),
+// wired into social:api-call, social:media-upload, and proxy:fetch in
+// main.js. Replaces generic proxying (arbitrary URL/headers forwarded to
+// fetch) with immutable per-integration HTTPS origin/path/method policies,
+// pre-DNS/pre-fetch validation, blocked-range DNS enforcement with pinning,
+// manual (revalidated) redirects, and allowlisted headers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Fetch/DNS test doubles ──────────────────────────────────────────────────
+// performEgressRequest takes `lookup`/`fetchImpl`/`buildDispatcher` as an
+// injection seam specifically so these tests never touch the real network —
+// `fetchImpl` is the "fetch spy" required by R7: every denial test asserts
+// its call count stayed at 0.
+
+function makeFetchSpy(responder) {
+  const calls = [];
+  let n = 0;
+  const fn = async (url, init) => {
+    calls.push({ url, init });
+    const r = Array.isArray(responder) ? responder[Math.min(n, responder.length - 1)] : responder;
+    n++;
+    return typeof r === "function" ? r(url, init) : r;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+function jsonResponse(status, body) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    statusText: String(status),
+    headers: { get: (h) => (String(h).toLowerCase() === "content-type" ? "application/json" : null) },
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  };
+}
+
+function redirectResponse(status, location) {
+  return {
+    status,
+    ok: false,
+    statusText: String(status),
+    headers: { get: (h) => (String(h).toLowerCase() === "location" ? location : null) },
+  };
+}
+
+function lookupOf(...addresses) {
+  return async () => addresses;
+}
+
+const noDispatcher = () => null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC1 (R1): immutable per-integration policies; enumeration; unknown
+// platform/integration denied before any DNS lookup or fetch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P8 AC1: every declared social policy and proxy integration is immutable", () => {
+  assert.ok(Object.isFrozen(SOCIAL_POLICIES));
+  assert.ok(Object.isFrozen(PROXY_INTEGRATIONS));
+  for (const platform of SOCIAL_PLATFORMS) {
+    for (const action of ["apiCall", "mediaUpload"]) {
+      const policy = SOCIAL_POLICIES[platform][action];
+      assert.ok(Object.isFrozen(policy), `${platform}.${action} policy must be frozen`);
+      assert.ok(Object.isFrozen(policy.routes), `${platform}.${action} routes array must be frozen`);
+      for (const route of policy.routes) assert.ok(Object.isFrozen(route), `${platform}.${action} route must be frozen`);
+    }
+  }
+  for (const host of PROXY_HOSTS) {
+    const policy = PROXY_INTEGRATIONS[host];
+    assert.ok(Object.isFrozen(policy), `${host} policy must be frozen`);
+    for (const route of policy.routes) assert.ok(Object.isFrozen(route), `${host} route must be frozen`);
+  }
+  assert.ok(SOCIAL_PLATFORMS.length >= 3);
+  assert.ok(PROXY_HOSTS.length >= 3);
+});
+
+test("P8 AC1: enumerates every social integration's allowed origin/path/method", () => {
+  for (const platform of SOCIAL_PLATFORMS) {
+    for (const action of ["apiCall", "mediaUpload"]) {
+      const policy = resolveSocialPolicy(platform, action);
+      assert.ok(policy, `${platform}.${action} must resolve to a policy`);
+      for (const route of policy.routes) {
+        assert.ok(route.origin.startsWith("https://"), `${platform}.${action} route origin must be https`);
+        for (const method of route.methods) {
+          const { route: matched } = validateTargetUrl(`${route.origin}${route.pathPrefix}`, policy, method);
+          assert.equal(matched, route, `${platform}.${action} ${route.origin}${route.pathPrefix} [${method}] must match its own route`);
+        }
+      }
+    }
+  }
+  // Instagram media upload is intentionally route-less (R6).
+  assert.deepEqual(resolveSocialPolicy("instagram", "mediaUpload").routes, []);
+});
+
+test("P8 AC1: enumerates every proxy integration's allowed origin/path/method", () => {
+  for (const host of PROXY_HOSTS) {
+    const policy = resolveProxyPolicy(`https://${host}/`);
+    assert.ok(policy, `${host} must resolve to a policy`);
+    assert.equal(policy, PROXY_INTEGRATIONS[host]);
+    for (const route of policy.routes) {
+      for (const method of route.methods) {
+        const { route: matched } = validateTargetUrl(`${route.origin}${route.pathPrefix}`, policy, method);
+        assert.equal(matched, route, `${host} ${route.origin}${route.pathPrefix} [${method}] must match its own route`);
+      }
+    }
+  }
+});
+
+test("P8 AC1: unknown platform and unknown host are denied before any DNS lookup or fetch", async () => {
+  assert.equal(resolveSocialPolicy("myspace", "apiCall"), null);
+  assert.equal(resolveSocialPolicy("instagram", "notARealAction"), null);
+  assert.equal(resolveProxyPolicy("https://evil.example.com/steal"), null);
+
+  const lookupCalls = [];
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  await assert.rejects(
+    performEgressRequest(
+      { policy: resolveSocialPolicy("myspace", "apiCall"), url: "https://myspace.com/api", method: "GET" },
+      { lookup: async (...a) => { lookupCalls.push(a); return []; }, fetchImpl: fetchSpy, buildDispatcher: noDispatcher },
+    ),
+    (e) => e instanceof EgressPolicyError && e.code === "UNKNOWN_INTEGRATION",
+  );
+  assert.equal(lookupCalls.length, 0, "no DNS lookup for an unknown integration");
+  assert.equal(fetchSpy.calls.length, 0, "no fetch for an unknown integration");
+
+  const fetchSpy2 = makeFetchSpy(jsonResponse(200, {}));
+  await assert.rejects(
+    performEgressRequest(
+      { policy: resolveProxyPolicy("https://evil.example.com/steal"), url: "https://evil.example.com/steal", method: "GET" },
+      { lookup: async () => [{ address: "203.0.113.10", family: 4 }], fetchImpl: fetchSpy2, buildDispatcher: noDispatcher },
+    ),
+    (e) => e.code === "UNKNOWN_INTEGRATION",
+  );
+  assert.equal(fetchSpy2.calls.length, 0);
+});
+
+test("P8 AC1: an allowed request for every declared route reaches the fetch implementation exactly once", async () => {
+  for (const platform of SOCIAL_PLATFORMS) {
+    for (const action of ["apiCall", "mediaUpload"]) {
+      const policy = resolveSocialPolicy(platform, action);
+      for (const route of policy.routes) {
+        const fetchSpy = makeFetchSpy(jsonResponse(200, { ok: true }));
+        const response = await performEgressRequest(
+          { policy, url: `${route.origin}${route.pathPrefix}`, method: route.methods[0], headers: {}, accessToken: "tok" },
+          { fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+        );
+        assert.equal(fetchSpy.calls.length, 1, `${platform}.${action} ${route.origin} should be fetched exactly once`);
+        assert.equal(response.status, 200);
+      }
+    }
+  }
+  for (const host of PROXY_HOSTS) {
+    const policy = resolveProxyPolicy(`https://${host}/`);
+    for (const route of policy.routes) {
+      const fetchSpy = makeFetchSpy(jsonResponse(200, { ok: true }));
+      const response = await performEgressRequest(
+        { policy, url: `${route.origin}${route.pathPrefix}`, method: route.methods[0], headers: {} },
+        { fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+      );
+      assert.equal(fetchSpy.calls.length, 1, `${host} should be fetched exactly once`);
+      assert.equal(response.status, 200);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC2 (R2): URL credentials, non-HTTPS schemes, unsupported methods,
+// loopback/private/unique-local/link-local/metadata literals, and DNS
+// results in blocked ranges are all denied, and never fetched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P8 AC2: isBlockedIpAddress covers loopback, RFC1918, unique-local, link-local, and metadata ranges (v4 and v6)", () => {
+  const blocked = [
+    "127.0.0.1", "127.255.255.255",
+    "10.0.0.1", "172.16.0.1", "172.31.255.255", "192.168.0.1",
+    "169.254.1.1", "169.254.169.254", "100.100.100.200",
+    "::1", "fc00::1", "fd12:3456:789a::1", "fe80::1", "fd00:ec2::254",
+    "::ffff:127.0.0.1", "::ffff:10.0.0.1",
+    "not-an-ip", "999.999.999.999",
+  ];
+  for (const addr of blocked) assert.equal(isBlockedIpAddress(addr), true, `${addr} must be blocked`);
+
+  const allowed = ["8.8.8.8", "1.1.1.1", "157.240.0.1", "203.0.113.10", "2001:4860:4860::8888", "::ffff:8.8.8.8"];
+  for (const addr of allowed) assert.equal(isBlockedIpAddress(addr), false, `${addr} must not be blocked`);
+});
+
+test("P8 AC2: URL credentials are rejected before any fetch", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://user:pass@graph.facebook.com/v21.0/me", method: "GET" },
+      { fetchImpl: fetchSpy, lookup: lookupOf({ address: "157.240.0.1", family: 4 }), buildDispatcher: noDispatcher },
+    ),
+    (e) => e.code === "URL_CREDENTIALS",
+  );
+  assert.equal(fetchSpy.calls.length, 0);
+});
+
+test("P8 AC2: non-HTTPS schemes are rejected before any fetch", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  for (const url of ["http://graph.facebook.com/v21.0/me", "file:///etc/passwd", "ftp://graph.facebook.com/v21.0/me"]) {
+    const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+    await assert.rejects(
+      performEgressRequest(
+        { policy, url, method: "GET" },
+        { fetchImpl: fetchSpy, lookup: lookupOf({ address: "157.240.0.1", family: 4 }), buildDispatcher: noDispatcher },
+      ),
+      (e) => e.code === "INVALID_SCHEME",
+      url,
+    );
+    assert.equal(fetchSpy.calls.length, 0, url);
+  }
+});
+
+test("P8 AC2/R2: unsupported methods are rejected before any fetch", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://graph.facebook.com/v21.0/me", method: "PUT" },
+      { fetchImpl: fetchSpy, lookup: lookupOf({ address: "157.240.0.1", family: 4 }), buildDispatcher: noDispatcher },
+    ),
+    (e) => e.code === "TARGET_NOT_ALLOWED",
+  );
+  assert.equal(fetchSpy.calls.length, 0);
+});
+
+test("P8 AC2/R2: a target outside every route's origin/path is rejected before any fetch", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://attacker.example.com/v21.0/me", method: "GET" },
+      { fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+    ),
+    (e) => e.code === "TARGET_NOT_ALLOWED",
+  );
+  assert.equal(fetchSpy.calls.length, 0);
+});
+
+// Loopback/private/unique-local/link-local/metadata IP literals in the URL
+// itself: exercised through the real validate→resolve→fetch pipeline (not
+// just the isBlockedIpAddress unit above) via a synthetic policy whose route
+// origin is the literal under test, proving the literal short-circuits
+// straight to the blocklist without ever calling DNS.
+const BLOCKED_LITERALS = [
+  ["127.0.0.1", "loopback v4"],
+  ["10.1.2.3", "RFC1918 10/8"],
+  ["172.16.0.1", "RFC1918 172.16/12"],
+  ["192.168.1.1", "RFC1918 192.168/16"],
+  ["169.254.169.254", "link-local / cloud metadata v4"],
+  ["100.100.100.200", "Alibaba Cloud metadata v4"],
+  ["[::1]", "loopback v6"],
+  ["[fc00::1]", "unique-local v6"],
+  ["[fe80::1]", "link-local v6"],
+  ["[fd00:ec2::254]", "AWS IMDSv6"],
+];
+
+test("P8 AC2/R2: loopback/private/unique-local/link-local/metadata IP literals are rejected before any fetch, without querying DNS", async () => {
+  for (const [hostLiteral, label] of BLOCKED_LITERALS) {
+    const origin = `https://${hostLiteral}`;
+    const policy = {
+      name: `test:${label}`,
+      routes: [{ origin, pathPrefix: "/", methods: ["GET"], allowedHeaders: [], authFrom: "none" }],
+    };
+    const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+    await assert.rejects(
+      performEgressRequest(
+        { policy, url: `${origin}/x`, method: "GET" },
+        {
+          fetchImpl: fetchSpy,
+          lookup: async () => { throw new Error("DNS must not be queried for an IP literal"); },
+          buildDispatcher: noDispatcher,
+        },
+      ),
+      (e) => e.code === "BLOCKED_ADDRESS",
+      label,
+    );
+    assert.equal(fetchSpy.calls.length, 0, `${label}: fetch must never be called`);
+  }
+});
+
+test("P8 AC2/R2: a hostname resolving to a blocked address is rejected, and any blocked answer denies the whole request (mixed answers / rebinding safety)", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+
+  const fetchSpy1 = makeFetchSpy(jsonResponse(200, {}));
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://graph.facebook.com/v21.0/me", method: "GET" },
+      { fetchImpl: fetchSpy1, lookup: lookupOf({ address: "127.0.0.1", family: 4 }), buildDispatcher: noDispatcher },
+    ),
+    (e) => e.code === "BLOCKED_ADDRESS",
+  );
+  assert.equal(fetchSpy1.calls.length, 0);
+
+  // Mixed answer set: one public, one private. Must deny outright rather
+  // than "pick the public one" — an attacker who controls answer order (or
+  // a later re-resolution) could otherwise steer a retry onto the private
+  // address.
+  const fetchSpy2 = makeFetchSpy(jsonResponse(200, {}));
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://graph.facebook.com/v21.0/me", method: "GET" },
+      {
+        fetchImpl: fetchSpy2,
+        lookup: lookupOf({ address: "157.240.0.1", family: 4 }, { address: "127.0.0.1", family: 4 }),
+        buildDispatcher: noDispatcher,
+      },
+    ),
+    (e) => e.code === "BLOCKED_ADDRESS",
+  );
+  assert.equal(fetchSpy2.calls.length, 0, "a mixed public/private DNS answer must deny the request outright");
+});
+
+test("P8 R2: the validated resolved address is pinned to the connector used for the actual fetch (prevents TOCTOU rebinding)", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const pinnedCalls = [];
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  await performEgressRequest(
+    { policy, url: "https://graph.facebook.com/v21.0/me", method: "GET" },
+    {
+      fetchImpl: fetchSpy,
+      lookup: lookupOf({ address: "157.240.0.1", family: 4 }, { address: "157.240.0.2", family: 4 }),
+      buildDispatcher: (address, family, hostname) => { pinnedCalls.push({ address, family, hostname }); return null; },
+    },
+  );
+  assert.deepEqual(pinnedCalls, [{ address: "157.240.0.1", family: 4, hostname: "graph.facebook.com" }]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC3 (R3): protected headers can never be overridden by callers; main-
+// process authorization is injected where required.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P8 AC3: Host/Cookie/Proxy-Authorization/Content-Length can never be set by the caller, for any declared route", () => {
+  const forbidden = { Host: "evil.com", Cookie: "session=stolen", "Proxy-Authorization": "Basic x", "Content-Length": "0" };
+  const allRoutes = [
+    ...SOCIAL_PLATFORMS.flatMap((p) => ["apiCall", "mediaUpload"].flatMap((a) => resolveSocialPolicy(p, a).routes)),
+    ...PROXY_HOSTS.flatMap((h) => resolveProxyPolicy(`https://${h}/`).routes),
+  ];
+  assert.ok(allRoutes.length > 0);
+  for (const route of allRoutes) {
+    const sanitized = sanitizeRequestHeaders(forbidden, route, {});
+    for (const key of Object.keys(forbidden)) {
+      assert.equal(sanitized[key], undefined, `${route.origin}: ${key} must be stripped`);
+    }
+  }
+});
+
+test("P8 AC3: header casing cannot be used to smuggle a protected header past the sanitizer", () => {
+  const route = resolveSocialPolicy("instagram", "apiCall").routes[0];
+  const sanitized = sanitizeRequestHeaders({ HOST: "evil.com", CoOkIe: "a=b", "PROXY-AUTHORIZATION": "x" }, route, {});
+  const keys = Object.keys(sanitized).map((k) => k.toLowerCase());
+  assert.equal(keys.includes("host"), false);
+  assert.equal(keys.includes("cookie"), false);
+  assert.equal(keys.includes("proxy-authorization"), false);
+});
+
+test("P8 AC3: caller Authorization is stripped unless the route declares authFrom: callerHeader", () => {
+  const accessTokenRoute = resolveSocialPolicy("tiktok", "mediaUpload").routes[0];
+  assert.equal(accessTokenRoute.authFrom, "accessTokenField");
+  const sanitized = sanitizeRequestHeaders({ Authorization: "Bearer forged" }, accessTokenRoute, {});
+  assert.equal(sanitized.Authorization, undefined);
+
+  const noAuthRoute = resolveProxyPolicy("https://api.coingecko.com/").routes[0];
+  assert.equal(noAuthRoute.authFrom, "none");
+  const sanitized2 = sanitizeRequestHeaders({ Authorization: "Bearer forged" }, noAuthRoute, {});
+  assert.equal(sanitized2.Authorization, undefined);
+});
+
+test("P8 AC3/R3: main-process authorization is injected from the vetted accessToken field, and a caller-forged Authorization header cannot override it", async () => {
+  const policy = resolveSocialPolicy("tiktok", "mediaUpload");
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  await performEgressRequest(
+    {
+      policy,
+      url: "https://open-upload.tiktokapis.com/upload/v1/session-abc",
+      method: "POST",
+      headers: { Authorization: "Bearer forged-by-caller" },
+      accessToken: "real-main-issued-token",
+    },
+    { fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.20", family: 4 }), buildDispatcher: noDispatcher },
+  );
+  assert.equal(fetchSpy.calls.length, 1);
+  assert.equal(fetchSpy.calls[0].init.headers.Authorization, "Bearer real-main-issued-token");
+});
+
+test("P8 AC3: default Accept/User-Agent are always injected and cannot be overridden by the caller", () => {
+  const route = resolveSocialPolicy("instagram", "apiCall").routes[0];
+  const sanitized = sanitizeRequestHeaders({ Accept: "text/evil", "User-Agent": "evil-agent" }, route, {});
+  assert.equal(sanitized.Accept, "application/json");
+  assert.equal(sanitized["User-Agent"], "BonzAI/1.0");
+});
+
+test("P8 AC3: headers not on a route's explicit allowlist are stripped even when harmless-looking", () => {
+  const route = resolveSocialPolicy("instagram", "apiCall").routes[0]; // allowedHeaders: ["content-type"]
+  const sanitized = sanitizeRequestHeaders({ "X-Forwarded-For": "10.0.0.1", "Content-Type": "application/json" }, route, {});
+  assert.equal(sanitized["X-Forwarded-For"], undefined);
+  assert.equal(sanitized["Content-Type"], "application/json");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC4 (R4): redirects are never followed automatically, and every allowed
+// redirect destination is revalidated (target policy + DNS + pinning) before
+// it is followed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P8 AC4: redirect is always requested as manual, never automatic", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  await performEgressRequest(
+    { policy, url: "https://graph.facebook.com/v21.0/me", method: "GET" },
+    { fetchImpl: fetchSpy, lookup: lookupOf({ address: "157.240.0.1", family: 4 }), buildDispatcher: noDispatcher },
+  );
+  assert.equal(fetchSpy.calls[0].init.redirect, "manual");
+});
+
+test("P8 AC4: a redirect to a destination outside the policy is rejected and never fetched", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const fetchSpy = makeFetchSpy(redirectResponse(302, "https://evil.example.com/steal"));
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://graph.facebook.com/v21.0/me", method: "GET" },
+      { fetchImpl: fetchSpy, lookup: lookupOf({ address: "157.240.0.1", family: 4 }), buildDispatcher: noDispatcher },
+    ),
+    (e) => e.code === "TARGET_NOT_ALLOWED",
+  );
+  assert.equal(fetchSpy.calls.length, 1, "the disallowed redirect target must never itself be fetched");
+});
+
+test("P8 AC4: a redirect to a private address is rejected and never fetched — the hop re-resolves DNS itself", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const fetchSpy = makeFetchSpy(redirectResponse(302, "https://graph.facebook.com/v21.0/internal"));
+  let lookupCall = 0;
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://graph.facebook.com/v21.0/me", method: "GET" },
+      {
+        fetchImpl: fetchSpy,
+        lookup: async () => {
+          lookupCall++;
+          return lookupCall === 1 ? [{ address: "157.240.0.1", family: 4 }] : [{ address: "127.0.0.1", family: 4 }];
+        },
+        buildDispatcher: noDispatcher,
+      },
+    ),
+    (e) => e.code === "BLOCKED_ADDRESS",
+  );
+  assert.equal(fetchSpy.calls.length, 1, "the redirect target must never itself be fetched");
+  assert.equal(lookupCall, 2, "the redirect hop must trigger its own DNS resolution");
+});
+
+test("P8 AC4: an allowed redirect destination is revalidated and then followed", async () => {
+  const policy = resolveSocialPolicy("x", "apiCall");
+  let calls = 0;
+  const fetchSpy = async (url, init) => {
+    calls++;
+    fetchSpy.calls.push({ url, init });
+    if (calls === 1) return redirectResponse(307, "https://upload.twitter.com/1.1/media/upload.json?command=STATUS");
+    return jsonResponse(200, { ok: true });
+  };
+  fetchSpy.calls = [];
+
+  const response = await performEgressRequest(
+    { policy, url: "https://api.twitter.com/2/tweets", method: "POST", body: "x=1" },
+    { fetchImpl: fetchSpy, lookup: lookupOf({ address: "104.244.42.1", family: 4 }), buildDispatcher: noDispatcher },
+  );
+
+  assert.equal(calls, 2, "the redirect target must be fetched only after revalidation");
+  assert.equal(response.status, 200);
+  assert.equal(fetchSpy.calls[1].url, "https://upload.twitter.com/1.1/media/upload.json?command=STATUS");
+  // 307 preserves method + body.
+  assert.equal(fetchSpy.calls[1].init.method, "POST");
+  assert.equal(fetchSpy.calls[1].init.body, "x=1");
+});
+
+test("P8 AC4: a 302 redirect for a non-GET request downgrades the follow-up to GET with no body (standard redirect semantics)", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  let calls = 0;
+  const fetchSpy = async (url, init) => {
+    calls++;
+    fetchSpy.calls.push({ url, init });
+    if (calls === 1) return redirectResponse(302, "https://graph.facebook.com/v21.0/redirected");
+    return jsonResponse(200, { ok: true });
+  };
+  fetchSpy.calls = [];
+
+  await performEgressRequest(
+    { policy, url: "https://graph.facebook.com/v21.0/me", method: "POST", body: "a=1" },
+    { fetchImpl: fetchSpy, lookup: lookupOf({ address: "157.240.0.1", family: 4 }), buildDispatcher: noDispatcher },
+  );
+
+  assert.equal(fetchSpy.calls[1].init.method, "GET");
+  assert.equal(fetchSpy.calls[1].init.body, undefined);
+});
+
+test("P8 AC4/R4: exceeding the redirect hop limit is rejected", async () => {
+  const policy = resolveSocialPolicy("instagram", "apiCall");
+  const fetchSpy = makeFetchSpy(redirectResponse(302, "https://graph.facebook.com/v21.0/next"));
+  await assert.rejects(
+    performEgressRequest(
+      { policy, url: "https://graph.facebook.com/v21.0/me", method: "GET" },
+      { fetchImpl: fetchSpy, lookup: lookupOf({ address: "157.240.0.1", family: 4 }), buildDispatcher: noDispatcher, maxRedirects: 2 },
+    ),
+    (e) => e.code === "TOO_MANY_REDIRECTS",
+  );
+  assert.equal(fetchSpy.calls.length, 3);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC5 (R5/R6): main.js wires all three handlers through the shared policy
+// helper, preserves their response envelopes, and the file:// temp-hosting
+// result is gone.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P8 AC5/R5: social:api-call routes through resolveSocialPolicy + performEgressRequest and preserves its response envelope", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const m = src.match(/ipcMain\.handle\(\s*["']social:api-call["'][\s\S]*?\n\}\);/);
+  assert.ok(m, "expected the social:api-call handler");
+  assert.ok(/resolveSocialPolicy\(\s*platform,\s*["']apiCall["']\s*\)/.test(m[0]));
+  assert.ok(/performEgressRequest\(/.test(m[0]));
+  assert.ok(/return\s*\{\s*\.\.\.data,\s*status:\s*response\.status\s*\}/.test(m[0]), "success shape must be unchanged");
+  assert.ok(/return\s*\{\s*error:\s*e\.message,\s*status:\s*0\s*\}/.test(m[0]), "failure shape must be unchanged");
+});
+
+test("P8 AC5/R5/R6: social:media-upload routes through resolveSocialPolicy + performEgressRequest, and the file:// temp-hosting result is removed", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const m = src.match(/ipcMain\.handle\(\s*["']social:media-upload["'][\s\S]*?\n\}\);/);
+  assert.ok(m, "expected the social:media-upload handler");
+  assert.ok(/resolveSocialPolicy\(\s*platform,\s*["']mediaUpload["']\s*\)/.test(m[0]));
+  assert.ok(/performEgressRequest\(/.test(m[0]));
+  assert.ok(/accessToken/.test(m[0]));
+  assert.equal(/file:\/\/\$\{filePath\}/.test(m[0]), false, "the file:// temp-hosting result must be removed (R6)");
+  assert.equal(/fs\.writeFileSync/.test(m[0]), false, "no local file should be written and handed back as a fake public URL");
+  assert.ok(/return\s*\{\s*success:\s*response\.ok,\s*\.\.\.data\s*\}/.test(m[0]), "success shape must be unchanged");
+});
+
+test("P8 AC5/R5: proxy:fetch routes through resolveProxyPolicy + performEgressRequest and preserves its response envelope", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const m = src.match(/ipcMain\.handle\(\s*["']proxy:fetch["'][\s\S]*?\n\}\);/);
+  assert.ok(m, "expected the proxy:fetch handler");
+  assert.ok(/resolveProxyPolicy\(\s*url\s*\)/.test(m[0]));
+  assert.ok(/performEgressRequest\(/.test(m[0]));
+  assert.ok(/return\s*\{\s*success:\s*true,\s*data\s*\}/.test(m[0]), "success shape must be unchanged");
+  assert.ok(/success:\s*false/.test(m[0]), "failure shape must still report success:false");
+});
+
+test("P8 R6: no file:// hosting result exists anywhere in main.js", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.equal(/url:\s*`file:\/\/\$\{filePath\}`/.test(src), false);
+});
+
+test("P8 R5: preload argument shapes for social.apiCall, social.mediaUpload, and externalProxy.fetch are unchanged", () => {
+  const preloadSrc = fs.readFileSync(PRELOAD_JS, "utf8");
+  assert.ok(
+    /apiCall:\s*\(\{\s*platform,\s*url,\s*method,\s*headers,\s*body,\s*formData\s*\}\)\s*=>[\s\S]{0,60}ipcRenderer\.invoke\(\s*["']social:api-call["']\s*,\s*\{\s*platform,\s*url,\s*method,\s*headers,\s*body,\s*formData\s*\}\s*\)/.test(preloadSrc),
+    "social.apiCall signature must be unchanged",
+  );
+  assert.ok(
+    /mediaUpload:\s*\(\{\s*platform,\s*url,\s*accessToken,\s*file,\s*fields\s*\}\)\s*=>[\s\S]{0,60}ipcRenderer\.invoke\(\s*["']social:media-upload["']\s*,\s*\{\s*platform,\s*url,\s*accessToken,\s*file,\s*fields\s*\}\s*\)/.test(preloadSrc),
+    "social.mediaUpload signature must be unchanged",
+  );
+  assert.ok(
+    /fetch:\s*\(url,\s*options\s*=\s*\{\}\)\s*=>[\s\S]{0,40}ipcRenderer\.invoke\(\s*["']proxy:fetch["']\s*,\s*\{\s*url,\s*options\s*\}\s*\)/.test(preloadSrc),
+    "externalProxy.fetch signature must be unchanged",
+  );
 });

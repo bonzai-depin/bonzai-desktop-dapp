@@ -58,6 +58,12 @@ import {
   authorizeWrite,
   authorizeVideoRequest,
 } from "./main/fileAccess.js";
+import {
+  resolveSocialPolicy,
+  resolveProxyPolicy,
+  performEgressRequest,
+  EgressPolicyError,
+} from "./main/egressPolicy.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -4391,26 +4397,34 @@ ipcMain.handle("social:refresh-token", async (_event, { platform, companionId })
 });
 
 /**
- * Generic social API call through main process (CORS bypass).
+ * Generic social API call through main process (CORS bypass), routed
+ * through the per-platform egress policy: unknown platforms, non-HTTPS
+ * targets, off-allowlist origins/paths/methods, and private/loopback/
+ * metadata destinations are all rejected before any DNS lookup or fetch
+ * (see src/main/egressPolicy.js).
  */
 ipcMain.handle("social:api-call", async (_event, { platform, url, method, headers, body, formData }) => {
   try {
-    const fetchOpts = {
-      method: method || 'GET',
-      headers: {
-        'User-Agent': 'BonzAI/1.0',
-        ...headers,
-      },
-    };
+    const policy = resolveSocialPolicy(platform, "apiCall");
+    if (!policy) throw new EgressPolicyError(`Unknown social platform: ${platform}`, "UNKNOWN_PLATFORM");
 
+    const requestHeaders = { ...(headers || {}) };
+    let requestBody;
     if (body && typeof body === 'string') {
-      fetchOpts.body = body;
+      requestBody = body;
     } else if (body) {
-      fetchOpts.headers['Content-Type'] = fetchOpts.headers['Content-Type'] || 'application/json';
-      fetchOpts.body = JSON.stringify(body);
+      requestHeaders['Content-Type'] = requestHeaders['Content-Type'] || 'application/json';
+      requestBody = JSON.stringify(body);
     }
 
-    const response = await fetch(url, fetchOpts);
+    const response = await performEgressRequest({
+      policy,
+      url,
+      method: method || 'GET',
+      headers: requestHeaders,
+      body: requestBody,
+    });
+
     const contentType = response.headers.get('content-type');
     let data;
 
@@ -4422,35 +4436,33 @@ ipcMain.handle("social:api-call", async (_event, { platform, url, method, header
 
     return { ...data, status: response.status };
   } catch (e) {
-    console.error(`[Social API] Error calling ${url}:`, e.message);
+    console.error(`[Social API] Error calling ${platform}:`, e.message);
     return { error: e.message, status: 0 };
   }
 });
 
 /**
  * Upload media for social platforms (binary data via multipart/form-data).
- * Handles Buffer conversion from renderer's Uint8Array.
+ * Handles Buffer conversion from renderer's Uint8Array. Routed through the
+ * per-platform egress policy (see src/main/egressPolicy.js); the
+ * Authorization header, when required, is built by this module from the
+ * vetted `accessToken` field, never from caller-supplied headers.
  */
 ipcMain.handle("social:media-upload", async (_event, { platform, url, accessToken, file, fields }) => {
   try {
-    // Special case: temporary hosting for Instagram (requires publicly accessible URL)
+    // The temporary file:// hosting result has been removed — serving a
+    // local file back to the renderer as a "public" URL violated the
+    // outbound egress boundary this handler now enforces. Instagram's
+    // Graph API requires a publicly reachable image_url; this app has no
+    // CDN, so this path is a documented, deliberate feature removal, not a
+    // bug: the resolveSocialPolicy("instagram", "mediaUpload") policy has
+    // zero routes and would deny it below regardless.
     if (url === '__temp_host__') {
-      // For now, save to a temp file and serve via local HTTP
-      // In production, upload to a CDN or use the app's own hosting
-      const tempDir = path.join(os.tmpdir(), 'bonzai-social-media');
-      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
-      const ext = (file.contentType || 'image/jpeg').split('/')[1] || 'bin';
-      const filename = `${crypto.randomBytes(8).toString('hex')}.${ext}`;
-      const filePath = path.join(tempDir, filename);
-
-      fs.writeFileSync(filePath, Buffer.from(file.buffer));
-
-      // Return local file path — the adapter will need to handle this
-      // For Instagram, the image needs to be accessible via URL
-      // This is a placeholder; real implementation needs a hosting solution
-      return { success: true, url: `file://${filePath}`, localPath: filePath };
+      return { success: false, error: 'Temporary media hosting is no longer available; a real CDN is required for Instagram media uploads.' };
     }
+
+    const policy = resolveSocialPolicy(platform, "mediaUpload");
+    if (!policy) throw new EgressPolicyError(`Unknown social platform: ${platform}`, "UNKNOWN_PLATFORM");
 
     // Standard upload: construct multipart form
     const { FormData, Blob } = await import('node-fetch');
@@ -4470,13 +4482,13 @@ ipcMain.handle("social:media-upload", async (_event, { platform, url, accessToke
       formDataObj.append('file', blob, file.name || 'media.bin');
     }
 
-    const fetchHeaders = {};
-    if (accessToken) fetchHeaders['Authorization'] = `Bearer ${accessToken}`;
-
-    const response = await fetch(url, {
+    const response = await performEgressRequest({
+      policy,
+      url,
       method: 'POST',
-      headers: fetchHeaders,
+      headers: {},
       body: formDataObj,
+      accessToken,
     });
 
     const data = await response.json();
@@ -4517,19 +4529,34 @@ ipcMain.handle("social:get-connected", async (_event, { companionId }) => {
 });
 
 /**
- * Generic external API proxy for any URL
- * Use this for APIs not in the predefined endpoints
+ * Generic external API proxy — but only for the fixed set of external
+ * product integrations declared in src/main/egressPolicy.js
+ * (PROXY_INTEGRATIONS, keyed by hostname since this handler carries no
+ * `platform` field). Any other host is an unknown integration and is
+ * denied before any DNS lookup or fetch.
  */
 ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
   try {
-    const response = await fetch(url, {
+    const policy = resolveProxyPolicy(url);
+    if (!policy) throw new EgressPolicyError(`Unknown or unsupported destination: ${url}`, "UNKNOWN_INTEGRATION");
+
+    const requestHeaders = { ...(options.headers || {}) };
+    let requestBody;
+    if (options.body !== undefined) {
+      if (typeof options.body === "string") {
+        requestBody = options.body;
+      } else {
+        requestHeaders["Content-Type"] = requestHeaders["Content-Type"] || "application/json";
+        requestBody = JSON.stringify(options.body);
+      }
+    }
+
+    const response = await performEgressRequest({
+      policy,
+      url,
       method: options.method || "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "BonzAI/1.0",
-        ...(options.headers || {}),
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      headers: requestHeaders,
+      body: requestBody,
     });
 
     const contentType = response.headers.get("content-type");
