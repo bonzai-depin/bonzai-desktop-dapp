@@ -443,6 +443,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     request: (request) => ipcRenderer.invoke("company-connector:request", request),
     validate: (companyId, connectorId) => ipcRenderer.invoke("company-connector:validate", { companyId, connectorId }),
   },
+  // Wallet secrets (P9 Security) — narrow safeStorage-backed storage for the
+  // agent wallet master derivation secret and per-companion private keys.
+  // See wallet-secret:* handlers in main.js / src/main/secretStore.js.
+  walletSecret: {
+    set: (key, secret, { address } = {}) => ipcRenderer.invoke("wallet-secret:set", { key, secret, address }),
+    get: (key) => ipcRenderer.invoke("wallet-secret:get", { key }),
+    has: (key) => ipcRenderer.invoke("wallet-secret:has", { key }),
+    delete: (key) => ipcRenderer.invoke("wallet-secret:delete", { key }),
+  },
   // Agent wallet transaction confirmation (P0 Security)
   confirmTransaction: (details) =>
     ipcRenderer.invoke("confirm-transaction", details),

@@ -38,6 +38,7 @@ import {
   exportDataset as studioExportDataset,
 } from "./scripts/dataset-studio.js";
 import { RobinhoodMcpManager } from "./main/robinhood-mcp.js";
+import { createSecretHandlers } from "./main/secretStore.js";
 import {
   createCredentialRegistry,
   childEnvSecrets,
@@ -1619,6 +1620,45 @@ ipcMain.handle("store-set", (_event, key, value) => {
 ipcMain.handle("store-delete", (_event, key) => {
   store.delete(key);
   return true;
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wallet secrets (P9 Security) — narrow safeStorage-backed IPC for the agent
+// wallet master derivation secret and per-companion private keys. Only
+// ciphertext + non-secret metadata (address, timestamps) is ever persisted;
+// see src/main/secretStore.js for the encrypt/decrypt seam this wraps. Reads
+// and writes throw (fail closed) when OS encryption is unavailable rather
+// than falling back to plaintext or handing back unusable ciphertext.
+// ─────────────────────────────────────────────────────────────────────────────
+const walletSecrets = createSecretHandlers({ store, safeStorage });
+
+// Same sender-authorization the session bridge above uses (P2): only the
+// current BonzAI top-level renderer may reach the master derivation secret
+// or companion private keys. Remote, subframe, stale-window, and
+// origin-mismatched senders are denied before touching walletSecrets.
+function authorizeWalletSecretSender(event) {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const decision = sessionAuthorize(sender);
+  if (!decision.ok) {
+    throw new Error(`Unauthorized wallet-secret access (${decision.reason})`);
+  }
+}
+
+ipcMain.handle("wallet-secret:set", (event, { key, secret, address } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.setSecret(key, secret, { address });
+});
+ipcMain.handle("wallet-secret:get", (event, { key } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.getSecret(key);
+});
+ipcMain.handle("wallet-secret:has", (event, { key } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.hasSecret(key);
+});
+ipcMain.handle("wallet-secret:delete", (event, { key } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.deleteSecret(key);
 });
 
 /**
