@@ -23,14 +23,52 @@ import { ethers } from "ethers";
 const VAULT_STORAGE_KEY = "bonzai-auth-vault";
 const VAULT_VERSION = 1;
 
-// Auth message template - user signs this ONCE
-const AUTH_MESSAGE_TEMPLATE = `BonzAI Auth Vault v${VAULT_VERSION}
+// Versioned separately from VAULT_VERSION so a future change to the signed
+// message wording doesn't need to bump the outer envelope format.
+const DERIVATION_TEMPLATE_VERSION = 1;
+
+// Reason code returned when an envelope's ciphertext cannot be reproduced
+// (no derivation metadata to rebuild the signed message, or the metadata/
+// signature doesn't match). Callers must go through resetVault() to clear it.
+export const LEGACY_VAULT_UNRECOVERABLE = "legacy-vault-unrecoverable";
+
+// Auth message templates - user signs this ONCE per vault. Keyed by
+// DERIVATION_TEMPLATE_VERSION so byte-for-byte reconstruction stays possible
+// even if the wording changes in a later version.
+const AUTH_MESSAGE_TEMPLATES = {
+  1: (address, createdAtIso) => `BonzAI Auth Vault v${VAULT_VERSION}
 
 This signature secures your local credentials.
 It does NOT authorize any transactions.
 
-Wallet: {address}
-Created: {timestamp}`;
+Wallet: ${address}
+Created: ${createdAtIso}`,
+};
+
+function buildAuthMessage(templateVersion, address, createdAtIso) {
+  const build = AUTH_MESSAGE_TEMPLATES[templateVersion];
+  if (typeof build !== "function") {
+    throw new Error(`Unsupported vault message template version: ${templateVersion}`);
+  }
+  return build(address, createdAtIso);
+}
+
+function isValidAddress(address) {
+  return typeof address === "string" && /^0x[0-9a-f]{40}$/.test(address);
+}
+
+/**
+ * Validate persisted derivation metadata against the address it claims to
+ * belong to, before it is ever used to request a signature or touch storage.
+ */
+function isValidDerivationMetadata(derivation, expectedAddress) {
+  if (!derivation || typeof derivation !== "object") return false;
+  if (derivation.version !== DERIVATION_TEMPLATE_VERSION) return false;
+  if (!isValidAddress(derivation.address) || derivation.address !== expectedAddress) return false;
+  if (typeof derivation.createdAtIso !== "string" || derivation.createdAtIso === "") return false;
+  if (Number.isNaN(Date.parse(derivation.createdAtIso))) return false;
+  return true;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STATE
@@ -64,6 +102,13 @@ const state = reactive({
 // In-memory only (never persisted)
 let masterKey = null; // Derived from wallet signature
 let refreshTimer = null;
+// The derivation metadata backing the CURRENT unlocked session (if the vault
+// was created/unlocked via the reproducible message-signing flow). Carried
+// forward into every saveVault() write so a later credential save never
+// strips the metadata a future unlock depends on. Null when the vault was
+// unlocked via a raw externally-supplied signature that never persisted
+// message-reconstruction metadata (initializeOrUnlockFromSignature).
+let vaultDerivation = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ENCRYPTION UTILITIES
@@ -158,21 +203,40 @@ export async function hasVault(address) {
 }
 
 /**
- * Initialize or unlock vault from an EXISTING signature.
+ * Attempt to unlock an EXISTING vault using an already-obtained signature
+ * (e.g. an auth-challenge signature), without prompting for a new one.
  *
- * This is the preferred method - reuses the auth signature so user
- * doesn't need to sign twice. The signature is used to derive the
- * encryption key.
+ * This only succeeds if `signature` happens to reproduce the vault's
+ * original derivation key, which is NOT guaranteed for a signature over a
+ * server-issued challenge - those typically embed a per-login random nonce
+ * for replay protection, so they differ on every login. On any decrypt
+ * failure this returns a recoverability result (see
+ * LEGACY_VAULT_UNRECOVERABLE) rather than throwing or overwriting the
+ * vault; callers MUST check `result.ok` - a resolved promise here does not
+ * mean the vault is unlocked.
+ *
+ * This function never creates a new vault: it does not control the signed
+ * message, so it has no way to persist derivation metadata that a future
+ * login could use to reproduce the same key. Use initializeVault(signer) to
+ * create a vault and unlockVault(signer) to unlock one - both sign a
+ * message this service controls and persist/reconstruct that exact
+ * message, so the derived key is always reproducible.
  *
  * @param {string} address - Wallet address (lowercase)
- * @param {string} signature - Existing signature from auth flow
+ * @param {string} signature - Existing signature to try against a stored vault
  */
 export async function initializeOrUnlockFromSignature(address, signature) {
   address = address.toLowerCase();
-  const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
 
-  // Derive master key from the signature
-  masterKey = await deriveKeyFromSignature(signature);
+  // Validate before touching storage or deriving anything from the signature.
+  if (!isValidAddress(address)) {
+    throw new Error("Invalid wallet address");
+  }
+  if (typeof signature !== "string" || signature === "") {
+    throw new Error("Invalid signature");
+  }
+
+  const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
 
   // Check if vault already exists
   const existingVault = window.electronAPI?.store?.get
@@ -180,8 +244,16 @@ export async function initializeOrUnlockFromSignature(address, signature) {
     : null;
 
   if (existingVault?.encrypted) {
-    // Try to decrypt existing vault
+    // Reject an envelope that claims a different address before deriving or
+    // decrypting anything with it.
+    if (existingVault.address && existingVault.address !== address) {
+      throw new Error("Vault address mismatch");
+    }
+
+    // Derive master key from the signature and try to decrypt existing vault
+    const candidateKey = await deriveKeyFromSignature(signature);
     try {
+      masterKey = candidateKey;
       const vaultData = await decrypt(existingVault.encrypted);
 
       // Restore state from vault
@@ -196,6 +268,9 @@ export async function initializeOrUnlockFromSignature(address, signature) {
       state.pendingOperations = vaultData.pendingOperations || [];
       state.isUnlocked = true;
       state.isInitialized = true;
+      // Carry forward whatever derivation metadata (if any) the envelope
+      // already had, so a later saveVault() never drops it.
+      vaultDerivation = existingVault.derivation || null;
 
       console.log("[Vault] Vault unlocked from existing signature");
 
@@ -204,48 +279,40 @@ export async function initializeOrUnlockFromSignature(address, signature) {
 
       return true;
     } catch (decryptError) {
-      // Signature doesn't match - this is a new signature, create fresh vault
-      console.log("[Vault] Existing vault incompatible, creating fresh vault");
+      // The signature doesn't reproduce this vault's key (e.g. the
+      // auth-challenge signature rotated since the vault was created, or the
+      // ciphertext predates this metadata scheme). We must NOT silently
+      // overwrite the existing encrypted record - that would destroy any
+      // secrets already stored. Surface a dedicated recoverability result;
+      // only an explicitly confirmed resetVault() call may replace it.
+      masterKey = null;
+      // A previous call may have left the vault unlocked (isUnlocked=true)
+      // in this same in-memory session. Without a masterKey nothing can
+      // actually be decrypted or persisted, so isUnlocked must reflect that
+      // now - otherwise getters keep serving stale cached secrets and
+      // setters/saveVault silently no-op instead of failing visibly.
+      state.isUnlocked = false;
+      console.warn("[Vault] Existing vault could not be unlocked with this signature; recovery required");
+      return {
+        ok: false,
+        recoverable: false,
+        reason: LEGACY_VAULT_UNRECOVERABLE,
+        requiresReset: true,
+      };
     }
   }
 
-  // Create new vault with this signature
-  const vaultData = {
-    version: VAULT_VERSION,
-    address,
-    createdAt: Date.now(),
-    services: {
-      moltbook: {},
-      agentWallets: {},
-      openclaw: null,
-      p2p: null,
-    },
-    auth: {
-      accessToken: null,
-      tokenExpiry: null,
-      refreshToken: null,
-    },
-    pendingOperations: [],
-  };
-
-  // Encrypt and store
-  const encrypted = await encrypt(vaultData);
-
-  if (window.electronAPI?.store?.set) {
-    await window.electronAPI.store.set(storageKey, {
-      version: VAULT_VERSION,
-      address,
-      encrypted,
-    });
-  }
-
-  // Update state
-  state.isUnlocked = true;
-  state.isInitialized = true;
-  state.walletAddress = address;
-
-  console.log("[Vault] New vault created from auth signature for", address);
-  return true;
+  // No existing vault. This function cannot create one: it only received an
+  // already-computed signature and does not control the message that was
+  // signed, so it has no derivation metadata to persist that a future login
+  // could use to reproduce this key - a vault created here would decrypt
+  // successfully only for the remainder of this in-memory session, then
+  // become permanently unrecoverable on the very next unlock attempt.
+  // Callers must go through initializeVault(signer), which signs its own
+  // deterministic message and persists reproducible derivation metadata.
+  throw new Error(
+    "No vault exists for this wallet; call initializeVault(signer) to create one with a reproducible key derivation"
+  );
 }
 
 /**
@@ -255,16 +322,31 @@ export async function initializeOrUnlockFromSignature(address, signature) {
 export async function initializeVault(signer) {
   const address = (await signer.getAddress()).toLowerCase();
 
+  if (!isValidAddress(address)) {
+    throw new Error("Invalid wallet address");
+  }
+
   // Check if vault already exists
   if (await hasVault(address)) {
     console.log("[Vault] Vault already exists for", address);
     return unlockVault(signer);
   }
 
-  // Create auth message
-  const message = AUTH_MESSAGE_TEMPLATE
-    .replace("{address}", address)
-    .replace("{timestamp}", new Date().toISOString());
+  // Build the exact derivation metadata that will be persisted alongside the
+  // ciphertext, and validate it BEFORE requesting a signature or writing
+  // anything - the timestamp used here is the one substituted into the
+  // signed message and must never be recomputed later.
+  const derivation = {
+    version: DERIVATION_TEMPLATE_VERSION,
+    address,
+    createdAtIso: new Date().toISOString(),
+  };
+
+  if (!isValidDerivationMetadata(derivation, address)) {
+    throw new Error("Failed to build valid vault derivation metadata");
+  }
+
+  const message = buildAuthMessage(derivation.version, derivation.address, derivation.createdAtIso);
 
   console.log("[Vault] Requesting one-time signature to create vault...");
 
@@ -273,13 +355,13 @@ export async function initializeVault(signer) {
 
   // Derive master key
   masterKey = await deriveKeyFromSignature(signature);
+  vaultDerivation = derivation;
 
   // Initialize vault data
   const vaultData = {
     version: VAULT_VERSION,
     address,
-    createdAt: Date.now(),
-    signature, // Store signature to re-derive key on unlock
+    createdAt: derivation.createdAtIso,
     services: {
       moltbook: {},
       agentWallets: {},
@@ -303,6 +385,7 @@ export async function initializeVault(signer) {
       version: VAULT_VERSION,
       address,
       encrypted,
+      derivation,
     });
   }
 
@@ -316,12 +399,20 @@ export async function initializeVault(signer) {
 }
 
 /**
- * Unlock existing vault with wallet signature
- * Uses stored signature to re-derive key (no new signature needed if we have it)
+ * Unlock existing vault with wallet signature.
+ *
+ * Reconstructs the EXACT message signed at creation time from persisted
+ * derivation metadata (address, template version, creation timestamp) so the
+ * re-signed message - and the key derived from it - are byte-for-byte
+ * identical to the original. Never recomputes the timestamp itself.
  */
 export async function unlockVault(signer) {
   const address = (await signer.getAddress()).toLowerCase();
   const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
+
+  if (!isValidAddress(address)) {
+    throw new Error("Invalid wallet address");
+  }
 
   if (!window.electronAPI?.store?.get) {
     throw new Error("Storage not available");
@@ -332,14 +423,39 @@ export async function unlockVault(signer) {
     throw new Error("No vault found for this wallet");
   }
 
-  // Try to decrypt with stored signature first
-  try {
-    // We need to get the signature somehow - either stored or request new one
-    // For now, request signature (we can optimize this later with keychain)
-    const message = AUTH_MESSAGE_TEMPLATE
-      .replace("{address}", address)
-      .replace("{timestamp}", new Date(stored.createdAt || Date.now()).toISOString());
+  if (stored.address && stored.address !== address) {
+    throw new Error("Vault address mismatch");
+  }
 
+  if (!stored.derivation) {
+    // Legacy ciphertext (or one created via a path that never recorded
+    // derivation metadata) - the original signed message cannot be rebuilt,
+    // so we refuse to guess at a key rather than risk decrypt failure
+    // cascading into a "just recreate it" fallback that clobbers data.
+    // Preserve the record verbatim; only an explicitly confirmed
+    // resetVault() call may replace it.
+    console.warn("[Vault] Legacy vault has no derivation metadata; recovery required");
+    return {
+      ok: false,
+      recoverable: false,
+      reason: LEGACY_VAULT_UNRECOVERABLE,
+      requiresReset: true,
+    };
+  }
+
+  // Validate the persisted metadata BEFORE requesting a signature or
+  // touching storage - an altered address/version/timestamp is rejected here.
+  if (!isValidDerivationMetadata(stored.derivation, address) || stored.version !== VAULT_VERSION) {
+    throw new Error("Vault derivation metadata is invalid or has been altered");
+  }
+
+  const message = buildAuthMessage(
+    stored.derivation.version,
+    stored.derivation.address,
+    stored.derivation.createdAtIso,
+  );
+
+  try {
     console.log("[Vault] Unlocking vault...");
     const signature = await signer.signMessage(message);
 
@@ -358,6 +474,7 @@ export async function unlockVault(signer) {
     state.pendingOperations = vaultData.pendingOperations || [];
     state.isUnlocked = true;
     state.isInitialized = true;
+    vaultDerivation = stored.derivation;
 
     console.log("[Vault] Vault unlocked successfully");
 
@@ -366,6 +483,12 @@ export async function unlockVault(signer) {
 
     return true;
   } catch (e) {
+    masterKey = null;
+    // Mirror the same-named fix in initializeOrUnlockFromSignature: without
+    // a masterKey nothing can actually be decrypted or persisted, so a
+    // stale isUnlocked=true from an earlier session must not survive a
+    // failed re-unlock attempt.
+    state.isUnlocked = false;
     console.error("[Vault] Failed to unlock vault:", e);
     state.error = e.message;
     throw e;
@@ -373,10 +496,58 @@ export async function unlockVault(signer) {
 }
 
 /**
+ * Explicit, caller-confirmed reset of a vault that could not be recovered
+ * (see LEGACY_VAULT_UNRECOVERABLE results above). Never invoked automatically
+ * - decrypt/unlock failures must never silently trigger this themselves.
+ *
+ * @param {string} address - Wallet address
+ * @param {{confirm: boolean}} options - Must pass confirm: true explicitly
+ */
+export async function resetVault(address, { confirm = false } = {}) {
+  address = (address || "").toLowerCase();
+
+  if (!isValidAddress(address)) {
+    throw new Error("Invalid wallet address");
+  }
+  if (confirm !== true) {
+    throw new Error("resetVault requires explicit confirmation ({ confirm: true })");
+  }
+  if (!window.electronAPI?.store?.delete) {
+    throw new Error("Storage not available");
+  }
+
+  const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
+
+  // If this throws (e.g. the write fails), the old record is left untouched
+  // below - we only clear in-memory state after the storage delete succeeds.
+  await window.electronAPI.store.delete(storageKey);
+
+  if (state.walletAddress === address) {
+    masterKey = null;
+    vaultDerivation = null;
+    state.isUnlocked = false;
+    state.isInitialized = false;
+    state.walletAddress = null;
+    state.moltbook = {};
+    state.agentWallets = {};
+    state.openclaw = null;
+    state.p2p = null;
+    state.accessToken = null;
+    state.tokenExpiry = null;
+    state.refreshTokenStored = null;
+    state.pendingOperations = [];
+  }
+
+  console.log("[Vault] Vault reset for", address, "(explicit caller confirmation)");
+  return true;
+}
+
+/**
  * Lock the vault (clear in-memory secrets)
  */
 export function lockVault() {
   masterKey = null;
+  vaultDerivation = null;
   state.isUnlocked = false;
   state.accessToken = null;
   state.tokenExpiry = null;
@@ -417,11 +588,15 @@ async function saveVault() {
   const storageKey = `${VAULT_STORAGE_KEY}-${state.walletAddress}`;
 
   if (window.electronAPI?.store?.set) {
-    await window.electronAPI.store.set(storageKey, {
+    const envelope = {
       version: VAULT_VERSION,
       address: state.walletAddress,
       encrypted,
-    });
+    };
+    // Carry forward the current session's derivation metadata so a
+    // credential save never strips what a future unlock depends on.
+    if (vaultDerivation) envelope.derivation = vaultDerivation;
+    await window.electronAPI.store.set(storageKey, envelope);
   }
 }
 
@@ -639,6 +814,7 @@ export const authVault = {
   unlockVault,
   lockVault,
   initializeOrUnlockFromSignature,
+  resetVault,
 
   // Moltbook
   setMoltbookCredentials,

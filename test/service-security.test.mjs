@@ -676,3 +676,330 @@ test("AC5 (P9): delete and existence operations remain compatible after migratin
   assert.equal(await agentWallet.hasAgentWallet("companion-del"), false);
   assert.equal(await agentWallet.getAgentWalletCredentials("companion-del"), null);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P10 — authVault.service: reproducible wallet-signature vault derivation +
+// legacy-safe recovery with an explicit reset.
+//
+// Exercises src/services/authVault.service.js:
+//   - initializeVault/unlockVault persist the EXACT derivation metadata
+//     (normalized address, template version, creation ISO timestamp) needed
+//     to rebuild, byte-for-byte, the message that was originally signed (R1);
+//   - that persisted metadata - never Date.now() - drives message
+//     reconstruction on every subsequent unlock, including across a
+//     simulated app restart (fresh module instance, same backing store),
+//     and restores every encrypted field (R2);
+//   - an altered address/version/metadata is rejected before a signature is
+//     requested or storage is written; an altered signature fails decrypt
+//     without silently recreating the vault (R3);
+//   - legacy ciphertext with no derivation metadata is preserved verbatim
+//     and surfaces a dedicated recoverability result; only an explicitly
+//     confirmed resetVault() may replace it, and a failed reset write
+//     leaves the old record intact (R4).
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { setTimeout as delay } from "node:timers/promises";
+import { LEGACY_VAULT_UNRECOVERABLE } from "../src/services/authVault.service.js";
+
+const AUTH_VAULT_URL = new URL("../src/services/authVault.service.js", import.meta.url).href;
+
+const VAULT_ADDRESS_A = "0x" + "cc".repeat(20);
+const VAULT_ADDRESS_B = "0x" + "dd".repeat(20);
+
+function makeVaultStore() {
+  const map = new Map();
+  const calls = [];
+  return {
+    get: async (key, def = null) => { calls.push({ op: "get", key }); return map.has(key) ? map.get(key) : def; },
+    set: async (key, value) => { calls.push({ op: "set", key, value }); map.set(key, value); },
+    delete: async (key) => { calls.push({ op: "delete", key }); map.delete(key); },
+    has: async (key) => map.has(key),
+    _map: map,
+    _calls: calls,
+  };
+}
+
+// A deterministic stand-in for a wallet signer: signing the same message
+// twice yields the same signature (as real wallets do via RFC 6979
+// deterministic ECDSA), so a byte-for-byte reconstructed message reproduces
+// the original key. Records every message it was asked to sign so tests can
+// assert a signature was (or wasn't) requested at all.
+function makeVaultSigner(address, signImpl) {
+  const messages = [];
+  return {
+    getAddress: async () => address,
+    signMessage: async (message) => {
+      messages.push(message);
+      return signImpl ? signImpl(message) : `sig::${message}`;
+    },
+    messages,
+  };
+}
+
+function installVaultGlobals() {
+  const store = makeVaultStore();
+  global.window = {
+    electronAPI: { store },
+    dispatchEvent: () => {},
+    CustomEvent: function CustomEvent() {},
+  };
+  return { store };
+}
+
+// Freezes both `new Date()` and `Date.now()` to a fixed instant, while still
+// letting `new Date(arg)` parse arbitrary values (needed by the service's own
+// metadata validation). Returns a restore function.
+function freezeTime(iso) {
+  const RealDate = global.Date;
+  const fixedMs = RealDate.parse(iso);
+  class FrozenDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(fixedMs);
+      else super(...args);
+    }
+    static now() { return fixedMs; }
+  }
+  global.Date = FrozenDate;
+  return () => { global.Date = RealDate; };
+}
+
+function vaultStorageKey(address) {
+  return `bonzai-auth-vault-${address}`;
+}
+
+let authVault;
+test.before(async () => {
+  installVaultGlobals();
+  const mod = await import(AUTH_VAULT_URL);
+  // Merge the named exports with the `authVault` aggregate object (which
+  // additionally carries the reactive `state`) so tests can use one handle.
+  authVault = { ...mod, ...mod.authVault };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC1 (R1) + AC2 (R2): derivation metadata is persisted and drives a
+// byte-for-byte reproducible unlock across a simulated restart, restoring
+// every encrypted field.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("AC1/AC2 (P10): creation persists derivation metadata, and unlock after a simulated restart reconstructs the exact signed message and restores every field", async () => {
+  const { store } = installVaultGlobals();
+  const restoreTime = freezeTime("2026-01-01T00:00:00.000Z");
+  try {
+    const address = VAULT_ADDRESS_A.toLowerCase();
+    const storageKey = vaultStorageKey(address);
+
+    const creationSigner = makeVaultSigner(address);
+    const created = await authVault.initializeVault(creationSigner);
+    assert.equal(created, true);
+    assert.equal(creationSigner.messages.length, 1, "exactly one signature requested on creation");
+    const originalMessage = creationSigner.messages[0];
+
+    // AC1: the outer envelope persists versioned, non-secret derivation
+    // metadata alongside the ciphertext.
+    const envelope = store._map.get(storageKey);
+    assert.equal(typeof envelope.encrypted, "string");
+    assert.deepEqual(envelope.derivation, {
+      version: 1,
+      address,
+      createdAtIso: "2026-01-01T00:00:00.000Z",
+    });
+
+    // Populate every encrypted field before locking.
+    await authVault.setMoltbookCredentials("companion-1", { apiKey: "sek-1", username: "user-1" });
+    await authVault.setAgentWallet("companion-1", {
+      address: "0x1111111111111111111111111111111111aaaa",
+      privateKey: "0x" + "11".repeat(32),
+    });
+    authVault.setAuthTokens("tok-abc", Date.now() + 3600_000, "refresh-abc");
+    // Flush the debounced save (scheduleSave uses a real 1s timer).
+    await delay(1100);
+
+    authVault.lockVault();
+    assert.equal(authVault.getMoltbookCredentials("companion-1"), null, "locked vault exposes no credentials");
+
+    // Simulate an app restart: fresh module instance (fresh in-memory
+    // masterKey/state), same backing store.
+    const restarted = await import(`${AUTH_VAULT_URL}?p10-restart=${Date.now()}-${Math.random()}`);
+
+    const unlockSigner = makeVaultSigner(address);
+    const unlocked = await restarted.unlockVault(unlockSigner);
+    assert.equal(unlocked, true);
+
+    assert.equal(unlockSigner.messages.length, 1, "exactly one signature requested on unlock");
+    assert.equal(unlockSigner.messages[0], originalMessage, "unlock reconstructs the exact original signed message");
+
+    // AC2: every encrypted field survives the restart + reproducible unlock.
+    const moltbook = restarted.getMoltbookCredentials("companion-1");
+    assert.equal(moltbook.apiKey, "sek-1");
+    assert.equal(moltbook.username, "user-1");
+
+    const agentWallet = await restarted.getAgentWallet("companion-1");
+    assert.equal(agentWallet.address, "0x1111111111111111111111111111111111aaaa");
+    assert.equal(agentWallet.privateKey, "0x" + "11".repeat(32));
+
+    assert.deepEqual(restarted.getAuthTokens(), {
+      accessToken: "tok-abc",
+      tokenExpiry: Date.now() + 3600_000,
+      refreshToken: "refresh-abc",
+    });
+  } finally {
+    restoreTime();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC3 (R3): altered address/version/metadata is rejected before a signature
+// is requested or storage is written; an altered signature fails to decrypt
+// without silently overwriting the vault.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("AC3 (P10): unlockVault rejects tampered derivation metadata before requesting a signature or writing storage", async () => {
+  const { store } = installVaultGlobals();
+  const restoreTime = freezeTime("2026-02-02T00:00:00.000Z");
+  try {
+    const address = VAULT_ADDRESS_B.toLowerCase();
+    const storageKey = vaultStorageKey(address);
+
+    await authVault.initializeVault(makeVaultSigner(address));
+    authVault.lockVault();
+
+    const original = store._map.get(storageKey);
+
+    const tamperCases = [
+      ["address", { ...original, derivation: { ...original.derivation, address: "0x" + "9".repeat(40) } }],
+      ["version", { ...original, derivation: { ...original.derivation, version: 99 } }],
+      ["timestamp", { ...original, derivation: { ...original.derivation, createdAtIso: "not-a-real-timestamp" } }],
+      ["outer address", { ...original, address: "0x" + "8".repeat(40) }],
+    ];
+
+    for (const [label, tampered] of tamperCases) {
+      store._map.set(storageKey, tampered);
+      const snapshotBefore = JSON.stringify(store._map.get(storageKey));
+
+      const attackSigner = makeVaultSigner(address);
+      await assert.rejects(
+        () => authVault.unlockVault(attackSigner),
+        (err) => err instanceof Error,
+        `unlock must reject a tampered ${label}`,
+      );
+      assert.equal(attackSigner.messages.length, 0, `no signature requested for a tampered ${label}`);
+      assert.equal(
+        JSON.stringify(store._map.get(storageKey)),
+        snapshotBefore,
+        `storage untouched after a tampered ${label} is rejected`,
+      );
+    }
+
+    // Restore the untampered record for later tests in this describe block.
+    store._map.set(storageKey, original);
+  } finally {
+    restoreTime();
+  }
+});
+
+test("AC3 (P10): an altered signature at unlock fails decryption without silently overwriting the vault", async () => {
+  const { store } = installVaultGlobals();
+  const restoreTime = freezeTime("2026-03-03T00:00:00.000Z");
+  try {
+    const address = VAULT_ADDRESS_A.toLowerCase();
+    const storageKey = vaultStorageKey(address);
+
+    await authVault.initializeVault(makeVaultSigner(address));
+    authVault.lockVault();
+    const before = JSON.stringify(store._map.get(storageKey));
+
+    // A signer that returns a completely different signature than the
+    // deterministic one for this exact message (corrupted/compromised wallet).
+    const badSigner = makeVaultSigner(address, () => "totally-different-signature");
+    await assert.rejects(() => authVault.unlockVault(badSigner));
+
+    assert.equal(store._map.has(storageKey), true, "vault record still present");
+    assert.equal(JSON.stringify(store._map.get(storageKey)), before, "ciphertext untouched after a failed unlock");
+    assert.equal(authVault.state.isUnlocked, false);
+  } finally {
+    restoreTime();
+  }
+});
+
+test("AC3 (P10): initializeOrUnlockFromSignature rejects an invalid address before touching storage", async () => {
+  const { store } = installVaultGlobals();
+  await assert.rejects(() => authVault.initializeOrUnlockFromSignature("not-an-address", "some-signature"), /address/i);
+  assert.deepEqual(store._calls, [], "no storage access for an invalid address");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC4 (R4): legacy ciphertext without derivation metadata is preserved
+// verbatim and returns the named recoverability result; only an explicitly
+// confirmed reset may replace it; a failed reset write leaves the old
+// record intact.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("AC4 (P10): a legacy vault (no derivation metadata) is byte-identical after unlock, and only an explicitly confirmed reset clears it", async () => {
+  const { store } = installVaultGlobals();
+  const address = VAULT_ADDRESS_B.toLowerCase();
+  const storageKey = vaultStorageKey(address);
+
+  // Simulate an envelope written before this fix existed - ciphertext with
+  // no `derivation` field at all.
+  const legacyEnvelope = { version: 1, address, encrypted: "legacy-ciphertext-blob==" };
+  store._map.set(storageKey, legacyEnvelope);
+  const snapshotBefore = JSON.stringify(store._map.get(storageKey));
+
+  const signer = makeVaultSigner(address);
+  const result = await authVault.unlockVault(signer);
+
+  assert.deepEqual(result, {
+    ok: false,
+    recoverable: false,
+    reason: LEGACY_VAULT_UNRECOVERABLE,
+    requiresReset: true,
+  });
+  assert.equal(signer.messages.length, 0, "no signature requested for an unrecoverable legacy vault");
+  assert.equal(JSON.stringify(store._map.get(storageKey)), snapshotBefore, "legacy record stays byte-identical");
+  assert.equal(authVault.state.isUnlocked, false);
+
+  // A failed reset write (e.g. disk error) must leave the old record intact.
+  const workingDelete = store.delete;
+  store.delete = async () => { throw new Error("disk write failed"); };
+  await assert.rejects(() => authVault.resetVault(address, { confirm: true }), /disk write failed/);
+  assert.equal(JSON.stringify(store._map.get(storageKey)), snapshotBefore, "record intact after a failed reset write");
+  store.delete = workingDelete;
+
+  // reset without explicit confirmation must never modify storage.
+  await assert.rejects(() => authVault.resetVault(address), /confirm/i);
+  await assert.rejects(() => authVault.resetVault(address, { confirm: false }), /confirm/i);
+  assert.equal(JSON.stringify(store._map.get(storageKey)), snapshotBefore, "record intact without explicit confirmation");
+
+  // Only the explicitly confirmed reset actually clears the record.
+  const reset = await authVault.resetVault(address, { confirm: true });
+  assert.equal(reset, true);
+  assert.equal(store._map.has(storageKey), false, "legacy record removed only after an explicitly confirmed reset");
+});
+
+test("AC4 (P10): initializeOrUnlockFromSignature never silently overwrites a vault it cannot decrypt", async () => {
+  const { store } = installVaultGlobals();
+  const address = VAULT_ADDRESS_A.toLowerCase();
+  const storageKey = vaultStorageKey(address);
+
+  await authVault.initializeVault(makeVaultSigner(address));
+  authVault.lockVault();
+  const before = JSON.stringify(store._map.get(storageKey));
+
+  // A different signature - as if the reused auth-challenge signature
+  // rotated since the vault was created - cannot decrypt this vault.
+  const result = await authVault.initializeOrUnlockFromSignature(address, "a-completely-different-signature");
+
+  assert.deepEqual(result, {
+    ok: false,
+    recoverable: false,
+    reason: LEGACY_VAULT_UNRECOVERABLE,
+    requiresReset: true,
+  });
+  assert.equal(
+    JSON.stringify(store._map.get(storageKey)),
+    before,
+    "existing vault is not silently recreated/overwritten on a decrypt failure",
+  );
+  assert.equal(authVault.state.isUnlocked, false);
+});

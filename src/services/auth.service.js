@@ -227,11 +227,18 @@ export const authenticate = async (signer) => {
 };
 
 /**
- * Combined authentication + vault initialization with ONE signature.
+ * Combined authentication + vault initialization.
  *
- * This is the preferred method - user signs once, we:
+ * User signs the server auth challenge, then:
  * 1. Authenticate with server
- * 2. Initialize/unlock the auth vault using the same signature
+ * 2. Initialize/unlock the auth vault
+ *
+ * Step 2 requires its OWN signature (a second wallet prompt), separate from
+ * the challenge signature above. The challenge embeds a per-login random
+ * nonce for replay protection, so it can never be reused to reproduce a
+ * vault encryption key on a later login - only a message this service
+ * controls (see initializeVault/unlockVault in authVault.service.js) can be
+ * reconstructed byte-for-byte to derive the same key again.
  *
  * @param {object} signer - ethers.js Signer from connected wallet
  * @returns {Promise<{address, level, levelValue}>}
@@ -296,10 +303,30 @@ export const authenticateWithVault = async (signer) => {
     // Sync auth state to electron store so main process can check it
     syncAuthToStore();
 
-    // 5. Initialize/unlock vault using the SAME signature (no new popup)
+    // 5. Initialize/unlock the vault. This needs a reproducible key
+    // derivation, which the (randomized, per-login) challenge signature
+    // above cannot provide, so it goes through initializeVault/unlockVault -
+    // both sign a message this service controls and persist/reconstruct the
+    // derivation metadata needed to derive the identical key next time.
     try {
-      await authVault.initializeOrUnlockFromSignature(address.toLowerCase(), signature);
-      console.log("[Auth] Vault initialized/unlocked from auth signature");
+      const vaultAlreadyExists = await authVault.hasVault(address.toLowerCase());
+      const vaultResult = vaultAlreadyExists
+        ? await authVault.unlockVault(signer)
+        : await authVault.initializeVault(signer);
+
+      if (vaultResult && vaultResult.ok === false) {
+        // The stored vault could not be decrypted with a reproducible key
+        // (e.g. legacy ciphertext, or metadata that no longer matches).
+        // It is left untouched on disk; only an explicit, user-confirmed
+        // authVault.resetVault() call may replace it.
+        console.warn(
+          "[Auth] Vault could not be unlocked and requires an explicit reset:",
+          vaultResult.reason
+        );
+        state.error = "Local vault could not be unlocked and needs to be reset.";
+      } else {
+        console.log("[Auth] Vault initialized/unlocked");
+      }
     } catch (vaultError) {
       // Vault is non-critical - log but don't fail auth
       console.warn("[Auth] Vault initialization failed:", vaultError.message);
@@ -756,7 +783,7 @@ export const authService = {
 
   // Authentication
   authenticate,
-  authenticateWithVault, // Combined auth + vault (ONE signature)
+  authenticateWithVault, // Combined auth + vault (auth challenge + reproducible vault signature)
   refreshToken,
   logout,
   reAuthenticate,
