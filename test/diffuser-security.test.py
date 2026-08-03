@@ -9,6 +9,12 @@ fabricated level / wallet-optional local inference (AC7), and debug/reload off
 (AC8). Runs without the torch/diffusers stack by exercising
 src/server/bonzai_security.py directly.
 
+Also covers the workflow orchestrator (spec: bonzai-sec-P5-orchestrator,
+src/server/orchestrator.py): its URL-map inventory, session-credential-only
+auth on /execute, loopback binding, configurable port, absent-secret startup
+failure, and sanitized error responses. orchestrator.py has no torch/diffusers
+dependency, so it is imported directly (not skipped).
+
 Run: python3 -m pytest test/diffuser-security.test.py -q
 """
 from __future__ import annotations
@@ -38,6 +44,7 @@ from eth_account.messages import encode_defunct  # noqa: E402
 from flask import Flask, jsonify, request  # noqa: E402
 
 DIFFUSER_PATH = SERVER_DIR / "diffuser.py"
+ORCHESTRATOR_PATH = SERVER_DIR / "orchestrator.py"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 
 JWT_SECRET = "test-jwt-secret"
@@ -627,6 +634,251 @@ class TestDebugOff:
         for forbidden in ("print(SECRET_KEY", "print(JWT_SECRET", "print(HMAC_SECRET",
                           "logger.info(f\"[Auth] {JWT_SECRET}", "logger.info(JWT_SECRET"):
             assert forbidden not in text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P5 — workflow orchestrator (src/server/orchestrator.py) hardening
+#
+# orchestrator.py validates its startup secrets and installs its auth guard
+# at import time (mirroring diffuser.py), so every test here reloads the
+# module under a controlled environment. It has no torch/diffusers
+# dependency, so unlike _import_diffuser this never skips.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Every env var orchestrator.py / bonzai_security.py might read, so each
+# reload starts from a clean slate instead of leaking a prior test's values.
+_ORCHESTRATOR_ENV_KEYS = (
+    security.FLASK_SECRET_ENV,
+    security.SESSION_CREDENTIAL_ENV,
+    security.SESSION_EXPIRES_ENV,
+    security.JWT_SECRET_ENV,
+    security.ORCHESTRATOR_HOST_ENV,
+    security.ORCHESTRATOR_PORT_ENV,
+    security.ORCHESTRATOR_TRUSTED_ORIGINS_ENV,
+)
+
+
+def _import_orchestrator(monkeypatch, env: dict):
+    """(Re)import orchestrator.py with exactly `env` set in os.environ."""
+    for k in _ORCHESTRATOR_ENV_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    if "orchestrator" in sys.modules:
+        return importlib.reload(sys.modules["orchestrator"])
+    return importlib.import_module("orchestrator")
+
+
+@pytest.fixture
+def orchestrator_client(monkeypatch):
+    orchestrator = _import_orchestrator(monkeypatch, _base_env())
+    return orchestrator.app.test_client()
+
+
+class TestOrchestratorUrlMapAndAuth:
+    """R1/AC1 — the Electron session credential is required on /execute, and
+    consistently on every other path (missing/malformed/expired/wrong-service
+    credentials all rejected the same way)."""
+
+    def test_url_map_has_execute_and_nothing_public(self, orchestrator_client, monkeypatch):
+        orchestrator = sys.modules["orchestrator"]
+        paths = {rule.rule for rule in orchestrator.app.url_map.iter_rules()}
+        assert "/execute" in paths
+        # The orchestrator defines no public paths at all (unlike diffuser.py's
+        # /auth/* exemptions) -- every registered route requires the
+        # credential, verified below across the whole map, not just /execute.
+        for rule in orchestrator.app.url_map.iter_rules():
+            if "GET" in rule.methods or "POST" in rule.methods:
+                method = "POST" if "POST" in rule.methods and "GET" not in rule.methods else "GET"
+                resp = orchestrator_client.open(rule.rule.replace("<path:filename>", "x"), method=method)
+                assert resp.status_code == 401, f"{rule.rule} should require auth"
+
+    def test_valid_scoped_credential_executes(self, orchestrator_client):
+        r = orchestrator_client.post(
+            "/execute", json={"steps": []}, headers={"x-bonzai-session": SESSION_CRED},
+        )
+        assert r.status_code == 200
+        assert r.get_json() == {}
+
+    def test_missing_credential_rejected(self, orchestrator_client):
+        r = orchestrator_client.post("/execute", json={"steps": []})
+        assert r.status_code == 401
+        assert "error" in r.get_json()
+
+    def test_non_empty_workflow_dispatches_to_configured_port_with_session_header(
+        self, monkeypatch,
+    ):
+        # Regression: execute_workflow's internal requests.post must target
+        # the orchestrator's own configured host/port (not a hard-coded
+        # localhost:5000) and must carry x-bonzai-session, or every
+        # non-empty workflow 401s against the auth guard on this same
+        # process / a wrong port once BONZAI_ORCHESTRATOR_PORT is set.
+        env = _base_env(**{security.ORCHESTRATOR_PORT_ENV: "6001"})
+        orchestrator = _import_orchestrator(monkeypatch, env)
+        c = orchestrator.app.test_client()
+
+        calls = []
+
+        class _FakeResponse:
+            def json(self):
+                return {"ok": True}
+
+        def _fake_post(url, json=None, headers=None, **kwargs):
+            calls.append((url, headers))
+            return _FakeResponse()
+
+        monkeypatch.setattr(orchestrator.requests, "post", _fake_post)
+
+        r = c.post(
+            "/execute",
+            json={"steps": [{"task": "step1", "endpoint": "/step1"}]},
+            headers={"x-bonzai-session": SESSION_CRED},
+        )
+        assert r.status_code == 200
+        assert r.get_json() == {"step1": {"ok": True}}
+        assert len(calls) == 1
+        url, headers = calls[0]
+        assert url == "http://127.0.0.1:6001/step1"
+        assert headers.get("x-bonzai-session") == SESSION_CRED
+
+    def test_malformed_credential_rejected(self, orchestrator_client):
+        for bad in ("wrong", "", "scoped-session-credential-from-electron-extra"):
+            r = orchestrator_client.post(
+                "/execute", json={"steps": []}, headers={"x-bonzai-session": bad},
+            )
+            assert r.status_code == 401
+
+    def test_expired_credential_rejected(self, monkeypatch):
+        env = _base_env(**{security.SESSION_EXPIRES_ENV: str(int(time.time()) - 1)})
+        orchestrator = _import_orchestrator(monkeypatch, env)
+        c = orchestrator.app.test_client()
+        r = c.post("/execute", json={"steps": []}, headers={"x-bonzai-session": SESSION_CRED})
+        assert r.status_code == 401
+
+    def test_wrong_service_credential_rejected(self, orchestrator_client):
+        # A valid wallet access JWT (the "service" diffuser.py's /auth/* flow
+        # issues) is a credential for a *different* service/purpose and must
+        # not authenticate the orchestrator -- it accepts only the scoped
+        # local session credential, never a Bearer JWT.
+        token = security.create_jwt({"sub": "0xwallet", "type": "access"}, 60, JWT_SECRET)
+        r = orchestrator_client.post(
+            "/execute", json={"steps": []}, headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 401
+
+    def test_every_other_path_rejected_consistently(self, orchestrator_client):
+        # R1: "reject every other unauthenticated request consistently" --
+        # even a path with no registered route still 401s (the guard runs
+        # before route resolution), never a bare 404 that would leak which
+        # paths exist.
+        for path in ("/nonexistent", "/execute/../secret", "/../etc/passwd"):
+            r = orchestrator_client.get(path)
+            assert r.status_code == 401
+
+
+class TestOrchestratorCors:
+    """R2/AC2 — explicit trusted origins only; no wildcard."""
+
+    def test_trusted_origin_gets_credentialed_cors(self, monkeypatch):
+        orchestrator = _import_orchestrator(
+            monkeypatch, _base_env(**{security.ORCHESTRATOR_TRUSTED_ORIGINS_ENV: TRUSTED_ORIGIN}),
+        )
+        c = orchestrator.app.test_client()
+        r = c.post("/execute", json={"steps": []},
+                   headers={"Origin": TRUSTED_ORIGIN, "x-bonzai-session": SESSION_CRED})
+        assert r.headers.get("Access-Control-Allow-Origin") == TRUSTED_ORIGIN
+        assert r.headers.get("Access-Control-Allow-Credentials") == "true"
+
+    def test_disallowed_origin_gets_no_cors_headers(self, orchestrator_client):
+        r = orchestrator_client.post(
+            "/execute", json={"steps": []},
+            headers={"Origin": "https://evil.example", "x-bonzai-session": SESSION_CRED},
+        )
+        assert r.headers.get("Access-Control-Allow-Origin") is None
+
+    def test_wildcard_origin_config_never_honored(self):
+        origins = security.get_trusted_origins(
+            {security.ORCHESTRATOR_TRUSTED_ORIGINS_ENV: "*"},
+            env_var=security.ORCHESTRATOR_TRUSTED_ORIGINS_ENV,
+        )
+        assert "*" not in origins
+
+
+class TestOrchestratorBindAndPort:
+    """R2/AC2 — loopback bind, configurable non-privileged port, current
+    default (5000) retained."""
+
+    def test_default_host_is_loopback(self):
+        assert security.get_server_host(
+            {}, env_var=security.ORCHESTRATOR_HOST_ENV,
+        ) == "127.0.0.1"
+
+    def test_non_loopback_host_coerced(self):
+        assert security.get_server_host(
+            {security.ORCHESTRATOR_HOST_ENV: "0.0.0.0"}, env_var=security.ORCHESTRATOR_HOST_ENV,
+        ) == "127.0.0.1"
+
+    def test_default_port_is_5000(self):
+        assert security.ORCHESTRATOR_DEFAULT_PORT == 5000
+        assert security.get_server_port(
+            {}, env_var=security.ORCHESTRATOR_PORT_ENV, default=security.ORCHESTRATOR_DEFAULT_PORT,
+        ) == 5000
+
+    def test_port_is_configurable(self):
+        assert security.get_server_port(
+            {security.ORCHESTRATOR_PORT_ENV: "6001"},
+            env_var=security.ORCHESTRATOR_PORT_ENV, default=security.ORCHESTRATOR_DEFAULT_PORT,
+        ) == 6001
+
+
+class TestOrchestratorStartupAndErrors:
+    """R3/AC3 — non-default secret required to start, debug/reload off,
+    sanitized error responses, no secrets printed."""
+
+    def test_startup_fails_without_secret(self, monkeypatch):
+        with pytest.raises(RuntimeError):
+            _import_orchestrator(monkeypatch, {})
+
+    def test_startup_fails_with_default_flask_secret(self, monkeypatch):
+        env = _base_env(**{security.FLASK_SECRET_ENV: security.DEFAULT_FLASK_SECRET})
+        with pytest.raises(RuntimeError):
+            _import_orchestrator(monkeypatch, env)
+
+    def test_startup_succeeds_with_electron_supplied_secrets(self, monkeypatch):
+        orchestrator = _import_orchestrator(monkeypatch, _base_env())
+        assert orchestrator.app is not None
+
+    def test_debug_and_reload_disabled(self):
+        text = ORCHESTRATOR_PATH.read_text()
+        assert "debug=False" in text
+        assert "use_reloader=False" in text
+        assert "debug=True" not in text
+        assert 'host="0.0.0.0"' not in text
+        assert "security.get_server_host" in text
+
+    def test_secrets_not_printed(self):
+        text = ORCHESTRATOR_PATH.read_text()
+        assert "bonzai-secret-key" not in text
+        assert "print(" not in text
+
+    def test_error_response_is_sanitized(self, orchestrator_client):
+        # A step missing "task" raises KeyError inside execute_workflow; the
+        # response must be a generic JSON error, never a Werkzeug traceback
+        # page or the exception's own message/file paths.
+        r = orchestrator_client.post(
+            "/execute", json={"steps": [{"endpoint": "/x"}]},
+            headers={"x-bonzai-session": SESSION_CRED},
+        )
+        assert r.status_code == 500
+        body = r.get_json()
+        assert body == {"error": "Internal server error"}
+        text = r.get_data(as_text=True)
+        for leak in ("Traceback", "KeyError", "orchestrator.py", "line "):
+            assert leak not in text
+
+    def test_unauthorized_response_carries_no_secret(self, orchestrator_client):
+        r = orchestrator_client.post("/execute", json={"steps": []})
+        assert SESSION_CRED not in r.get_data(as_text=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

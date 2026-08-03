@@ -45,6 +45,16 @@ from flask import Flask, jsonify, request
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 65000
 
+# P5: workflow orchestrator (src/server/orchestrator.py) bind/origin env vars.
+# A distinct env-var namespace from the inference server so the two local
+# Flask processes can be configured independently; the default port (5000)
+# is the port orchestrator.py already bound to (Flask's implicit default
+# from the pre-hardening `app.run(debug=True)` call).
+ORCHESTRATOR_HOST_ENV = "BONZAI_ORCHESTRATOR_HOST"
+ORCHESTRATOR_PORT_ENV = "BONZAI_ORCHESTRATOR_PORT"
+ORCHESTRATOR_TRUSTED_ORIGINS_ENV = "BONZAI_ORCHESTRATOR_TRUSTED_ORIGINS"
+ORCHESTRATOR_DEFAULT_PORT = 5000
+
 # R2: the legacy default Flask signing secret we must refuse to run with.
 DEFAULT_FLASK_SECRET = "bonzai-secret-key"
 
@@ -101,30 +111,34 @@ def _is_loopback(host: str) -> bool:
     return host in {"localhost", "::1", "0:0:0:0:0:0:0:1"} or host.startswith("127.")
 
 
-def get_server_host(env: Optional[dict] = None) -> str:
+def get_server_host(env: Optional[dict] = None, env_var: str = SERVER_HOST_ENV,
+                     default: str = DEFAULT_HOST) -> str:
     """Loopback-only bind host.
 
     The default is loopback and any non-loopback value (including ``0.0.0.0``)
-    is coerced back to ``127.0.0.1`` so the inference server never binds all
-    interfaces, even under misconfiguration (R1).
+    is coerced back to ``127.0.0.1`` so the server never binds all interfaces,
+    even under misconfiguration (R1). ``env_var``/``default`` let other local
+    services (e.g. the orchestrator's ``BONZAI_ORCHESTRATOR_HOST``) reuse this
+    same loopback-enforcing logic under their own env var.
     """
     env = env if env is not None else os.environ
-    host = (env.get(SERVER_HOST_ENV) or DEFAULT_HOST).strip().lower()
+    host = (env.get(env_var) or default).strip().lower()
     if not host or not _is_loopback(host):
-        return DEFAULT_HOST
+        return default
     return "127.0.0.1" if host == "localhost" else host
 
 
-def get_server_port(env: Optional[dict] = None) -> int:
+def get_server_port(env: Optional[dict] = None, env_var: str = SERVER_PORT_ENV,
+                     default: int = DEFAULT_PORT) -> int:
     env = env if env is not None else os.environ
     try:
-        port = int(env.get(SERVER_PORT_ENV) or DEFAULT_PORT)
+        port = int(env.get(env_var) or default)
     except (TypeError, ValueError):
-        return DEFAULT_PORT
-    return port if 0 < port < 65536 else DEFAULT_PORT
+        return default
+    return port if 0 < port < 65536 else default
 
 
-def get_trusted_origins(env: Optional[dict] = None) -> list:
+def get_trusted_origins(env: Optional[dict] = None, env_var: str = TRUSTED_ORIGINS_ENV) -> list:
     """Trusted origins, never containing a wildcard.
 
     A wildcard would re-enable credentialed CORS for every origin, so any '*'
@@ -132,7 +146,7 @@ def get_trusted_origins(env: Optional[dict] = None) -> list:
     defaults rather than fail open.
     """
     env = env if env is not None else os.environ
-    raw = (env.get(TRUSTED_ORIGINS_ENV) or "").strip()
+    raw = (env.get(env_var) or "").strip()
     if not raw:
         return list(DEFAULT_TRUSTED_ORIGINS)
     origins = [o.strip() for o in raw.split(",") if o.strip()]
@@ -418,10 +432,11 @@ def origin_allowed(origin: Optional[str], trusted) -> bool:
     return False
 
 
-def install_cors(app: Flask, env: Optional[dict] = None) -> list:
+def install_cors(app: Flask, env: Optional[dict] = None,
+                  origins_env_var: str = TRUSTED_ORIGINS_ENV) -> list:
     """Attach trusted-origin CORS to ``app`` and return the trusted list."""
     env = env if env is not None else os.environ
-    trusted = get_trusted_origins(env)
+    trusted = get_trusted_origins(env, env_var=origins_env_var)
 
     @app.after_request
     def _cors_headers(resp):
@@ -457,6 +472,28 @@ def install_auth(app: Flask, env: Optional[dict] = None, jwt_secret: Optional[st
         if request.path in PUBLIC_PATHS:
             return None
         if request_authenticated(env, jwt_secret):
+            return None
+        return jsonify({"error": "Unauthorized"}), 401
+
+
+def install_session_credential_auth(app: Flask, env: Optional[dict] = None) -> None:
+    """Require the Electron-issued x-bonzai-session credential on every route.
+
+    Unlike :func:`install_auth`, this guard never accepts a wallet ``Bearer``
+    JWT: local services with no wallet/economy routes of their own (e.g. the
+    workflow orchestrator, P5) have no JWT secret configured, and accepting
+    the Bearer path there would mean validating against an empty HMAC key --
+    a publicly-known "secret" an attacker could sign a forged token with. A
+    credential scoped to a different service/purpose (a wallet JWT) is
+    therefore rejected the same as a missing one, consistently as 401.
+    """
+    env = env if env is not None else os.environ
+
+    @app.before_request
+    def _session_auth_guard():
+        if request.method == "OPTIONS":
+            return None
+        if session_credential_matches(request.headers.get("x-bonzai-session"), env):
             return None
         return jsonify({"error": "Unauthorized"}), 401
 
