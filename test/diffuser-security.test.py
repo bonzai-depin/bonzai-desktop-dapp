@@ -16,11 +16,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import importlib
 import json
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -624,6 +627,251 @@ class TestDebugOff:
         for forbidden in ("print(SECRET_KEY", "print(JWT_SECRET", "print(HMAC_SECRET",
                           "logger.info(f\"[Auth] {JWT_SECRET}", "logger.info(JWT_SECRET"):
             assert forbidden not in text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P4 — media path confinement (/media/stream, /media/info)
+#
+# resolve_media_path() in diffuser.py is the ONE canonical validator behind
+# both endpoints: roots are ONLY the configured MODEL_DIR/FILES_DIR, resolved
+# through filesystem links, with component-aware containment (Path.relative_to)
+# so a `..`/symlink escape or a sibling directory that merely shares the root's
+# string prefix cannot pass. These tests exercise the real diffuser.py Flask
+# app with MODEL_DIR/FILES_DIR pointed at an isolated tmp_path; like
+# TestRouteMapAuth.test_real_diffuser_url_map_guarded above, they skip when
+# the torch/diffusers stack isn't installed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+AUTH = {"x-bonzai-session": SESSION_CRED}
+
+
+def _import_diffuser(monkeypatch, model_dir: Path):
+    """Import (or reload) diffuser.py with BONZAI_MODEL_DIR pointed at
+    model_dir, so MODEL_DIR/FILES_DIR are test-scoped. Skips the caller's
+    test if the torch/diffusers stack isn't installed."""
+    for k, v in _base_env().items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("BONZAI_MODEL_DIR", str(model_dir))
+    try:
+        if "diffuser" in sys.modules:
+            return importlib.reload(sys.modules["diffuser"])
+        return importlib.import_module("diffuser")
+    except ImportError:
+        pytest.skip("diffuser.py not importable without the torch/diffusers stack")
+
+
+@pytest.fixture
+def media(monkeypatch, tmp_path):
+    """Real diffuser app with a populated MODEL_DIR/FILES_DIR tree, plus
+    out-of-root fixtures (home/temp/external/sibling-prefix/symlink-escape)
+    for denial tests."""
+    model_dir = (tmp_path / "bonzai-models").resolve()
+    files_dir = model_dir / "files"
+    files_dir.mkdir(parents=True)
+
+    model_video = model_dir / "model_clip.mp4"
+    model_video.write_bytes(b"MODEL-ROOT-VIDEO-BYTES" * 100)
+
+    files_video = files_dir / "gen_clip.mp4"
+    files_video.write_bytes(b"FILES-ROOT-VIDEO-BYTES" * 100)
+
+    unsupported = files_dir / "notes.txt"
+    unsupported.write_text("not media")
+
+    # Out-of-root fixtures for denial tests.
+    home_secret = Path.home() / f"__bonzai_test_secret_{os.getpid()}.mp4"
+    home_secret.write_bytes(b"HOME-SECRET-BYTES")
+
+    tmp_secret = Path(tempfile.gettempdir()) / f"__bonzai_test_secret_{os.getpid()}.mp4"
+    tmp_secret.write_bytes(b"TMP-SECRET-BYTES")
+
+    try:
+        external_root = tmp_path / "external-volume"
+        external_root.mkdir()
+        external_secret = external_root / "secret.mp4"
+        external_secret.write_bytes(b"EXTERNAL-SECRET-BYTES")
+
+        sibling_root = tmp_path / "bonzai-models-evil"  # shares MODEL_DIR's string prefix
+        sibling_root.mkdir()
+        sibling_secret = sibling_root / "secret.mp4"
+        sibling_secret.write_bytes(b"SIBLING-SECRET-BYTES")
+
+        outside_target_dir = tmp_path / "outside-target"
+        outside_target_dir.mkdir()
+        outside_secret = outside_target_dir / "outside.mp4"
+        outside_secret.write_bytes(b"SYMLINK-ESCAPE-SECRET-BYTES")
+        in_root_symlink = files_dir / "escape_link.mp4"
+        in_root_symlink.symlink_to(outside_secret)
+
+        diffuser = _import_diffuser(monkeypatch, model_dir)
+        client = diffuser.app.test_client()
+
+        yield SimpleNamespace(
+            client=client,
+            model_dir=model_dir,
+            files_dir=files_dir,
+            model_video=model_video,
+            files_video=files_video,
+            unsupported=unsupported,
+            home_secret=home_secret,
+            tmp_secret=tmp_secret,
+            external_secret=external_secret,
+            sibling_secret=sibling_secret,
+            in_root_symlink=in_root_symlink,
+            outside_secret=outside_secret,
+        )
+    finally:
+        for p in (home_secret, tmp_secret):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
+class TestMediaConfinementPositive:
+    def test_info_under_model_root(self, media):
+        r = media.client.get("/media/info", query_string={"path": str(media.model_video)}, headers=AUTH)
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["exists"] is True
+        assert body["size"] == media.model_video.stat().st_size
+        assert body["mime_type"] == "video/mp4"
+
+    def test_info_under_files_root(self, media):
+        r = media.client.get("/media/info", query_string={"path": str(media.files_video)}, headers=AUTH)
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["exists"] is True
+        assert body["mime_type"] == "video/mp4"
+
+    def test_stream_full_file_under_model_root(self, media):
+        r = media.client.get("/media/stream", query_string={"path": str(media.model_video)}, headers=AUTH)
+        assert r.status_code == 200
+        assert r.data == media.model_video.read_bytes()
+
+    def test_stream_full_file_under_files_root(self, media):
+        r = media.client.get("/media/stream", query_string={"path": str(media.files_video)}, headers=AUTH)
+        assert r.status_code == 200
+        assert r.data == media.files_video.read_bytes()
+
+    def test_stream_range_request_under_files_root(self, media):
+        content = media.files_video.read_bytes()
+        r = media.client.get(
+            "/media/stream", query_string={"path": str(media.files_video)},
+            headers={**AUTH, "Range": "bytes=0-4"},
+        )
+        assert r.status_code == 206
+        assert r.data == content[0:5]
+        assert r.headers["Content-Range"] == f"bytes 0-4/{len(content)}"
+        assert r.headers["Accept-Ranges"] == "bytes"
+
+    def test_stream_url_has_no_credentials(self, media):
+        r = media.client.get("/media/info", query_string={"path": str(media.files_video)}, headers=AUTH)
+        stream_url = r.get_json()["stream_url"]
+        assert stream_url.startswith("/media/stream?path=")
+        for leak in (SESSION_CRED, "session", "token", "Bearer", "Authorization"):
+            assert leak.lower() not in stream_url.lower()
+        # The returned stream_url itself must still be usable and authorized.
+        follow = media.client.get(stream_url, headers=AUTH)
+        assert follow.status_code == 200
+        assert follow.data == media.files_video.read_bytes()
+
+    def test_symlinked_root_resolves_through_link(self, monkeypatch, tmp_path):
+        real_storage = tmp_path / "real-storage"
+        (real_storage / "files").mkdir(parents=True)
+        linked_model_dir = tmp_path / "bonzai-models-link"
+        linked_model_dir.symlink_to(real_storage, target_is_directory=True)
+        vid = real_storage / "files" / "clip.mp4"
+        vid.write_bytes(b"LINKED-ROOT-BYTES")
+
+        diffuser = _import_diffuser(monkeypatch, linked_model_dir)
+        client = diffuser.app.test_client()
+
+        r = client.get("/media/stream", query_string={"path": str(vid)}, headers=AUTH)
+        assert r.status_code == 200
+        assert r.data == b"LINKED-ROOT-BYTES"
+
+
+class TestMediaConfinementDenials:
+    ENDPOINTS = ("/media/stream", "/media/info")
+
+    def _assert_denied(self, resp, endpoint, secret_bytes=None, rejected_path=None):
+        if endpoint == "/media/stream":
+            assert resp.status_code == 403
+        else:
+            assert resp.status_code == 200
+            assert resp.get_json() == {"exists": False}
+        body = resp.get_data(as_text=True)
+        if secret_bytes is not None:
+            assert secret_bytes.decode("latin-1") not in resp.get_data(as_text=True)
+        if rejected_path is not None:
+            assert str(rejected_path) not in body
+
+    def test_unauthenticated_denied(self, media):
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(media.files_video)})
+            assert r.status_code == 401
+
+    def test_home_directory_denied(self, media):
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(media.home_secret)}, headers=AUTH)
+            self._assert_denied(r, endpoint, b"HOME-SECRET-BYTES", media.home_secret)
+
+    def test_temp_directory_denied(self, media):
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(media.tmp_secret)}, headers=AUTH)
+            self._assert_denied(r, endpoint, b"TMP-SECRET-BYTES", media.tmp_secret)
+
+    def test_external_volume_denied(self, media):
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(media.external_secret)}, headers=AUTH)
+            self._assert_denied(r, endpoint, b"EXTERNAL-SECRET-BYTES", media.external_secret)
+
+    def test_sibling_prefix_directory_denied(self, media):
+        # bonzai-models-evil shares MODEL_DIR's string prefix but is a
+        # different directory; a startswith()-style check would wrongly admit it.
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(media.sibling_secret)}, headers=AUTH)
+            self._assert_denied(r, endpoint, b"SIBLING-SECRET-BYTES", media.sibling_secret)
+
+    def test_dot_dot_traversal_denied(self, media):
+        traversal = media.files_dir / ".." / ".." / "bonzai-models-evil" / "secret.mp4"
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(traversal)}, headers=AUTH)
+            self._assert_denied(r, endpoint, b"SIBLING-SECRET-BYTES")
+
+    def test_encoded_traversal_denied(self, media):
+        # Percent-encoded ".." segments decode (by Werkzeug, as they would by
+        # any front-end) to the same literal traversal before reaching the
+        # validator, and must be denied identically.
+        raw = f"{media.files_dir}/%2e%2e/%2e%2e/bonzai-models-evil/secret.mp4"
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(f"{endpoint}?path={raw}", headers=AUTH)
+            self._assert_denied(r, endpoint, b"SIBLING-SECRET-BYTES")
+
+    def test_directory_denied(self, media):
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(media.files_dir)}, headers=AUTH)
+            self._assert_denied(r, endpoint)
+
+    def test_unsupported_media_type_denied(self, media):
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(media.unsupported)}, headers=AUTH)
+            self._assert_denied(r, endpoint)
+
+    def test_missing_file_denied(self, media):
+        missing = media.files_dir / "does-not-exist.mp4"
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(endpoint, query_string={"path": str(missing)}, headers=AUTH)
+            self._assert_denied(r, endpoint)
+
+    def test_in_root_symlink_to_outside_denied(self, media):
+        # The symlink itself lives inside FILES_DIR, but it resolves to a
+        # target outside every configured root and must be denied.
+        for endpoint in self.ENDPOINTS:
+            r = media.client.get(
+                endpoint, query_string={"path": str(media.in_root_symlink)}, headers=AUTH)
+            self._assert_denied(r, endpoint, b"SYMLINK-ESCAPE-SECRET-BYTES", media.outside_secret)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ import json
 import tempfile
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 from datetime import datetime, date
 from decimal import Decimal
 from dataclasses import dataclass, field
@@ -2652,44 +2653,72 @@ def convert_wav_to_mp3(wav_path: str, bitrate: str = "128k") -> Optional[str]:
         return None
 
 
+def _media_root_dirs() -> List[Path]:
+    """The ONLY roots media paths may resolve into: the configured BonzAI
+    model/files directories. Resolved through filesystem links so a symlinked
+    root and a symlinked candidate are compared on the same real tree."""
+    roots = []
+    for d in (MODEL_DIR, FILES_DIR):
+        try:
+            roots.append(d.resolve(strict=True))
+        except OSError:
+            continue
+    return roots
+
+
+def resolve_media_path(raw_path: str) -> Optional[Path]:
+    """Canonical media-path validator shared by /media/stream and /media/info.
+
+    Confines access to the configured BonzAI model/files roots ONLY -- no
+    home-directory, temp, sibling-prefix, or external-volume allowances. Both
+    the roots and the candidate are resolved through filesystem links, and
+    containment is checked component-by-component via ``Path.relative_to``
+    (never a string prefix test), so neither a sibling directory that merely
+    shares the root's string prefix nor a ``..``/symlink escape can pass. The
+    candidate must resolve to an existing regular file with an allowed media
+    extension. Returns None on any failure. Callers must not stat/open the
+    raw input themselves and must never reflect it back in a response.
+    """
+    if not raw_path:
+        return None
+    try:
+        candidate = Path(raw_path).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not candidate.is_file():
+        return None
+    if candidate.suffix.lower() not in MEDIA_MIME_TYPES:
+        return None
+    for root in _media_root_dirs():
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        return candidate
+    return None
+
+
 @app.route("/media/stream", methods=["GET"])
 def stream_media():
     """
-    Stream a media file from the local filesystem.
+    Stream a media file confined to the configured BonzAI model/files roots.
     Query params:
-      - path: Absolute path to the media file
+      - path: Path to a media file inside a configured root.
     Supports range requests for video seeking.
     """
-    file_path = request.args.get("path", "").strip()
-    if not file_path:
+    raw_path = request.args.get("path", "").strip()
+    if not raw_path:
         return jsonify({"error": "Missing 'path' parameter"}), 400
 
-    # Security: Only allow files in known safe directories
-    cwd = os.getcwd()
-    allowed_dirs = [
-        cwd,
-        str(MODEL_DIR),
-        str(FILES_DIR),
-        os.path.expanduser("~"),
-        "/tmp",
-        "/var/folders",  # macOS temp
-        "/Volumes",  # External drives on macOS
-    ]
-
-    # Normalize path to prevent directory traversal
-    file_path = os.path.abspath(file_path)
-    is_allowed = any(file_path.startswith(os.path.abspath(d)) for d in allowed_dirs if d)
-
-    if not is_allowed:
-        logger.warning(f"[Media] Blocked access to path outside allowed dirs: {file_path}")
-        logger.warning(f"[Media] Current MODEL_DIR: {MODEL_DIR}, FILES_DIR: {FILES_DIR}")
+    resolved = resolve_media_path(raw_path)
+    if resolved is None:
+        logger.warning("[Media] Denied /media/stream request outside configured roots")
         return jsonify({"error": "Access denied"}), 403
 
-    if not os.path.isfile(file_path):
-        return jsonify({"error": "File not found"}), 404
+    file_path = str(resolved)
 
     # Determine MIME type
-    ext = os.path.splitext(file_path)[1].lower()
+    ext = resolved.suffix.lower()
     mime_type = MEDIA_MIME_TYPES.get(ext, "application/octet-stream")
     file_size = os.path.getsize(file_path)
 
@@ -2753,22 +2782,27 @@ def stream_media():
 
 @app.route("/media/info", methods=["GET"])
 def media_info():
-    """Get info about a media file (exists, size, type)."""
-    file_path = request.args.get("path", "").strip()
-    if not file_path:
+    """Get info about a media file (exists, size, type), confined to the
+    configured BonzAI model/files roots via resolve_media_path. A path that
+    fails validation is reported the same as a missing file -- no distinction
+    is drawn between "doesn't exist" and "outside the allowed roots", so a
+    denied request cannot be used as an oracle for filesystem contents."""
+    raw_path = request.args.get("path", "").strip()
+    if not raw_path:
         return jsonify({"error": "Missing 'path' parameter"}), 400
 
-    file_path = os.path.abspath(file_path)
-    if not os.path.isfile(file_path):
+    resolved = resolve_media_path(raw_path)
+    if resolved is None:
         return jsonify({"exists": False}), 200
 
-    ext = os.path.splitext(file_path)[1].lower()
+    file_path = str(resolved)
+    ext = resolved.suffix.lower()
     return jsonify({
         "exists": True,
         "path": file_path,
-        "size": os.path.getsize(file_path),
+        "size": resolved.stat().st_size,
         "mime_type": MEDIA_MIME_TYPES.get(ext, "application/octet-stream"),
-        "stream_url": f"/media/stream?path={file_path}",
+        "stream_url": f"/media/stream?path={quote(file_path)}",
     }), 200
 
 
