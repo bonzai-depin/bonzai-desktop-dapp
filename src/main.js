@@ -39,6 +39,10 @@ import {
   exportDataset as studioExportDataset,
 } from "./scripts/dataset-studio.js";
 import { RobinhoodMcpManager } from "./main/robinhood-mcp.js";
+import {
+  createCredentialRegistry,
+  childEnvSecrets,
+} from "./main/credentialRegistry.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -362,6 +366,12 @@ const startPythonSubprocess = async () => {
     // the parent-pid heuristic would collide.
     BONZAI_SHARD_SOCKET: process.env.BONZAI_SHARD_SOCKET
       || path.join(os.tmpdir(), `bonzai-shard-${process.pid}.sock`),
+    // Per-launch registry secrets for the local Flask service: a scoped
+    // session credential and a non-default signing secret. Delivered via
+    // environment ONLY — never argv, URLs, logs, or storage. The signing
+    // secret overrides diffuser.py's hardcoded "bonzai-secret-key" default
+    // via its existing `SECRET_KEY` env read (no Python change here).
+    ...childEnvSecrets(credentialRegistry),
   };
 
   // Log detailed spawn info
@@ -886,6 +896,19 @@ function getOrCreateJwtSecret() {
 }
 
 const JWT_SECRET = getOrCreateJwtSecret();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-instance credential registry (P1 Security)
+//
+// Main-process-owned trust primitive. On every application launch we mint
+// a fresh scoped local-session credential (>= 128 bits CSPRNG entropy,
+// <= 24h lifetime) and a separate non-default Flask signing secret. Both
+// are memory-only — never persisted, logged, or sent over IPC — and are
+// delivered to local child processes through their environment alone via
+// `childEnvSecrets()`. See src/main/credentialRegistry.js for the API.
+// ─────────────────────────────────────────────────────────────────────────────
+const credentialRegistry = createCredentialRegistry();
+credentialRegistry.issue();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transaction confirmation dialog (P0 Security)
@@ -1922,6 +1945,10 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
   console.log(`[Pipeline Shard] Starting rpc-server on port ${rpcPort}...`);
   rpcServerProcess = child_process.spawn(binPath, ["-p", String(rpcPort)], {
     stdio: ["ignore", "pipe", "pipe"],
+    // rpc-server authenticates the bridge with the session credential
+    // only; it does not consume the Flask signing secret, so scope it out
+    // and keep SECRET_KEY limited to the diffuser service that reads it.
+    env: { ...process.env, ...childEnvSecrets(credentialRegistry, { flask: false }) },
   });
 
   rpcServerProcess.stdout.on("data", (d) => {

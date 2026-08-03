@@ -27,6 +27,7 @@
     "test:i18n": "node scripts/check-i18n.mjs",
     "test:web3": "node --test test/x402.service.test.mjs",
     "test:connectors": "node --test test/company-connectors.test.mjs",
+    "test:security": "node --test test/main-security.test.mjs",
     "web3:verify": "node scripts/check-web3-production.mjs",
     "web3:verify:offline": "node scripts/check-web3-production.mjs --offline",
     "companions:cold-start": "npx hardhat --config hardhat.config.cjs run scripts/cold-start-default-companions.cjs",
