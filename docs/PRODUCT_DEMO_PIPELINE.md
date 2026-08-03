@@ -175,17 +175,6 @@ output/demos/<feature>/<run-id>/
 - Produce contact sheets and low-resolution review proxies before final mastering.
 - Require human approval for the final film.
 
-## Implementation Order
-
-1. Manifest schema and validator.
-2. Deterministic Desktop, Web, and extension capture.
-3. Approved claims and brand-asset registries.
-4. Approved cinematic plate registry and task ledger.
-5. Exact product composition with short cinematic bridges.
-6. FFmpeg assembly, typography, audio, and mastering.
-7. Automated artifact, continuity, OCR, and media QA.
-8. End-to-end pilots for Company and Companions before registering every feature.
-
 ## Official References
 
 - [PixVerse API workflow](https://docs.platform.pixverse.ai/how-does-the-api-work-882967m0)

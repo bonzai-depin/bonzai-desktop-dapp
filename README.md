@@ -166,9 +166,11 @@ Security-sensitive issues should not be disclosed in a public issue. Follow the 
 
 ## Documentation
 
+- [Engineering documentation index](docs/README.md)
 - [Company architecture and product intent](docs/BONZAI_BACK_OFFICE.md)
 - [3D and game engine](docs/BONZAI_3D_GAME_ENGINE.md)
-- [Companion wallet security plan](docs/COMPANION_WALLET_SECURITY_PLAN.md)
+- [Protocol architecture](docs/BONZAI_V4_ARCHITECTURE.md)
+- [Companion-token skill access](docs/COMPANION_TOKEN_ACCESS.md)
 - [Environment configuration](.env.example)
 
 Product documentation is published at [docs.bonzai.sh](https://docs.bonzai.sh).

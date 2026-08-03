@@ -17,9 +17,7 @@
  *   - LAN bandwidth measurement
  *   - real provider holding a model loaded
  *
- * For a real-libp2p two-machine test, see docs/privacy-pipeline-test.md
- * (TODO) — invokes the BonzAI binary on two hosts and runs a Z-Image
- * generation.
+ * A real two-machine test remains out of scope for this smoke script.
  *
  * Usage:
  *   node scripts/smoke-shard-twohost.mjs

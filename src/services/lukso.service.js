@@ -913,7 +913,7 @@ export async function deployCompanionUPCrossChain(
     throw new Error(
       `LSP23 dependencies missing on chain ${targetChainId}: ${missing.join(", ")}. ` +
       `Cross-chain UP replay requires the same factory + implementations to be deployed. ` +
-      `See docs/COMPANION_UP_CROSS_CHAIN.md for options.`
+      `Use a chain-specific Universal Profile deployment and verify its factory configuration.`
     );
   }
 
@@ -933,7 +933,7 @@ export async function deployCompanionUPCrossChain(
   // Replay same calldata to same factory address. Deterministic CREATE2 salt
   // means the UP address should match what was predicted on LUKSO, but we
   // still store per-chain addresses in case the post-deployment module
-  // produces different init code hashes (see COMPANION_UP_CROSS_CHAIN.md).
+  // produces different init code hashes, so each chain needs its own verified deployment.
   const tx = await signer.sendTransaction({
     to: CONFIG.luksoUPFactory.lsp23FactoryAddress,
     data: upData.deploymentCalldata,

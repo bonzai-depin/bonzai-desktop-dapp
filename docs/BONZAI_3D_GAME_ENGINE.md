@@ -26,12 +26,10 @@ The 3D workspace now exposes four free generation paths:
 - **Image to 3D**: reference image to vision evidence, reconstruction blueprint,
   procedural Three.js render, fidelity review and one bounded correction pass.
 
-## Selective img2threejs adoption
+## Image reconstruction
 
-BonzAI will port concepts and isolated Apache-2.0 modules, with attribution, rather
-than replace its engine with the upstream runtime.
-
-Adopt:
+BonzAI applies selected img2threejs concepts without replacing its renderer or
+introducing a second scene lifecycle. The reconstruction pipeline uses:
 
 - reference admission and suitability checks
 - detail inventory and topology classification
@@ -41,15 +39,12 @@ Adopt:
 - silhouette, proportion, colour and multi-angle diagnostics
 - bounded correction loops
 
-Adapt:
+Specifications compile to BonzAI's existing `MAT`, `TEX`, `SHADER`, `FLUID`,
+`FX`, `P`, and `GAME` APIs. The current renderer produces every comparison image,
+and local vision resolves ambiguous review findings. Specifications and review
+history persist with the inference record.
 
-- compile specifications to BonzAI `MAT`, `TEX`, `SHADER`, `FLUID`, `FX`, `P` and
-  `GAME` APIs
-- use BonzAI's renderer for every comparison image
-- use the local vision model for ambiguous visual review
-- persist specifications and review history in the inference store
-
-Do not adopt:
+The pipeline deliberately excludes:
 
 - upstream post-processing or environment setup
 - a second Three.js scene, camera or render loop
@@ -119,25 +114,5 @@ Game collectibles are registered with a manifest hash in
 `BonzaiGameRegistry`. `GameTokenFactory` only issues an ERC-20 when the caller
 owns both the canonical BonzAI collection and the registered game token ID.
 
-## Production sequence
-
-1. **Runtime foundation**: gameplay lifecycle, input, actors, objectives, HUD and
-   generation mode.
-2. **Structured generation**: versioned game projects and deterministic
-   compilation of generated levels, objects, placements and interactions.
-3. **Reference reconstruction**: image input, evidence extraction, reconstruction
-   blueprint, render comparison and one local vision correction pass. Implemented.
-4. **Game systems**: navigation meshes, finite-state enemy behavior, animation
-   graphs, inventory, dialogue, quests, save slots and spatial audio.
-5. **Authoring and export**: level inspector, play/edit switch, asset browser,
-   GLTF import/export and a self-contained web game package.
-6. **AAA hardening**: LOD, instancing budgets, texture streaming, occlusion,
-   deterministic replay, gamepad support, profiling gates and visual regression
-   captures across quality tiers.
-
-The next reconstruction milestone is to replace the prose blueprint with a
-versioned `BonzaiSculptSpec` JSON compiler and add deterministic silhouette and
-multi-angle diagnostics before consulting the vision model.
-
-The renderer remains stable through every phase. New systems consume its public
-runtime instead of rewriting it.
+The renderer remains the visual authority. New systems consume its public runtime
+instead of rewriting it.

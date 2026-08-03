@@ -1,178 +1,69 @@
 ---
 name: bonzai
-description: Decentralized AI inference - generate images, audio, music, video, and chat with AI companions via P2P network
-version: 2.0.0
+description: Local-first AI generation, companions, skills, and peer inference through BonzAI Desktop
+version: 2.1.0
 homepage: https://bonzai.sh
 platforms: [macos, linux]
 metadata:
   hermes:
-    tags: [ai, inference, image-generation, tts, music, video, companions, web3, p2p]
+    tags: [ai, inference, image-generation, tts, music, video, companions, p2p]
     category: ai
     requires_toolsets: [web]
-    # Generation can take 1-5 minutes depending on hardware
-    # Hermes must wait for the full response before sending to user
     timeout: 600
 ---
 
-# BonzAI Skill
+# BonzAI
 
-Access decentralized AI inference through BonzAI. Generate images, audio, music, video, and chat with AI companions.
-
-## When to Use
-
-- User asks to generate images, audio, music, or video locally
-- User wants to chat with AI companions
-- User mentions BonzAI, decentralized AI, or local inference
-- User wants to mint companion NFTs or interact with the BonzAI ecosystem
-
-## Two Modes
-
-| Mode | Description | Cost |
-|------|-------------|------|
-| **Local** | User runs BonzAI Desktop | Free |
-| **Remote** | Connect to P2P providers | Paid (ETH on Base) |
-
-```
-LOCAL MODE
-  Hermes ───HTTP (free)───► localhost:3002 (BonzAI Desktop)
-
-REMOTE MODE
-  Hermes ───► Base Contract ───► libp2p dial to provider (pay ETH)
-```
+Use BonzAI Desktop when a user wants local language or multimodal generation, companion chat, or BonzAI skills. Local inference is free. Discovered peers can contribute compute without receiving private memory or application data; providers participate in protocol reward pools rather than charging the user per request.
 
 ## Procedure
 
-### Step 1: Check Availability
+1. Check `GET http://localhost:3002/health`.
+2. If unavailable, ask the user to start BonzAI Desktop.
+3. Send commands or chat to `POST http://localhost:3002/webhook`.
+4. Use a stable `channelId` and set `platform` to `hermes`.
+5. Wait for the synchronous response. Initial model downloads and media generation may take several minutes.
 
-```http
-GET http://localhost:3002/health
-```
-
-Response:
 ```json
 {
-  "status": "ok",
-  "llmLoaded": true,
-  "modelName": "mythomax-l2-13b.Q5_K_M.gguf",
-  "flaskPort": 65000,
-  "companions": 13,
-  "scenarios": 13,
-  "rendererReady": true
-}
-```
-
-If this fails, BonzAI Desktop is not running. Ask the user to start it.
-
-### Step 2: Use the Webhook Interface
-
-Send commands and chat messages:
-
-```http
-POST http://localhost:3002/webhook
-Content-Type: application/json
-
-{
   "platform": "hermes",
-  "channelId": "hermes-session-id",
-  "message": "your message or command here",
-  "userId": "hermes-user",
+  "channelId": "stable-session-id",
+  "message": "!bonzai status",
+  "userId": "stable-user-id",
   "imageBase64": null
 }
 ```
 
-**Important:** Always use `"platform": "hermes"` to identify requests from Hermes Agent.
+## Commands
 
-### Step 3: Use Commands or Chat
+- `!bonzai status`, `network`, `models`, `model <name>`, `reset`, or `help`.
+- `!bonzai generate image|image_quality|image_standard <prompt>`.
+- `!bonzai generate video <prompt>`.
+- `!bonzai generate audio|audio_quality <text>`.
+- `!bonzai generate music <prompt>`.
+- `!bonzai generate vision` with an image supplied in `imageBase64`.
+- `!bonzai companion list|select <name>` and `scenario list|select <name>`.
+- `!bonzai skill list|info|search|run`.
+- `!bonzai autonomous on|off|status`.
 
-**Companion & Scenario:**
-- `!companion list` - List available companions
-- `!companion select <name>` - Select a companion
-- `!scenario list` - List scenarios
-- `!scenario select <name>` - Select a scenario
+A message without a command prefix chats with the selected companion.
 
-**Generation:**
-- `!generate image <prompt>` - Fast image (FLUX Klein)
-- `!generate image_quality <prompt>` - Quality image (Z-Image Turbo)
-- `!generate image_standard <prompt>` - Standard image (SDXL, uncensored)
-- `!generate image_advanced <prompt>` - Advanced image (Z-Image)
-- `!generate video <prompt>` - Video (LTX-2)
-- `!generate audio <text>` - Fast TTS (Kokoro)
-- `!generate audio_quality <text>` - Quality TTS (Qwen3-TTS)
-- `!generate music <prompt>` - Music (ACE-Step)
-- `!generate vision` - Image analysis (requires image attachment)
+Optional companion minting commands are `!bonzai mint bare`, `companion`, `status`, and `finalize`. Minting requires configured protocol infrastructure and is never required for local generation.
 
-**Settings:**
-- `!settings audio on|off` - Toggle voice generation
-- `!settings images on|off` - Toggle image generation
-- `!settings video on|off` - Toggle video generation
-- `!settings music on|off` - Toggle music generation
-- `!settings level pg|pg13|mature|adult` - Set content level
+## Direct language endpoint
 
-**Session:**
-- `!status` - Show current session
-- `!reset` - Clear history
-- `!models` - List LLM models
-- `!model <name>` - Load specific model
-- `!help` - Show all commands
+```text
+Base URL: http://localhost:3002/v1
+Endpoint:  /chat/completions
+```
 
-**Skills:**
-- `!skill list [category]` - List available skills
-- `!skill info <id>` - Show skill details
-- `!skill run <id> [key=value ...]` - Execute a skill
-- `!skill search <query>` - Search skills
-
-**Minting:**
-- `!mint bare [gender]` - Mint a bare companion NFT
-- `!mint companion <name>` - Mint a complete companion
-- `!mint status` - Check mint status
-- `!mint finalize <tokenId>` - Finalize a bare companion
-
-**Chat:** Any message without `!` prefix chats with the selected companion.
-
-## Pitfalls
-
-- BonzAI Desktop must be running on localhost for local mode
-- First-time generation for any pipeline downloads models (several GB) — expect longer waits
-- Video and music generation can take 1-5 minutes on slower hardware
-- The webhook is synchronous — wait for the full response before showing to user
-- Images are returned as local file paths, not base64
+Discover the active model from BonzAI. Do not assume a fixed inventory. For images, audio, music, video, or vision, prefer webhook commands so the desktop app can validate model availability and route the request.
 
 ## Verification
 
-After sending a command, verify:
-1. Response contains `"text"` field with the result
-2. For generation commands, check for `"imagePath"`, `"audioPath"`, or `"videoPath"`
-3. No `"error"` field in the response
+- Treat an `error` response as failure; do not manufacture a result.
+- Return generated local paths or response fields exactly as supplied by BonzAI.
+- If a model is missing, surface the required download instead of selecting an unrelated model silently.
+- If ownership infrastructure is unavailable, preserve local creation and explain that publishing is unavailable.
 
-## OpenAI-Compatible LLM Endpoint
-
-Hermes Agent can also use BonzAI's LLM directly via the OpenAI-compatible API:
-
-```
-Base URL: http://localhost:3002/v1
-API Key: bonzai-local (any non-empty string)
-Model: bonzai-sovereign
-```
-
-This provides access to whichever local LLM model is currently loaded in BonzAI Desktop (38 models available).
-
-## Available Pipelines
-
-| Pipeline | Endpoint | Description |
-|----------|----------|-------------|
-| `llm` | `/v1/chat/completions` | Local LLM (38 models) |
-| `image_turbo` | Flask `:65000/image/turbo` | Fast image (FLUX Klein) |
-| `image_quality` | Flask `:65000/image/quality` | Quality image (Z-Image Turbo) |
-| `image_standard` | Flask `:65000/image/standard` | Standard image (SDXL) |
-| `image_advanced` | Flask `:65000/image/advanced` | Advanced image (Z-Image) |
-| `audio_turbo` | Flask `:65000/audio/turbo` | Fast TTS (Kokoro) |
-| `audio_quality` | Flask `:65000/audio/quality/persona` | Persona TTS (Qwen3-TTS) |
-| `music` | Flask `:65000/audio/music` | Music (ACE-Step) |
-| `video_fast` | Flask `:65000/video` | Video (LTX-2) |
-| `vision` | Flask `:65000/vision/analyze` | Vision (Qwen3-VL) |
-
-## Resources
-
-- Website: https://bonzai.sh
-- Docs: https://docs.bonzai.sh
-- Discord: https://discord.gg/bonzai
+Resources: [bonzai.sh](https://bonzai.sh) and [docs.bonzai.sh](https://docs.bonzai.sh).

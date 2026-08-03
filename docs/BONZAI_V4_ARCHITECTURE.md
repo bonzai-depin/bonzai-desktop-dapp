@@ -38,7 +38,7 @@ Legacy MintPool epochs remain a separate content-pool mechanism until deployed c
 
 ## Storage and privacy
 
-BonzAI does **not** use Irys. Private artifacts stay local. Publishable metadata/content use the configured IPFS/Pinata path, while contracts store hashes, licenses, ownership, validation, and revenue routes. Private memory, generation, training, and company operations require no chain transaction.
+Private artifacts stay local. Publishable metadata and content use the configured decentralized storage path, while contracts store hashes, licenses, ownership, validation, and revenue routes. Private memory, generation, training, and company operations require no chain transaction.
 
 ## Deployment
 
