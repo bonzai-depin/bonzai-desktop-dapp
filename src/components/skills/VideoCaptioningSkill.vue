@@ -505,10 +505,10 @@ export default {
     // ─── Video Loading ───────────────────────────────────────────────
     const selectVideoFile = async () => {
       try {
-        const filePath = await window.electronAPI?.selectVideoFile?.();
-        if (filePath) {
-          videoFilename.value = filePath.split("/").pop() || "video";
-          videoSrc.value = `local-video://${filePath}`;
+        const selected = await window.electronAPI?.selectVideoFile?.();
+        if (selected) {
+          videoFilename.value = selected.path.split("/").pop() || "video";
+          videoSrc.value = selected.videoUrl;
           return;
         }
       } catch (e) {

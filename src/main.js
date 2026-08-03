@@ -52,6 +52,12 @@ import {
   getOpenClawPort,
   OPENCLAW_CREDENTIAL_SCOPE,
 } from "./main/openclawServer.js";
+import {
+  createFileGrantStore,
+  authorizeRead,
+  authorizeWrite,
+  authorizeVideoRequest,
+} from "./main/fileAccess.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -88,6 +94,21 @@ const __dirname = path.dirname(__filename);
 let MODEL_DIR = path.join(os.homedir(), "bonzai-models");
 // Ensure directory exists
 fs.mkdirSync(MODEL_DIR, { recursive: true });
+fs.mkdirSync(path.join(MODEL_DIR, "files"), { recursive: true });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P7 — file-IPC authorization (read-file-as-base64, save-base64-to-file,
+// local-video://). See src/main/fileAccess.js for the policy: owned roots
+// (below) authorize by containment alone; anything else needs a one-time
+// grant minted by a native dialog flow (fileGrants.register, called from
+// the dialog handlers further down — see select-video-file).
+// ─────────────────────────────────────────────────────────────────────────────
+const fileGrants = createFileGrantStore();
+const fileAccessRoots = () => [
+  MODEL_DIR,
+  path.join(MODEL_DIR, "files"),
+  path.join(app.getPath("temp"), "bonzai-videos"),
+];
 
 // Dev/prod detection - app.isPackaged is true when running from packaged app
 const isDev = !app.isPackaged;
@@ -629,7 +650,16 @@ const restartServerManually = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { bypassCSP: true } },
-  { scheme: "local-video", privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
+  // No CSP is configured for this app's renderer today, and local-video://
+  // is only ever consumed same-origin via <video src>, never fetch()'d
+  // cross-origin — bypassCSP, corsEnabled, and supportFetchAPI bought
+  // nothing but broader privilege than the confined handler below needs.
+  // supportFetchAPI is left off deliberately: on Electron builds before
+  // 40.9.3, setting it alone (even with corsEnabled left false) lets other
+  // origins read supportFetchAPI-only protocols via cross-origin fetch/XHR
+  // (https://releases.electronjs.org/pr/51271) — dropping it is what
+  // actually confines this protocol to same-origin <video> use (P7).
+  { scheme: "local-video", privileges: { stream: true } },
   // bonzai-blob:// resolves <id>.<ext> to the on-disk content-addressed
   // blob path. Lets <img :src> / <audio :src> / <video :src> reference
   // blob-stored media synchronously without IPC round-trips. Critical
@@ -672,18 +702,21 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(pathname).toString());
   });
 
-  // Serve local video files safely via local-video:// protocol
+  // Serve local video files safely via local-video:// protocol.
   // Usage: local-video:///path/to/video.mp4
+  // Confined to the same owned roots + ephemeral dialog grants as
+  // read-file-as-base64 / save-base64-to-file (P7, src/main/fileAccess.js).
+  // The request URL/path is never reflected back in a denial response.
   protocol.handle("local-video", (req) => {
-    const { pathname } = new URL(req.url);
-    const decoded = decodeURIComponent(pathname);
-    // Only allow video file extensions
-    const ext = path.extname(decoded).toLowerCase();
-    const allowed = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".ogv", ".m4v"];
-    if (!allowed.includes(ext)) {
-      return new Response("Forbidden", { status: 403 });
+    const decision = authorizeVideoRequest({
+      url: req.url,
+      roots: fileAccessRoots(),
+      grants: fileGrants,
+    });
+    if (!decision.ok) {
+      return new Response(decision.status === 404 ? "Not found" : "Forbidden", { status: decision.status });
     }
-    return net.fetch(pathToFileURL(decoded).toString());
+    return net.fetch(pathToFileURL(decision.canonicalPath).toString());
   });
 
   /**
@@ -2874,7 +2907,7 @@ ipcMain.handle("download-video-to-temp", async (_event, url) => {
   return tempPath;
 });
 
-ipcMain.handle("select-video-file", async () => {
+ipcMain.handle("select-video-file", async (event) => {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: "Select Video File",
@@ -2884,7 +2917,19 @@ ipcMain.handle("select-video-file", async () => {
     properties: ["openFile"],
   });
   if (canceled || !filePaths.length) return null;
-  return filePaths[0];
+  const picked = filePaths[0];
+  // The user picked this exact file through a trusted native dialog, so
+  // grant it one-time "read" access — the only way a path outside the
+  // owned model/files roots ever becomes readable (P7). Two separate
+  // grants: a sender-bound one for read-file-as-base64 (IPC has a real
+  // sender id to check), and an unguessable capability token for
+  // local-video://, whose protocol.handle gets no sender id and shares a
+  // session with every window in the app — see src/main/fileAccess.js.
+  const real = fs.existsSync(picked) ? fs.realpathSync(picked) : null;
+  if (!real) return null;
+  fileGrants.register(event.sender.id, real, "read");
+  const grantToken = fileGrants.registerCapability(real, "read");
+  return { path: picked, videoUrl: `local-video://${picked}?grant=${grantToken}` };
 });
 
 ipcMain.handle("select-model-dir", async () => {
@@ -3038,6 +3083,7 @@ ipcMain.handle("select-model-dir", async () => {
 
   // Update MODEL_DIR and restart server
   MODEL_DIR = newDir;
+  fs.mkdirSync(path.join(MODEL_DIR, "files"), { recursive: true });
   store.set("models", newDir);
 
   notifyMigrationProgress({ phase: "restarting", pct: 98, detail: "Restarting server..." });
@@ -3327,9 +3373,20 @@ ipcMain.handle("file-exists", (_event, filePath) => {
 ipcMain.handle("get-home-dir", () => os.homedir());
 
 // Read file as base64 (for NFT minting of audio/video files)
-ipcMain.handle("read-file-as-base64", async (_event, filePath) => {
+// Confined to owned model/files roots + ephemeral dialog grants (P7).
+ipcMain.handle("read-file-as-base64", async (event, filePath) => {
+  const decision = authorizeRead({
+    requestedPath: filePath,
+    senderId: event.sender.id,
+    roots: fileAccessRoots(),
+    grants: fileGrants,
+  });
+  if (!decision.ok) {
+    console.error("[Main] read-file-as-base64 denied:", decision.reason);
+    throw new Error("Access denied");
+  }
   try {
-    const data = await fs.promises.readFile(filePath);
+    const data = await fs.promises.readFile(decision.canonicalPath);
     return data.toString("base64");
   } catch (e) {
     console.error("[Main] Failed to read file as base64:", e.message);
@@ -3338,12 +3395,20 @@ ipcMain.handle("read-file-as-base64", async (_event, filePath) => {
 });
 
 // Save base64 data to file (for OpenClaw/WhatsApp media delivery)
-ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
+// Confined to owned model/files roots + ephemeral dialog grants (P7). The
+// parent directory must already exist (no auto-mkdir) and the exact target
+// must not be an existing symlink — both checked before any create/truncate.
+ipcMain.handle("save-base64-to-file", async (event, filePath, base64Data) => {
   try {
-    // Ensure directory exists
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    const decision = authorizeWrite({
+      requestedPath: filePath,
+      senderId: event.sender.id,
+      roots: fileAccessRoots(),
+      grants: fileGrants,
+    });
+    if (!decision.ok) {
+      console.error("[save-base64-to-file] Denied:", decision.reason);
+      return { success: false, error: "Access denied" };
     }
 
     // Remove data URL prefix if present
@@ -3354,7 +3419,7 @@ ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
 
     // Write base64 data as binary
     const buffer = Buffer.from(data, "base64");
-    fs.writeFileSync(filePath, buffer);
+    fs.writeFileSync(decision.canonicalPath, buffer);
 
     return { success: true, path: filePath };
   } catch (error) {
@@ -5492,6 +5557,7 @@ async function systemInformation() {
 const storedModelDir = store.get("models");
 if (storedModelDir && fs.existsSync(storedModelDir)) {
   MODEL_DIR = storedModelDir;
+  fs.mkdirSync(path.join(MODEL_DIR, "files"), { recursive: true });
 } else {
   store.set("models", MODEL_DIR);
 }

@@ -36,6 +36,16 @@ import {
   DEFAULT_OPENCLAW_PORT,
   OPENCLAW_CREDENTIAL_SCOPE,
 } from "../src/main/openclawServer.js";
+import {
+  createFileGrantStore,
+  authorizeRead,
+  authorizeWrite,
+  authorizeVideoRequest,
+  parseLocalVideoUrl,
+  isWithinRoot,
+  VIDEO_EXTENSIONS,
+} from "../src/main/fileAccess.js";
+import os from "node:os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_JS = path.resolve(__dirname, "..", "src", "main.js");
@@ -1265,4 +1275,378 @@ test("P6: the shared credential registry is issued with the openclaw scope", () 
     /scopes:\s*\[\s*["']local-session["']\s*,\s*OPENCLAW_CREDENTIAL_SCOPE\s*\]/.test(src),
     "credentialRegistry must be constructed with the openclaw scope alongside local-session",
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P7 — Centralized file-IPC authorization (src/main/fileAccess.js), wired
+// into read-file-as-base64, save-base64-to-file, and the local-video://
+// protocol handler in main.js.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Real filesystem fixture tree — the authorization functions resolve
+// symlinks and stat the filesystem directly, so containment/escape cases
+// need real paths, not mocks.
+const P7_TMP = fs.mkdtempSync(path.join(os.tmpdir(), "bonzai-p7-"));
+const OWNED_ROOT = path.join(P7_TMP, "owned");
+const OWNED_FILES = path.join(OWNED_ROOT, "files");
+const SIBLING_ROOT = path.join(P7_TMP, "owned-evil"); // shares OWNED_ROOT's string prefix, not nested inside it
+const OUTSIDE_ROOT = path.join(P7_TMP, "outside");
+
+fs.mkdirSync(OWNED_FILES, { recursive: true });
+fs.mkdirSync(SIBLING_ROOT, { recursive: true });
+fs.mkdirSync(OUTSIDE_ROOT, { recursive: true });
+
+const ownedFile = path.join(OWNED_ROOT, "inside.txt");
+fs.writeFileSync(ownedFile, "owned-content");
+
+const nestedOwnedFile = path.join(OWNED_FILES, "nested.txt");
+fs.writeFileSync(nestedOwnedFile, "nested-content");
+
+const siblingFile = path.join(SIBLING_ROOT, "sneaky.txt");
+fs.writeFileSync(siblingFile, "sneaky");
+
+const outsideFile = path.join(OUTSIDE_ROOT, "external.txt");
+fs.writeFileSync(outsideFile, "external");
+
+const outsideVideo = path.join(OUTSIDE_ROOT, "external.mp4");
+fs.writeFileSync(outsideVideo, "fake-mp4-bytes");
+
+const ownedVideo = path.join(OWNED_ROOT, "clip.mp4");
+fs.writeFileSync(ownedVideo, "fake-mp4-bytes-owned");
+
+const ownedNonVideo = path.join(OWNED_ROOT, "notvideo.txt");
+fs.writeFileSync(ownedNonVideo, "text");
+
+const dirLikeVideo = path.join(OWNED_ROOT, "folder.mp4");
+fs.mkdirSync(dirLikeVideo);
+
+// Symlink inside the owned root that resolves outside it.
+const symlinkEscapeRead = path.join(OWNED_ROOT, "escape-read.txt");
+fs.symlinkSync(outsideFile, symlinkEscapeRead);
+const symlinkEscapeVideo = path.join(OWNED_ROOT, "escape-video.mp4");
+fs.symlinkSync(outsideVideo, symlinkEscapeVideo);
+
+// Pre-existing symlink sitting at a would-be write target, pointing at a
+// file that does not exist yet — a classic write-through-link escape.
+const writeLinkTarget = path.join(OWNED_ROOT, "write-target.bin");
+const writeLinkDestination = path.join(OUTSIDE_ROOT, "does-not-exist-yet.bin");
+fs.symlinkSync(writeLinkDestination, writeLinkTarget);
+
+function toLocalVideoUrl(absPath) {
+  return `local-video://${absPath}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC1 (R1): owned-root access and exact ephemeral grants both work; a grant
+// is bound to sender, canonical path, operation, and exactly one use.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P7 AC1: owned-root reads and writes are authorized and resolve to the canonical path", () => {
+  const grants = createFileGrantStore();
+  const roots = [OWNED_ROOT, OWNED_FILES];
+
+  const read = authorizeRead({ requestedPath: ownedFile, senderId: 1, roots, grants });
+  assert.equal(read.ok, true);
+  assert.equal(read.canonicalPath, fs.realpathSync(ownedFile));
+
+  const nestedRead = authorizeRead({ requestedPath: nestedOwnedFile, senderId: 1, roots, grants });
+  assert.equal(nestedRead.ok, true);
+
+  const writeTarget = path.join(OWNED_ROOT, "created.bin");
+  const write = authorizeWrite({ requestedPath: writeTarget, senderId: 1, roots, grants });
+  assert.equal(write.ok, true);
+  assert.equal(write.canonicalPath, path.join(fs.realpathSync(OWNED_ROOT), "created.bin"));
+});
+
+test("P7 AC1: an exact ephemeral grant authorizes a path outside every owned root, exactly once", () => {
+  const grants = createFileGrantStore();
+  const real = fs.realpathSync(outsideFile);
+  assert.equal(grants.register(7, real, "read"), true);
+
+  const first = authorizeRead({ requestedPath: outsideFile, senderId: 7, roots: [OWNED_ROOT], grants });
+  assert.equal(first.ok, true);
+  assert.equal(first.canonicalPath, real);
+
+  const second = authorizeRead({ requestedPath: outsideFile, senderId: 7, roots: [OWNED_ROOT], grants });
+  assert.equal(second.ok, false, "the grant must be consumed after its first use");
+});
+
+test("P7 AC1: a grant is bound to sender, path, and operation — every mismatch is denied", () => {
+  const grants = createFileGrantStore();
+  const real = fs.realpathSync(outsideFile);
+  const siblingReal = fs.realpathSync(siblingFile);
+  grants.register(1, real, "read");
+
+  assert.equal(grants.consume(2, real, "read"), false, "a different sender must not redeem the grant");
+  assert.equal(grants.consume(1, real, "write"), false, "a different operation must not redeem the grant");
+  assert.equal(grants.consume(1, siblingReal, "read"), false, "a different path must not redeem the grant");
+  assert.equal(grants.consume(1, real, "read"), true, "the exact match succeeds");
+  assert.equal(grants.consume(1, real, "read"), false, "already consumed — no replay");
+});
+
+test("P7 AC1: an unregistered path is never authorized, even with a live grant store present", () => {
+  const grants = createFileGrantStore();
+  grants.register(1, fs.realpathSync(outsideFile), "read"); // some other path
+  const decision = authorizeRead({ requestedPath: siblingFile, senderId: 1, roots: [OWNED_ROOT], grants });
+  assert.equal(decision.ok, false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC2 (R2): grants are registered ONLY from the existing native dialog
+// flows — never inside read-file-as-base64/save-base64-to-file themselves,
+// so a renderer can never forge its own grant.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P7 AC2: fileGrants.register call sites all follow a dialog.showOpenDialog/showSaveDialog in the same handler", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const registerCalls = [...src.matchAll(/fileGrants\.register\(/g)];
+  assert.ok(registerCalls.length >= 1, "expected at least one fileGrants.register call site (select-video-file)");
+  for (const m of registerCalls) {
+    const before = src.slice(Math.max(0, m.index - 2000), m.index);
+    const lastHandleIdx = before.lastIndexOf("ipcMain.handle(");
+    assert.ok(lastHandleIdx !== -1, "a register() call must live inside an ipcMain.handle body");
+    const handlerSlice = before.slice(lastHandleIdx);
+    assert.ok(
+      /dialog\.show(Open|Save)Dialog\(/.test(handlerSlice),
+      `fileGrants.register must follow a native dialog call in the same handler, got: ${handlerSlice.slice(0, 160)}`,
+    );
+  }
+});
+
+test("P7 AC2: read-file-as-base64 and save-base64-to-file never mint their own grants (no renderer-forged authorization)", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const extractHandler = (name) => {
+    const re = new RegExp(`ipcMain\\.handle\\(\\s*["']${name}["'][\\s\\S]*?\\n\\}\\);`);
+    const m = src.match(re);
+    assert.ok(m, `expected to find ipcMain.handle("${name}", ...)`);
+    return m[0];
+  };
+  assert.equal(extractHandler("read-file-as-base64").includes("fileGrants.register("), false);
+  assert.equal(extractHandler("save-base64-to-file").includes("fileGrants.register("), false);
+});
+
+test("P7 AC2: select-video-file registers a grant scoped to the picked file for the invoking sender only", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const m = src.match(/ipcMain\.handle\(\s*["']select-video-file["'][\s\S]*?\n\}\);/);
+  assert.ok(m, "expected the select-video-file handler");
+  assert.ok(/dialog\.showOpenDialog\(/.test(m[0]));
+  assert.ok(/fileGrants\.register\(\s*event\.sender\.id\s*,/.test(m[0]), "grant must be keyed to event.sender.id");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC3 (R3): traversal/sibling-prefix/symlink/write-link escapes are denied
+// before any read/create/truncate; success shapes and bridge argument
+// shapes are unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P7 AC3: arbitrary host, sibling-prefix, traversal, and symlink escapes are rejected before a read", () => {
+  const grants = createFileGrantStore();
+  const roots = [OWNED_ROOT];
+
+  assert.equal(authorizeRead({ requestedPath: outsideFile, senderId: 1, roots, grants }).ok, false, "arbitrary outside path denied");
+  assert.equal(authorizeRead({ requestedPath: siblingFile, senderId: 1, roots, grants }).ok, false, "sibling-prefix path denied");
+
+  const traversal = path.join(OWNED_ROOT, "..", "outside", "external.txt");
+  assert.equal(authorizeRead({ requestedPath: traversal, senderId: 1, roots, grants }).ok, false, "traversal denied");
+
+  assert.equal(authorizeRead({ requestedPath: symlinkEscapeRead, senderId: 1, roots, grants }).ok, false, "symlink escape denied");
+});
+
+test("P7 AC3: write-through-link and a missing parent are rejected before create/truncate — the link is never followed", () => {
+  const grants = createFileGrantStore();
+  const roots = [OWNED_ROOT];
+
+  assert.equal(fs.existsSync(writeLinkDestination), false, "sanity: the link's destination must not exist yet");
+  const linkDecision = authorizeWrite({ requestedPath: writeLinkTarget, senderId: 1, roots, grants });
+  assert.equal(linkDecision.ok, false);
+  assert.equal(linkDecision.reason, "write-through-link");
+  assert.equal(fs.existsSync(writeLinkDestination), false, "must never create/truncate through the link");
+
+  const missingParent = authorizeWrite({
+    requestedPath: path.join(OWNED_ROOT, "no-such-dir", "file.bin"),
+    senderId: 1,
+    roots,
+    grants,
+  });
+  assert.equal(missingParent.ok, false);
+  assert.equal(missingParent.reason, "parent-missing");
+
+  const outsideWrite = authorizeWrite({ requestedPath: path.join(OUTSIDE_ROOT, "new.bin"), senderId: 1, roots, grants });
+  assert.equal(outsideWrite.ok, false);
+});
+
+test("P7 AC3: isWithinRoot uses component-aware containment, not a string prefix test", () => {
+  const root = fs.realpathSync(OWNED_ROOT);
+  const sibling = fs.realpathSync(SIBLING_ROOT);
+  assert.equal(isWithinRoot(sibling, root), false, "a sibling sharing the root's string prefix must not pass");
+  assert.equal(isWithinRoot(path.join(root, "sub", "f.txt"), root), true);
+  assert.equal(isWithinRoot(root, root), true, "the root itself is within itself");
+});
+
+test("P7 R3: read-file-as-base64 routes through authorizeRead and preserves its success return shape", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const m = src.match(/ipcMain\.handle\(\s*["']read-file-as-base64["'][\s\S]*?\n\}\);/);
+  assert.ok(m, "expected the read-file-as-base64 handler");
+  assert.ok(/authorizeRead\(/.test(m[0]), "handler must route through authorizeRead");
+  assert.ok(/return data\.toString\(\s*["']base64["']\s*\)/.test(m[0]), "success path must still return a base64 string");
+
+  const preloadSrc = fs.readFileSync(PRELOAD_JS, "utf8");
+  assert.ok(
+    /readFileAsBase64:\s*\(filePath\)\s*=>[\s\S]{0,40}ipcRenderer\.invoke\(\s*["']read-file-as-base64["']\s*,\s*filePath\s*\)/.test(preloadSrc),
+    "preload bridge signature readFileAsBase64(filePath) must be unchanged",
+  );
+});
+
+test("P7 R3: save-base64-to-file routes through authorizeWrite and preserves its success/failure return shapes", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const m = src.match(/ipcMain\.handle\(\s*["']save-base64-to-file["'][\s\S]*?\n\}\);/);
+  assert.ok(m, "expected the save-base64-to-file handler");
+  assert.ok(/authorizeWrite\(/.test(m[0]), "handler must route through authorizeWrite");
+  assert.ok(/return\s*\{\s*success:\s*true,\s*path:\s*filePath\s*\}/.test(m[0]), "success shape must be unchanged");
+  assert.ok(/success:\s*false/.test(m[0]), "failure shape must still report success:false, never throw");
+
+  const preloadSrc = fs.readFileSync(PRELOAD_JS, "utf8");
+  assert.ok(
+    /saveBase64ToFile:\s*\(filePath,\s*base64Data\)\s*=>[\s\S]{0,40}ipcRenderer\.invoke\(\s*["']save-base64-to-file["']\s*,\s*filePath,\s*base64Data\s*\)/.test(preloadSrc),
+    "preload bridge signature saveBase64ToFile(filePath, base64Data) must be unchanged",
+  );
+});
+
+test("P7 R3: preload exposes no new file-grant IPC surface to the renderer", () => {
+  const src = fs.readFileSync(PRELOAD_JS, "utf8");
+  assert.equal(/fileGrant|registerGrant|register-grant/i.test(src), false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC4 (R4): local-video:// applies the same root/grant policy. A valid
+// owned video is served; malformed URL, encoded traversal, directory,
+// outside/link target, missing file, and unsupported extension are denied.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P7 AC4: a valid owned video is authorized and resolves to the canonical path", () => {
+  const grants = createFileGrantStore();
+  const decision = authorizeVideoRequest({ url: toLocalVideoUrl(ownedVideo), roots: [OWNED_ROOT], grants });
+  assert.equal(decision.ok, true);
+  assert.equal(decision.canonicalPath, fs.realpathSync(ownedVideo));
+});
+
+test("P7 AC4: malformed URLs (wrong scheme, host component, unparsable, double-encoded) are denied with 4xx", () => {
+  const grants = createFileGrantStore();
+  const roots = [OWNED_ROOT];
+
+  assert.equal(authorizeVideoRequest({ url: "not a url at all", roots, grants }).ok, false);
+  assert.equal(authorizeVideoRequest({ url: "not a url at all", roots, grants }).status, 400);
+
+  assert.equal(authorizeVideoRequest({ url: "https://example.com/x.mp4", roots, grants }).status, 400);
+
+  assert.equal(
+    authorizeVideoRequest({ url: "local-video://evil-host/etc/passwd.mp4", roots, grants }).status,
+    400,
+    "a host component must not be silently folded into the path",
+  );
+
+  const doubleEncoded = "local-video:///tmp%252e%252e%252fescape.mp4";
+  const decision = authorizeVideoRequest({ url: doubleEncoded, roots, grants });
+  assert.equal(decision.ok, false);
+  assert.equal(decision.status, 400, "residual percent-encoding after one decode pass must be rejected as malformed");
+});
+
+test("P7 AC4: directory, outside-root, symlink-escape, missing file, and unsupported extension are all denied", () => {
+  const grants = createFileGrantStore();
+  const roots = [OWNED_ROOT];
+
+  const dir = authorizeVideoRequest({ url: toLocalVideoUrl(dirLikeVideo), roots, grants });
+  assert.equal(dir.ok, false);
+  assert.notEqual(dir.status, 200);
+
+  const outside = authorizeVideoRequest({ url: toLocalVideoUrl(outsideVideo), roots, grants });
+  assert.equal(outside.ok, false);
+  assert.equal(outside.status, 403);
+
+  const linkEscape = authorizeVideoRequest({ url: toLocalVideoUrl(symlinkEscapeVideo), roots, grants });
+  assert.equal(linkEscape.ok, false);
+  assert.equal(linkEscape.status, 403);
+
+  const missing = authorizeVideoRequest({ url: toLocalVideoUrl(path.join(OWNED_ROOT, "nope.mp4")), roots, grants });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.status, 404);
+
+  const unsupported = authorizeVideoRequest({ url: toLocalVideoUrl(ownedNonVideo), roots, grants });
+  assert.equal(unsupported.ok, false);
+  assert.equal(unsupported.status, 403);
+});
+
+test("P7 AC4: a select-video-file-style grant authorizes local-video:// for a path outside owned roots, exactly once", () => {
+  const grants = createFileGrantStore();
+  const real = fs.realpathSync(outsideVideo);
+  const token = grants.registerCapability(real, "read");
+  const grantedUrl = `${toLocalVideoUrl(outsideVideo)}?grant=${token}`;
+
+  const first = authorizeVideoRequest({ url: grantedUrl, roots: [OWNED_ROOT], grants });
+  assert.equal(first.ok, true);
+
+  const second = authorizeVideoRequest({ url: grantedUrl, roots: [OWNED_ROOT], grants });
+  assert.equal(second.ok, false, "protocol-layer grant consumption is one-time too");
+});
+
+test("P7 AC4: a path-only grant (no capability token) never authorizes local-video://, even for the matching sender", () => {
+  const grants = createFileGrantStore();
+  const real = fs.realpathSync(outsideVideo);
+  grants.register(3, real, "read");
+
+  const noToken = authorizeVideoRequest({ url: toLocalVideoUrl(outsideVideo), roots: [OWNED_ROOT], grants });
+  assert.equal(noToken.ok, false, "the protocol handler has no sender id, so path-only grants must not redeem here");
+  assert.equal(noToken.status, 403);
+});
+
+test("P7: VIDEO_EXTENSIONS matches the handler's documented supported set", () => {
+  assert.deepEqual(
+    [...VIDEO_EXTENSIONS].sort(),
+    [".mp4", ".webm", ".mov", ".avi", ".mkv", ".ogv", ".m4v"].sort(),
+  );
+});
+
+test("P7 R4: main.js wires local-video through authorizeVideoRequest and never reflects the raw request path/url in a denial", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const start = src.indexOf('protocol.handle("local-video"');
+  assert.notEqual(start, -1, "expected the local-video protocol.handle registration");
+  // Slice to the next protocol.handle(...) registration (bonzai-blob) so the
+  // full handler body is captured, not just its first nested call — a
+  // non-greedy regex bounded on "\n  });" stops early because
+  // authorizeVideoRequest({...}) itself closes with exactly that pattern.
+  const next = src.indexOf('protocol.handle(', start + 1);
+  assert.notEqual(next, -1, "expected another protocol.handle(...) registration to follow");
+  const handlerSrc = src.slice(start, next);
+
+  assert.ok(/authorizeVideoRequest\(/.test(handlerSrc), "handler must route through authorizeVideoRequest");
+  assert.equal(/new Response\([^)]*req\.url/.test(handlerSrc), false, "a denial response must never echo the raw request URL");
+  assert.ok(/new Response\(/.test(handlerSrc), "sanity: handler must actually build denial responses");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC5 (R5): protocol registration no longer requests CSP-bypass/CORS
+// privileges for local-video:// that the confined handler no longer needs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P7 AC5: local-video privileged-scheme registration drops bypassCSP and corsEnabled", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const block = src.match(/registerSchemesAsPrivileged\(\[[\s\S]*?\]\);/);
+  assert.ok(block, "expected protocol.registerSchemesAsPrivileged(...)");
+  const entry = block[0].match(/\{\s*scheme:\s*["']local-video["'][\s\S]*?\}/);
+  assert.ok(entry, "expected a local-video scheme privilege entry");
+  assert.equal(/bypassCSP\s*:\s*true/.test(entry[0]), false, "local-video must not request bypassCSP");
+  assert.equal(/corsEnabled\s*:\s*true/.test(entry[0]), false, "local-video must not request corsEnabled");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sanity: parseLocalVideoUrl unit coverage independent of roots/grants.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P7: parseLocalVideoUrl strictly decodes exactly once and rejects malformed input", () => {
+  assert.equal(parseLocalVideoUrl("local-video:///a/b.mp4"), "/a/b.mp4");
+  assert.equal(parseLocalVideoUrl("local-video://host/a.mp4"), null);
+  assert.equal(parseLocalVideoUrl("ftp:///a/b.mp4"), null);
+  assert.equal(parseLocalVideoUrl("::not a url::"), null);
+  assert.equal(parseLocalVideoUrl("local-video:///a%252e%252eb.mp4"), null);
+  assert.equal(parseLocalVideoUrl("local-video:///a%20b.mp4"), "/a b.mp4");
 });
