@@ -23,7 +23,6 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { download, CancelError } from "electron-dl";
 import { unlink } from "node:fs";
 import child_process from "child_process";
-import http from "http";
 import crypto from "crypto";
 import { pipeline } from "stream/promises";
 import {
@@ -48,6 +47,11 @@ import {
   authorizeSessionSender,
   normalizeSessionEvent,
 } from "./main/sessionBridge.js";
+import {
+  createOpenClawServer,
+  getOpenClawPort,
+  OPENCLAW_CREDENTIAL_SCOPE,
+} from "./main/openclawServer.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -912,7 +916,18 @@ const JWT_SECRET = getOrCreateJwtSecret();
 // delivered to local child processes through their environment alone via
 // `childEnvSecrets()`. See src/main/credentialRegistry.js for the API.
 // ─────────────────────────────────────────────────────────────────────────────
-const credentialRegistry = createCredentialRegistry();
+// The "openclaw" scope (P6) lets the OpenClaw API server
+// (src/main/openclawServer.js) gate its routes via
+// registry.validate({ scope: "openclaw" }). Only the registry's SEPARATE
+// external credential (registry.issueExternalCredential — see A5 note on
+// hermes-set-enabled/openclaw-set-enabled below) is ever written to the
+// on-disk configs OpenClaw/Hermes read; the session credential minted here
+// still carries the "openclaw" scope for in-process use but is never
+// persisted, so a leak of those config files cannot yield a token Flask
+// or rpc-server would accept.
+const credentialRegistry = createCredentialRegistry({
+  scopes: ["local-session", OPENCLAW_CREDENTIAL_SCOPE],
+});
 credentialRegistry.issue();
 
 // Internal main→Flask calls authenticate with the same scoped session
@@ -967,6 +982,14 @@ const rekeySessionDependents = async () => {
       rpcServerProcess = null;
     }
   } catch {}
+
+  // OpenClaw/Hermes are external processes we don't spawn, so Flask/
+  // rpc-server rekeying above never touches them — refresh their on-disk
+  // credential too, otherwise an already-enabled integration keeps
+  // presenting the now-invalid pre-rotation token (see refreshExternal-
+  // IntegrationCredentials, defined below with the rest of the OpenClaw/
+  // Hermes integration config).
+  refreshExternalIntegrationCredentials();
 };
 
 const sessionBridge = createSessionBridge({
@@ -3381,6 +3404,28 @@ ipcMain.handle("openclaw-get-enabled", async () => {
 
 ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
   try {
+    // OpenClaw is an external, independently-running process we do not
+    // spawn (unlike Flask/rpc-server), so the only way to hand it a
+    // credential is through its own on-disk config, read at OpenClaw's own
+    // startup. This replaces the previous hardcoded "bonzai-local"
+    // placeholder, which any local process could reuse.
+    //
+    // A5 follow-up: this must NOT be credentialRegistry.getSessionCredential()
+    // — that is the exact token Flask/rpc-server trust for local-session
+    // routes (delivered to them only via env, per credentialRegistry.js).
+    // Writing it into models.json would mean reading that file discloses a
+    // credential valid for the whole gateway, not just OpenClaw. Instead we
+    // mint/reuse the registry's separate external credential, scoped ONLY to
+    // "openclaw" — the one secret the registry itself considers safe to
+    // persist. Fail closed rather than write a config OpenClaw could never
+    // authenticate with.
+    const openclawCredential = enabled
+      ? credentialRegistry.getExternalCredential() || credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE)
+      : null;
+    if (enabled && !openclawCredential) {
+      return { success: false, error: "No active session credential" };
+    }
+
     // 1. Update models.json with provider definition (where OpenClaw reads providers)
     const modelsDir = path.dirname(OPENCLAW_MODELS_PATH);
     if (!fs.existsSync(modelsDir)) {
@@ -3402,7 +3447,7 @@ ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
       // Add bonzai provider with full model configuration
       modelsConfig.providers.bonzai = {
         baseUrl: `http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
-        apiKey: "bonzai-local",
+        apiKey: openclawCredential,
         api: "openai-completions",
         models: [
           {
@@ -3420,6 +3465,10 @@ ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
       delete modelsConfig.providers.bonzai;
     }
     fs.writeFileSync(OPENCLAW_MODELS_PATH, JSON.stringify(modelsConfig, null, 2));
+    // models.json holds the live session credential as a plaintext apiKey;
+    // restrict it to owner-only regardless of the umask writeFileSync used,
+    // and regardless of whether the file pre-existed with looser permissions.
+    try { fs.chmodSync(OPENCLAW_MODELS_PATH, 0o600); } catch {}
 
     // 2. Update openclaw.json with default model setting
     let mainConfig = {};
@@ -3490,6 +3539,23 @@ ipcMain.handle("hermes-get-enabled", async () => {
 ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
   try {
     if (enabled) {
+      // Same reasoning as openclaw-set-enabled: Hermes is an external
+      // process we don't spawn, so it authenticates OpenClaw API requests
+      // with a credential we write into its .env (never the previous
+      // hardcoded "bonzai-local" placeholder). This is the registry's
+      // external credential, NOT getSessionCredential() — the .env file is
+      // plaintext on disk, and the session token is the same value Flask
+      // trusts for every local-session route, so persisting that one would
+      // let anyone who reads .env reach the whole gateway. The external
+      // credential is scoped to "openclaw" only and shared with the
+      // OpenClaw integration above so both configs stay in sync on
+      // rotation. Fail closed if no credential is currently live.
+      const hermesCredential =
+        credentialRegistry.getExternalCredential() || credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
+      if (!hermesCredential) {
+        return { success: false, error: "No active session credential" };
+      }
+
       // 1. Install BonzAI skill into Hermes skills directory
       if (!fs.existsSync(HERMES_BONZAI_SKILL_DIR)) {
         fs.mkdirSync(HERMES_BONZAI_SKILL_DIR, { recursive: true });
@@ -3506,23 +3572,39 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
         console.warn("[Hermes] SKILL.md not found in bundled resources — toggle proceeding but skill file not installed");
       }
 
-      // 2. Add BonzAI as custom OpenAI-compatible endpoint in .env
+      // 2. Add/update BonzAI as custom OpenAI-compatible endpoint in .env
       let envContent = "";
       if (fs.existsSync(HERMES_ENV_PATH)) {
         envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
       }
 
-      // Add/update BONZAI endpoint variables if not present
-      if (!envContent.includes("BONZAI_BASE_URL")) {
+      if (envContent.includes("BONZAI_BASE_URL")) {
+        // Block already present from an earlier enable — rewrite both
+        // values in place so re-enabling always presents the *current*
+        // credential (previously only appended when the block was
+        // entirely absent, so BONZAI_API_KEY silently went stale after a
+        // disable/enable cycle or a credential rotation).
+        envContent = envContent
+          .split("\n")
+          .map((line) => {
+            if (line.startsWith("BONZAI_BASE_URL=")) return `BONZAI_BASE_URL=http://127.0.0.1:${OPENCLAW_API_PORT}/v1`;
+            if (line.startsWith("BONZAI_API_KEY=")) return `BONZAI_API_KEY=${hermesCredential}`;
+            return line;
+          })
+          .join("\n");
+      } else {
         const bonzaiEnv = [
           "",
           "# BonzAI Decentralized AI - Local inference endpoint",
           `BONZAI_BASE_URL=http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
-          "BONZAI_API_KEY=bonzai-local",
+          `BONZAI_API_KEY=${hermesCredential}`,
         ].join("\n");
         envContent += bonzaiEnv + "\n";
-        fs.writeFileSync(HERMES_ENV_PATH, envContent);
       }
+      fs.writeFileSync(HERMES_ENV_PATH, envContent);
+      // .env carries the live session credential as plaintext — owner-only,
+      // regardless of the umask writeFileSync used or pre-existing perms.
+      try { fs.chmodSync(HERMES_ENV_PATH, 0o600); } catch {}
 
       console.log("[Hermes] Integration enabled — skill installed and env configured");
     } else {
@@ -3554,6 +3636,72 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
     return { success: false, error: error.message };
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keep external integrations' on-disk credential current (P6 follow-up, A5)
+//
+// OpenClaw/Hermes are external processes we don't spawn: the only way they
+// learn a credential is the on-disk config written by the *-set-enabled
+// handlers above, and that write only happens when the user flips the
+// toggle. Without this, an already-enabled integration keeps presenting the
+// external credential live at the time it was enabled — which goes stale
+// the moment the session rotates (registry.issueExternalCredential mints a
+// fresh value, invalidating the old one) — until the user disables and
+// re-enables it manually.
+//
+// Both helpers are no-ops (not an error) when the integration was never
+// enabled: they only rewrite a credential slot that already exists in the
+// respective config file, never create one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function refreshOpenClawCredential(token) {
+  try {
+    if (!token || !fs.existsSync(OPENCLAW_MODELS_PATH)) return;
+    const content = fs.readFileSync(OPENCLAW_MODELS_PATH, "utf8");
+    let modelsConfig;
+    try {
+      modelsConfig = JSON.parse(content);
+    } catch {
+      return;
+    }
+    if (!modelsConfig.providers?.bonzai) return; // integration not enabled
+    modelsConfig.providers.bonzai.apiKey = token;
+    fs.writeFileSync(OPENCLAW_MODELS_PATH, JSON.stringify(modelsConfig, null, 2));
+    try { fs.chmodSync(OPENCLAW_MODELS_PATH, 0o600); } catch {}
+  } catch (error) {
+    console.error("[OpenClaw] Failed to refresh credential:", error);
+  }
+}
+
+function refreshHermesCredential(token) {
+  try {
+    if (!token || !fs.existsSync(HERMES_ENV_PATH)) return;
+    let envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
+    if (!envContent.includes("BONZAI_API_KEY")) return; // integration not enabled
+    envContent = envContent
+      .split("\n")
+      .map((line) => (line.startsWith("BONZAI_API_KEY=") ? `BONZAI_API_KEY=${token}` : line))
+      .join("\n");
+    fs.writeFileSync(HERMES_ENV_PATH, envContent);
+    try { fs.chmodSync(HERMES_ENV_PATH, 0o600); } catch {}
+  } catch (error) {
+    console.error("[Hermes] Failed to refresh credential:", error);
+  }
+}
+
+function refreshExternalIntegrationCredentials() {
+  // Nothing to rotate if neither integration has ever been enabled — that's
+  // exactly what a null getExternalCredential() means, since it's only ever
+  // minted by openclaw-set-enabled/hermes-set-enabled above.
+  if (!credentialRegistry.getExternalCredential()) return;
+  // Re-mint on every rotation, same as the session credential: a stale copy
+  // of the external credential already written to disk must stop working
+  // the moment we hand out a fresh one, not linger until the file is
+  // rewritten by a future toggle.
+  const token = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
+  refreshOpenClawCredential(token);
+  refreshHermesCredential(token);
+}
 
 // Open URL in default browser
 ipcMain.handle("open-external", async (_event, url) => {
@@ -6868,546 +7016,53 @@ async function downloadMmproj(event, { url, filename }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OpenClaw API Server
+// OpenClaw API Server (P6 — see src/main/openclawServer.js)
 // Forwards webhook requests to the renderer which uses the existing flagship.js
 // generation logic. This ensures the same code path for both UI and external chat.
+// Loopback-bound, every non-preflight route requires the shared session
+// credential under the "openclaw" scope, and /webhook validates its payload
+// against a strict allowlisted schema before anything is forwarded.
 // ─────────────────────────────────────────────────────────────────────────────
-const OPENCLAW_API_PORT = parseInt(process.env.OPENCLAW_API_PORT || "3002");
-let openclawServer = null;
-
-// Pending webhook requests waiting for renderer response
-const pendingWebhookRequests = new Map();
-let webhookRequestId = 0;
-
-// IPC handler for renderer to respond to webhook requests
-ipcMain.handle("openclaw-webhook-response", (_event, { requestId, result }) => {
-  const pending = pendingWebhookRequests.get(requestId);
-  if (pending) {
-    pending.resolve(result);
-    pendingWebhookRequests.delete(requestId);
-  }
-});
-
-/**
- * Forward webhook to renderer and wait for response
- */
-function forwardToRenderer(data) {
-  return new Promise((resolve, reject) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      reject(new Error("Renderer not available"));
-      return;
-    }
-
-    if (pendingWebhookRequests.size > 50) {
-      reject(new Error("Webhook queue full (>50 pending requests)"));
-      return;
-    }
-
-    const requestId = ++webhookRequestId;
-    // 5 minute timeout for generation
-    const timeout = setTimeout(() => {
-      pendingWebhookRequests.delete(requestId);
-      reject(new Error("Webhook request timed out after 5 minutes"));
-    }, 5 * 60 * 1000);
-
-    pendingWebhookRequests.set(requestId, {
-      resolve: (result) => {
-        clearTimeout(timeout);
-        resolve(result);
-      },
-      reject: (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      },
-    });
-
-    // Send to renderer
-    mainWindow.webContents.send("openclaw-webhook", { requestId, ...data });
-  });
-}
+const OPENCLAW_API_PORT = getOpenClawPort(process.env);
+let openclawApi = null;
 
 function startOpenClawAPIServer() {
-  openclawServer = http.createServer(async (req, res) => {
-    // CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    const url = new URL(req.url, `http://localhost:${OPENCLAW_API_PORT}`);
-
-    // Health check
-    if (url.pathname === "/health") {
+  openclawApi = createOpenClawServer({
+    registry: credentialRegistry,
+    isRendererAvailable: () => !!mainWindow && !mainWindow.isDestroyed(),
+    sendToRenderer: (payload) => mainWindow.webContents.send("openclaw-webhook", payload),
+    getHealthInfo: () => {
       const companions = store.get("companions", []);
       const scenarios = store.get("scenarios", []);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        status: "ok",
+      return {
         llmLoaded: llamaServer.isRunning(),
         modelName: currentLoadedModel?.filename || null,
         flaskPort: PY_SERVER_PORT,
         companions: companions.length,
         scenarios: scenarios.length,
-        rendererReady: mainWindow && !mainWindow.isDestroyed(),
-      }));
-      return;
-    }
-
-    // Manifest discovery — serves the SKILL.md files so any external agent
-    // harness can GET the BonzAI capability description without needing the
-    // repo on disk. Supports `?agent=openclaw` (default) and `?agent=hermes`.
-    if (req.method === "GET" && url.pathname === "/manifest") {
-      const agent = (url.searchParams.get("agent") || "openclaw").toLowerCase();
-      const manifestName = agent === "hermes" ? "hermes" : "openclaw";
-      const manifestPath = resolveBundledSkillManifest(manifestName);
-      if (!manifestPath || !fs.existsSync(manifestPath)) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `manifest not found for ${agent}` }));
-        return;
-      }
-      try {
-        const content = fs.readFileSync(manifestPath, "utf8");
-        res.writeHead(200, {
-          "Content-Type": "text/markdown; charset=utf-8",
-          "X-Manifest-Agent": manifestName,
-        });
-        res.end(content);
-      } catch (e) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      }
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // OpenClaw Gateway Webhook - Forwards to renderer for processing
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "POST" && url.pathname === "/webhook") {
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const data = JSON.parse(body);
-          console.log(`[OpenClaw Webhook] ${data.platform}/${data.channelId}: ${data.message}`);
-
-          // Forward to renderer and wait for response
-          const result = await forwardToRenderer(data);
-
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (error) {
-          console.error("[OpenClaw Webhook] Error:", error);
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Companion & Scenario REST API (forwards to renderer for dynamic data)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "GET" && url.pathname === "/companions") {
-      try {
-        const result = await forwardToRenderer({ type: "get-companions" });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available", companions: [] }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname === "/scenarios") {
-      try {
-        const result = await forwardToRenderer({ type: "get-scenarios" });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available", scenarios: [] }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname.startsWith("/companion/")) {
-      const id = url.pathname.split("/")[2];
-      try {
-        const result = await forwardToRenderer({ type: "get-companion", id });
-        if (result) {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Companion not found" }));
-        }
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available" }));
-      }
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Skills REST API (for OpenClaw skill discovery and execution)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    if (req.method === "GET" && url.pathname === "/api/skills") {
-      try {
-        const category = url.searchParams.get("category");
-        const result = await forwardToRenderer({ type: "get-skills", category });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result || []));
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available", skills: [] }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname.startsWith("/api/skills/")) {
-      const id = url.pathname.split("/")[3];
-      if (id && id !== "execute") {
-        try {
-          const result = await forwardToRenderer({ type: "get-skill", id });
-          if (result) {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(result));
-          } else {
-            res.writeHead(404, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Skill not found" }));
-          }
-        } catch (error) {
-          res.writeHead(503, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Renderer not available" }));
-        }
-        return;
-      }
-    }
-
-    if (req.method === "POST" && url.pathname.match(/^\/api\/skills\/[^/]+\/execute$/)) {
-      const skillId = url.pathname.split("/")[3];
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const inputs = JSON.parse(body || "{}");
-          const result = await forwardToRenderer({
-            type: "execute-skill",
-            skillId,
-            inputs,
-          });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // OpenAI-Compatible API (for OpenClaw and other clients)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "POST" && url.pathname === "/api/vision/analyze") {
-      let body = "";
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 32 * 1024 * 1024) req.destroy();
-      });
-      req.on("end", async () => {
-        try {
-          const text = await runCrossPlatformVision(JSON.parse(body || "{}"));
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, response: text }));
-        } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-
-    // GET /v1/models - List available models
-    if (req.method === "GET" && url.pathname === "/v1/models") {
-      const modelName = currentLoadedModel?.filename || "bonzai-sovereign";
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        object: "list",
-        data: [
-          {
-            id: "bonzai-sovereign",
-            object: "model",
-            created: Date.now(),
-            owned_by: "bonzai",
-          },
-          {
-            id: modelName,
-            object: "model",
-            created: Date.now(),
-            owned_by: "bonzai",
-          }
-        ],
-      }));
-      return;
-    }
-
-    // POST /v1/chat/completions - OpenAI-compatible chat endpoint
-    if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-      // Auth removed — all LLM generation is free
-      if (false) {
-      }
-
-      console.log(`[OpenAI API] Incoming request headers:`, JSON.stringify(req.headers));
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        console.log(`[OpenAI API] req.on(end) triggered, body length: ${body.length}`);
-        try {
-          console.log(`[OpenAI API] Request body preview:`, body.substring(0, 500));
-
-          let parsed;
-          try {
-            parsed = JSON.parse(body);
-            console.log(`[OpenAI API] JSON parsed successfully, keys:`, Object.keys(parsed));
-          } catch (parseErr) {
-            console.error(`[OpenAI API] JSON parse error:`, parseErr.message);
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_request_error" } }));
-            return;
-          }
-
-          const { messages, model, temperature, max_tokens, stream } = parsed;
-          console.log(`[OpenAI API] Extracted: model=${model}, messages=${messages?.length}, stream=${stream}`);
-
-          if (!messages || !Array.isArray(messages)) {
-            console.log(`[OpenAI API] Invalid messages, returning 400`);
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              error: { message: "messages array is required", type: "invalid_request_error" }
-            }));
-            return;
-          }
-
-          if (!llamaServer.isRunning()) {
-            console.log(`[OpenAI API] No model loaded, returning 503`);
-            res.writeHead(503, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              error: { message: "No model loaded. Please load a model in BonzAI first.", type: "server_error" }
-            }));
-            return;
-          }
-
-          // Transparent proxy to the llama-server subprocess. This preserves
-          // every OpenAI feature (tool_calls, json_mode, logprobs, vision
-          // via image_url, etc.) without us re-implementing them. We rewrite
-          // the `model` field to match whichever GGUF is actually loaded.
-          const actualModel = currentLoadedModel?.filename || "unknown";
-          const upstreamBody = { ...parsed, model: actualModel };
-
-          const upstream = await llamaServer.proxyRequest("/v1/chat/completions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(upstreamBody),
-          });
-
-          res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
-
-          if (!upstream.body) {
-            res.end();
-            return;
-          }
-
-          const reader = upstream.body.getReader();
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (!res.write(Buffer.from(value))) {
-              await new Promise((resolve) => res.once("drain", resolve));
-            }
-          }
-          res.end();
-        } catch (error) {
-          console.error("[OpenAI API] Chat completions error:", error);
-          if (!res.headersSent) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-          }
-          res.end(JSON.stringify({
-            error: { message: error.message, type: "server_error" }
-          }));
-        }
-      });
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // LLM API (for direct access without roleplay context)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "POST" && url.pathname === "/api/llm/chat") {
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const { prompt } = JSON.parse(body);
-
-          if (!prompt) {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "prompt is required" }));
-            return;
-          }
-
-          if (!llamaServer.isRunning()) {
-            res.writeHead(503, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "LLM not loaded. Load a model first." }));
-            return;
-          }
-
-          const completion = await llamaServer.chat({
-            messages: [{ role: "user", content: prompt }],
-          });
-          const response = completion.choices?.[0]?.message?.content ?? "";
-          recordLifetimeTokenUsage({
-            messages: [{ role: "user", content: prompt }],
-            output: response,
-            usage: completion.usage,
-          });
-
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, response }));
-        } catch (error) {
-          console.error("[OpenClaw API] LLM chat error:", error);
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/llm/load") {
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const { modelname, filename, url: modelUrl } = JSON.parse(body);
-          await loadModel(null, { modelname, filename, url: modelUrl });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, modelName: modelname || filename }));
-        } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/llm/unload") {
-      try {
-        await unloadModel();
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: true }));
-      } catch (error) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: error.message }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/llm/info") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        loaded: llamaServer.isRunning(),
-        modelName: currentLoadedModel?.filename || null,
-        hasSession: llamaServer.isRunning(),
-      }));
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Flask Proxy (for direct media generation access)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (url.pathname.startsWith("/api/flask/")) {
-      const flaskPath = url.pathname.replace("/api/flask", "");
-      const flaskUrl = `http://localhost:${PY_SERVER_PORT}${flaskPath}`;
-
-      try {
-        if (req.method === "POST") {
-          let body = "";
-          let bodyTooLarge = false;
-          req.on("data", (chunk) => {
-            body += chunk;
-            if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-          });
-          req.on("end", async () => {
-            if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-            const response = await fetch(flaskUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: body,
-            });
-            const data = await response.json();
-            res.writeHead(response.status, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(data));
-          });
-        } else {
-          const response = await fetch(flaskUrl);
-          const data = await response.json();
-          res.writeHead(response.status, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(data));
-        }
-      } catch (error) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `Flask proxy error: ${error.message}` }));
-      }
-      return;
-    }
-
-    // Not found
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found" }));
+        rendererReady: !!mainWindow && !mainWindow.isDestroyed(),
+      };
+    },
+    resolveManifestPath: (agent) => resolveBundledSkillManifest(agent),
+    llama: llamaServer,
+    getCurrentModelFilename: () => currentLoadedModel?.filename || null,
+    runVisionAnalyze: (body) => runCrossPlatformVision(body),
+    loadModelSpec: (spec) => loadModel(null, spec),
+    unloadModel: () => unloadModel(),
+    recordLifetimeTokenUsage,
+    flaskPort: PY_SERVER_PORT,
+    // R5: the Flask proxy always authenticates with the main process's own
+    // scoped credential — never anything read from the caller's headers.
+    flaskAuthHeaders: () => flaskSessionHeaders(),
   });
 
-  // Disable server timeouts for long-running generation requests
-  // Default Node.js timeout is 2 minutes which is not enough for video/music generation
-  openclawServer.timeout = 0; // No timeout
-  openclawServer.keepAliveTimeout = 0; // No keep-alive timeout
-  openclawServer.headersTimeout = 0; // No headers timeout
+  // IPC handler for renderer to respond to webhook requests
+  ipcMain.handle("openclaw-webhook-response", (_event, { requestId, result }) => {
+    openclawApi.respondWebhook(requestId, result);
+  });
 
-  openclawServer.listen(OPENCLAW_API_PORT, () => {
-    console.log(`[OpenClaw API] Server running on http://localhost:${OPENCLAW_API_PORT}`);
-    console.log(`[OpenClaw API] Timeouts disabled for long-running generation requests`);
+  openclawApi.server.listen(openclawApi.port, openclawApi.host, () => {
+    console.log(`[OpenClaw API] Server running on http://${openclawApi.host}:${openclawApi.port}`);
     console.log(`[OpenClaw API] Endpoints:`);
     console.log(`  GET  /v1/models            - List models (OpenAI-compatible)`);
     console.log(`  POST /v1/chat/completions  - Chat completions (OpenAI-compatible)`);
@@ -7426,4 +7081,10 @@ function startOpenClawAPIServer() {
 // Start OpenClaw API when app is ready
 app.on("ready", () => {
   startOpenClawAPIServer();
+  // Every launch issues a brand-new session credential (credentialRegistry
+  // .issue() above), so an already-enabled OpenClaw/Hermes integration is
+  // holding the *previous* launch's token at this point — refresh it now
+  // rather than waiting for the user to notice 401s and re-toggle.
+  refreshExternalIntegrationCredentials();
 });
+

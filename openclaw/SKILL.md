@@ -18,10 +18,11 @@ Use BonzAI Desktop for local language and multimodal inference, companion conver
 
 ## Availability
 
-BonzAI Desktop must be running for the local gateway:
+BonzAI Desktop must be running for the local gateway. Every request — including `/health` — requires the credential from your `models.providers.bonzai.apiKey` config as a bearer token:
 
 ```http
 GET http://localhost:3002/health
+Authorization: Bearer <models.providers.bonzai.apiKey>
 ```
 
 The main synchronous interface is:
@@ -29,6 +30,7 @@ The main synchronous interface is:
 ```http
 POST http://localhost:3002/webhook
 Content-Type: application/json
+Authorization: Bearer <models.providers.bonzai.apiKey>
 
 {
   "platform": "openclaw",
@@ -38,6 +40,8 @@ Content-Type: application/json
   "imageBase64": null
 }
 ```
+
+BonzAI Desktop writes this credential into `models.providers.bonzai.apiKey` itself when the OpenClaw integration is enabled from its settings, and refreshes it there automatically whenever the underlying session credential rotates or the app restarts — no manual configuration needed.
 
 Retain a stable `channelId` to preserve the corresponding BonzAI session. Wait for the complete response; image, music, and video generation can take several minutes, especially during a first model download.
 

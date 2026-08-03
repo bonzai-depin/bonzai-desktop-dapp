@@ -1279,7 +1279,9 @@ const runSelfTest = async () => {
     const ocEnabled = await window.electronAPI.openclawGetEnabled();
     const hermEnabled = await window.electronAPI.hermesGetEnabled();
     if (ocEnabled || hermEnabled) {
-      const orchResponse = await fetch("http://127.0.0.1:3002/health", {
+      // /health now requires the shared session credential (P6) — authFetch
+      // attaches it the same way it does for the Flask probe above.
+      const orchResponse = await authFetch("http://127.0.0.1:3002/health", {
         method: "GET",
       });
       if (orchResponse.ok) {

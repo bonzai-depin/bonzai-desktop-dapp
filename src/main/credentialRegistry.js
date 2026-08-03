@@ -11,10 +11,18 @@
 //     explicit service/operation scopes;
 //   - a separate, non-default Flask signing secret.
 //
-// Everything is memory-only: nothing here is written to disk, store, or
-// logs. The registry is replaced on every application launch. Secrets are
-// handed to child processes through their environment ONLY (see
-// `childEnvSecrets`); they never appear in argv, URLs, logs, or storage.
+// Everything this module produces starts memory-only: nothing here is
+// written to disk, store, or logs BY THIS MODULE. The registry is replaced
+// on every application launch. Session secrets are handed to spawned child
+// processes through their environment ONLY (see `childEnvSecrets`); they
+// never appear in argv, URLs, logs, or storage.
+//
+// The one deliberate exception a caller may make is `issueExternalCredential`
+// — a second, independently-random secret, scoped narrowly, that a caller
+// MAY persist to an external tool's own on-disk config when that tool is a
+// process we don't spawn (so environment delivery isn't possible). It is
+// never derived from, nor interchangeable with, the session credential or
+// Flask signing secret above, so persisting it cannot disclose either.
 //
 // Deterministic seams: `rng` and `now` default to the CSPRNG and wall clock
 // but are injectable so tests can produce controlled, repeatable credentials.
@@ -96,6 +104,15 @@ function safeEqual(a, b) {
  *                                    or null when no credential is live or the
  *                                    live one has expired (mirrors validate()).
  *   getFlaskSigningSecret()          Raw Flask signing secret (for env delivery only).
+ *   issueExternalCredential(scope)   Mint/reissue a SEPARATE credential scoped
+ *                                    to exactly one scope, independent of the
+ *                                    session token. The only secret this
+ *                                    registry considers safe to persist to
+ *                                    disk (see module doc above `current`).
+ *                                    Returns the raw token.
+ *   getExternalCredential()          Raw external-credential token, or null
+ *                                    when none is live/minted yet or it has
+ *                                    expired.
  *   describe()                       Log-safe metadata (no secret values).
  */
 export function createCredentialRegistry({
@@ -126,6 +143,20 @@ export function createCredentialRegistry({
   // The live credential, or null when nothing issued / after invalidation.
   let current = null;
 
+  // A SECOND, independent credential for callers that must hand a secret to
+  // a process this registry cannot reach over an environment variable (e.g.
+  // OpenClaw/Hermes: external tools we don't spawn, whose only integration
+  // point is their own on-disk config — see hermes-set-enabled /
+  // openclaw-set-enabled in src/main.js). Writing `current.token` itself to
+  // disk would leak the exact credential Flask/rpc-server trust for every
+  // local-session route, since that is the same string delivered to them via
+  // `childEnvSecrets`. This external credential is a distinct random value,
+  // carrying ONLY the scope it's issued for (never "local-session"), so a
+  // leak of the file it's written to authenticates nothing beyond that one
+  // scope — Flask's raw string comparison against its own env-delivered
+  // token rejects it outright.
+  let currentExternal = null;
+
   function issue({ type = "local-session", extraScopes = [] } = {}) {
     if (typeof type !== "string" || !type) {
       throw new Error("credential type must be a non-empty string");
@@ -148,21 +179,34 @@ export function createCredentialRegistry({
   // timing-sensitive comparisons (safeEqual) all run regardless of outcome
   // so a caller cannot learn which field failed from how long validate took.
   // Fails closed (returns false) when no credential is live.
-  function validate({ token, type, scope, generation: gen } = {}) {
-    const cred = current;
-    if (!cred) return false;
-
+  function matches(cred, { token, type, scope, generation: gen }) {
+    if (!cred) {
+      // Still spend the same comparison work as a real credential so a
+      // missing `current` vs. missing `currentExternal` isn't distinguishable
+      // by timing either.
+      safeEqual(token, "");
+      return false;
+    }
     const tokenOk = safeEqual(token, cred.token);
     const typeOk = safeEqual(type, cred.type);
     const scopeOk = cred.scopes.some((s) => safeEqual(scope, s));
     const notExpired = now() < cred.expiresAt;
     const genOk = typeof gen === "number" ? gen === cred.generation : true;
-
     return tokenOk && typeOk && scopeOk && notExpired && genOk;
+  }
+
+  // Checked against BOTH the session credential and the external credential
+  // (if any) — both branches always evaluated, so which one (if either)
+  // matched is not observable from timing.
+  function validate(opts = {}) {
+    const sessionOk = matches(current, opts);
+    const externalOk = matches(currentExternal, opts);
+    return sessionOk || externalOk;
   }
 
   function invalidate() {
     current = null;
+    currentExternal = null;
   }
 
   // Only ever return a credential the registry itself still considers valid.
@@ -177,6 +221,37 @@ export function createCredentialRegistry({
 
   function getFlaskSigningSecret() {
     return flaskSigningSecret;
+  }
+
+  // Mint (or re-mint, on rotation) the external credential — a fresh random
+  // value scoped to exactly `scope`, unrelated to the session token. This is
+  // the ONLY credential this registry considers safe for a caller to persist
+  // outside process memory (see `currentExternal` above). Re-issuing replaces
+  // the old value outright, so a prior copy already written to disk stops
+  // working the moment the caller refreshes that file with the new token —
+  // mirroring how `issue()` retires the previous session generation.
+  function issueExternalCredential(scope) {
+    if (typeof scope !== "string" || !scope) {
+      throw new Error("issueExternalCredential requires a non-empty scope string");
+    }
+    const issuedAt = now();
+    currentExternal = {
+      token: toHex(rng(SECRET_BYTES)),
+      type: "local-session",
+      scopes: [scope],
+      issuedAt,
+      expiresAt: issuedAt + lifetimeMs,
+      generation: null, // not part of the session generation lineage
+    };
+    return currentExternal.token;
+  }
+
+  // Only ever return an external credential this registry still considers
+  // valid — same expiry mirroring as getSessionCredential().
+  function getExternalCredential() {
+    if (!currentExternal) return null;
+    if (now() >= currentExternal.expiresAt) return null;
+    return currentExternal.token;
   }
 
   // Log-safe view: metadata only, never the raw token or signing secret.
@@ -200,6 +275,8 @@ export function createCredentialRegistry({
     invalidate,
     getSessionCredential,
     getFlaskSigningSecret,
+    issueExternalCredential,
+    getExternalCredential,
     describe,
   };
 }

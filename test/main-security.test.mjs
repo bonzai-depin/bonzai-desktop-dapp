@@ -23,11 +23,25 @@ import {
   createSessionBridge,
   authorizeSessionSender,
 } from "../src/main/sessionBridge.js";
+import {
+  createOpenClawServer,
+  validateWebhookPayload,
+  getOpenClawHost,
+  getOpenClawPort,
+  getOpenClawTrustedOrigins,
+  isOriginAllowed,
+  OPENCLAW_HOST_ENV,
+  OPENCLAW_PORT_ENV,
+  OPENCLAW_TRUSTED_ORIGINS_ENV,
+  DEFAULT_OPENCLAW_PORT,
+  OPENCLAW_CREDENTIAL_SCOPE,
+} from "../src/main/openclawServer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_JS = path.resolve(__dirname, "..", "src", "main.js");
 const PRELOAD_JS = path.resolve(__dirname, "..", "src", "preload.js");
 const REGISTRY_JS = path.resolve(__dirname, "..", "src", "main", "credentialRegistry.js");
+const ENV_EXAMPLE = path.resolve(__dirname, "..", ".env.example");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deterministic seams
@@ -721,4 +735,534 @@ test("P2 AC4: obtain fails closed when no live credential exists", () => {
   const registry = createCredentialRegistry({ rng: makeDeterministicRng(205) });
   const bridge = createSessionBridge({ registry, authorize: () => ({ ok: true }) });
   assert.deepEqual(bridge.obtain(trustedSender(DEV_URL)), { ok: false, reason: "no-credential" });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P6 — Authenticate and validate the OpenClaw API (src/main/openclawServer.js)
+//
+// The server factory takes plain injected dependencies (no Electron), so
+// every test below builds a real http.Server via createOpenClawServer(),
+// listens on an ephemeral loopback port, and exercises it with real HTTP
+// requests — the same approach P1/P2 use for the registry/bridge above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeOpenClawRegistry({ seed = 900, scopes = ["local-session", OPENCLAW_CREDENTIAL_SCOPE], now } = {}) {
+  const reg = createCredentialRegistry({
+    rng: makeDeterministicRng(seed),
+    scopes,
+    ...(now ? { now } : {}),
+  });
+  reg.issue();
+  return reg;
+}
+
+function buildOpenClawTestServer(overrides = {}) {
+  const logs = { log: [], error: [] };
+  const fakeLog = {
+    log: (...args) => logs.log.push(args.map(String).join(" ")),
+    error: (...args) => logs.error.push(args.map(String).join(" ")),
+  };
+  const forwardedCalls = [];
+  const flaskCalls = [];
+
+  let openclaw; // sendToRenderer closes over this; only invoked after assignment below.
+
+  const registry = overrides.registry || makeOpenClawRegistry();
+
+  const baseDeps = {
+    registry,
+    env: {},
+    isRendererAvailable: () => true,
+    sendToRenderer: (payload) => {
+      forwardedCalls.push(payload);
+      setImmediate(() => openclaw.respondWebhook(payload.requestId, { ok: true, echo: payload }));
+    },
+    getHealthInfo: () => ({
+      llmLoaded: false,
+      modelName: null,
+      flaskPort: 65000,
+      companions: 0,
+      scenarios: 0,
+      rendererReady: true,
+    }),
+    resolveManifestPath: () => null,
+    llama: {
+      isRunning: () => false,
+      proxyRequest: async () => ({ status: 200, headers: new Map(), body: null }),
+      chat: async () => ({ choices: [{ message: { content: "hi" } }], usage: {} }),
+    },
+    getCurrentModelFilename: () => null,
+    runVisionAnalyze: async () => "vision-result",
+    loadModelSpec: async () => {},
+    unloadModel: async () => {},
+    recordLifetimeTokenUsage: () => {},
+    flaskPort: 65000,
+    flaskAuthHeaders: () => ({ "x-bonzai-session": "server-side-flask-credential" }),
+    fetchImpl: async (url, opts) => {
+      flaskCalls.push({ url, opts });
+      return { status: 200, json: async () => ({ ok: true }) };
+    },
+    log: fakeLog,
+  };
+
+  openclaw = createOpenClawServer({ ...baseDeps, ...overrides, registry });
+  return { openclaw, registry, logs, forwardedCalls, flaskCalls };
+}
+
+async function listenEphemeral(openclaw) {
+  await new Promise((resolve, reject) => {
+    openclaw.server.once("error", reject);
+    openclaw.server.listen(0, "127.0.0.1", resolve);
+  });
+  return openclaw.server.address().port;
+}
+
+async function closeServer(openclaw) {
+  await new Promise((resolve) => openclaw.server.close(resolve));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC1 (R1): loopback-only listening, configurable port
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P6 AC1: getOpenClawHost defaults to loopback and coerces non-loopback values", () => {
+  assert.equal(getOpenClawHost({}), "127.0.0.1");
+  assert.equal(getOpenClawHost({ [OPENCLAW_HOST_ENV]: "0.0.0.0" }), "127.0.0.1");
+  assert.equal(getOpenClawHost({ [OPENCLAW_HOST_ENV]: "evil.example.com" }), "127.0.0.1");
+  assert.equal(getOpenClawHost({ [OPENCLAW_HOST_ENV]: "localhost" }), "127.0.0.1");
+  assert.equal(getOpenClawHost({ [OPENCLAW_HOST_ENV]: "127.0.0.5" }), "127.0.0.5");
+  assert.equal(getOpenClawHost({ [OPENCLAW_HOST_ENV]: "::1" }), "::1");
+});
+
+test("P6 AC1: getOpenClawPort is env-configurable and retains the 3002 default", () => {
+  assert.equal(DEFAULT_OPENCLAW_PORT, 3002);
+  assert.equal(getOpenClawPort({}), DEFAULT_OPENCLAW_PORT);
+  assert.equal(getOpenClawPort({ [OPENCLAW_PORT_ENV]: "4100" }), 4100);
+  assert.equal(getOpenClawPort({ [OPENCLAW_PORT_ENV]: "not-a-number" }), DEFAULT_OPENCLAW_PORT);
+  assert.equal(getOpenClawPort({ [OPENCLAW_PORT_ENV]: "0" }), DEFAULT_OPENCLAW_PORT);
+  assert.equal(getOpenClawPort({ [OPENCLAW_PORT_ENV]: "99999" }), DEFAULT_OPENCLAW_PORT);
+});
+
+test("P6 AC1: the server binds loopback-only even under a hostile OPENCLAW_API_HOST, and actually accepts connections there", async () => {
+  const { openclaw, registry } = buildOpenClawTestServer({ env: { [OPENCLAW_HOST_ENV]: "0.0.0.0" } });
+  assert.equal(openclaw.host, "127.0.0.1", "0.0.0.0 must be coerced to loopback before listen()");
+  await new Promise((resolve, reject) => {
+    openclaw.server.once("error", reject);
+    openclaw.server.listen(0, openclaw.host, resolve);
+  });
+  try {
+    const addr = openclaw.server.address();
+    assert.equal(addr.address, "127.0.0.1");
+    const res = await fetch(`http://127.0.0.1:${addr.port}/health`, {
+      headers: { "x-bonzai-session": registry.getSessionCredential() },
+    });
+    assert.equal(res.status, 200);
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC2 (R2): auth on every non-preflight route, trusted-origin CORS, preflight
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P6 AC2: representative routes reject missing/wrong credentials and accept a valid one (Bearer or x-bonzai-session)", async () => {
+  const { openclaw, registry } = buildOpenClawTestServer();
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  try {
+    const routes = [
+      { method: "GET", path: "/health" },
+      { method: "GET", path: "/v1/models" },
+      { method: "GET", path: "/companions" },
+      { method: "GET", path: "/api/llm/info" },
+      { method: "GET", path: "/manifest" },
+    ];
+    for (const { method, path } of routes) {
+      const noAuth = await fetch(`http://127.0.0.1:${port}${path}`, { method });
+      assert.equal(noAuth.status, 401, `${method} ${path} without credential must be 401`);
+
+      const wrong = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        headers: { "x-bonzai-session": "definitely-wrong" },
+      });
+      assert.equal(wrong.status, 401, `${method} ${path} with a wrong credential must be 401`);
+
+      const bearer = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      assert.notEqual(bearer.status, 401, `${method} ${path} with a valid Bearer credential must not be 401`);
+
+      const sessionHeader = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        headers: { "x-bonzai-session": token },
+      });
+      assert.notEqual(sessionHeader.status, 401, `${method} ${path} with a valid x-bonzai-session must not be 401`);
+    }
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC2: an expired credential fails closed", async () => {
+  const clock = makeClock();
+  // Short lifetime so the test can advance the injected clock past expiry.
+  const shortLived = createCredentialRegistry({
+    rng: makeDeterministicRng(911),
+    now: clock.now,
+    lifetimeMs: 60_000,
+    scopes: ["local-session", OPENCLAW_CREDENTIAL_SCOPE],
+  });
+  shortLived.issue();
+  const token = shortLived.getSessionCredential();
+  const { openclaw } = buildOpenClawTestServer({ registry: shortLived });
+  const port = await listenEphemeral(openclaw);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/health`, { headers: { "x-bonzai-session": token } });
+    assert.equal(ok.status, 200);
+    clock.advance(60_001);
+    const expired = await fetch(`http://127.0.0.1:${port}/health`, { headers: { "x-bonzai-session": token } });
+    assert.equal(expired.status, 401, "expired credential must be rejected");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC2: a credential without the openclaw scope (wrong scope) is rejected", async () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(912), scopes: ["local-session"] });
+  registry.issue();
+  const token = registry.getSessionCredential();
+  const { openclaw } = buildOpenClawTestServer({ registry });
+  const port = await listenEphemeral(openclaw);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { headers: { "x-bonzai-session": token } });
+    assert.equal(res.status, 401, "a credential scoped only to local-session must not authenticate OpenClaw routes");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC2: trusted origin gets an exact echoed CORS header (never a wildcard); disallowed origin gets none", async () => {
+  const { openclaw, registry } = buildOpenClawTestServer({
+    env: { [OPENCLAW_TRUSTED_ORIGINS_ENV]: "http://localhost:5173" },
+  });
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  try {
+    const trusted = await fetch(`http://127.0.0.1:${port}/health`, {
+      headers: { "x-bonzai-session": token, Origin: "http://localhost:5173" },
+    });
+    assert.equal(trusted.headers.get("access-control-allow-origin"), "http://localhost:5173");
+    assert.notEqual(trusted.headers.get("access-control-allow-origin"), "*");
+
+    const untrusted = await fetch(`http://127.0.0.1:${port}/health`, {
+      headers: { "x-bonzai-session": token, Origin: "https://evil.example.com" },
+    });
+    assert.equal(untrusted.headers.get("access-control-allow-origin"), null, "disallowed origin must get no ACAO header");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC2: OPTIONS preflight is a deterministic, unauthenticated 204", async () => {
+  const { openclaw } = buildOpenClawTestServer();
+  const port = await listenEphemeral(openclaw);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/webhook`, { method: "OPTIONS" });
+    assert.equal(res.status, 204);
+    assert.equal(await res.text(), "");
+    const withOrigin = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "OPTIONS",
+      headers: { Origin: "https://evil.example.com" },
+    });
+    assert.equal(withOrigin.status, 204, "preflight status must not depend on origin trust");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6: isOriginAllowed / getOpenClawTrustedOrigins never produce a wildcard allowlist entry", () => {
+  const trusted = getOpenClawTrustedOrigins({});
+  assert.equal(isOriginAllowed("http://localhost:5173", trusted), true);
+  assert.equal(isOriginAllowed(null, trusted), false);
+  assert.equal(isOriginAllowed("https://evil.example.com", trusted), false);
+
+  assert.equal(getOpenClawTrustedOrigins({ [OPENCLAW_TRUSTED_ORIGINS_ENV]: "*" }).includes("*"), false);
+  const custom = getOpenClawTrustedOrigins({ [OPENCLAW_TRUSTED_ORIGINS_ENV]: "https://app.example.com, *" });
+  assert.deepEqual(custom, ["https://app.example.com"]);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC3 (R3): finite timeouts, bounded JSON parsing
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P6 AC3: header/request/keep-alive timeouts are finite (no longer disabled)", () => {
+  const { openclaw } = buildOpenClawTestServer();
+  assert.ok(openclaw.server.headersTimeout > 0, "headersTimeout must be finite");
+  assert.ok(openclaw.server.requestTimeout > 0, "requestTimeout must be finite");
+  assert.ok(openclaw.server.keepAliveTimeout > 0, "keepAliveTimeout must be finite");
+});
+
+test("P6 AC3: an oversized request body is rejected with 413 before reaching any handler", async () => {
+  const { openclaw, registry, forwardedCalls } = buildOpenClawTestServer({ maxBodyBytes: 512 });
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+      method: "POST",
+      headers: { "x-bonzai-session": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "web", channel: "c", message: "x".repeat(1000) }),
+    });
+    assert.equal(res.status, 413);
+    assert.equal(forwardedCalls.length, 0, "an oversized body must never reach the forwarder");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC4 (R4): strict /webhook schema, exactly-once forwarding, redaction
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P6: validateWebhookPayload accepts the documented shape and rejects every other one", () => {
+  assert.equal(validateWebhookPayload({ platform: "web", channel: "c1", message: "hi" }).ok, true);
+  assert.equal(
+    validateWebhookPayload({ platform: "web", channel: "c1", message: "hi", identifier: "u1" }).data.userId,
+    "u1",
+  );
+  assert.equal(validateWebhookPayload(null).ok, false);
+  assert.equal(validateWebhookPayload([1, 2]).ok, false, "array body rejected");
+  assert.equal(validateWebhookPayload("just a string").ok, false, "scalar body rejected");
+  assert.equal(validateWebhookPayload({ channel: "c1", message: "hi" }).ok, false, "missing platform");
+  assert.equal(validateWebhookPayload({ platform: "web", message: "hi" }).ok, false, "missing channel");
+  assert.equal(validateWebhookPayload({ platform: "web", channel: "c1" }).ok, false, "missing message");
+  assert.equal(validateWebhookPayload({ platform: 1, channel: "c1", message: "hi" }).ok, false, "wrong-type platform");
+  assert.equal(validateWebhookPayload({ platform: "myspace", channel: "c1", message: "hi" }).ok, false, "unsupported platform");
+  assert.equal(
+    validateWebhookPayload({ platform: "web", channel: "c1", message: "hi", extra: 1 }).ok,
+    false,
+    "unknown field rejected",
+  );
+  assert.equal(
+    validateWebhookPayload({ platform: "web", channel: "c1", message: "x".repeat(4001) }).ok,
+    false,
+    "oversized message rejected",
+  );
+  assert.equal(
+    validateWebhookPayload({ platform: "web", channel: "c".repeat(257), message: "hi" }).ok,
+    false,
+    "oversized channel rejected",
+  );
+});
+
+test("P6 AC4: a valid webhook payload is forwarded exactly once, mapped onto the internal shape", async () => {
+  const { openclaw, registry, forwardedCalls } = buildOpenClawTestServer();
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+      method: "POST",
+      headers: { "x-bonzai-session": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "discord", channel: "chan-1", message: "hello", identifier: "user-1" }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(forwardedCalls.length, 1, "forwardToRenderer must be called exactly once");
+    const { platform, channelId, message, userId } = forwardedCalls[0];
+    assert.deepEqual({ platform, channelId, message, userId }, {
+      platform: "discord",
+      channelId: "chan-1",
+      message: "hello",
+      userId: "user-1",
+    });
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC4: malformed, oversized, or unsupported webhook payloads are rejected with 4xx and never forwarded", async () => {
+  const { openclaw, registry, forwardedCalls } = buildOpenClawTestServer();
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+
+  const send = (body, { raw = false } = {}) =>
+    fetch(`http://127.0.0.1:${port}/webhook`, {
+      method: "POST",
+      headers: { "x-bonzai-session": token, "Content-Type": "application/json" },
+      body: raw ? body : JSON.stringify(body),
+    });
+
+  try {
+    const cases = [
+      ["invalid JSON", "not json at all", { raw: true }],
+      ["array body", ["platform", "web"]],
+      ["scalar body", "just a string"],
+      ["missing platform", { channel: "c", message: "m" }],
+      ["missing channel", { platform: "web", message: "m" }],
+      ["missing message", { platform: "web", channel: "c" }],
+      ["wrong-type platform", { platform: 5, channel: "c", message: "m" }],
+      ["unsupported platform value", { platform: "myspace", channel: "c", message: "m" }],
+      ["unknown field", { platform: "web", channel: "c", message: "m", extra: "nope" }],
+      ["oversized message field", { platform: "web", channel: "c", message: "x".repeat(4001) }],
+    ];
+    for (const [label, body, opts] of cases) {
+      const res = await send(body, opts);
+      assert.ok(res.status >= 400 && res.status < 500, `${label} must be rejected with a 4xx`);
+    }
+    assert.equal(forwardedCalls.length, 0, "no malformed payload may ever reach forwardToRenderer");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC4: credentials, headers, and body/message content never appear in logs; credentials never appear in responses", async () => {
+  const { openclaw, registry, logs } = buildOpenClawTestServer();
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  const bogusCaller = "attacker-supplied-credential-xyz";
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+      method: "POST",
+      headers: {
+        "x-bonzai-session": token,
+        Authorization: `Bearer ${bogusCaller}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ platform: "discord", channel: "very-secret-channel-id", message: "sensitive message body" }),
+    });
+    const text = await res.text();
+    const logged = [...logs.log, ...logs.error].join("\n");
+
+    assert.equal(logged.includes(token), false, "server credential must never be logged");
+    assert.equal(logged.includes(bogusCaller), false, "caller-supplied credential must never be logged");
+    assert.equal(logged.includes("very-secret-channel-id"), false, "channel identifier must not be logged");
+    assert.equal(logged.includes("sensitive message body"), false, "message body must not be logged");
+
+    assert.equal(text.includes(token), false, "server credential must never appear in a response body");
+    assert.equal(text.includes(bogusCaller), false, "caller-supplied credential must never be echoed in a response body");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC4: an internal forwarding failure returns a generic error body, not raw internals", async () => {
+  const { openclaw, registry } = buildOpenClawTestServer({
+    isRendererAvailable: () => false,
+  });
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+      method: "POST",
+      headers: { "x-bonzai-session": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "web", channel: "c", message: "m" }),
+    });
+    assert.equal(res.status, 502);
+    const body = await res.json();
+    assert.equal(body.error, "Webhook forwarding failed");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC5 (R5): Flask proxy attaches the server-side credential, never the caller's
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P6 AC5: GET through the Flask proxy carries only the server-side scoped credential", async () => {
+  const { openclaw, registry, flaskCalls } = buildOpenClawTestServer();
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/flask/audio/info`, {
+      method: "GET",
+      headers: { "x-bonzai-session": token, "X-Attacker-Header": "x-bonzai-session=attacker-value" },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(flaskCalls.length, 1);
+    assert.equal(flaskCalls[0].opts.headers["x-bonzai-session"], "server-side-flask-credential");
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+test("P6 AC5: POST through the Flask proxy never forwards the caller's own credential verbatim", async () => {
+  const { openclaw, registry, flaskCalls } = buildOpenClawTestServer();
+  const port = await listenEphemeral(openclaw);
+  const token = registry.getSessionCredential();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/flask/audio/tts`, {
+      method: "POST",
+      headers: { "x-bonzai-session": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "hi" }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(flaskCalls.length, 1);
+    assert.equal(flaskCalls[0].opts.headers["x-bonzai-session"], "server-side-flask-credential");
+    assert.notEqual(
+      flaskCalls[0].opts.headers["x-bonzai-session"],
+      token,
+      "the caller's own credential must never be forwarded to Flask verbatim — only the server-side one",
+    );
+  } finally {
+    await closeServer(openclaw);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC6 (R6): .env.example documents OpenClaw host/port/trusted-origin/credential
+// variable names without secret values
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P6 AC6: .env.example documents OpenClaw bind/origin variable names, and the shared credential name, without secret values", () => {
+  const content = fs.readFileSync(ENV_EXAMPLE, "utf8");
+  assert.match(content, /OPENCLAW_API_HOST=127\.0\.0\.1/);
+  assert.match(content, /OPENCLAW_API_PORT=3002/);
+  assert.match(content, /^OPENCLAW_TRUSTED_ORIGINS=\s*$/m, "trusted origins must be documented with no value");
+  assert.match(content, /BONZAI_SESSION_CREDENTIAL/, "the Electron-owned credential name must be referenced");
+  assert.equal(/BONZAI_SESSION_CREDENTIAL=\S/.test(content), false, "the credential variable must not carry a value");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Static wiring checks — main.js cannot be imported directly under
+// `node --test` (it requires a live Electron process), so, consistent with
+// the A5 checks above, these assert the source wiring statically.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P6: main.js wires the OpenClaw server through createOpenClawServer and listens on its resolved loopback host/port", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.ok(/createOpenClawServer\(\{/.test(src), "main.js must construct the server via createOpenClawServer");
+  assert.ok(
+    /openclawApi\.server\.listen\(\s*openclawApi\.port\s*,\s*openclawApi\.host/.test(src),
+    "main.js must listen on the factory-resolved host/port, not a hardcoded 0.0.0.0/undefined bind",
+  );
+  assert.equal(
+    /Access-Control-Allow-Origin["'`]\s*,\s*["'`]\*["'`]/.test(src),
+    false,
+    "main.js must not set a wildcard Access-Control-Allow-Origin header",
+  );
+});
+
+test("P6: OpenClaw/Hermes config writers use the live scoped credential, not a hardcoded placeholder", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.equal(/apiKey:\s*["']bonzai-local["']/.test(src), false, "the hardcoded bonzai-local apiKey literal must be removed");
+  assert.equal(/BONZAI_API_KEY=bonzai-local/.test(src), false, "the hardcoded bonzai-local env literal must be removed");
+  assert.ok(/apiKey:\s*openclawCredential/.test(src), "OpenClaw's provider config must use the live credential");
+  assert.ok(/BONZAI_API_KEY=\$\{hermesCredential\}/.test(src), "Hermes's .env must use the live credential");
+});
+
+test("P6: the Flask proxy dependency is wired to the main-owned session credential helper", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.ok(
+    /flaskAuthHeaders:\s*\(\)\s*=>\s*flaskSessionHeaders\(\)/.test(src),
+    "the Flask proxy must authenticate with flaskSessionHeaders(), not caller-supplied headers",
+  );
+});
+
+test("P6: the shared credential registry is issued with the openclaw scope", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.ok(
+    /scopes:\s*\[\s*["']local-session["']\s*,\s*OPENCLAW_CREDENTIAL_SCOPE\s*\]/.test(src),
+    "credentialRegistry must be constructed with the openclaw scope alongside local-session",
+  );
 });
