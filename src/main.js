@@ -566,7 +566,7 @@ const checkPythonServer = async (url, silent = false) => {
     try {
       const controller = new AbortController();
       const fetchTimeout = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, { signal: controller.signal, headers: flaskSessionHeaders() });
       clearTimeout(fetchTimeout);
       if (res.ok) {
         const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -915,6 +915,19 @@ const JWT_SECRET = getOrCreateJwtSecret();
 const credentialRegistry = createCredentialRegistry();
 credentialRegistry.issue();
 
+// Internal main→Flask calls authenticate with the same scoped session
+// credential the renderer uses (x-bonzai-session). The Flask server requires
+// it on every route except /auth/challenge and /auth/verify
+// (src/server/bonzai_security.py), so server-to-loopback calls must carry it.
+// Merges the credential into `extra` headers; if no live credential exists
+// the server rejects with 401 (fail-closed).
+function flaskSessionHeaders(extra = {}) {
+  const token = credentialRegistry.getSessionCredential();
+  const headers = { ...extra };
+  if (token) headers["x-bonzai-session"] = token;
+  return headers;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Trusted local-session lifecycle (P2 Security)
 //
@@ -979,6 +992,58 @@ ipcMain.on("session:invalidate-credential", (event) => {
   const sender = normalizeSessionEvent(event, mainWindow);
   event.returnValue = sessionBridge.invalidate(sender);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Automatic credential rotation (A5 Security)
+//
+// The registry bounds every credential to <= 24h (MAX_LIFETIME_MS), and
+// Flask's session_credential_active() fails closed once that declared expiry
+// passes — a stolen credential cannot outlive it. But nothing previously
+// re-issued the credential before that happened, so a long-running session
+// would eventually run Flask on an expired credential with no live
+// replacement: every request would be rejected, and a subsequent Flask
+// restart would find getSessionCredential() returning null (past expiry)
+// and fail validate_startup_secrets() for want of SESSION/SESSION_EXPIRES.
+//
+// Rotating proactively, well before expiry, keeps a live credential handed
+// to dependents at all times so the app never runs (or restarts) into that
+// dead zone. This reuses the exact rekey path manual rotation uses, so
+// Flask/rpc-server are restarted with the fresh credential the same way.
+// ─────────────────────────────────────────────────────────────────────────────
+const CREDENTIAL_ROTATION_MARGIN_MS = 10 * 60 * 1000; // rotate 10 min before declared expiry
+let credentialRotationTimer = null;
+
+function scheduleCredentialRotation() {
+  if (credentialRotationTimer) clearTimeout(credentialRotationTimer);
+  const { expiresAt } = credentialRegistry.describe();
+  if (typeof expiresAt !== "number") return;
+  const delay = Math.max(expiresAt - Date.now() - CREDENTIAL_ROTATION_MARGIN_MS, 0);
+  credentialRotationTimer = setTimeout(async () => {
+    try {
+      console.log("[Session] Rotating session credential ahead of declared expiry...");
+      credentialRegistry.issue();
+      await rekeySessionDependents();
+      console.log("[Session] Automatic credential rotation complete.");
+      // The renderer's in-memory token is for the now-invalidated generation
+      // (Flask/rpc-server were just rekeyed to the new one) — tell it to
+      // re-obtain via session:obtain-credential rather than silently 401ing.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("session:credential-rotated");
+      }
+    } catch (err) {
+      console.error("[Session] Automatic credential rotation failed:", err?.message || err);
+      // The now-current credential is still live (issue() already replaced
+      // it even though rekey failed); retry sooner instead of leaving
+      // dependents on the old generation until the next scheduled rotation.
+      credentialRotationTimer = setTimeout(scheduleCredentialRotation, 60 * 1000);
+      return;
+    }
+    scheduleCredentialRotation();
+  }, delay);
+  if (typeof credentialRotationTimer.unref === "function") credentialRotationTimer.unref();
+}
+
+scheduleCredentialRotation();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transaction confirmation dialog (P0 Security)
@@ -1653,7 +1718,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
           try {
             const res = await fetch(`http://127.0.0.1:${FLASK_PORT}/pipelines/plan`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: flaskSessionHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({ pipeline: p }),
               signal: AbortSignal.timeout(3000),
             });
@@ -1731,7 +1796,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       const mode = store.get("p2p.networkMode", "local");
       if (mode === "provider") {
         const flaskPort = parseInt(process.env.BONZAI_SERVER_PORT || "65000", 10);
-        await startProviderBridge({ flaskPort });
+        await startProviderBridge({ flaskPort, getFlaskHeaders: flaskSessionHeaders });
       }
     } catch (err) {
       // Bridge is non-fatal — Consumer + Privacy / Provider modes just
@@ -2302,7 +2367,7 @@ async function routeInferenceRequest(request) {
   // Make the request
   const response = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: flaskSessionHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(requestParams),
   });
 
@@ -4977,7 +5042,7 @@ ipcMain.handle("synth-describe", async (_event, { mode, tier, html, css, js, tex
 
       // 2. Tell Flask server to unload all GPU pipelines
       try {
-        await fetch(`http://127.0.0.1:${PY_SERVER_PORT}/memory/clear`, { method: "POST" });
+        await fetch(`http://127.0.0.1:${PY_SERVER_PORT}/memory/clear`, { method: "POST", headers: flaskSessionHeaders() });
         console.log("[synth-describe] Flask pipelines cleared");
       } catch (e) {
         console.warn("[synth-describe] Flask memory clear skipped:", e.message);

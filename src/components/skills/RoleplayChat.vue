@@ -3449,6 +3449,7 @@ import {
   switchNetwork,
   web3Service,
 } from "../../services/web3.service.js";
+import { authFetch, socketAuthPayload } from "../../services/auth.service.js";
 
 // Pre-load bundled companion and scenario images using Vite's import.meta.glob
 // This ensures images are bundled with the app and available on first run
@@ -3844,7 +3845,7 @@ export default {
       const checks = Object.entries(PIPELINE_MAP).map(
         async ([modelKey, pipeline]) => {
           try {
-            const response = await fetch(
+            const response = await authFetch(
               `http://localhost:${port}/pipelines/plan`,
               {
                 method: "POST",
@@ -3893,7 +3894,7 @@ export default {
         console.log(
           `[RoleplayChat] Starting download for ${modelKey} (pipeline: ${pipeline})`,
         );
-        const response = await fetch(
+        const response = await authFetch(
           `http://localhost:${port}/pipelines/prefetch`,
           {
             method: "POST",
@@ -3945,6 +3946,7 @@ export default {
           reconnection: true,
           reconnectionDelay: 1000,
           reconnectionAttempts: 5,
+          auth: socketAuthPayload(),
         });
 
         downloadsSocket.value.on("connect", () => {
@@ -7341,7 +7343,7 @@ export default {
         );
 
         // Call the voice design endpoint with return_sample to get the voice for persistence
-        const response = await fetch(
+        const response = await authFetch(
           "http://127.0.0.1:65000/audio/quality/persona",
           {
             method: "POST",
@@ -7376,7 +7378,7 @@ export default {
           // Also get the generated speech as a preview
           let previewAudio = null;
           if (result.audio_path) {
-            const audioResponse = await fetch(
+            const audioResponse = await authFetch(
               `http://127.0.0.1:65000/files/${result.audio_path.split("/").pop()}`,
             );
             if (audioResponse.ok) {
@@ -8512,7 +8514,7 @@ export default {
 
       try {
         const port = window.BONZAI_SERVER_PORT || 65000;
-        const response = await fetch(
+        const response = await authFetch(
           `http://localhost:${port}/vision/analyze`,
           {
             method: "POST",

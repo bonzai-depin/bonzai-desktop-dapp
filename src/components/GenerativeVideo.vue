@@ -409,7 +409,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
-import { socketAuthPayload } from "../services/auth.service.js";
+import { socketAuthPayload, authFetch } from "../services/auth.service.js";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
@@ -1481,7 +1481,7 @@ export default {
         auto_download: true,
       });
       for (let attempt = 0; attempt < 12; attempt++) {  // ≤ 60s wait window
-        const r = await fetch(`${API_BASE}/video/enhance`, {
+        const r = await authFetch(`${API_BASE}/video/enhance`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
@@ -1614,7 +1614,7 @@ export default {
       // Free GPU memory: unload local LLM + clear cached Flask models
       try {
         await window.electronAPI?.unloadModel?.();
-        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
+        await authFetch(`${API_BASE}/memory/clear`, { method: "POST" });
       } catch (e) {
         console.warn("[GenerativeVideo] Memory clear:", e.message);
       }

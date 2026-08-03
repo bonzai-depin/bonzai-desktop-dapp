@@ -442,6 +442,17 @@ export const initLocalSession = async () => {
   return !!localCredential;
 };
 
+// Main rotates the desktop session credential on its own, ahead of its
+// declared expiry, and rekeys Flask/rpc-server to the replacement before
+// this fires (see scheduleCredentialRotation in main.js). The token held
+// above is for the now-dead generation, so every local request would start
+// 401ing until the app is restarted; re-obtain immediately instead.
+if (typeof window !== "undefined") {
+  window?.electronAPI?.session?.onRotated?.(() => {
+    initLocalSession().catch(() => {});
+  });
+}
+
 /**
  * Socket.IO auth payload attaching the local session credential without
  * persisting it. The wallet bearer (if any) rides on the transport; callers

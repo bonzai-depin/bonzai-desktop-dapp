@@ -634,6 +634,7 @@
 <script>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
+import { authFetch } from '../../services/auth.service.js';
 import BzCloseButton from '../BzCloseButton.vue';
 
 const SKILL_ID = 'live-streaming-v1.0.0';
@@ -1083,13 +1084,13 @@ export default {
 
     // ═══ GENERATION FUNCTIONS ═══
     async function generateImage(prompt) {
-      const res = await fetch('http://127.0.0.1:65000/image/turbo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, width: 1024, height: 1024 }) });
+      const res = await authFetch('http://127.0.0.1:65000/image/turbo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, width: 1024, height: 1024 }) });
       if (!res.ok) throw new Error(`Image: ${res.status}`);
       const data = await res.json();
       return data.image_base64 ? `data:image/png;base64,${data.image_base64}` : data.image_path;
     }
     async function generateAudio(text) {
-      const res = await fetch('http://127.0.0.1:65000/audio/turbo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: 'af_heart' }) });
+      const res = await authFetch('http://127.0.0.1:65000/audio/turbo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: 'af_heart' }) });
       if (!res.ok) throw new Error(`Audio: ${res.status}`);
       const data = await res.json();
       return data.audio_path || data.audio_base64;
@@ -1098,12 +1099,12 @@ export default {
       let style = 'pop', bpm = 120;
       const m = prompt.match(/^\[([^\]]+)\]\s*/);
       if (m) { const parts = m[1].split(/\s+/); style = parts[0] || style; bpm = parseInt(parts[1]) || bpm; prompt = prompt.slice(m[0].length); }
-      const res = await fetch('http://127.0.0.1:65000/audio/music', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, tags: style, bpm, duration: 30 }) });
+      const res = await authFetch('http://127.0.0.1:65000/audio/music', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, tags: style, bpm, duration: 30 }) });
       if (!res.ok) throw new Error(`Music: ${res.status}`);
       return (await res.json()).audio_path;
     }
     async function generateVideo(prompt) {
-      const res = await fetch('http://127.0.0.1:65000/video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, width: 768, height: 480, num_frames: 81, fps: 24 }) });
+      const res = await authFetch('http://127.0.0.1:65000/video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, width: 768, height: 480, num_frames: 81, fps: 24 }) });
       if (!res.ok) throw new Error(`Video: ${res.status}`);
       return (await res.json()).video_path;
     }

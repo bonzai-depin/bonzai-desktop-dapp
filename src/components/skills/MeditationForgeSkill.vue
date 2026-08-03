@@ -315,7 +315,7 @@
 <script>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import BonzaiPulse from '../BonzaiPulse.vue';
-import { getAuthHeaders } from '../../services/auth.service.js';
+import { getAuthHeaders, getLocalSessionHeaders } from '../../services/auth.service.js';
 import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 import { resolveLLM } from '../../skills/flagship.js';
 
@@ -1079,10 +1079,10 @@ Output ONLY the meditation script text, nothing else.`;
         emit('status-update', generationStatus.value);
 
         // Get auth headers for API calls
-        const authHeaders = getAuthHeaders();
         const headers = {
           'Content-Type': 'application/json',
-          ...authHeaders,
+          ...getLocalSessionHeaders(),
+          ...getAuthHeaders(),
         };
         // Generate calming image with FLUX Klein
         try {

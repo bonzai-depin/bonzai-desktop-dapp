@@ -235,10 +235,16 @@ test("AC3: childEnvSecrets delivers session credential + non-default signing sec
   const session = reg.getSessionCredential();
   const signing = reg.getFlaskSigningSecret();
 
-  // Two distinct, non-default secrets present under the expected env keys.
-  assert.deepEqual(Object.keys(env).sort(), [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.FLASK_SIGNING].sort());
+  // Two distinct, non-default secrets present under the expected env keys,
+  // plus the credential's epoch-second expiry (bonzai_security.py's
+  // validate_startup_secrets/session_credential_active require it).
+  assert.deepEqual(
+    Object.keys(env).sort(),
+    [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.SESSION_EXPIRES, CREDENTIAL_ENV.FLASK_SIGNING].sort(),
+  );
   assert.equal(env[CREDENTIAL_ENV.SESSION], session);
   assert.equal(env[CREDENTIAL_ENV.FLASK_SIGNING], signing);
+  assert.equal(env[CREDENTIAL_ENV.SESSION_EXPIRES], String(Math.floor(reg.describe().expiresAt / 1000)));
   assert.notEqual(session, signing, "session credential and signing secret are separate");
   assert.ok(hexBitLength(session) >= ENTROPY_BITS_MIN);
   assert.ok(hexBitLength(signing) >= ENTROPY_BITS_MIN);
@@ -284,7 +290,11 @@ test("AC3: secrets do not appear in argv, URLs, logs, store data, or fixtures", 
 });
 
 test("AC3: env names are stable and documented as the sole delivery channel", () => {
-  assert.deepEqual(CREDENTIAL_ENV, { SESSION: "BONZAI_SESSION_CREDENTIAL", FLASK_SIGNING: "SECRET_KEY" });
+  assert.deepEqual(CREDENTIAL_ENV, {
+    SESSION: "BONZAI_SESSION_CREDENTIAL",
+    SESSION_EXPIRES: "BONZAI_SESSION_EXPIRES",
+    FLASK_SIGNING: "SECRET_KEY",
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,6 +373,11 @@ test("A1: childEnvSecrets omits an expired session credential so a restarted chi
     false,
     "expired session credential must not be delivered (no key at all, not 'null')",
   );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(expired, CREDENTIAL_ENV.SESSION_EXPIRES),
+    false,
+    "no stale expiry timestamp without its matching credential",
+  );
   // The Flask signing secret is per-launch and never expires, so it is still delivered.
   assert.equal(expired[CREDENTIAL_ENV.FLASK_SIGNING], reg.getFlaskSigningSecret());
 });
@@ -378,7 +393,12 @@ test("A2: childEnvSecrets omits the Flask signing secret when flask:false", () =
   reg.issue();
   const env = childEnvSecrets(reg, { flask: false });
 
-  assert.deepEqual(Object.keys(env), [CREDENTIAL_ENV.SESSION], "session only when flask scoped out");
+  // Expiry travels with the session credential regardless of flask scoping.
+  assert.deepEqual(
+    Object.keys(env).sort(),
+    [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.SESSION_EXPIRES].sort(),
+    "session (+ its expiry) only when flask scoped out",
+  );
   assert.equal(env[CREDENTIAL_ENV.SESSION], reg.getSessionCredential());
   assert.equal(
     Object.prototype.hasOwnProperty.call(env, CREDENTIAL_ENV.FLASK_SIGNING),
@@ -391,7 +411,10 @@ test("A2: default childEnvSecrets still delivers both secrets (diffuser path unc
   const reg = createCredentialRegistry({ rng: makeDeterministicRng(42) });
   reg.issue();
   const env = childEnvSecrets(reg);
-  assert.deepEqual(Object.keys(env).sort(), [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.FLASK_SIGNING].sort());
+  assert.deepEqual(
+    Object.keys(env).sort(),
+    [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.SESSION_EXPIRES, CREDENTIAL_ENV.FLASK_SIGNING].sort(),
+  );
 });
 
 test("A2: main.js scopes the signing secret away from the rpc-server spawn", () => {
@@ -634,6 +657,63 @@ test("P2 AC4: an untrusted sender is denied obtain and rotate", () => {
   return bridge.rotate(remote).then((r) => {
     assert.deepEqual(r, { ok: false, reason: "remote" });
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A5: proactive automatic rotation. Nothing previously re-issued the
+// credential before its declared (<=24h) expiry, so a long-running launch
+// would eventually run Flask on an expired credential with no replacement,
+// and a subsequent Flask restart would find getSessionCredential() returning
+// null and fail validate_startup_secrets(). main.js must self-schedule a
+// rotation ahead of expiry, reuse the same rekey path as manual rotate, and
+// tell the renderer to re-obtain (the old token it holds is for a dead
+// generation the instant rekey restarts Flask/rpc-server).
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("A5: main.js self-schedules a credential rotation ahead of declared expiry", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.ok(
+    /function scheduleCredentialRotation\s*\(/.test(src),
+    "expected a scheduleCredentialRotation function in main.js",
+  );
+  assert.ok(
+    /scheduleCredentialRotation\(\)\s*;/.test(src),
+    "scheduleCredentialRotation must actually be invoked, not just defined",
+  );
+  // The rotation must run before the credential's declared expiry, not after.
+  assert.ok(
+    /expiresAt\s*-\s*Date\.now\(\)/.test(src),
+    "rotation delay must be derived from time remaining until expiresAt",
+  );
+});
+
+test("A5: automatic rotation reuses the same rekey path as manual rotate and notifies the renderer", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const scheduleFnMatch = src.match(
+    /function scheduleCredentialRotation\s*\([^)]*\)\s*\{[\s\S]*?\n\}/,
+  );
+  assert.ok(scheduleFnMatch, "could not locate scheduleCredentialRotation body");
+  const body = scheduleFnMatch[0];
+  assert.ok(
+    /credentialRegistry\.issue\(\)/.test(body),
+    "automatic rotation must mint a fresh credential via the same registry",
+  );
+  assert.ok(
+    /rekeySessionDependents\(\)/.test(body),
+    "automatic rotation must rekey Flask/rpc-server, same as manual rotate",
+  );
+  assert.ok(
+    /webContents\.send\(\s*["']session:credential-rotated["']/.test(body),
+    "renderer must be told to re-obtain after an automatic rotation",
+  );
+});
+
+test("A5: preload exposes a listener for the automatic-rotation notification", () => {
+  const src = fs.readFileSync(PRELOAD_JS, "utf8");
+  assert.ok(
+    /onRotated\s*:/.test(src) && /ipcRenderer\.on\(\s*["']session:credential-rotated["']/.test(src),
+    "preload must expose session.onRotated wired to session:credential-rotated",
+  );
 });
 
 test("P2 AC4: obtain fails closed when no live credential exists", () => {

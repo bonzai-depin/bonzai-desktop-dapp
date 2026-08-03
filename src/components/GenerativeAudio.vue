@@ -1026,7 +1026,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
-import { socketAuthPayload } from "../services/auth.service.js";
+import { socketAuthPayload, authFetch } from "../services/auth.service.js";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import {
   generationStore,
@@ -2656,7 +2656,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       // Free GPU memory: unload local LLM + clear cached Flask models
       try {
         await window.electronAPI?.unloadModel?.();
-        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
+        await authFetch(`${API_BASE}/memory/clear`, { method: "POST" });
       } catch (e) {
         console.warn("[GenerativeAudio] Memory clear:", e.message);
       }

@@ -278,6 +278,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import VueMarkdown from "vue-markdown-render";
 import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 import { listAllLLMs } from "../../skills/flagship.js";
+import { authFetch } from "../../services/auth.service.js";
 
 const SKILL_ID = "mass-chat-v1.0.0";
 const PROMPT_LIBRARY_KEY = "bonzai.mass-chat.library";
@@ -463,7 +464,7 @@ export default {
           .slice(0, 220)
           .replace(/\s+/g, " ");
         if (!snippet) return;
-        const imgRes = await fetch(`${API_BASE}/image/turbo`, {
+        const imgRes = await authFetch(`${API_BASE}/image/turbo`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

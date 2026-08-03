@@ -29,6 +29,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     rotateCredential: () => ipcRenderer.invoke("session:rotate-credential"),
     /** Synchronously invalidate the current local session credential (logout). */
     invalidateCredential: () => ipcRenderer.sendSync("session:invalidate-credential"),
+    /**
+     * Fired after main autonomously rotates the credential ahead of its
+     * declared expiry (see scheduleCredentialRotation in main.js). The
+     * renderer must re-obtain the credential — the old token it is holding
+     * has already been rejected by the rekeyed Flask/rpc-server.
+     */
+    onRotated: (cb) => {
+      const handler = () => cb();
+      ipcRenderer.on("session:credential-rotated", handler);
+      return () => ipcRenderer.removeListener("session:credential-rotated", handler);
+    },
   },
   copyText: (text) => ipcRenderer.invoke("clipboard-copy-text", text),
   startServer: () => ipcRenderer.invoke("start-server"),

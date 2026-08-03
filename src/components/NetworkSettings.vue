@@ -756,6 +756,7 @@ import {
   flushPending as serviceTimeFlush,
   checkEligibility as serviceTimeCheckEligibility,
 } from "../services/serviceTime.service.js";
+import { authFetch } from "../services/auth.service.js";
 
 // ─── Section rail navigation ───────────────────────────────────
 //
@@ -1253,7 +1254,7 @@ const runSelfTest = async () => {
 
   // Test 1: Flask Server (port 65000) — image/audio/video/vision
   try {
-    const flaskResponse = await fetch("http://127.0.0.1:65000/audio/info", {
+    const flaskResponse = await authFetch("http://127.0.0.1:65000/audio/info", {
       method: "GET",
       headers: { "Content-Type": "application/json" },
     });

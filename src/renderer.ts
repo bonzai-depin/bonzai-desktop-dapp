@@ -30,13 +30,19 @@ import { createApp } from "vue";
 import { createPinia } from 'pinia';
 import axios from 'axios';
 import App from "./App.vue";
-import { authService, initLocalSession } from './services/auth.service.js';
+import { authService, getLocalSessionHeaders, initLocalSession } from './services/auth.service.js';
 import { createI18nPlugin } from './i18n/index.js';
 import { installLegacyI18nBridge } from './i18n/legacy.js';
 
-// Add axios interceptor to include auth headers on all requests
+// Add axios interceptor to include auth headers on all requests. The local
+// desktop session header is attached unconditionally (wallet-optional local
+// creation); the wallet bearer layers on top when present.
 axios.interceptors.request.use(
   (config) => {
+    const localHeaders = getLocalSessionHeaders();
+    if (localHeaders['x-bonzai-session']) {
+      config.headers['x-bonzai-session'] = localHeaders['x-bonzai-session'];
+    }
     const headers = authService.getAuthHeaders();
     if (headers.Authorization) {
       config.headers.Authorization = headers.Authorization;

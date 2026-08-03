@@ -1023,7 +1023,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue"
 import VueMarkdown from "vue-markdown-render";
 import axios from "axios";
 import { io } from "socket.io-client";
-import { socketAuthPayload } from "../services/auth.service.js";
+import { socketAuthPayload, authFetch } from "../services/auth.service.js";
 import { useSkillStore } from "../stores/skillStore.js";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { SKILL_CATEGORY_META } from "../skills/types.js";
@@ -1468,7 +1468,7 @@ export default {
             console.log(
               `[SmartAgent] Checking pipeline ${pipeline} for model ${modelKey}...`,
             );
-            const response = await fetch(
+            const response = await authFetch(
               `http://localhost:${port}/pipelines/plan`,
               {
                 method: "POST",

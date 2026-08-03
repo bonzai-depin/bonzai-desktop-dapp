@@ -39,12 +39,17 @@ const DEFAULT_SCOPES = ["local-session"];
 // are the ONLY channel through which registry secrets leave this process.
 //
 //   SESSION          — the per-launch session credential (P2+ bridge / server auth).
+//   SESSION_EXPIRES  — the credential's epoch-second expiry. bonzai_security.py's
+//                       validate_startup_secrets() refuses to start Flask without
+//                       this, and session_credential_active() fails closed on a
+//                       missing/malformed value, so it MUST travel alongside SESSION.
 //   FLASK_SIGNING     — non-default Flask signing secret; matches the
 //                       `os.environ.get("SECRET_KEY", ...)` read already in
 //                       src/server/diffuser.py, so a non-default value takes
 //                       effect with no Python change in this step.
 export const CREDENTIAL_ENV = Object.freeze({
   SESSION: "BONZAI_SESSION_CREDENTIAL",
+  SESSION_EXPIRES: "BONZAI_SESSION_EXPIRES",
   FLASK_SIGNING: "SECRET_KEY",
 });
 
@@ -223,7 +228,16 @@ export function createCredentialRegistry({
 export function childEnvSecrets(registry, { flask = true } = {}) {
   const env = {};
   const session = registry.getSessionCredential();
-  if (session != null) env[CREDENTIAL_ENV.SESSION] = session;
+  if (session != null) {
+    env[CREDENTIAL_ENV.SESSION] = session;
+    // Same liveness check as getSessionCredential(), so expiresAt here is
+    // always in the future — Flask's session_credential_active() re-derives
+    // the same fail-closed check from this value on every request.
+    const { expiresAt } = registry.describe();
+    if (typeof expiresAt === "number") {
+      env[CREDENTIAL_ENV.SESSION_EXPIRES] = String(Math.floor(expiresAt / 1000));
+    }
+  }
   if (flask) env[CREDENTIAL_ENV.FLASK_SIGNING] = registry.getFlaskSigningSecret();
   return env;
 }
