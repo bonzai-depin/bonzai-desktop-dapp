@@ -135,63 +135,19 @@
         </div>
 
         <!-- Main dashboard for the active company -->
-        <section v-if="teamView === 'all'" class="all-teams-view models__activity--payouts">
-          <div class="all-teams-view__head">
-            <div>
-              <h2 class="fira-sans-condensed-black-italic">All teams</h2>
-            </div>
-            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" :class="{ 'bz-btn--running': allTeamsLoading }" @click="loadAllTeams">
-              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
-              Refresh
-            </button>
-          </div>
-          <div class="all-teams-kpis">
-            <article>
-              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.teams }}</strong>
-              <span>teams</span>
-            </article>
-            <article>
-              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.open }}</strong>
-              <span>open</span>
-            </article>
-            <article>
-              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.blocked }}</strong>
-              <span>blocked</span>
-            </article>
-            <article>
-              <strong class="fira-sans-condensed-black-italic">{{ allTeamStats.approvals }}</strong>
-              <span>approvals</span>
-            </article>
-          </div>
-          <div class="work-status-tabs all-teams-filters" aria-label="All team work filter">
-            <button
-              v-for="filter in allTeamFilters"
-              :key="filter.id"
-              class="issue-filter__chip"
-              :class="{ 'is-active': allTeamStatus === filter.id }"
-              @click="allTeamStatus = filter.id"
-            >
-              {{ filter.label }}
-            </button>
-          </div>
-          <div v-if="allTeamRows.length" class="all-team-todos">
-            <article v-for="row in allTeamRows" :key="row.team.id + ':' + row.issue.id" class="all-team-todo">
-              <span class="company-pill" :class="statusChip(row.issue.status)">{{ row.issue.status.replace('_', ' ') }}</span>
-              <div>
-                <strong class="fira-sans-condensed-black-italic">{{ row.issue.title }}</strong>
-                <small>{{ companyName(row.team) }} · {{ row.issue.assigneeRole || 'Unassigned' }}</small>
-              </div>
-              <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="selectTeam(row.team.id)">
-                Open
-              </button>
-            </article>
-          </div>
-          <div v-else class="empty">No work matches this filter.</div>
-        </section>
+        <CompanyAllTeamsRoom
+          v-if="teamView === 'all'"
+          :bundles="allTeamBundles"
+          :loading="allTeamsLoading"
+          @refresh="loadAllTeams"
+          @open-team="openTeam"
+        />
         <CompanyDashboard
           v-if="active && teamView === 'team'"
           :charter="active"
           :state="store.state"
+          :initial-view="teamTargetView"
+          :initial-result-id="teamTargetResultId"
           @edit="onEdit"
           @new-company="openNewTeam"
           @delete-company="requestDeleteCompany(active)"
@@ -236,12 +192,13 @@ import companyStore from "../stores/companyStore.js";
 import CompanyForm from "./company/CompanyForm.vue";
 import CompanyDashboard from "./company/CompanyDashboard.vue";
 import CompanyIntakeWizard from "./company/CompanyIntakeWizard.vue";
+import CompanyAllTeamsRoom from "./company/CompanyAllTeamsRoom.vue";
 import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { web3Service } from "../services/web3.service.js";
 
 export default {
   name: "Company",
-  components: { CompanyForm, CompanyDashboard, CompanyIntakeWizard },
+  components: { CompanyForm, CompanyDashboard, CompanyIntakeWizard, CompanyAllTeamsRoom },
   setup() {
     const store = companyStore;
     const showForm = ref(false);
@@ -251,6 +208,8 @@ export default {
     const teamView = ref("team");
     const allTeamBundles = ref([]);
     const allTeamsLoading = ref(false);
+    const teamTargetView = ref("command");
+    const teamTargetResultId = ref("");
     const allTeamStatus = ref("open");
     const newTeamPaymentBusy = ref(false);
 
@@ -337,6 +296,14 @@ export default {
       return (company?.name || "Untitled Company").replace(/\s+\(Draft\)$/i, "");
     }
     async function selectTeam(id) {
+      teamTargetView.value = "command";
+      teamTargetResultId.value = "";
+      teamView.value = "team";
+      await store.setActive(id);
+    }
+    async function openTeam(id, view = "command", resultId = "") {
+      teamTargetView.value = view;
+      teamTargetResultId.value = resultId;
       teamView.value = "team";
       await store.setActive(id);
     }
@@ -397,7 +364,8 @@ export default {
       openForm, openWizard, openNewTeam, onFormed, onEdit, onWizardDone, onWizardCancel,
       triggerImport, onImportFile, importInput, companyName,
       pendingDeleteCompany, requestDeleteCompany, dismissDeleteCompany, confirmDeleteCompany,
-      teamView, selectTeam, showAllTeams, loadAllTeams, allTeamsLoading, activeTeamCount,
+      teamView, selectTeam, openTeam, showAllTeams, loadAllTeams, allTeamsLoading, activeTeamCount,
+      teamTargetView, teamTargetResultId,
       allTeamFilters, allTeamStatus, allTeamRows, allTeamStats, statusChip, newTeamLabel, newTeamPaymentBusy,
     };
   },

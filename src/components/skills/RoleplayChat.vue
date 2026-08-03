@@ -2676,6 +2676,7 @@
                 >
                   {{ msg.emotion }}
                 </span>
+                <time v-if="msg.timestamp" class="message-time">{{ formatMessageTime(msg.timestamp) }}</time>
               </div>
               <div class="message-text">
                 <!-- Loading placeholder when waiting for text -->
@@ -3019,6 +3020,16 @@
               </p>
             </div>
           </div>
+          <button
+            v-if="!isChatNearBottom"
+            class="roleplay-scroll-bottom"
+            type="button"
+            title="Scroll to latest message"
+            aria-label="Scroll to latest message"
+            @click="scrollToBottom(true)"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_downward</span>
+          </button>
         </div>
       </div>
 
@@ -4007,6 +4018,7 @@ export default {
     const typingStatus = ref("");
     const suggestedResponses = ref([]);
     const messagesContainer = ref(null);
+    const isChatNearBottom = ref(true);
     const chatInput = ref(null);
     const showAppearanceEditor = ref(false);
 
@@ -6169,8 +6181,8 @@ export default {
         suggestedResponses.value = [];
         nextTick(() => {
           chatInput.value?.focus();
-          scrollToBottom();
-          setTimeout(() => scrollToBottom(), 500);
+          scrollToBottom(true);
+          setTimeout(() => scrollToBottom(true), 500);
         });
       }
     };
@@ -6634,6 +6646,8 @@ export default {
     let scrollTimeout = null;
     let _scrollRafId = 0;
     const onMessagesScroll = (event) => {
+      const container = event.target;
+      isChatNearBottom.value = container.scrollHeight - container.scrollTop - container.clientHeight <= 96;
       // RAF throttle to avoid firing on every scroll frame
       if (_scrollRafId) return;
       _scrollRafId = requestAnimationFrame(() => {
@@ -7978,8 +7992,8 @@ export default {
         suggestedResponses.value = [];
         nextTick(() => {
           chatInput.value?.focus();
-          scrollToBottom();
-          setTimeout(() => scrollToBottom(), 500);
+          scrollToBottom(true);
+          setTimeout(() => scrollToBottom(true), 500);
         });
       }
     };
@@ -8068,13 +8082,25 @@ export default {
       return Date.now() - msg.timestamp < 2000; // Animate messages less than 2 seconds old
     };
 
-    const scrollToBottom = () => {
+    const scrollToBottom = (force = false) => {
+      if (!force && !isChatNearBottom.value) return;
       nextTick(() => {
         if (messagesContainer.value) {
-          messagesContainer.value.scrollTop =
-            messagesContainer.value.scrollHeight;
+          messagesContainer.value.scrollTo({
+            top: messagesContainer.value.scrollHeight,
+            behavior: force ? "smooth" : "auto",
+          });
+          isChatNearBottom.value = true;
         }
       });
+    };
+
+    watch(() => chatHistory.value.length, () => scrollToBottom(false));
+
+    const formatMessageTime = (timestamp) => {
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     };
 
     const getImageSrc = (image) => {
@@ -9202,7 +9228,10 @@ export default {
       pendingMessage,
       suggestedResponses,
       messagesContainer,
+      isChatNearBottom,
+      scrollToBottom,
       chatInput,
+      formatMessageTime,
       showAppearanceEditor,
       companions,
       isLoadingNFTCompanions,
@@ -11050,20 +11079,11 @@ hr {
 }
 
 /* Only animate newly added messages */
-.chat-message.is-new {
-  animation: messageSlideIn 0.4s ease-out;
-}
-
-@keyframes messageSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+.chat-message.is-new:not(.user) { animation: roleplay-message-from-left 280ms var(--bz-ease-out) both; }
+.chat-message.is-new.user { animation: roleplay-message-from-right 280ms var(--bz-ease-out) both; }
+@keyframes roleplay-message-from-left { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes roleplay-message-from-right { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: translateX(0); } }
+.roleplay-scroll-bottom { position: absolute; right: var(--bz-space-5); bottom: var(--bz-space-5); z-index: 4; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--bz-border-strong); border-radius: 50%; background: var(--bz-raised); color: var(--bz-fg); box-shadow: var(--bz-shadow-lg); cursor: pointer; }
 
 .chat-message.user {
   flex-direction: row-reverse;
@@ -11128,6 +11148,7 @@ hr {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.message-time { margin-left: auto; color: var(--bz-fg-low); font: 400 var(--bz-size-micro)/1 var(--bz-font-mono); }
 
 .message-text {
   background: var(--bz-card);

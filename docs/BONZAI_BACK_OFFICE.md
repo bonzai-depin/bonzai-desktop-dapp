@@ -264,6 +264,75 @@ Avoid:
 - product surface
 - agentic org chart as the first experience
 
+## Goal Rooms
+
+The default Company experience is conversational. The owner describes a
+business outcome in a Goal Room, using the language they would use with a
+trusted operator. BonzAI stores that brief as a durable goal, asks the
+coordinator to plan it, routes resulting work to companions, and brings
+decisions and evidence back into the same timeline.
+
+A Goal Room combines:
+
+- owner briefs and active goals;
+- companion planning and in-flight work;
+- approval requests;
+- completed actions and deliverables;
+- the teammates accountable for the outcome;
+- recorded revenue, completed work, and execution counts.
+
+Technical failures remain available in Audit instead of overwhelming the
+business conversation. Detailed Work, Approvals, Outputs, Tools, and Settings
+views remain drill-down surfaces from the room.
+
+The primary interaction is **Brief the team**. Advanced task forms exist for
+inspection and correction, not as the normal way to delegate work.
+
+## Work Event Model
+
+Company goals, issues, approvals, connector actions, generated deliverables,
+treasury entries, and model activity are persisted as structured records and
+projected into the Goal Room and Audit views. Every visible claim should link
+back to a goal, action, output, or receipt. Chat is a view over operational
+state, not a separate source of unverified agent narration.
+
+The event vocabulary is:
+
+```text
+goal_created -> task_created -> action_proposed -> approval_requested
+-> action_executed -> artifact_created -> outcome_recorded
+```
+
+Private company payloads stay in the local SQLite-backed company data layer.
+The inference mesh activity channel never carries company prompts, files,
+wallet details, or generated outputs.
+
+## Inference Mesh Presence
+
+BonzAI joins peer discovery by default. The global Mesh Presence control shows
+connected peers, LAN peers, privacy mode, and sanitized lifecycle activity.
+Discovery combines:
+
+- mDNS discovery for peers on the local network;
+- active relay and LLM-provider records from the protocol provider registry;
+- encrypted libp2p connections using Noise and Yamux.
+
+Discovery and compute authority are separate:
+
+| Mode | Discover peers | Send work | Execute inbound work |
+|---|---:|---:|---:|
+| Private | Yes | No | No |
+| Consumer | Yes | Yes | No |
+| Provider | Yes | Optional | Yes |
+
+The main process checks the current mode for every inbound inference request.
+Private and Consumer modes return `provider_disabled` before invoking any local
+inference pipeline. Provider activity notifications expose a pseudonymous peer
+alias and pipeline category only, never the request body.
+
+Users can pause discovery from Network Settings. This is a privacy override;
+the default is an active, visible mesh presence.
+
 ## Day-One User Scenarios
 
 ### Scenario A: Small Agency

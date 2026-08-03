@@ -1455,7 +1455,21 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     const localPeerId = startedNode.getPeerId();
 
     await startedNode.onInferenceRequest(async (request, remotePeer) => {
+      // Discovery is always available, but serving compute is an explicit
+      // provider capability. Local and consumer modes never execute inbound
+      // payloads, even though their node remains visible to the mesh.
+      const activeMode = store.get("p2p.networkMode", "local");
+      if (activeMode !== "provider") {
+        return { ok: false, error: "provider_disabled", detail: "This peer is present but is not serving inference." };
+      }
+
       console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("mesh-activity", {
+          type: "inference_requested", ts: Date.now(), peerId: remotePeer,
+          pipeline: request.pipeline || "inference",
+        });
+      }
 
       // Concurrency guard — one consumer at a time
       if (_providerBusy) {
@@ -1509,6 +1523,12 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
         if (node.isLANPeer(remotePeer)) response.lanInference = true;
         if (remotePeer === localPeerId) response.selfInference = true;
         response.freeInference = true;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("mesh-activity", {
+            type: "inference_completed", ts: Date.now(), peerId: remotePeer,
+            pipeline: request.pipeline || "inference",
+          });
+        }
         return response;
       } catch (err) {
         return { ok: false, error: "inference_failed", detail: err.message };
@@ -1577,8 +1597,8 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       const { Notification } = require("electron");
       if (Notification.isSupported()) {
         const notification = new Notification({
-          title: "BonzAI — LAN Provider Found",
-          body: `Discovered a BonzAI node at ${lanIP || "local network"}. Free inference available.`,
+          title: "BonzAI Mesh",
+          body: "A BonzAI peer joined your local mesh. No private content was shared.",
           silent: false,
         });
         notification.show();
@@ -1586,6 +1606,14 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       // Forward to renderer for in-app notification
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("lan-peer-discovered", { peerId: discoveredPeerId, lanIP });
+      }
+    };
+
+    startedNode._onNetworkEvent = (activity) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        // Peer IDs are required for routing but no addresses, prompts, model
+        // inputs, wallet data, or generated content cross this UI channel.
+        mainWindow.webContents.send("mesh-activity", activity);
       }
     };
 
@@ -1666,6 +1694,7 @@ ipcMain.handle("p2p-status", async () => {
     multiaddrs: node.getMultiaddrs(),
     connectedPeers: node.getConnectedPeersCount(),
     relayConnections: node.getRelayConnectionsCount(),
+    lanPeers: node.getLANPeers().length,
     natStatus: node.getNatStatus(),
     isUsingRelay: node.isUsingRelay(),
   };
@@ -2152,15 +2181,17 @@ async function routeInferenceRequest(request) {
         endpoint = "/video/quality";
         break;
 
-      // Vision pipeline (Qwen3.5-0.8B 4-bit MLX)
+      // Cross-platform GGUF vision pipeline.
       case "vision":
       case "qwen35_vision":
         endpoint = "/vision/analyze";
         break;
+      case "vision_caption":
+        endpoint = "/vision/caption";
+        break;
 
-      // OCR pipeline (GLM-OCR 4-bit MLX)
+      // OCR uses the same multimodal GGUF with a transcription prompt.
       case "ocr":
-      case "glm_ocr":
         endpoint = "/vision/ocr";
         break;
 
@@ -4211,6 +4242,7 @@ ipcMain.handle("model-unload", unloadModel);
 ipcMain.handle("model-chat", chat);
 ipcMain.handle("model-chat-stream", chatStream);
 ipcMain.handle("zhc-chat-stream", chatStreamStateless);
+ipcMain.handle("usage:get-lifetime-tokens", getLifetimeTokenUsage);
 ipcMain.handle("model-abort-chat-stream", (event) => {
   const aborted = _abortChat(event.sender.id);
   if (!aborted) {
@@ -4258,6 +4290,52 @@ async function _getPool() {
   return _pool;
 }
 
+const BONZAI_VISION_MODEL = Object.freeze({
+  key: "bonzai_vision_qwen35_08b",
+  filename: "meetara-qwen3.5-0.8b-q4_k_m.gguf",
+  mmproj: "meetara-vl-qwen3.5-0.8b.gguf",
+});
+
+async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens } = {}) {
+  const encoded = image_base64 || image;
+  if (!encoded) throw new Error("image_base64 is required");
+  const modelPath = path.join(MODEL_DIR, BONZAI_VISION_MODEL.filename);
+  const mmprojPath = path.join(MODEL_DIR, BONZAI_VISION_MODEL.mmproj);
+  if (!fs.existsSync(modelPath) || !fs.existsSync(mmprojPath)) {
+    throw new Error("Cross-platform vision assets are not downloaded");
+  }
+
+  const pool = await _getPool();
+  const sizeBytes = Math.round(
+    (fs.statSync(modelPath).size + fs.statSync(mmprojPath).size) * 1.25,
+  );
+  pool.registerModelPath(BONZAI_VISION_MODEL.key, modelPath, sizeBytes, {
+    ctxSize: 4096,
+    context: 4096,
+    mmprojPath,
+  });
+  const dataUrl = String(encoded).startsWith("data:")
+    ? String(encoded)
+    : `data:image/jpeg;base64,${encoded}`;
+  const text = await pool.chat({
+    modelKey: BONZAI_VISION_MODEL.key,
+    maxTokens: Number(max_tokens) || 512,
+    temperature: 0.1,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: prompt || "Describe this image in detail." },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ],
+    }],
+  });
+  recordLifetimeTokenUsage({
+    messages: [{ role: "user", content: [{ type: "text", text: prompt || "Describe this image in detail." }] }],
+    output: text,
+  });
+  return String(text).replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+}
+
 ipcMain.handle("pool-configure", async (_event, opts) => {
   const pool = await _getPool();
   pool.configure(opts || {});
@@ -4289,6 +4367,7 @@ ipcMain.handle("pool-chat", async (_event, opts) => {
   const pool = await _getPool();
   try {
     const text = await pool.chat(opts);
+    recordLifetimeTokenUsage({ messages: opts?.messages || [], output: text });
     return { ok: true, text };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -4835,6 +4914,11 @@ ipcMain.handle("synth-describe", async (_event, { mode, tier, html, css, js, tex
       temperature: 0.2,
     });
     const rawOutput = (describeResult.choices?.[0]?.message?.content ?? "").trim();
+    recordLifetimeTokenUsage({
+      messages: [{ role: "user", content: promptText }],
+      output: rawOutput,
+      usage: describeResult.usage,
+    });
 
     // Strip any markdown formatting the LLM may have added
     let description = rawOutput
@@ -6266,6 +6350,52 @@ function _estTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
+const LIFETIME_TOKEN_USAGE_KEY = "usage.lifetimeTokens";
+
+function getLifetimeTokenUsage() {
+  if (store.has(LIFETIME_TOKEN_USAGE_KEY)) {
+    return Number(store.get(LIFETIME_TOKEN_USAGE_KEY, 0)) || 0;
+  }
+
+  // Older releases only persisted completion counts on text-history rows.
+  // Preserve that available history once, then use the full lifetime ledger.
+  const historicalRows = store.get("unifiedTextInferences", []);
+  const historicalTotal = Array.isArray(historicalRows)
+    ? historicalRows.reduce((total, row) => total + Math.max(0, Number(row?.tokensUsed) || 0), 0)
+    : 0;
+  store.set(LIFETIME_TOKEN_USAGE_KEY, historicalTotal);
+  return historicalTotal;
+}
+
+function _messageTokenEstimate(messages = []) {
+  return messages.reduce((total, message) => {
+    if (typeof message?.content === "string") return total + _estTokens(message.content);
+    if (!Array.isArray(message?.content)) return total;
+    return total + message.content.reduce((partTotal, part) => (
+      part?.type === "text" ? partTotal + _estTokens(part.text || "") : partTotal
+    ), 0);
+  }, 0);
+}
+
+function recordLifetimeTokenUsage({ messages = [], output = "", usage = null } = {}) {
+  const reportedTotal = Number(usage?.total_tokens);
+  const reportedParts = Number(usage?.prompt_tokens || 0) + Number(usage?.completion_tokens || 0);
+  const estimatedTotal = _messageTokenEstimate(messages) + _estTokens(String(output || ""));
+  const increment = Math.max(0, Math.round(
+    Number.isFinite(reportedTotal) && reportedTotal > 0
+      ? reportedTotal
+      : reportedParts > 0 ? reportedParts : estimatedTotal,
+  ));
+  if (!increment) return getLifetimeTokenUsage();
+
+  const total = getLifetimeTokenUsage() + increment;
+  store.set(LIFETIME_TOKEN_USAGE_KEY, total);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send("usage:lifetime-tokens-changed", total);
+  }
+  return total;
+}
+
 /**
  * Trim chatHistory to fit within the active model's context window.
  *
@@ -6332,14 +6462,16 @@ async function chat(_event, input) {
   const returnMetadata = typeof input === "object" && input.returnMetadata;
 
   const startTime = Date.now();
+  const messages = _buildMessages(userMessage, { maxTokens });
   const result = await llamaServer.chat({
-    messages: _buildMessages(userMessage, { maxTokens }),
+    messages,
     temperature,
     maxTokens,
     seed,
   });
 
   const assistantMessage = result.choices?.[0]?.message?.content ?? "";
+  recordLifetimeTokenUsage({ messages, output: assistantMessage, usage: result.usage });
   chatHistory.push({ role: "user", content: userMessage });
   chatHistory.push({ role: "assistant", content: assistantMessage });
 
@@ -6428,6 +6560,7 @@ async function chatStreamStateless(event, input) {
       },
       { signal: ctrl.signal },
     );
+    recordLifetimeTokenUsage({ messages, output: res });
     return res;
   } catch (err) {
     if (err.name === "AbortError" || ctrl.signal.aborted) {
@@ -6470,9 +6603,10 @@ async function chatStream(event, input) {
   _setChatAbort(key, ctrl);
 
   try {
+    const messages = _buildMessages(userMessage, { maxTokens });
     const assistantMessage = await llamaServer.chatStream(
       {
-        messages: _buildMessages(userMessage, { maxTokens }),
+        messages,
         temperature,
         maxTokens,
         seed,
@@ -6486,6 +6620,7 @@ async function chatStream(event, input) {
       { signal: ctrl.signal },
     );
 
+    recordLifetimeTokenUsage({ messages, output: assistantMessage });
     chatHistory.push({ role: "user", content: userMessage });
     chatHistory.push({ role: "assistant", content: assistantMessage });
     return assistantMessage;
@@ -6542,7 +6677,16 @@ async function chatWithVision(_event, { message, imageBase64 }) {
       "Current model is not multimodal. Load a GGUF with an mmproj asset, or hit the Flask /vision/analyze endpoint for Python-side vision.",
     );
   }
-  return llamaServer.chatVision({ message, imageBase64 });
+  const result = await llamaServer.chatVision({ message, imageBase64 });
+  const output = typeof result === "string"
+    ? result
+    : result?.choices?.[0]?.message?.content || result?.text || "";
+  recordLifetimeTokenUsage({
+    messages: [{ role: "user", content: message }],
+    output,
+    usage: result?.usage,
+  });
+  return result;
 }
 
 // Check if mmproj file exists for multimodal GGUF models
@@ -6820,6 +6964,25 @@ function startOpenClawAPIServer() {
     // ═══════════════════════════════════════════════════════════════════════
     // OpenAI-Compatible API (for OpenClaw and other clients)
     // ═══════════════════════════════════════════════════════════════════════
+    if (req.method === "POST" && url.pathname === "/api/vision/analyze") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 32 * 1024 * 1024) req.destroy();
+      });
+      req.on("end", async () => {
+        try {
+          const text = await runCrossPlatformVision(JSON.parse(body || "{}"));
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, response: text }));
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
 
     // GET /v1/models - List available models
     if (req.method === "GET" && url.pathname === "/v1/models") {
@@ -6969,6 +7132,11 @@ function startOpenClawAPIServer() {
             messages: [{ role: "user", content: prompt }],
           });
           const response = completion.choices?.[0]?.message?.content ?? "";
+          recordLifetimeTokenUsage({
+            messages: [{ role: "user", content: prompt }],
+            output: response,
+            usage: completion.usage,
+          });
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: true, response }));

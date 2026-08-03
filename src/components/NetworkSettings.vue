@@ -39,8 +39,8 @@
             :class="{ 'is-selected': networkMode === 'local' }"
             @click="networkMode = 'local'"
           >
-            <span class="material-symbols-outlined">wifi_off</span>
-            <span>Local</span>
+            <span class="material-symbols-outlined">shield_lock</span>
+            <span>Private</span>
           </button>
           <button
             type="button"
@@ -67,10 +67,10 @@
           <div v-if="networkMode === 'local'" class="description-card">
             <span class="material-symbols-outlined">info</span>
             <div>
-              <strong>Local Mode</strong>
+              <strong>Private Mode</strong>
               <p>
-                All generation runs on your device. Fully offline, maximum
-                privacy.
+                Generation stays on your device. Peer discovery remains active,
+                but inbound work and private data never leave this machine.
               </p>
             </div>
           </div>
@@ -101,8 +101,8 @@
         </div>
       </div>
 
-      <!-- Node Status (consumer + provider) -->
-      <div class="status-section mt-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
+      <!-- Mesh presence is visible in every mode. -->
+      <div class="status-section mt-5">
         <h2 id="net-status" class="section-title">
           Node Status
         </h2>
@@ -144,12 +144,12 @@
           <button v-if="!p2pStatus.started" class="bz-btn bz-btn--success is-medium" @click="startP2P" :disabled="isStarting">
             <span v-if="isStarting" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">play_arrow</span>
-            {{ isStarting ? "Starting..." : "Start Node" }}
+            {{ isStarting ? "Joining..." : "Join Mesh" }}
           </button>
           <button v-else class="bz-btn bz-btn--destructive is-medium" @click="stopP2P" :disabled="isStopping">
             <span v-if="isStopping" class="loader mr-2"></span>
             <span class="material-symbols-outlined mr-2">stop</span>
-            {{ isStopping ? "Stopping..." : "Stop Node" }}
+            {{ isStopping ? "Leaving..." : "Pause Discovery" }}
           </button>
           <button class="bz-btn bz-btn--warning is-medium ml-2" @click="refreshStatus" :disabled="isRefreshing">
             <span class="material-symbols-outlined" :class="{ spinning: isRefreshing }">refresh</span>
@@ -770,7 +770,7 @@ import {
 // silently broken before.
 const _allSections = [
   { id: "net-mode",             label: "Mode",            visible: () => true },
-  { id: "net-status",           label: "Node Status",     visible: () => networkMode.value === "consumer" || networkMode.value === "provider" },
+  { id: "net-status",           label: "Mesh Presence",   visible: () => true },
   { id: "net-nat",              label: "NAT",             visible: () => networkMode.value === "provider" },
   { id: "net-local-providers",  label: "Local Providers", visible: () => networkMode.value === "consumer" && lanProviders.value && lanProviders.value.length > 0 },
   { id: "net-remote-providers", label: "Remote Providers",visible: () => networkMode.value === "consumer" },
@@ -1140,6 +1140,7 @@ const startP2P = async () => {
       await window.electronAPI.store.set("p2p.pricingCurrency", "FREE");
       await window.electronAPI.store.set("p2p.enableRelay", enableRelay.value);
       await window.electronAPI.store.set("p2p.relayFee", relayFee.value);
+      await window.electronAPI.store.set("p2p.discoveryEnabled", true);
     } else {
       console.error("[NetworkSettings] Failed to start P2P:", result.error);
     }
@@ -1160,6 +1161,7 @@ const stopP2P = async () => {
       shardProviderEnabled.value = false;
     }
     await window.electronAPI.p2pStop();
+    await window.electronAPI.store.set("p2p.discoveryEnabled", false);
     console.log("[NetworkSettings] P2P node stopped");
     p2pStatus.value = {
       started: false,
@@ -1395,12 +1397,9 @@ watch(networkMode, async (newMode) => {
     await window.electronAPI.p2pPipelineCancel();
   }
 
-  if (newMode === 'local' && p2pStatus.value.started) {
-    await stopP2P();
-  }
-
-  // Auto-start P2P when switching to consumer or provider mode
-  if ((newMode === 'consumer' || newMode === 'provider') && !p2pStatus.value.started) {
+  // Discovery is independent from compute routing. Private mode keeps the
+  // node present while refusing inbound work in the main process.
+  if (!p2pStatus.value.started) {
     await startP2P();
   }
 

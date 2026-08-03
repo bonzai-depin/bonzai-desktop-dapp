@@ -234,6 +234,7 @@ import { ref, reactive, computed } from "vue";
 import companyStore from "../../stores/companyStore.js";
 import { DEFAULT_COMPANIONS, LLM_BASE_MODELS, listAllLLMs } from "../../skills/flagship.js";
 import { getCompanionCareer, getCompanySkillsForCompanion } from "../../skills/companionSkillRoadmap.js";
+import { formatModelLabel, formatRoleTitle } from "../../services/company/presentation.js";
 
 const QUICK_ROLES = ["CEO", "CFO", "CMO", "CPO", "Producer:text", "GeneralCounsel"];
 
@@ -262,7 +263,7 @@ export default {
           const m = LLM_BASE_MODELS[baseKey];
           return {
             key: `llm_${baseKey}`,
-            label: `${m.name} (${m.parameters >= 1e9 ? `${(m.parameters / 1e9).toFixed(1)}B` : m.parameters})`,
+            label: `${formatModelLabel(m.name)} (${m.parameters >= 1e9 ? `${(m.parameters / 1e9).toFixed(1)}B` : m.parameters})`,
             params: m.parameters || 0,
           };
         })
@@ -345,21 +346,7 @@ export default {
      * charters; this only affects rendering.
      */
     function roleDisplayName(roleKey) {
-      if (!roleKey) return "";
-      if (roleKey.startsWith("Producer:")) {
-        const pipeline = roleKey.split(":")[1] || "";
-        let label;
-        if (pipeline === "3d") label = "3D";
-        else if (pipeline === "fineTune") label = "Fine-Tune";
-        else label = pipeline.charAt(0).toUpperCase() + pipeline.slice(1);
-        return `${label} Producer`;
-      }
-      const TITLES = {
-        CEO: "Coordinator", CFO: "Finance", CPO: "Product", CMO: "Marketing",
-        CSO: "Sales", COO: "Operations",
-        GeneralCounsel: "General Counsel", RnDLead: "R&D Lead",
-      };
-      return TITLES[roleKey] || roleKey;
+      return formatRoleTitle(roleKey);
     }
 
     return {

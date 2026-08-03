@@ -1,5 +1,6 @@
 import companionTokenService from './companionToken.service.js'
 import fineTuneTokenService from './fineTuneToken.service.js'
+import { getAllGameTokenAddresses, getGameTokenInfo } from './gameToken.service.js'
 
 const HISTORY_KEY = 'bonzai.market.history.v1'
 const readHistory = () => { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}') } catch { return {} } }
@@ -9,7 +10,7 @@ async function marketFor(address) {
   const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`)
   if (!response.ok) throw new Error(`Market data unavailable (${response.status})`)
   const payload = await response.json()
-  const pairs = (payload.pairs || []).filter(pair => pair.dexId === 'uniswap')
+  const pairs = payload.pairs || []
   return pairs.sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0))[0] || null
 }
 
@@ -24,8 +25,10 @@ function record(assets) {
 }
 
 export async function loadMarkets() {
-  const [companionAddresses, modelAddresses] = await Promise.all([
-    companionTokenService.getAllTokenAddresses(), fineTuneTokenService.getAllTokenAddresses(),
+  const [companionAddresses, modelAddresses, gameAddresses] = await Promise.all([
+    companionTokenService.getAllTokenAddresses().catch(() => []),
+    fineTuneTokenService.getAllTokenAddresses().catch(() => []),
+    getAllGameTokenAddresses().catch(() => []),
   ])
   const companions = (await Promise.all(companionAddresses.map(companionTokenService.getTokenInfo))).filter(Boolean).map(info => ({ ...info, kind: 'companion' }))
   const models = (await Promise.all(modelAddresses.map(async address => {
@@ -33,7 +36,8 @@ export async function loadMarkets() {
     const profile = await fineTuneTokenService.getModelProfile(info.contentTokenId)
     return { ...info, ...profile, imageURI: profile?.imageURI, kind: profile?.modelKind || 'fine_tuned' }
   }))).filter(Boolean)
-  const assets = await Promise.all([...companions, ...models].map(async asset => {
+  const games = (await Promise.all(gameAddresses.map(getGameTokenInfo))).filter(Boolean)
+  const assets = await Promise.all([...companions, ...models, ...games].map(async asset => {
     try { return { ...asset, market: await marketFor(asset.address) } } catch (error) { return { ...asset, market: null, marketError: error.message } }
   }))
   const history = record(assets)

@@ -1948,46 +1948,44 @@ export const MODEL_REQUIREMENTS = {
     description: "3D mesh generation from images",
   },
 
-  // Vision / Captioning (Apple Silicon — mlx_vlm, single shared model)
+  // Shared cross-platform llama.cpp vision model (GGUF + mmproj).
   vision: {
-    name: "Qwen3.5 0.8B 4-bit (MLX)",
+    name: "Qwen 3.5 0.8B Vision",
     type: "vision",
     pipeline: "vision",
     endpoint: "/vision/analyze",
-    repo: "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    repo: "meetara-lab/meetara-qwen3.5-0.8b-gguf",
     license: "Apache-2.0",
-    licenseUrl: "https://huggingface.co/mlx-community/Qwen3.5-0.8B-MLX-4bit",
-    size: "~0.5 GB",
+    licenseUrl: "https://huggingface.co/meetara-lab/meetara-qwen3.5-0.8b-gguf",
+    size: "~0.7 GB",
     vram: "2 GB",
-    description: "Vision-language model for image analysis (Apple Silicon)",
+    description: "Cross-platform image understanding through llama.cpp",
   },
 
-  vision_mlx: {
-    name: "Qwen3.5 0.8B 4-bit (MLX)",
+  vision_caption: {
+    name: "Qwen 3.5 0.8B Vision",
     type: "vision",
-    pipeline: "vision_mlx",
+    pipeline: "vision_caption",
     endpoint: "/vision/caption",
-    repo: "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    repo: "meetara-lab/meetara-qwen3.5-0.8b-gguf",
     license: "Apache-2.0",
-    licenseUrl: "https://huggingface.co/mlx-community/Qwen3.5-0.8B-MLX-4bit",
-    size: "~0.5 GB",
+    licenseUrl: "https://huggingface.co/meetara-lab/meetara-qwen3.5-0.8b-gguf",
+    size: "~0.7 GB",
     vram: "2 GB",
-    description: "Vision-language model for video captioning (Apple Silicon)",
+    description: "Cross-platform frame captioning through llama.cpp",
   },
 
-  // OCR (Apple Silicon — mlx_vlm)
   ocr: {
-    name: "GLM-OCR 4-bit (MLX)",
+    name: "Qwen 3.5 Vision OCR",
     type: "ocr",
     pipeline: "ocr",
     endpoint: "/vision/ocr",
-    repo: "mlx-community/GLM-OCR-4bit",
-    license: "MIT",
-    licenseUrl: "https://huggingface.co/mlx-community/GLM-OCR-4bit",
-    size: "~1.25 GB",
+    repo: "meetara-lab/meetara-qwen3.5-0.8b-gguf",
+    license: "Apache-2.0",
+    licenseUrl: "https://huggingface.co/meetara-lab/meetara-qwen3.5-0.8b-gguf",
+    size: "~0.7 GB",
     vram: "2 GB",
-    description:
-      "State-of-the-art OCR for documents, tables, formulas, and TCG cards (Apple Silicon)",
+    description: "Cross-platform OCR, tables, and formula transcription",
   },
 };
 
@@ -1998,7 +1996,7 @@ export const MODEL_REQUIREMENTS = {
 export const SKILL_MODEL_REQUIREMENTS = {
   "story-studio-v1.0.0": ["llm_llama_3_1_8b", "image_turbo", "audio"],
   "meditation-forge-v1.0.0": ["llm_qwen3_5_9b", "image_turbo", "audio_turbo"],
-  "video-captioning-v1.0.0": ["vision_mlx"],
+  "video-captioning-v1.0.0": ["vision_caption"],
   "tcg-analysis-v1.0.0": ["ocr"],
   "virtual-staging-pro-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
   "virtual-try-on-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
@@ -7481,7 +7479,6 @@ export const videoCaptioning = createSkillDefinition({
     "vision",
   ],
   hasCustomUI: true,
-  platform: { os: "darwin", arch: "arm64" }, // Apple Silicon only (mlx_vlm)
   requirements: {
     minLevel: 3,
     requiredApis: ["vision"],
@@ -7547,7 +7544,6 @@ export const tcgAnalysis = createSkillDefinition({
     "pricing",
   ],
   hasCustomUI: true,
-  platform: { os: "darwin", arch: "arm64" }, // Apple Silicon only (mlx_vlm)
   requirements: {
     minLevel: 3,
     requiredApis: ["ocr"],

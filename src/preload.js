@@ -57,6 +57,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setSystemPrompt: (prompt) => ipcRenderer.invoke("model-set-system-prompt", prompt),
   chatStream: (userMessage, options = {}) => ipcRenderer.invoke("model-chat-stream", { message: userMessage, ...options }),
   abortChatStream: () => ipcRenderer.invoke("model-abort-chat-stream"),
+  usage: {
+    getLifetimeTokens: () => ipcRenderer.invoke("usage:get-lifetime-tokens"),
+    onLifetimeTokensChanged: (cb) => {
+      const handler = (_event, total) => cb(total);
+      ipcRenderer.on("usage:lifetime-tokens-changed", handler);
+      return () => ipcRenderer.removeListener("usage:lifetime-tokens-changed", handler);
+    },
+  },
 
   // ─── Multi-instance llama-server pool (Company "parallel LLM" mode) ───
   poolConfigure: (opts) => ipcRenderer.invoke("pool-configure", opts),
@@ -645,6 +653,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onLANPeerDiscovered: (handler) => {
     ipcRenderer.on("lan-peer-discovered", handler);
     return () => ipcRenderer.removeListener("lan-peer-discovered", handler);
+  },
+
+  onMeshActivity: (handler) => {
+    ipcRenderer.on("mesh-activity", handler);
+    return () => ipcRenderer.removeListener("mesh-activity", handler);
   },
 
   // ─────────────────────────────────────────────────────────────────────────────

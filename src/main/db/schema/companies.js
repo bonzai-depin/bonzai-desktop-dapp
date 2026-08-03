@@ -94,6 +94,7 @@ export const issueAttempts = sqliteTable(
     finishedAt: integer("finished_at"),
     txOrLink: text("tx_or_link"),
     error: text("error"),
+    result: text("result", { mode: "json" }),
   },
   (t) => ({
     byIssue: index("idx_attempts_issue").on(t.issueId, t.startedAt),

@@ -5,6 +5,7 @@
       `bz-msg--${role}`,
       { 'bz-msg--streaming': streaming },
       { 'bz-msg--error': error },
+      { 'bz-msg--fresh': fresh },
     ]"
     :aria-busy="streaming ? 'true' : 'false'"
   >
@@ -207,6 +208,8 @@ const props = defineProps({
   attachments: { type: Array, default: () => [] },
   /** Optional tool calls: [{ name, detail }, …] */
   toolCalls: { type: Array, default: () => [] },
+  /** Animate only messages that have just arrived. */
+  fresh: { type: Boolean, default: false },
 });
 
 defineEmits(["inspect", "regenerate", "edit", "delete", "retry", "switch-local", "mint"]);
@@ -296,6 +299,10 @@ function copyWithTextarea(text) {
 }
 .bz-msg:first-child { padding-top: 0; }
 .bz-msg:last-child  { border-bottom: 0; padding-bottom: var(--bz-space-3); }
+.bz-msg--fresh:not(.bz-msg--user) { animation: bz-msg-from-left 280ms var(--bz-ease-out) both; }
+.bz-msg--fresh.bz-msg--user { animation: bz-msg-from-right 280ms var(--bz-ease-out) both; }
+@keyframes bz-msg-from-left { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes bz-msg-from-right { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: translateX(0); } }
 
 /* Marker — left-edge dot identifying the role. */
 .bz-msg__marker {

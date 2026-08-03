@@ -41,14 +41,33 @@ export function create(companyId, input) {
 }
 
 export function list(companyId, filter = {}) {
-  const { orm } = get();
+  const { db, orm } = get();
   const where = [eq(issues.companyId, companyId)];
   if (filter.status) where.push(eq(issues.status, filter.status));
   if (filter.assigneeRole) where.push(eq(issues.assigneeRole, filter.assigneeRole));
   if (filter.priority) where.push(eq(issues.priority, filter.priority));
   if (filter.goalId !== undefined) where.push(filter.goalId === null
     ? sql`${issues.goalId} IS NULL` : eq(issues.goalId, filter.goalId));
-  return orm.select().from(issues).where(and(...where)).orderBy(desc(issues.createdAt)).all();
+  const rows = orm.select().from(issues).where(and(...where)).orderBy(desc(issues.createdAt)).all();
+  if (!rows.length) return rows;
+  const attempts = db.prepare(`
+    SELECT a.id, a.issue_id AS issueId, a.role, a.companion, a.status,
+           a.started_at AS startedAt, a.finished_at AS finishedAt,
+           a.tx_or_link AS txOrLink, a.error, a.result
+    FROM issue_attempts a
+    JOIN issues i ON i.id = a.issue_id
+    WHERE i.company_id = ?
+    ORDER BY a.started_at ASC
+  `).all(companyId).map((attempt) => ({
+    ...attempt,
+    result: _parseJSON(attempt.result),
+  }));
+  const byIssue = new Map();
+  for (const attempt of attempts) {
+    if (!byIssue.has(attempt.issueId)) byIssue.set(attempt.issueId, []);
+    byIssue.get(attempt.issueId).push(attempt);
+  }
+  return rows.map((row) => ({ ...row, attempts: byIssue.get(row.id) || [] }));
 }
 
 export function getById(companyId, issueId) {
@@ -123,6 +142,7 @@ export function startAttempt(companyId, issueId, role, companion) {
     finishedAt: null,
     txOrLink: null,
     error: null,
+    result: null,
   };
   const tx = db.transaction(() => {
     orm.insert(issueAttempts).values(attempt).run();
@@ -157,6 +177,7 @@ export function finishAttempt(companyId, issueId, outcome) {
         finishedAt: now,
         txOrLink: outcome.txOrLink ?? null,
         error: outcome.error ?? null,
+        result: outcome.result ?? null,
       }).where(eq(issueAttempts.id, att.id)).run();
     }
     orm.update(issues).set({ status: nextStatus, updatedAt: now })
@@ -209,9 +230,9 @@ export function bulkInsert(items) {
   `);
   const attemptStmt = db.prepare(`
     INSERT OR IGNORE INTO issue_attempts (
-      id, issue_id, role, companion, status, started_at, finished_at, tx_or_link, error
+      id, issue_id, role, companion, status, started_at, finished_at, tx_or_link, error, result
     ) VALUES (
-      @id, @issueId, @role, @companion, @status, @startedAt, @finishedAt, @txOrLink, @error
+      @id, @issueId, @role, @companion, @status, @startedAt, @finishedAt, @txOrLink, @error, @result
     )
   `);
   const tx = db.transaction((rows) => {
@@ -244,6 +265,7 @@ export function bulkInsert(items) {
             finishedAt: a.finishedAt ?? null,
             txOrLink: a.txOrLink ?? null,
             error: a.error ?? null,
+            result: a.result ? JSON.stringify(a.result) : null,
           });
         }
       }
@@ -251,4 +273,10 @@ export function bulkInsert(items) {
   });
   tx(items);
   return items.length;
+}
+
+function _parseJSON(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  try { return JSON.parse(value); } catch { return null; }
 }

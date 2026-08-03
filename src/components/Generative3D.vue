@@ -20,6 +20,7 @@
             </div>
             <div class="bz-screen-actions">
                 <button
+                  v-if="workspaceTab === 'generate'"
                   class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
                   @click="showExamples = !showExamples"
                   title="View examples"
@@ -30,6 +31,7 @@
                   {{ showExamples ? "Hide" : "Examples" }}
                 </button>
                 <button
+                  v-if="workspaceTab === 'generate'"
                   class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
                   :disabled="isLoading"
                   @click="clearScene"
@@ -43,8 +45,22 @@
             </div>
           </header>
 
+          <nav class="three-workspace-tabs" aria-label="3D workspace">
+            <button
+              v-for="tab in workspaceTabs"
+              :key="tab.id"
+              type="button"
+              :class="{ 'is-active': workspaceTab === tab.id }"
+              :aria-current="workspaceTab === tab.id ? 'page' : undefined"
+              @click="setWorkspaceTab(tab.id)"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">{{ tab.icon }}</span>
+              {{ tab.label }}
+            </button>
+          </nav>
+
           <!-- GENERATION PROGRESS -->
-          <div v-if="isLoading" class="three-progress-card">
+          <div v-if="isLoading && workspaceTab === 'generate'" class="three-progress-card">
             <div class="three-progress-card__head">
               <div>
                 <span class="three-progress-card__title fira-sans-condensed-black-italic">
@@ -109,11 +125,11 @@
           <!-- Example Prompts -->
           <div
             class="examples-panel models__activity--payouts"
-            v-if="showExamples"
+            v-if="showExamples && workspaceTab === 'generate'"
           >
             <div class="example-grid">
               <div
-                v-for="(example, idx) in examplePrompts"
+                v-for="(example, idx) in activeExamples"
                 :key="idx"
                 class="example-card"
                 @click="useExample(example)"
@@ -124,7 +140,7 @@
               </div>
             </div>
           </div>
-          <div class="models__activity--payouts">
+          <div v-if="workspaceTab === 'generate'" class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
                 <!-- DOWNLOAD REQUIRED PANEL -->
@@ -207,20 +223,65 @@
                   </div>
                 </div>
 
-                <!-- ACCESS REQUIREMENTS -->
-                <AccessRequirements
-                  ref="accessRef"
-                  level="LVL5"
-                  @access-changed="onAccessChanged"
-                />
+                <div class="bz-3d-mode" role="group" aria-label="Creation type">
+                  <button
+                    type="button"
+                    :class="{ 'is-selected': creationMode === 'object' }"
+                    @click="creationMode = 'object'"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">deployed_code</span>
+                    Object
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ 'is-selected': creationMode === 'level' }"
+                    @click="creationMode = 'level'; objectInputMode = 'prompt'"
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true">landscape</span>
+                    Level
+                  </button>
+                </div>
+
+                <div v-if="creationMode === 'object'" class="object-input-mode" role="group" aria-label="Object input">
+                  <button type="button" :class="{ 'is-selected': objectInputMode === 'prompt' }" @click="objectInputMode = 'prompt'; removeReferenceImage()">
+                    <span class="material-symbols-outlined">text_fields</span>Prompt
+                  </button>
+                  <button type="button" :class="{ 'is-selected': objectInputMode === 'image' }" @click="objectInputMode = 'image'">
+                    <span class="material-symbols-outlined">add_photo_alternate</span>Prompt + image
+                  </button>
+                </div>
+
+                <div v-if="creationMode === 'object' && objectInputMode === 'image'" class="bz-3d-reference">
+                  <label v-if="!referenceImage" class="bz-3d-reference__picker">
+                    <input type="file" accept="image/*" @change="onReferenceImagePicked" />
+                    <span class="material-symbols-outlined" aria-hidden="true">add_photo_alternate</span>
+                    <span>
+                      <strong>Reference image</strong>
+                      <small>Use one isolated object with a clear silhouette.</small>
+                    </span>
+                  </label>
+                  <div v-else class="bz-3d-reference__preview">
+                    <img :src="referenceImage.dataUrl" alt="3D reconstruction reference" />
+                    <span class="bz-3d-reference__name">{{ referenceImage.name }}</span>
+                    <BzCloseButton
+                      size="sm"
+                      aria-label="Remove reference image"
+                      @click="removeReferenceImage"
+                    />
+                  </div>
+                </div>
 
                 <GenerativeInput
                   v-model="form.prompt"
-                  placeholder="Describe a 3D object..."
-                  submit-label="Generate"
+                  :placeholder="creationMode === 'level'
+                      ? 'Describe a complete playable environment or level...'
+                    : objectInputMode === 'image'
+                      ? 'Describe how the object should be reconstructed or styled...'
+                      : 'Describe a 3D object...'"
+                  :submit-label="creationMode === 'level' ? 'Generate level' : objectInputMode === 'image' ? 'Reconstruct object' : 'Generate object'"
                   running-label="Building"
                   :running="isLoading"
-                  :disabled="!canSubmitWithAccess || !hasAccess || !isModel"
+                  :disabled="!canSubmitWithAccess || !isModel"
                   shortcut-hint="⌘⏎"
                   @submit="onSubmit"
                 />
@@ -257,7 +318,7 @@
           </div>
 
           <!-- ENVIRONMENT CONTROLS -->
-          <div class="environment-controls bz-3d-environment mt-5">
+          <div v-if="workspaceTab === 'generate'" class="environment-controls bz-3d-environment mt-5">
             <div class="bz-3d-control-group bz-3d-control-group--lighting">
               <div class="bz-3d-control-head">
                 <span class="material-symbols-outlined">wb_sunny</span>
@@ -320,8 +381,99 @@
           </div>
 
           <!-- VIEWER -->
-          <div class="viewer-container">
-            <div class="viewer-wrapper">
+          <div class="viewer-container" :class="{ 'is-build': workspaceTab === 'build' }">
+            <section v-if="workspaceTab === 'build' && buildEditorReady && !isPlaytesting" class="build-director" aria-label="Level editor" @click.stop>
+              <div class="build-director__levels">
+                <input v-model="gameProject.title" class="build-director__title" aria-label="Game title" placeholder="Untitled game" />
+                <div class="build-level-tabs" role="tablist" aria-label="Levels">
+                  <button v-for="(level, index) in orderedProjectLevels" :key="level.id" type="button" :class="{ 'is-active': forgeLevelId === level.id }" @click="selectBuildLevel(level.id)">
+                    <span class="build-level-tabs__index">{{ index + 1 }}</span>{{ level.title }}
+                  </button>
+                  <button class="build-level-tabs__add" type="button" title="Generate a level" @click="createLevelFromBuild"><span class="material-symbols-outlined">add</span></button>
+                </div>
+                <div v-if="activeLevel" class="build-director__order build-director__actions">
+                  <button type="button" title="Move level earlier" @click="moveActiveLevel(-1)"><span class="material-symbols-outlined">arrow_back</span></button>
+                  <button type="button" title="Move level later" @click="moveActiveLevel(1)"><span class="material-symbols-outlined">arrow_forward</span></button>
+                  <button type="button" title="Remove level" @click="removeActiveLevel"><span class="material-symbols-outlined">close</span></button>
+                  <button class="build-action" type="button" :disabled="!canTokenizeProject" @click="startPlaytest"><span class="material-symbols-outlined">play_arrow</span>Playtest</button>
+                  <button class="build-action is-publish" type="button" :disabled="!canTokenizeProject" @click="tokenizeGameProject"><span class="material-symbols-outlined">publish</span>Publish</button>
+                </div>
+              </div>
+              <form class="gameplay-command" @submit.prevent="updateGameplayWithAI">
+                <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+                <textarea v-model="gameplayInstruction" rows="1" :disabled="gameplayUpdating" placeholder="Describe the game rules, challenge, or change you want..." aria-label="Describe gameplay"></textarea>
+                <button type="submit" :disabled="gameplayUpdating || !gameplayInstruction.trim()">
+                  <BonzaiPulse v-if="gameplayUpdating" variant="dot" />
+                  <span v-else class="material-symbols-outlined">arrow_upward</span>
+                  <span>{{ gameplayUpdating ? 'Designing' : 'Apply' }}</span>
+                </button>
+              </form>
+              <div v-if="activeLevel" class="clear-conditions">
+                <span class="clear-conditions__label">Clear when</span>
+                <button v-for="condition in activeLevel.clearConditions || []" :key="condition.id" type="button" :title="`Remove: ${condition.label}`" @click="deleteClearCondition(condition.id)">
+                  <span class="material-symbols-outlined">{{ clearConditionIcon(condition.type) }}</span>
+                  {{ condition.label }}
+                  <span class="material-symbols-outlined">close</span>
+                </button>
+                <span v-if="!activeLevel.clearConditions?.length" class="clear-conditions__empty">Ask BonzAI to define the win condition.</span>
+                <span v-else-if="activeLevel.clearConditions.length > 1" class="clear-conditions__mode">{{ activeLevel.clearMode === 'any' ? 'Any' : 'All' }}</span>
+              </div>
+              <div class="gameplay-suggestions" aria-label="Gameplay suggestions">
+                <button v-for="suggestion in gameplaySuggestions" :key="suggestion" type="button" @click="gameplayInstruction = suggestion">{{ suggestion }}</button>
+              </div>
+            </section>
+            <section v-if="workspaceTab === 'build' && !buildEditorReady" class="build-workflow" aria-label="Start game build" @click.stop>
+              <template v-if="canStartBuildWorkflow">
+                <div class="build-workflow__step">
+                  <span>1</span><strong>Select a level</strong>
+                  <div class="build-workflow__levels">
+                    <button v-for="level in historyLevelLibrary" :key="level.libraryId" type="button" :class="{ 'is-selected': selectedBuildLevelLibraryId === level.libraryId }" @click="selectedBuildLevelLibraryId = level.libraryId">
+                      <img v-if="level.thumbnail" :src="level.thumbnail" :alt="level.title" />
+                      <span v-else class="material-symbols-outlined">landscape</span>
+                      <small>{{ level.title }}</small>
+                    </button>
+                  </div>
+                </div>
+                <div class="build-workflow__step">
+                  <span>2</span><strong>Select objects</strong>
+                  <div class="build-workflow__objects">
+                    <button v-for="asset in historyObjectLibrary" :key="asset.libraryId" type="button" :class="{ 'is-selected': selectedBuildObjectLibraryIds.includes(asset.libraryId) }" :title="asset.title" :aria-label="asset.title" @click="toggleBuildObject(asset.libraryId)">
+                      <img v-if="asset.thumbnail" :src="asset.thumbnail" alt="" />
+                      <span v-else class="material-symbols-outlined">deployed_code</span>
+                    </button>
+                  </div>
+                </div>
+                <form class="build-workflow__step build-workflow__gameplay" @submit.prevent="startBuildWorkflow">
+                  <span>3</span><strong>Describe gameplay</strong>
+                  <textarea v-model="gameplayInstruction" rows="3" placeholder="Make the selected object the player. Collect three crystals while avoiding traps..." aria-label="Describe initial gameplay"></textarea>
+                  <button type="submit" :disabled="!buildWorkflowComplete || gameplayUpdating">
+                    <BonzaiPulse v-if="gameplayUpdating" variant="dot" />
+                    <span v-else class="material-symbols-outlined">auto_awesome</span>
+                    {{ gameplayUpdating ? 'Building' : 'Build game' }}
+                  </button>
+                </form>
+              </template>
+              <div v-else class="build-workflow__blocked">
+                <strong>Generate a level and an object first</strong>
+                <div>
+                  <button type="button" :class="{ 'is-ready': historyLevelLibrary.length }" @click="createLevelFromBuild"><span class="material-symbols-outlined">{{ historyLevelLibrary.length ? 'check' : 'add' }}</span>Level</button>
+                  <button type="button" :class="{ 'is-ready': historyObjectLibrary.length }" @click="createObjectFromBuild"><span class="material-symbols-outlined">{{ historyObjectLibrary.length ? 'check' : 'add' }}</span>Object</button>
+                </div>
+              </div>
+            </section>
+            <div v-if="workspaceTab === 'build' && isPlaytesting" class="playtest-bar" @click.stop>
+              <button type="button" @click="stopPlaytest"><span class="material-symbols-outlined">arrow_back</span>Edit</button>
+              <strong>{{ gameProject.title }}</strong>
+              <select v-model="agentCompanionId" aria-label="Companion player"><option v-for="companion in agentCompanions" :key="companion.id" :value="companion.id">{{ companion.name }}</option></select>
+              <button type="button" @click="startCompanionPlay"><span class="material-symbols-outlined">smart_toy</span>Let {{ agentCompanionName }} play</button>
+            </div>
+            <div
+              class="viewer-wrapper"
+              :class="{ 'is-drop-target': workspaceTab === 'build' && draggedObjectId, 'has-builder': workspaceTab === 'build' }"
+              @dragover.prevent
+              @drop.prevent="dropObjectOnMap"
+              @click="handleBuildCanvasClick"
+            >
               <ThreeViewer
                 ref="threeViewer"
                 :enablePhysics="enablePhysics"
@@ -330,11 +482,56 @@
                 @generation-success="handleSuccess"
                 @generation-error="handleError"
               />
+              <p v-if="workspaceTab === 'build' && projectStatus" class="build-status">{{ projectStatus }}</p>
+            </div>
+
+            <aside v-if="workspaceTab === 'build' && buildEditorReady && !isPlaytesting && selectedPlacement" class="build-inspector" aria-label="Selection inspector" @click.stop>
+                <div class="build-inspector__head">
+                  <div><span>Selected object</span><strong>{{ selectedPlacementAsset?.title || 'Object' }}</strong></div>
+                  <button class="bz-iconbtn" type="button" title="Remove object" @click="deleteSelectedPlacement"><span class="material-symbols-outlined">delete</span></button>
+                </div>
+                <label class="build-field"><span>Role</span><select v-model="selectedPlacement.role" @change="commitSelectedPlacement"><option v-for="role in objectRoles" :key="role.id" :value="role.id">{{ role.label }}</option></select></label>
+                <div class="build-transform">
+                  <span>Position</span>
+                  <label v-for="axis in ['x','y','z']" :key="axis"><small>{{ axis.toUpperCase() }}</small><input v-model.number="selectedPlacement.position[axis]" type="number" step="0.25" @change="commitSelectedPlacement" /></label>
+                </div>
+                <div class="build-transform">
+                  <span>Scale</span>
+                  <label v-for="axis in ['x','y','z']" :key="axis"><small>{{ axis.toUpperCase() }}</small><input v-model.number="selectedPlacement.scale[axis]" type="number" step="0.1" min="0.1" @change="commitSelectedPlacement" /></label>
+                </div>
+                <div class="build-connections">
+                  <strong>Interaction</strong>
+                  <select v-model="interactionType" aria-label="Interaction behavior">
+                    <option value="activates">Activates</option>
+                    <option value="damages">Damages</option>
+                    <option value="unlocks">Unlocks</option>
+                    <option value="collects">Collects</option>
+                  </select>
+                  <select v-model="interactionTargetId" aria-label="Interaction target">
+                    <option value="">Choose target</option>
+                    <option v-for="item in activeLevelPlacements.filter(item => item.id !== selectedPlacement.id)" :key="item.id" :value="item.id">{{ placementLabel(item) }}</option>
+                  </select>
+                  <button class="bz-btn bz-btn--ghost bz-btn--sm" type="button" :disabled="!interactionTargetId" @click="addForgeInteraction">Add interaction</button>
+                  <div v-for="interaction in selectedPlacementInteractions" :key="interaction.id" class="build-connection-row">
+                    <span>{{ interaction.type }}</span><span>{{ placementLabelById(interaction.targetPlacementId) }}</span>
+                  </div>
+                </div>
+            </aside>
+
+            <div v-if="workspaceTab === 'build' && buildEditorReady && !isPlaytesting" class="build-palette" aria-label="Object palette">
+              <div class="build-palette__head"><strong>Objects</strong><span>{{ buildObjectLibrary.length }}</span></div>
+              <div class="build-palette__items">
+                <button v-for="asset in buildObjectLibrary" :key="asset.libraryId" type="button" :class="{ 'is-selected': pendingPaletteItemId === asset.libraryId }" :title="asset.title" :aria-label="asset.title" draggable="true" @dragstart="beginHistoryDrag(asset, $event)" @dragend="draggedObjectId = ''" @click="selectPaletteAsset(asset)">
+                  <img v-if="asset.thumbnail" :src="asset.thumbnail" alt="" />
+                  <span v-else class="material-symbols-outlined">deployed_code</span>
+                </button>
+                <button class="build-palette__add" type="button" title="Generate object" aria-label="Generate object" @click="createObjectFromBuild"><span class="material-symbols-outlined">add</span></button>
+              </div>
             </div>
           </div>
 
           <!-- GENERATION HISTORY HEADER -->
-          <div class="level mb-4 mt-5" v-if="objectInferences.length > 0">
+          <div v-if="objectInferences.length > 0 && workspaceTab === 'generate'" class="level mb-4 mt-5">
             <div class="level-left">
               <div class="level-item">
                 <h2
@@ -382,7 +579,7 @@
           </div>
 
           <!-- History -->
-          <div v-if="objectInferences.length > 0">
+          <div v-if="objectInferences.length > 0 && workspaceTab === 'generate'">
             <ol class="chat">
               <li
                 v-for="(item, displayIndex) in paginatedInferences"
@@ -568,7 +765,6 @@ import {
   nextTick,
 } from "vue";
 import ThreeViewer from "./ThreeViewer.vue";
-import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
 import BonzaiPulse from "./BonzaiPulse.vue";
 import BzCloseButton from "./BzCloseButton.vue";
@@ -578,7 +774,25 @@ import { requestOpenNetworkModal } from "../services/level.service.js";
 import { fetchNFT3DCode } from "../services/contentNFT.service.js";
 import { inspector as generationInspector } from "../services/generationInspector.service.js";
 import { resolveLLM } from "../skills/flagship.js";
-import { makeLibs } from "./gen3d/engine.js";
+import { validateGeneratedGameCode } from "./gen3d/gameRuntime.js";
+import {
+  applyGameplayPatch,
+  addInteraction,
+  addLevel,
+  addObjectAsset,
+  buildGameCollectibleManifest,
+  compileGameProject,
+  createGameProject,
+  moveLevel,
+  placeObject,
+  removePlacement,
+  removeClearCondition,
+  removeLevel,
+  setLevelMarker,
+  updatePlacement,
+  validateGameProject,
+} from "./gen3d/gameProject.js";
+import { routeFlaskRequest } from "../services/inferenceRouter.service.js";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
@@ -611,6 +825,23 @@ function uuid() {
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+function loadGameProjectDraft() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("bonzai-game-project") || "null");
+    return saved?.schema === "bonzai.game-project" ? saved : createGameProject();
+  } catch {
+    return createGameProject();
+  }
+}
+
+function parseGameplayPatch(text) {
+  const source = String(text || "").replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  const start = source.indexOf("{");
+  const end = source.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("The model returned no gameplay update");
+  return JSON.parse(source.slice(start, end + 1));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -728,7 +959,7 @@ function normalizeLLMCode(code) {
   //
   // This rewrite intentionally runs BEFORE the wrapper-reserved
   // stripper below so the namespace identifier survives intact.
-  const NAMESPACE_NAMES = "MAT|TEX|SHADER|FLUID|H|helpers|P|CELESTIAL|FX";
+  const NAMESPACE_NAMES = "MAT|TEX|SHADER|FLUID|H|helpers|P|CELESTIAL|FX|GAME";
   out = out.replace(
     new RegExp(`\\b(?:const|let|var)\\s+(${NAMESPACE_NAMES})\\.(\\w+)\\s*=`, "g"),
     "$1.$2 =",
@@ -753,6 +984,7 @@ function normalizeLLMCode(code) {
   // statement" on module import.
   const WRAPPER_RESERVED = [
     "THREE", "scene", "camera", "root", "H", "helpers", "MAT", "TEX",
+    "SHADER", "FLUID", "P", "CELESTIAL", "FX", "GAME",
     "addUpdateCallback", "setObjectInfo", "physics", "CANNON",
   ];
   const stripReservedDecl = (src, name) => {
@@ -975,7 +1207,7 @@ function normalizeLLMCode(code) {
   // identifier.
   const PROTECTED = [
     'THREE', 'scene', 'camera', 'renderer', 'root',
-    'H', 'helpers', 'MAT', 'TEX', 'SHADER', 'FLUID', 'P', 'CELESTIAL', 'FX',
+    'H', 'helpers', 'MAT', 'TEX', 'SHADER', 'FLUID', 'P', 'CELESTIAL', 'FX', 'GAME',
     'addUpdateCallback', 'removeUpdateCallback', 'setObjectInfo',
     'setFilmGrain', 'setScreenDroplets',
     'setChromatic', 'setDoF', 'setColorGrade', 'setLensFlare', 'setUnderwater', 'setEnvironment',
@@ -995,7 +1227,7 @@ function normalizeLLMCode(code) {
   }
   // `this.X` references on a module-scope wrapper point at nothing useful —
   // swap them for the local identifier since it's already in scope.
-  out = out.replace(/\bthis\.(THREE|scene|camera|renderer|root|H|helpers|MAT|TEX|SHADER|FLUID|P|addUpdateCallback|setObjectInfo)\b/g, '$1');
+  out = out.replace(/\bthis\.(THREE|scene|camera|renderer|root|H|helpers|MAT|TEX|SHADER|FLUID|P|GAME|addUpdateCallback|setObjectInfo)\b/g, '$1');
 
   // STEP 5.5: Remove stray export statements (e.g. "export { root }")
   out = out.replace(/export\s*\{[^}]*\}\s*;?\s*/g, "");
@@ -1092,12 +1324,12 @@ export default async function generate(params) {
   const helpers = params.helpers;
   const H = helpers;
 
-  // Engine libraries (MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX) — injected
+  // Engine libraries (rendering plus GAME runtime) — injected
   // by ThreeViewer via ctx._engine so they share the same update loop the
   // helpers use.
-  const { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX } = params._engine;
+  const { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX, GAME } = params._engine;
   params.MAT = MAT; params.TEX = TEX; params.SHADER = SHADER;
-  params.FLUID = FLUID; params.P = P; params.CELESTIAL = CELESTIAL; params.FX = FX;
+  params.FLUID = FLUID; params.P = P; params.CELESTIAL = CELESTIAL; params.FX = FX; params.GAME = GAME;
   params.H = H; params.helpers = H;
 
   // ── USER CODE START ──
@@ -1199,6 +1431,52 @@ function validateRenderableUserCode(userCode) {
   return { ok: true, reason: "" };
 }
 
+function buildReferenceFallbackCode(imageDataUrl) {
+  const encodedImage = JSON.stringify(String(imageDataUrl || ""));
+  return normalizeLLMCode(`
+setObjectInfo({
+  name: "Reference Relief",
+  description: "Depth-backed reconstruction generated from the source image"
+});
+const texture = await new Promise((resolve, reject) => {
+  new THREE.TextureLoader().load(${encodedImage}, resolve, undefined, reject);
+});
+texture.colorSpace = THREE.SRGBColorSpace;
+texture.anisotropy = 8;
+const sourceWidth = texture.image?.naturalWidth || texture.image?.width || 1;
+const sourceHeight = texture.image?.naturalHeight || texture.image?.height || 1;
+const aspect = Math.min(2.2, Math.max(0.48, sourceWidth / sourceHeight));
+const height = aspect >= 1 ? 0.92 : Math.min(1.25, 0.92 / aspect);
+const width = height * aspect;
+const depth = Math.max(0.1, Math.min(width, height) * 0.14);
+const body = new THREE.Mesh(
+  new THREE.BoxGeometry(width, height, depth, 10, 10, 3),
+  [
+    new THREE.MeshPhysicalMaterial({ color: 0x24211f, roughness: 0.48, metalness: 0.15 }),
+    new THREE.MeshPhysicalMaterial({ color: 0x24211f, roughness: 0.48, metalness: 0.15 }),
+    new THREE.MeshPhysicalMaterial({ color: 0x37312c, roughness: 0.4, metalness: 0.12 }),
+    new THREE.MeshPhysicalMaterial({ color: 0x171513, roughness: 0.58, metalness: 0.08 }),
+    new THREE.MeshPhysicalMaterial({ map: texture, roughness: 0.62, metalness: 0.02 }),
+    new THREE.MeshPhysicalMaterial({ color: 0x181614, roughness: 0.58, metalness: 0.08 })
+  ]
+);
+body.position.y = height * 0.5 + 0.08;
+root.add(body);
+const imageFace = new THREE.Mesh(
+  new THREE.PlaneGeometry(width * 0.985, height * 0.985, 18, 18),
+  new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
+);
+imageFace.position.set(0, body.position.y, depth * 0.505 + 0.002);
+root.add(imageFace);
+const pedestal = new THREE.Mesh(
+  new THREE.CylinderGeometry(width * 0.43, width * 0.5, 0.08, 48),
+  new THREE.MeshPhysicalMaterial({ color: 0x171514, roughness: 0.3, metalness: 0.62, clearcoat: 0.45 })
+);
+pedestal.position.y = 0.04;
+root.add(pedestal);
+`);
+}
+
 function stripThinkBlocks(text) {
   let out = String(text || "");
   out = out.replace(/<think>[\s\S]*?<\/think>\s*/gi, "");
@@ -1232,7 +1510,7 @@ function modelFromResolved(resolved, role) {
 
 export default {
   name: "Generative3D",
-  components: { ThreeViewer, AccessRequirements, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
+  components: { ThreeViewer, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
   setup() {
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
@@ -1247,20 +1525,26 @@ export default {
         contentType: "model/gltf+json",
         prompt: item.prompt,
         generation: {
-          type: "text-to-3d",
+          type: `bonzai-${item.assetKind || item.mode || "object"}`,
+          assetKind: item.assetKind || item.mode || "object",
           model: currentModel.value.modelname || "three-js",
           timestamp: item.timestamp,
           threeCode: item.code,
+          projectManifest: item.projectManifest || null,
           tokensPerSecond: item.tokensPerSecond || null,
         },
       };
     };
 
     const onMinted = (result) => {
-      const inf = savedInferences.value.find(
+      const inf = objectInferences.value.find(
         (i) => i.id === mintTarget.value?.inferenceId,
       );
       if (inf) inf.nft = result;
+      if (mintTarget.value?.generation?.assetKind === "game") {
+        gameProject.value.ownership ||= { collectible: null, token: null };
+        gameProject.value.ownership.collectible = result;
+      }
       mintTarget.value = null;
     };
 
@@ -1408,6 +1692,142 @@ export default {
     );
     const hasCopy = reactive([]);
     const enablePhysics = ref(true);
+    const workspaceTab = ref("generate");
+    const workspaceTabs = [
+      { id: "generate", label: "Generate", icon: "auto_awesome" },
+      { id: "build", label: "Build", icon: "construction" },
+    ];
+    const creationMode = ref("object");
+    const objectInputMode = ref("prompt");
+    const referenceImage = ref(null);
+    const isReferenceGeneration = computed(() =>
+      creationMode.value === "object" && objectInputMode.value === "image",
+    );
+    const effectiveCreationMode = computed(() => isReferenceGeneration.value ? "reference" : creationMode.value);
+    const gameProject = ref(loadGameProjectDraft());
+    const forgeLevelId = ref(gameProject.value.levelOrder?.[0] || "");
+    const forgeObjectId = ref("");
+    const forgePosition = reactive({ x: 0, y: 0, z: 0 });
+    const forgeRole = ref("prop");
+    const interactionSourceId = ref("");
+    const interactionTargetId = ref("");
+    const interactionType = ref("activates");
+    const draggedObjectId = ref("");
+    const selectedPlacementId = ref("");
+    const pendingPaletteItemId = ref("");
+    const buildTool = ref("select");
+    const buildTools = [
+      { id: "select", label: "Select", icon: "near_me" },
+      { id: "start", label: "Start", icon: "flag" },
+      { id: "finish", label: "Finish", icon: "sports_score" },
+    ];
+    const gameplayInstruction = ref("");
+    const gameplayUpdating = ref(false);
+    const selectedBuildLevelLibraryId = ref("");
+    const selectedBuildObjectLibraryIds = ref([]);
+    const buildEditorReady = ref(
+      gameProject.value.levels.length > 0 &&
+      gameProject.value.levels.some((level) => level.placements?.length && level.clearConditions?.length),
+    );
+    const isPlaytesting = ref(false);
+    const gameplaySuggestions = [
+      "Collect 5 relics before time runs out",
+      "Turn this into a boss level",
+      "Make the crystal a speed buff",
+    ];
+    const objectRoles = [
+      { id: "player", label: "Main character", description: "The player-controlled object and level spawn." },
+      { id: "enemy", label: "Enemy", description: "Can be attacked and defeated." },
+      { id: "trap", label: "Trap", description: "Damages the player on contact." },
+      { id: "collectible", label: "Collectible", description: "Adds score and disappears when collected." },
+      { id: "buff", label: "Buff", description: "A beneficial pickup for the player." },
+      { id: "debuff", label: "Debuff", description: "A harmful pickup or contact effect." },
+      { id: "checkpoint", label: "Checkpoint", description: "Stores progress and respawn position." },
+      { id: "platform", label: "Platform", description: "Traversable level geometry." },
+      { id: "goal", label: "Goal object", description: "An objective or destination inside the level." },
+      { id: "prop", label: "Scenery", description: "Visual world-building with no default behavior." },
+    ];
+    const projectStatus = ref("");
+    const agentCompanionId = ref("aurore");
+    const agentCompanions = [
+      { id: "aurore", name: "Aurore" },
+      { id: "mai", name: "Mai" },
+      { id: "marcus", name: "Marcus" },
+      { id: "jin", name: "Jin" },
+      { id: "priya", name: "Priya" },
+    ];
+    const projectPlacementCount = computed(() =>
+      gameProject.value.levels.reduce((total, level) => total + level.placements.length, 0),
+    );
+    const projectVerdict = computed(() => validateGameProject(gameProject.value));
+    const canTokenizeProject = computed(() => projectVerdict.value.ok);
+    const agentCompanionName = computed(() =>
+      agentCompanions.find((companion) => companion.id === agentCompanionId.value)?.name || "Companion",
+    );
+    const libraryKind = (item) => {
+      const kind = String(item?.assetKind || item?.mode || "object").toLowerCase();
+      if (kind === "level" || kind === "scene") return "level";
+      if (kind === "game") return "game";
+      return "object";
+    };
+    const buildLibrary = computed(() => {
+      const history = objectInferences.value
+        .filter((item) => String(item?.code || "").trim())
+        .map((item) => ({
+          libraryId: `history:${item.id}`,
+          inferenceId: item.id,
+          kind: libraryKind(item),
+          title: item.title || item.prompt || "Untitled asset",
+          code: item.code,
+          thumbnail: historyThumbnail(item),
+          projectManifest: item.projectManifest || null,
+          source: "history",
+        }));
+      const inferenceIds = new Set(history.map((item) => item.inferenceId));
+      const projectObjects = gameProject.value.objects
+        .filter((item) => !item.sourceInferenceId || !inferenceIds.has(item.sourceInferenceId))
+        .map((item) => ({
+          libraryId: `project:${item.id}`,
+          projectAssetId: item.id,
+          kind: "object",
+          title: item.title,
+          code: item.code,
+          thumbnail: item.thumbnail,
+          source: "project",
+        }));
+      const projectLevels = gameProject.value.levels
+        .filter((item) => !item.sourceInferenceId || !inferenceIds.has(item.sourceInferenceId))
+        .map((item) => ({
+          libraryId: `project:${item.id}`,
+          projectAssetId: item.id,
+          kind: "level",
+          title: item.title,
+          code: item.code,
+          thumbnail: item.thumbnail,
+          source: "project",
+        }));
+      return history.reverse().concat(projectObjects, projectLevels);
+    });
+    const buildObjectLibrary = computed(() => buildLibrary.value.filter((item) => item.kind === "object"));
+    const historyLevelLibrary = computed(() => buildLibrary.value.filter((item) => item.kind === "level" && item.source === "history"));
+    const historyObjectLibrary = computed(() => buildLibrary.value.filter((item) => item.kind === "object" && item.source === "history"));
+    const canStartBuildWorkflow = computed(() => historyLevelLibrary.value.length > 0 && historyObjectLibrary.value.length > 0);
+    const buildWorkflowComplete = computed(() =>
+      selectedBuildLevelLibraryId.value &&
+      selectedBuildObjectLibraryIds.value.length > 0 &&
+      gameplayInstruction.value.trim(),
+    );
+    const orderedProjectLevels = computed(() => gameProject.value.levelOrder
+      .map((levelId) => gameProject.value.levels.find((level) => level.id === levelId))
+      .filter(Boolean));
+    const activeLevel = computed(() => gameProject.value.levels.find((level) => level.id === forgeLevelId.value) || null);
+    const activeLevelPlacements = computed(() => activeLevel.value?.placements || []);
+    const selectedPlacement = computed(() => activeLevelPlacements.value.find((placement) => placement.id === selectedPlacementId.value) || null);
+    const selectedPlacementAsset = computed(() => gameProject.value.objects.find((asset) => asset.id === selectedPlacement.value?.objectId) || null);
+    const selectedRole = computed(() => objectRoles.find((role) => role.id === selectedPlacement.value?.role) || null);
+    const selectedPlacementInteractions = computed(() => gameProject.value.gameplay.interactions.filter(
+      (interaction) => interaction.sourcePlacementId === selectedPlacementId.value,
+    ));
     const currentTime = ref(localStorage.getItem("bonzai-3d-time") || "day");
     const currentWeather = ref(localStorage.getItem("bonzai-3d-weather") || "sunny");
     const lightIntensity = ref(1.0);
@@ -1897,12 +2317,49 @@ export default {
 
     const canSubmitWithAccess = computed(() => {
       return (
-        form.prompt.trim() &&
+        (form.prompt.trim() || (isReferenceGeneration.value && referenceImage.value)) &&
         !isLoading.value &&
-        hasAccess.value &&
         isModel.value
       );
     });
+
+    const onReferenceImagePicked = (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (!file.type.startsWith("image/")) {
+        lastStatus.value = "Please choose an image file";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const dataUrl = String(reader.result || "");
+        try {
+          const image = await loadBrowserImage(dataUrl);
+          if (image.width < 256 || image.height < 256) {
+            lastStatus.value = "Reference image must be at least 256 x 256";
+            return;
+          }
+          referenceImage.value = {
+            name: file.name,
+            mime: file.type || "image/png",
+            width: image.width,
+            height: image.height,
+            dataUrl,
+          };
+        } catch {
+          lastStatus.value = "Could not decode the reference image";
+        }
+      };
+      reader.onerror = () => {
+        lastStatus.value = "Could not read the reference image";
+      };
+      reader.readAsDataURL(file);
+      event.target.value = "";
+    };
+
+    const removeReferenceImage = () => {
+      referenceImage.value = null;
+    };
 
     // ═══════════════════════════════════════════════════════════════════════
     // STATIC DATA
@@ -1969,6 +2426,65 @@ export default {
       ),
     );
     const isModel = computed(() => missingRequiredModels.value.length === 0);
+
+    const levelExamples = ref([
+      {
+        kind: "level",
+        icon: "filter_hdr",
+        title: "Sky Garden Odyssey",
+        description: "Vertical collectathon across floating castle gardens",
+        prompt: "Create a complete 3D platforming level set across floating castle gardens above a bright cloud sea. Build three readable vertical routes, hidden terraces, moving vine platforms, bounce flowers, 30 collectible sun seeds, five secret alcoves and a summit gate that opens after 20 seeds. Include recovery platforms, a start area, checkpoint, final goal, win state and fall reset. Reward curiosity without using existing game characters or worlds.",
+      },
+      {
+        kind: "level",
+        icon: "temple_buddhist",
+        title: "Temple Gauntlet",
+        description: "Precision corridors, chase beats and collapsing paths",
+        prompt: "Create a complete 3D platforming level inside a monumental jungle temple. Alternate precision corridors with two wide spectacle chambers, collapsing stone paths, swinging hazards, wall jumps, a short rolling-boulder chase and three optional relic rooms. Establish a safe tutorial beat, escalating checkpoints, a clear exit idol, win and failure states, and lighting cues that make the critical route instantly readable.",
+      },
+      {
+        kind: "level",
+        icon: "paragliding",
+        title: "Glider Archipelago",
+        description: "Floating islands linked by glide routes and wind rings",
+        prompt: "Create a complete 3D platforming level across a colorful archipelago of floating islands. The player crosses gaps by gliding through wind rings, catching thermal columns and choosing risky shortcuts. Include altitude recovery, moving airships, 20 sky emblems, two hidden caves, a mid-level checkpoint, a landing challenge and a lighthouse finish. Define controls, scoring, fall reset and a clear win state.",
+      },
+      {
+        kind: "level",
+        icon: "public",
+        title: "Gravity Lanterns",
+        description: "Small worlds connected by shifting gravity",
+        prompt: "Create a complete 3D platforming level made of six lantern-lit planetoids with local gravity. Let the player leap between curved surfaces, rotate gravity at marked shrines and use orbiting platforms to reach the final moon gate. Include a gentle first planet, escalating traversal puzzles, 18 collectible sparks, checkpoints, direction cues and robust recovery after missed jumps.",
+      },
+      {
+        kind: "level",
+        icon: "nightlight",
+        title: "Moonlit Rooftops",
+        description: "Stealth platforming above a living city",
+        prompt: "Create a complete nighttime 3D platforming level across tiled rooftops, courtyards and bell towers. Combine precise jumps with patrol spotlights, shadow zones, distraction bells and alternate high and low routes. Add six hidden letters, three checkpoints, a timed final escape and a glowing train platform as the goal. Make sightlines and safe routes immediately legible.",
+      },
+      {
+        kind: "level",
+        icon: "speed",
+        title: "Velocity Foundry",
+        description: "Rails, wall runs and momentum-driven shortcuts",
+        prompt: "Create a complete high-speed 3D platforming level through a luminous industrial foundry. Use acceleration lanes, grind rails, wall runs, launch pads, rotating turbines and branching shortcuts that reward momentum. Add a readable beginner route, advanced time-trial route, checkpoint gates, split timing, fail recovery and a dramatic reactor-core finish.",
+      },
+      {
+        kind: "level",
+        icon: "psychology",
+        title: "Dream Workshop",
+        description: "A surreal scale-shifting puzzle playground",
+        prompt: "Create a complete surreal 3D platforming level inside a dream workshop where the player changes scale to navigate giant desks, miniature machinery and folding paper architecture. Build puzzles around size, perspective and movable props, with five memorable chambers, optional imagination fragments, checkpoints and a final clockwork door that establishes the win state.",
+      },
+      {
+        kind: "level",
+        icon: "timer",
+        title: "Clockwork Course",
+        description: "A replayable obstacle course built for mastery",
+        prompt: "Create a complete replayable 3D obstacle-course level in a clockwork arena. Use moving platforms, swinging pendulums, rotating beams, timed doors, seesaws and a final vertical sprint. Provide bronze, silver and gold target times, checkpoint toggles, instant reset, a clearly framed finish bell and clean silhouettes that keep every hazard readable at speed.",
+      },
+    ]);
 
     const examplePrompts = ref([
       {
@@ -2044,13 +2560,183 @@ export default {
         prompt: "A broadsword driven vertically halfway into a rough-hewn stone altar. The altar's surface is scarred with chisel marks and shallow weathering, each groove catching deep shadow. The blade is polished brushed steel engraved with cyan runic script running down its length — the runes cut deeply into the steel so they hold shadow, and the glyphs themselves glow bright cyan, hot enough to bloom softly across the blade. The crossguard and fittings are mirror-polished gold catching sharp environment reflections; the grip is dark wrapped leather with thread-line detail; a faceted sapphire pommel glints at the end. A cyan dissolve-pulse ripples across the blade every few seconds. A translucent cyan energy hemisphere covers the altar. A circular rune inscription glows on the ground around the altar base. Cyan mist curls upward, cyan sparks rise continuously, and faint caustic light patterns the surrounding ground.",
       },
     ]);
+    const activeExamples = computed(() =>
+      creationMode.value === "level" ? levelExamples.value : examplePrompts.value,
+    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // PROMPT BUILDERS
     // ═══════════════════════════════════════════════════════════════════════
+    const waitForVisionDownload = async (pipelineId) => {
+      const deadline = Date.now() + 30 * 60 * 1000;
+      startDownloadTracking(pipelineId);
+      while (Date.now() < deadline) {
+        const { data } = await axios.get(
+          `${SERVER_URL}/downloads/status/${pipelineId}`,
+          { timeout: 15000 },
+        );
+        applyPipelineUpdate(data);
+        if (data?.status === "completed") return;
+        if (data?.status === "failed" || data?.status === "cancelled") {
+          const failedTask = Object.values(data?.tasks || {}).find(
+            (task) => task.status === "failed",
+          );
+          throw new Error(
+            failedTask?.error_message ||
+              `Vision model download ${data.status}. Retry the model download.`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      throw new Error("Vision model download timed out after 30 minutes.");
+    };
+
+    const visionResponseText = (result) => {
+      const body = result?.data || result?.result || result;
+      return body?.response || body?.text || body?.analysis || "";
+    };
+
+    const runVisionAnalysis = async (imageDataUrl, prompt, maxTokens = 1400) => {
+      const payload = {
+        image_base64: String(imageDataUrl).replace(/^data:image\/[^;]+;base64,/, ""),
+        prompt,
+        max_tokens: maxTokens,
+        auto_download: true,
+      };
+      const requestVision = async () => {
+        const routed = await routeFlaskRequest("/vision/analyze", payload);
+        return routed.handled
+          ? routed.result
+          : (
+              await axios.post(`${SERVER_URL}/vision/analyze`, payload, {
+                timeout: 600000,
+              })
+            ).data;
+      };
+
+      let result = await requestVision();
+      if (result?.error) throw new Error(result.error);
+      if (!visionResponseText(result) && result?.pipeline_id) {
+        lastStatus.value = "Downloading vision model...";
+        _resetStream(
+          "Preparing Vision",
+          1,
+          "Downloading and validating the image analysis model.",
+        );
+        await waitForVisionDownload(result.pipeline_id);
+        payload.auto_download = false;
+        result = await requestVision();
+      }
+
+      if (result?.error) throw new Error(result.error);
+      const response = visionResponseText(result);
+      if (!response) throw new Error("Vision model returned no reconstruction analysis");
+      return String(response).trim();
+    };
+
+    const analyzeReferenceFor3D = (imageDataUrl, instruction) =>
+      runVisionAnalysis(
+        imageDataUrl,
+        `Analyze the single visible subject for procedural Three.js reconstruction.
+User intent: ${instruction || "faithful real-time browser reconstruction"}
+
+Report only observable evidence. Cover:
+1. suitability: pass, conditional, or reject, with occlusion and hidden-side uncertainty;
+2. camera/view angle and silhouette;
+3. macro dimensions normalized to total height 1.0;
+4. every visible component from largest to smallest, with parent attachment, position, rotation, dimensions, and best geometry primitive or profile;
+5. material regions with approximate hex colors, metalness, roughness, transmission, clearcoat and emissive evidence;
+6. repeated details, openings, bevels, seams, fasteners, decals and surface wear;
+7. identity-critical features that must survive simplification;
+8. suggested pivots, sockets and colliders.
+
+Use exact 3D vocabulary. Do not invent unseen details. This analysis will be passed to a code-generating LLM.`,
+        900,
+      );
+
+    const loadBrowserImage = (src) =>
+      new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = src;
+      });
+
+    const makeReferenceComparison = async (referenceDataUrl, renderDataUrl) => {
+      const [reference, render] = await Promise.all([
+        loadBrowserImage(referenceDataUrl),
+        loadBrowserImage(renderDataUrl),
+      ]);
+      const width = 1600;
+      const height = 800;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#11141d";
+      context.fillRect(0, 0, width, height);
+      const drawContain = (image, x, w) => {
+        const scale = Math.min(w / image.width, height / image.height);
+        const dw = image.width * scale;
+        const dh = image.height * scale;
+        context.drawImage(image, x + (w - dw) / 2, (height - dh) / 2, dw, dh);
+      };
+      drawContain(reference, 0, width / 2);
+      drawContain(render, width / 2, width / 2);
+      context.fillStyle = "rgba(17,20,29,0.9)";
+      context.fillRect(0, 0, width, 40);
+      context.fillStyle = "#f0f0f5";
+      context.font = "18px sans-serif";
+      context.fillText("REFERENCE", 20, 27);
+      context.fillText("BONZAI RENDER", width / 2 + 20, 27);
+      return canvas.toDataURL("image/jpeg", 0.9);
+    };
+
+    const reviewReferenceFidelity = async (referenceDataUrl, renderDataUrl) => {
+      const comparison = await makeReferenceComparison(referenceDataUrl, renderDataUrl);
+      const raw = await runVisionAnalysis(
+        comparison,
+        `The left half is a reference image and the right half is its procedural Three.js reconstruction.
+Evaluate only visible fidelity. Return strict JSON:
+{"score":0.0,"silhouette":0.0,"proportions":0.0,"materials":0.0,"criticalDetails":0.0,"verdict":"pass|refine","defects":["short concrete defect"],"strengths":["short concrete strength"]}
+Scores range from 0 to 1. Do not reward atmosphere when geometry is wrong.`,
+        700,
+      );
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return { score: null, verdict: "unparsed", raw, comparison };
+      try {
+        return { ...JSON.parse(match[0]), raw, comparison };
+      } catch {
+        return { score: null, verdict: "unparsed", raw, comparison };
+      }
+    };
+
     // PROMPT ENHANCER — decompose vague descriptions into geometric blueprints
     // ═══════════════════════════════════════════════════════════════════════
-    const buildEnhancePrompt = (userText) => {
+    const buildEnhancePrompt = (userText, referenceAnalysis = "") => {
+      if (isReferenceGeneration.value) {
+        return `/no_think
+You are a procedural 3D reconstruction architect. Convert visual evidence into a compact, implementation-ready ASSEMBLY BLUEPRINT. Do not write code or a thinking process.
+
+USER INTENT: "${userText || "Faithfully reconstruct the reference object"}"
+
+VISION EVIDENCE:
+${referenceAnalysis}
+
+Resolve the evidence into a parent-child component hierarchy with normalized dimensions, transforms, geometry strategies, material parameters, attachment points, repetition systems and identity-critical details. Use y=0 as ground and total height 0.3-1.5 units. Preserve silhouette and proportions above decorative atmosphere. Mark uncertain hidden geometry as inferred and use the simplest symmetric continuation supported by evidence. Do not redesign, embellish or add unrelated effects.
+
+FORMAT: 350-650 words of dense structured prose with explicit component names and numeric measurements. No markdown, no code, no <think>.`;
+      }
+      if (creationMode.value === "game") {
+        return `/no_think
+You are a game director and systems designer. Return a compact GAME BLUEPRINT for the request below. Do not write code or a thinking process.
+
+GAME: "${userText}"
+
+Define: genre and camera; player fantasy and controls; one complete gameplay loop; world layout; actors and hazards; a measurable primary objective; scoring, health and fail state; feedback and atmosphere. Scope the result to a polished five-minute playable vertical slice. Every mechanic must be implementable with Three.js, Rapier and BonzAI GAME APIs. Preserve the user's premise exactly.
+
+FORMAT: 180-280 words, dense prose, no markdown, no bullets, no <think>.`;
+      }
       return `/no_think
 You are a 3D production designer. Return a compact ASSEMBLY BLUEPRINT for the exact object below. Do not reason. Do not write a thinking process.
 
@@ -2135,6 +2821,79 @@ RULES:
       const selectedSkills = scored.slice(0, 3).map(s => s.content);
       const skillsContext = selectedSkills.join("\n\n---\n\n");
 
+      const gameContract = creationMode.value === "game" ? `
+
+═══ GAMEPLAY CONTRACT ═══
+This is a PLAYABLE GAME, not a diorama. Build the complete world under root, then:
+- Create exactly one session with GAME.create({ title, genre, state, objectives }).
+- Build each playable environment as its own THREE.Group and register it with game.level(id, group, { entry }).
+- Multi-level games must call game.goToLevel(id) and use level-change triggers instead of keeping every level visible.
+- Register a visible player with game.player(playerMesh, { speed, cameraOffset }).
+- Register enemies, collectibles and goal zones with game.actor() and game.trigger().
+- Implement interaction, damage, collection, scoring and enemy behavior through actor update functions and game events.
+- Include an explicit win condition and fail state. Start with game.start().
+- Use GAME input actions only. Do not add DOM listeners, requestAnimationFrame, HTML or a second render loop.
+- Keep the game immediately playable with WASD/arrows, Shift and E/Space.
+- The visual bar remains identical to a hero scene: authored materials, atmospheric depth, animation, lighting and post effects.
+
+Core API:
+const game = GAME.create({title, genre?, state?, objectives:[{id,type:'collect|score|defeat|reach|survive|custom',label,target,tag?,trigger?}]});
+game.player(object,{speed?,sprintMultiplier?,cameraOffset?,update?});
+game.level(id,object,{entry?}); game.goToLevel(id);
+game.actor(id,object,{tags?,health?,radius?,score?,update?});
+game.trigger(id,object,{radius?,once?,onEnter?});
+game.collect(id,amount?,tag?); game.damage(id,amount,source?); game.score(amount,reason?);
+game.on(event,handler); game.emit(event,detail?); game.checkpoint(id); game.restore(id);
+game.agent({companionId,damage?}); game.stopAgent();
+game.input.down(action); game.input.pressed(action); game.start();
+` : "";
+      const reconstructionContract = isReferenceGeneration.value ? `
+
+═══ RECONSTRUCTION CONTRACT ═══
+This is reference reconstruction, not concept art.
+- Match the supplied blueprint's silhouette, proportions, view angle and material boundaries.
+- Build a named parent-child hierarchy. Every visible component in the blueprint must exist.
+- Use primitives only where they preserve form. Use Shape+ExtrudeGeometry, LatheGeometry, TubeGeometry or custom BufferGeometry for identity-critical profiles.
+- Add bevels, seams, fasteners and repeated details explicitly or through instancing.
+- Use measured dimensions and attachment contact. No floating parts.
+- Keep hidden faces conservative and symmetric unless the evidence says otherwise.
+- Set root.userData.sculptRuntime = { nodes, sockets, colliders } with named maps.
+- Do not add unrelated particles, fantasy effects, pedestals or ornaments merely to satisfy visual richness.
+- Material fidelity and readable geometry take precedence over cinematic decoration.
+` : "";
+
+      if (isReferenceGeneration.value) {
+        return `You are an expert procedural Three.js reconstruction engineer.
+
+CRITICAL: Output ONLY raw JavaScript. No reasoning, prose, markdown fences, imports or requestAnimationFrame. Start with setObjectInfo().
+
+RECONSTRUCTION BLUEPRINT:
+${userText}
+${reconstructionContract}
+
+Pre-declared runtime:
+THREE, root, MAT, TEX, SHADER, FLUID, H, P, FX, CELESTIAL, addUpdateCallback, setObjectInfo, setAO, setBloom, setColorGrade, setDoF.
+
+Implementation requirements:
+1. Establish a nodes object and build the complete named component hierarchy.
+2. Match every numeric transform and material boundary in the blueprint.
+3. Prefer ExtrudeGeometry, LatheGeometry, TubeGeometry, Shape holes, instancing and custom BufferGeometry when primitives cannot preserve the silhouette.
+4. Use MeshPhysicalMaterial for measured PBR properties when a MAT preset is not a close match.
+5. Add only evidence-backed texture, wear, seams, fasteners and decals.
+6. Attach every child physically to its parent. Ground the object at y=0.
+7. Add sockets and simple collider descriptors for movable or interactive parts.
+8. Set root.userData.sculptRuntime = { nodes, sockets, colliders }.
+9. Use the existing cinematic baseline. Add animation or FX only when visible evidence or user intent requires it.
+10. Keep total object height between 0.3 and 1.5 units and return a valid root.
+
+Relevant Three.js references:
+${skillsContext}
+
+${recipeHint ? `Relevant material/form recipe:\n${recipeHint}` : ""}
+
+OUTPUT RAW JAVASCRIPT:`;
+      }
+
       return `${detectArchetypeHint(userText)}You are an expert Three.js developer building a bespoke scene
 from the task below. Match the app's AAA quality bar, but do not copy
 the default scene.
@@ -2144,6 +2903,8 @@ no <think> tags, no explanation, no markdown fences. Start with
 setObjectInfo() immediately.
 
 TASK: "${userText}"
+${gameContract}
+${reconstructionContract}
 
 ═══ QUALITY CONTRACT — NON-NEGOTIABLE ═══
 The orrery reference uses EVERY subsystem of the engine. Your output
@@ -3109,7 +3870,531 @@ OUTPUT:`;
       threeViewer.value?.clear();
     };
 
+    const saveCurrentAsset = async (kind) => {
+      if (!lastGeneratedCode.value) return;
+      const snapshot = await captureViewerSnapshot(kind === "level" ? "Level" : "Object");
+      const title = form.prompt.trim() || `${kind === "level" ? "Level" : "Object"} ${
+        kind === "level" ? gameProject.value.levels.length + 1 : gameProject.value.objects.length + 1
+      }`;
+      if (kind === "level") {
+        const level = addLevel(gameProject.value, {
+          title,
+          code: lastGeneratedCode.value,
+          thumbnail: snapshot?.dataUrl || "",
+        });
+        forgeLevelId.value = level.id;
+      } else {
+        const asset = addObjectAsset(gameProject.value, {
+          title,
+          code: lastGeneratedCode.value,
+          source: isReferenceGeneration.value ? "image" : "text",
+          thumbnail: snapshot?.dataUrl || "",
+        });
+        forgeObjectId.value = asset.id;
+      }
+      projectStatus.value = `${title} added to ${gameProject.value.title}`;
+    };
+
+    const materializeBuildAsset = (item) => {
+      if (item.kind === "game") {
+        if (!item.projectManifest) throw new Error("This game history entry has no editable manifest.");
+        const manifest = structuredClone(item.projectManifest);
+        gameProject.value = {
+          schema: manifest.schema,
+          version: manifest.version,
+          id: manifest.projectId,
+          title: manifest.title,
+          description: manifest.description || "",
+          objects: manifest.objects || [],
+          levels: manifest.levels || [],
+          levelOrder: manifest.levelOrder || [],
+          gameplay: manifest.gameplay,
+          ownership: { collectible: null, token: null },
+          createdAt: manifest.createdAt || Date.now(),
+          updatedAt: Date.now(),
+        };
+        forgeLevelId.value = gameProject.value.levelOrder[0] || "";
+        return gameProject.value;
+      }
+      if (item.kind === "level") {
+        const existing = item.projectAssetId
+          ? gameProject.value.levels.find((level) => level.id === item.projectAssetId)
+          : gameProject.value.levels.find((level) => level.sourceInferenceId === item.inferenceId);
+        if (existing) return existing;
+        return addLevel(gameProject.value, {
+          title: item.title,
+          code: item.code,
+          sourceInferenceId: item.inferenceId || "",
+          thumbnail: item.thumbnail,
+        });
+      }
+      const existing = item.projectAssetId
+        ? gameProject.value.objects.find((asset) => asset.id === item.projectAssetId)
+        : gameProject.value.objects.find((asset) => asset.sourceInferenceId === item.inferenceId);
+      if (existing) return existing;
+      return addObjectAsset(gameProject.value, {
+        title: item.title,
+        code: item.code,
+        source: "history",
+        sourceInferenceId: item.inferenceId || "",
+        thumbnail: item.thumbnail,
+      });
+    };
+
+    const useBuildAsset = async (item) => {
+      try {
+        const asset = materializeBuildAsset(item);
+        if (item.kind === "game") {
+          await previewGameProject();
+          projectStatus.value = `${gameProject.value.title} opened from history.`;
+          return;
+        }
+        if (item.kind === "level") {
+          forgeLevelId.value = asset.id;
+          await threeViewer.value?.applyModuleCode(normalizeLLMCode(asset.code), "replace");
+          restoreViewerEnvironmentControls();
+          projectStatus.value = `${asset.title} is now the active level.`;
+          return;
+        }
+        forgeObjectId.value = asset.id;
+        projectStatus.value = `${asset.title} selected. Drag it onto the level to place it.`;
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const useBuildStarter = (example) => {
+      creationMode.value = "level";
+      form.prompt = example.prompt;
+      workspaceTab.value = "generate";
+      showExamples.value = false;
+      nextTick(() => scrollToTop());
+    };
+
+    const createLevelFromBuild = () => {
+      creationMode.value = "level";
+      form.prompt = "";
+      workspaceTab.value = "generate";
+      nextTick(() => scrollToTop());
+    };
+
+    const createObjectFromBuild = () => {
+      creationMode.value = "object";
+      form.prompt = "";
+      workspaceTab.value = "generate";
+      nextTick(() => scrollToTop());
+    };
+
+    const selectBuildLevel = async (levelId) => {
+      forgeLevelId.value = levelId;
+      selectedPlacementId.value = "";
+      buildTool.value = "select";
+      try {
+        await previewGameProject();
+        workspaceTab.value = "build";
+        projectStatus.value = "Level ready. Drag an object from the palette to place it.";
+      } catch (error) {
+        const level = gameProject.value.levels.find((candidate) => candidate.id === levelId);
+        if (level?.code) await threeViewer.value?.applyModuleCode(normalizeLLMCode(level.code), "replace");
+        projectStatus.value = `Level opened. ${error.message}`;
+      }
+    };
+
+    const moveActiveLevel = (direction) => {
+      moveLevel(gameProject.value, forgeLevelId.value, direction);
+    };
+
+    const selectPaletteAsset = (item) => {
+      try {
+        const asset = materializeBuildAsset(item);
+        forgeObjectId.value = asset.id;
+        pendingPaletteItemId.value = item.libraryId;
+        buildTool.value = "select";
+        projectStatus.value = `${asset.title} selected. Click the level or drag it to place copies.`;
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const formatVector = (value = {}) => ["x", "y", "z"]
+      .map((axis) => Number(value[axis] || 0).toFixed(1))
+      .join(", ");
+
+    const placementLabel = (placement) => {
+      const asset = gameProject.value.objects.find((candidate) => candidate.id === placement?.objectId);
+      return `${asset?.title || "Object"} (${placement?.role || "prop"})`;
+    };
+    const placementLabelById = (placementId) => placementLabel(
+      gameProject.value.levels.flatMap((level) => level.placements).find((placement) => placement.id === placementId),
+    );
+
+    const placeBuildLibraryItem = async (item, position) => {
+      const asset = materializeBuildAsset(item);
+      const placement = placeObject(gameProject.value, forgeLevelId.value, asset.id, {
+        position,
+        role: forgeRole.value,
+      });
+      forgeObjectId.value = asset.id;
+      selectedPlacementId.value = placement.id;
+      Object.assign(forgePosition, position);
+      await previewGameProject();
+      workspaceTab.value = "build";
+      projectStatus.value = `${placementLabel(placement)} placed at ${formatVector(position)}.`;
+      return placement;
+    };
+
+    const handleBuildCanvasClick = async (event) => {
+      if (workspaceTab.value !== "build") return;
+      if (!activeLevel.value) {
+        projectStatus.value = "Choose a level first.";
+        return;
+      }
+      try {
+        const position = threeViewer.value?.screenToGroundPosition(event.clientX, event.clientY);
+        if (buildTool.value === "select") {
+          const item = buildObjectLibrary.value.find((candidate) => candidate.libraryId === pendingPaletteItemId.value);
+          if (item) await placeBuildLibraryItem(item, position);
+          return;
+        }
+        setLevelMarker(gameProject.value, activeLevel.value.id, buildTool.value, position);
+        const marker = buildTool.value;
+        buildTool.value = "select";
+        await previewGameProject();
+        workspaceTab.value = "build";
+        projectStatus.value = `${marker === "start" ? "Start" : "Finish"} placed at ${formatVector(position)}.`;
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const commitSelectedPlacement = async () => {
+      if (!selectedPlacement.value || !activeLevel.value) return;
+      try {
+        updatePlacement(gameProject.value, activeLevel.value.id, selectedPlacement.value.id, {
+          role: selectedPlacement.value.role,
+          position: selectedPlacement.value.position,
+          rotation: selectedPlacement.value.rotation,
+          scale: selectedPlacement.value.scale,
+        });
+        await previewGameProject();
+        workspaceTab.value = "build";
+        projectStatus.value = `${placementLabel(selectedPlacement.value)} updated.`;
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const deleteSelectedPlacement = async () => {
+      if (!selectedPlacement.value || !activeLevel.value) return;
+      const title = placementLabel(selectedPlacement.value);
+      removePlacement(gameProject.value, activeLevel.value.id, selectedPlacement.value.id);
+      selectedPlacementId.value = "";
+      try {
+        await previewGameProject();
+        workspaceTab.value = "build";
+      } catch (error) {
+        projectStatus.value = error.message;
+        return;
+      }
+      projectStatus.value = `${title} removed.`;
+    };
+
+    const placeForgeObject = () => {
+      try {
+        placeObject(gameProject.value, forgeLevelId.value, forgeObjectId.value, {
+          position: forgePosition,
+          role: forgeRole.value,
+        });
+        projectStatus.value = "Object placed. Its transform is now part of the game manifest.";
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const beginObjectDrag = (asset, event) => {
+      draggedObjectId.value = asset.id;
+      forgeObjectId.value = asset.id;
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("application/x-bonzai-object", asset.id);
+      event.dataTransfer.setData("text/plain", asset.id);
+    };
+
+    const beginHistoryDrag = (asset, event) => {
+      draggedObjectId.value = asset.libraryId;
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("application/x-bonzai-asset", asset.libraryId);
+      event.dataTransfer.setData("text/plain", asset.libraryId);
+    };
+
+    const dropObjectOnMap = async (event) => {
+      const libraryId = event.dataTransfer.getData("application/x-bonzai-asset") || event.dataTransfer.getData("text/plain");
+      const libraryItem = buildLibrary.value.find((item) => item.libraryId === libraryId);
+      let objectId = event.dataTransfer.getData("application/x-bonzai-object");
+      draggedObjectId.value = "";
+      if (libraryItem?.kind === "game") {
+        await useBuildAsset(libraryItem);
+        return;
+      }
+      if (libraryItem?.kind === "level") {
+        await useBuildAsset(libraryItem);
+        return;
+      }
+      if (!forgeLevelId.value) {
+        projectStatus.value = "Choose a level before placing objects.";
+        return;
+      }
+      if (libraryItem) objectId = materializeBuildAsset(libraryItem).id;
+      if (!objectId) return;
+      try {
+        const position = threeViewer.value?.screenToGroundPosition(event.clientX, event.clientY);
+        if (!position) throw new Error("3D viewer is not ready");
+        if (libraryItem) await placeBuildLibraryItem(libraryItem, position);
+        else {
+          const projectItem = buildObjectLibrary.value.find((item) => item.projectAssetId === objectId);
+          if (projectItem) await placeBuildLibraryItem(projectItem, position);
+        }
+      } catch (error) {
+        projectStatus.value = `Placement could not render: ${error.message}`;
+      }
+    };
+
+    const addForgeInteraction = () => {
+      try {
+        addInteraction(gameProject.value, {
+          sourcePlacementId: selectedPlacementId.value,
+          targetPlacementId: interactionTargetId.value,
+          type: interactionType.value,
+        });
+        interactionTargetId.value = "";
+        projectStatus.value = "Interaction added.";
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const clearConditionIcon = (type) => ({
+      collect: "diamond",
+      defeat: "swords",
+      reach: "location_on",
+      survive: "timer",
+      score: "trophy",
+      custom: "bolt",
+    }[type] || "check_circle");
+
+    const deleteClearCondition = (conditionId) => {
+      if (!activeLevel.value) return;
+      try {
+        removeClearCondition(gameProject.value, activeLevel.value.id, conditionId);
+        projectStatus.value = "Clear condition removed.";
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const toggleBuildObject = (libraryId) => {
+      const selected = selectedBuildObjectLibraryIds.value;
+      selectedBuildObjectLibraryIds.value = selected.includes(libraryId)
+        ? selected.filter((id) => id !== libraryId)
+        : [...selected, libraryId];
+    };
+
+    const startBuildWorkflow = async () => {
+      if (!buildWorkflowComplete.value) return;
+      try {
+        const levelItem = historyLevelLibrary.value.find((item) => item.libraryId === selectedBuildLevelLibraryId.value);
+        if (!levelItem) throw new Error("Select a level from history");
+        const level = materializeBuildAsset(levelItem);
+        forgeLevelId.value = level.id;
+        const objectItems = selectedBuildObjectLibraryIds.value
+          .map((libraryId) => historyObjectLibrary.value.find((item) => item.libraryId === libraryId))
+          .filter(Boolean);
+        const spacing = 2.5;
+        objectItems.forEach((item, index) => {
+          const asset = materializeBuildAsset(item);
+          if (!level.placements.some((placement) => placement.objectId === asset.id)) {
+            placeObject(gameProject.value, level.id, asset.id, {
+              position: { x: (index - (objectItems.length - 1) / 2) * spacing, y: 0, z: 0 },
+              role: "prop",
+            });
+          }
+        });
+        const applied = await updateGameplayWithAI();
+        if (applied) buildEditorReady.value = true;
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const updateGameplayWithAI = async () => {
+      const instruction = gameplayInstruction.value.trim();
+      if (!instruction || gameplayUpdating.value) return;
+      gameplayUpdating.value = true;
+      projectStatus.value = "BonzAI is directing the gameplay...";
+      try {
+        await loadModelForGeneration(codeModel.value);
+        await window.electronAPI?.resetChat?.();
+        const projectContext = {
+          title: gameProject.value.title,
+          premise: gameProject.value.gameplay.premise,
+          activeLevelId: activeLevel.value?.id || null,
+          levels: orderedProjectLevels.value.map((level) => ({
+            id: level.id,
+            title: level.title,
+            clearMode: level.clearMode || "all",
+            clearConditions: level.clearConditions || [],
+            placements: (level.placements || []).map((placement) => ({
+              id: placement.id,
+              asset: gameProject.value.objects.find((asset) => asset.id === placement.objectId)?.title || "Object",
+              role: placement.role,
+              tags: placement.tags || [],
+              settings: placement.settings || {},
+            })),
+          })),
+          interactions: gameProject.value.gameplay.interactions || [],
+        };
+        const result = await callLLM(`You are BonzAI's game director. Convert the user's instruction into a safe structured gameplay patch.
+
+USER INSTRUCTION:
+${instruction}
+
+CURRENT PROJECT:
+${JSON.stringify(projectContext, null, 2)}
+
+Return only one JSON object with this optional shape:
+{
+  "premise": "short player-facing premise",
+  "levelUpdates": [{
+    "levelId": "an existing level id",
+    "title": "optional concise title",
+    "clearMode": "all or any",
+    "clearConditions": [{
+      "type": "collect, defeat, reach, survive, score, or custom",
+      "label": "short clear instruction",
+      "target": 1,
+      "tag": "matching placement role or tag when relevant",
+      "targetPlacementId": "existing placement id for reach when relevant",
+      "event": "event name for custom only"
+    }]
+  }],
+  "placementUpdates": [{ "placementId": "existing id", "role": "player, enemy, trap, collectible, buff, debuff, checkpoint, platform, goal, or prop", "tags": ["short-tag"], "settings": {} }],
+  "interactions": [{ "sourcePlacementId": "existing id", "targetPlacementId": "existing id", "type": "activates, damages, unlocks, or collects", "amount": 1 }]
+}
+
+Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and placements by omitting them. A reach condition must name a targetPlacementId. Prefer clear, playable rules over prose.`, {
+          maxTokens: 2048,
+          temperature: 0.2,
+          thoughtTokens: 0,
+          enableThinking: false,
+        });
+        const patch = parseGameplayPatch(result.text);
+        applyGameplayPatch(gameProject.value, patch);
+        gameplayInstruction.value = "";
+        const verdict = validateGameProject(gameProject.value);
+        if (verdict.ok) await previewGameProject();
+        else projectStatus.value = `Gameplay updated. ${verdict.errors[0]}`;
+        return true;
+      } catch (error) {
+        projectStatus.value = `Gameplay update failed: ${error.message}`;
+        return false;
+      } finally {
+        gameplayUpdating.value = false;
+      }
+    };
+
+    const removeActiveLevel = () => {
+      if (!activeLevel.value) return;
+      const currentIndex = gameProject.value.levelOrder.indexOf(activeLevel.value.id);
+      removeLevel(gameProject.value, activeLevel.value.id);
+      forgeLevelId.value = gameProject.value.levelOrder[Math.max(0, currentIndex - 1)] || "";
+      selectedPlacementId.value = "";
+      if (!gameProject.value.levels.length) buildEditorReady.value = false;
+    };
+
+    const startPlaytest = async () => {
+      try {
+        await previewGameProject();
+        isPlaytesting.value = true;
+      } catch {
+        // Project status explains which level is incomplete.
+      }
+    };
+
+    const stopPlaytest = () => {
+      isPlaytesting.value = false;
+      selectBuildLevel(forgeLevelId.value);
+    };
+
+    const startCompanionPlay = async () => {
+      try {
+        await previewGameProject();
+        threeViewer.value?.startAgenticPlay(agentCompanionId.value);
+        projectStatus.value = `${agentCompanionName.value} is now playing autonomously.`;
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    const previewGameProject = async () => {
+      try {
+        const userCode = compileGameProject(gameProject.value);
+        const code = normalizeLLMCode(userCode);
+        const gameVerdict = validateGeneratedGameCode(code);
+        if (!gameVerdict.ok) throw new Error(gameVerdict.reason);
+        await threeViewer.value?.applyModuleCode(code, "replace");
+        restoreViewerEnvironmentControls();
+        lastGeneratedCode.value = userCode;
+        projectStatus.value = `${gameProject.value.title} is running as an ordered, playable game.`;
+        return { code, userCode };
+      } catch (error) {
+        projectStatus.value = error.message;
+        throw error;
+      }
+    };
+
+    const setWorkspaceTab = async (tab) => {
+      workspaceTab.value = tab;
+      if (tab === "play" && canTokenizeProject.value) {
+        try {
+          await previewGameProject();
+        } catch {
+          // The inline project status contains the actionable compiler error.
+        }
+      }
+    };
+
+    const openGameMarkets = () => {
+      window.dispatchEvent(new CustomEvent("bonzai:set-mode", { detail: "markets" }));
+    };
+
+    const tokenizeGameProject = async () => {
+      try {
+        const { code } = await previewGameProject();
+        const manifest = buildGameCollectibleManifest(gameProject.value);
+        const snapshot = await captureViewerSnapshot("Game");
+        const record = await addObjectInference(gameProject.value.title, code, {
+          success: true,
+          mode: "game",
+          assetKind: "game",
+          title: gameProject.value.title,
+          projectManifest: manifest,
+          screenshots: snapshot ? [snapshot] : [],
+          thumbnail: snapshot?.dataUrl || "",
+          model: currentModel.value.modelname,
+        });
+        openMint(record);
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+
+    watch(
+      gameProject,
+      (project) => localStorage.setItem("bonzai-game-project", JSON.stringify(project)),
+      { deep: true },
+    );
+
     const useExample = (example) => {
+      if (example.kind) creationMode.value = example.kind;
       form.prompt = example.prompt;
       showExamples.value = false;
     };
@@ -3208,6 +4493,11 @@ OUTPUT:`;
     const applyInference = async (item) => {
       if (!item.code || !threeViewer.value) return;
       try {
+        creationMode.value = ["level", "scene"].includes(item.mode) ? "level" : "object";
+        objectInputMode.value = item.mode === "reference" ? "image" : "prompt";
+        referenceImage.value = item.mode === "reference" && item.referenceImage
+          ? { ...item.referenceImage }
+          : null;
         await threeViewer.value.applyModuleCode(item.code, "replace");
         restoreViewerEnvironmentControls();
         // Store for refinement
@@ -3224,6 +4514,11 @@ OUTPUT:`;
       if (!item.prompt) return;
       // Set the prompt from the inference
       form.prompt = item.prompt;
+      creationMode.value = ["level", "scene"].includes(item.mode) ? "level" : "object";
+      objectInputMode.value = item.mode === "reference" ? "image" : "prompt";
+      referenceImage.value = item.mode === "reference" && item.referenceImage
+        ? { ...item.referenceImage }
+        : null;
       // Trigger generation
       await onSubmit();
     };
@@ -3248,6 +4543,9 @@ OUTPUT:`;
           ...(item.mode ? { mode: item.mode } : {}),
           ...(item.tokensPerSecond ? { tokensPerSecond: `${item.tokensPerSecond} tok/s` } : {}),
           ...(item.blueprint ? { blueprint: item.blueprint } : {}),
+          ...(item.fidelityReview?.score != null
+            ? { fidelity: `${Math.round(Number(item.fidelityReview.score) * 100)}%` }
+            : {}),
           screenshots: String(screenshots.length),
           codeChars: String((item.code || "").length),
           snapshotQuality: screenshots[0]?.quality || (item.thumbnail ? "ultra" : ""),
@@ -3911,8 +5209,12 @@ OUTPUT:`;
     // ═══════════════════════════════════════════════════════════════════════
     // MAIN SUBMIT HANDLER
     const onSubmit = async () => {
-      if (!form.prompt.trim()) return;
+      if (!form.prompt.trim() && !(isReferenceGeneration.value && referenceImage.value)) return;
       if (!canSubmitWithAccess.value) return;
+      if (isReferenceGeneration.value && !referenceImage.value) {
+        lastStatus.value = "Choose a reference image first";
+        return;
+      }
 
       if (!isModel.value) {
         lastStatus.value = "Please download the AI model first";
@@ -3921,11 +5223,23 @@ OUTPUT:`;
 
       isLoading.value = true;
       lastStatus.value = "Preparing...";
+      const submittedPrompt = form.prompt.trim() ||
+        (isReferenceGeneration.value ? "Faithfully reconstruct this object" : "");
+      const submittedReference = referenceImage.value
+        ? { ...referenceImage.value }
+        : null;
 
       try {
-        await loadModelForGeneration(plannerModel.value);
         const viewer = threeViewer.value;
         if (!viewer) throw new Error("Viewer not initialized");
+
+        let draftReferenceCode = "";
+        if (isReferenceGeneration.value) {
+          lastStatus.value = "Preparing reconstruction...";
+          draftReferenceCode = buildReferenceFallbackCode(submittedReference.dataUrl);
+          await viewer.applyModuleCode(draftReferenceCode, "replace");
+          restoreViewerEnvironmentControls();
+        }
 
         // Reset chat history to free context for new generation
         await window.electronAPI.resetChat();
@@ -3934,15 +5248,35 @@ OUTPUT:`;
         console.log("3D CODE GENERATION");
         console.log("═══════════════════════════════════════════════════════");
 
-        // Phase 1: Enhance prompt — decompose into explicit geometric blueprint
+        let referenceAnalysis = "";
+        if (isReferenceGeneration.value) {
+          lastStatus.value = "Reading reference...";
+          _resetStream("Reading Reference", 1, "Mapping silhouette, materials and visible construction.");
+          referenceAnalysis = await analyzeReferenceFor3D(
+            submittedReference.dataUrl,
+            submittedPrompt,
+          );
+          if (/suitability\s*[:\-]\s*reject\b/i.test(referenceAnalysis)) {
+            throw new Error(
+              "This image is not suitable for reliable 3D reconstruction. Use one isolated subject with less occlusion.",
+            );
+          }
+        }
+
+        // The vision inventory and assembly planner solve different problems:
+        // one records evidence, the other resolves it into executable hierarchy.
+        await loadModelForGeneration(plannerModel.value);
         lastStatus.value = "Designing blueprint...";
-        // Keep the planner terse. Thinking-capable models can otherwise
-        // spend the whole budget on <think> text and never reach the actual
-        // blueprint, so request-level thinking is explicitly disabled below.
-        const BLUEPRINT_MAX_TOKENS = 768;
-        _resetStream("Designing Blueprint", BLUEPRINT_MAX_TOKENS, "Drafting the world before we render it.");
+        const BLUEPRINT_MAX_TOKENS = isReferenceGeneration.value ? 1200 : 768;
+        _resetStream(
+          "Designing Blueprint",
+          BLUEPRINT_MAX_TOKENS,
+          isReferenceGeneration.value
+            ? "Resolving visual evidence into a component hierarchy."
+            : "Drafting the world before we render it.",
+        );
         const blueprintResult = await callLLM(
-          buildEnhancePrompt(form.prompt),
+          buildEnhancePrompt(submittedPrompt, referenceAnalysis),
           {
             maxTokens: BLUEPRINT_MAX_TOKENS,
             temperature: 0.35,
@@ -3954,44 +5288,29 @@ OUTPUT:`;
             stream.tokenCount = tokenCount;
             stream.elapsedMs = elapsedMs;
             stream.tokensPerSec = elapsedMs > 0 ? +(tokenCount / (elapsedMs / 1000)).toFixed(1) : 0;
-            // Keep the last ~600 chars in the preview so it never overflows.
             stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
           },
         );
         const blueprint = stripThinkBlocks(blueprintResult.text) ||
-          `${detectArchetypeHint(form.prompt)}${form.prompt}`;
-        const blueprintTokS = blueprintResult.elapsedMs > 0
-          ? ((blueprintResult.tokenCount / blueprintResult.elapsedMs) * 1000).toFixed(1)
-          : null;
-        console.log("Enhanced blueprint:", blueprint);
-        console.log(`Blueprint: ${blueprintResult.tokenCount} tokens in ${(blueprintResult.elapsedMs / 1000).toFixed(1)}s (${blueprintTokS || '?'} tok/s), prefill: ${((blueprintResult.prefillMs || 0) / 1000).toFixed(1)}s`);
-        // Truncation guard — if the blueprint hit the cap (within 8 tokens
-        // of the budget) AND doesn't end on terminal punctuation, the
-        // codegen will get an incomplete spec. Loud warning so we notice
-        // when the budget needs another bump.
-        if (blueprintResult.tokenCount >= BLUEPRINT_MAX_TOKENS - 8) {
-          const tail = blueprint.slice(-2).trim();
-          if (!/[.!?"]/.test(tail)) {
-            console.warn(
-              `[3D] Blueprint hit the ${BLUEPRINT_MAX_TOKENS}-token cap and looks truncated ` +
-              `(ends with "${blueprint.slice(-30)}"). Consider raising BLUEPRINT_MAX_TOKENS.`
-            );
-          }
-        }
+          referenceAnalysis ||
+          `${detectArchetypeHint(submittedPrompt)}${submittedPrompt}`;
+        console.log("Reconstruction blueprint:", blueprint);
 
         // Phase 2: Generate Three.js code from blueprint
         // Reset chat again — the blueprint exchange is in history and the code prompt
         // is very large (Three.js reference docs), so we need maximum context available
         await loadModelForGeneration(codeModel.value);
         await window.electronAPI.resetChat();
-        lastStatus.value = "Vibe Coding...";
+        lastStatus.value = isReferenceGeneration.value
+          ? "Building reconstruction..."
+          : "Building scene...";
         const codePrompt = buildObjectPrompt(blueprint);
-        // 16K output budget — the orrery reference is ~270 lines and
-        // our quality bar expects new scenes to match that volume. The
-        // Keep thinking disabled for 3D codegen. Hybrid reasoning models
-        // can otherwise burn output budget before emitting executable JS.
-        const codeMaxTokens = 16384;
-        _resetStream("Vibe Coding", codeMaxTokens, "Hand-stitching three.js geometry, frame by frame.");
+        const codeMaxTokens = isReferenceGeneration.value ? 8192 : 16384;
+        _resetStream(
+          isReferenceGeneration.value ? "Building Reconstruction" : "Building Scene",
+          codeMaxTokens,
+          "Generating visible Three.js geometry.",
+        );
         const codeResult = await callLLM(
           codePrompt,
           {
@@ -4048,6 +5367,9 @@ OUTPUT:`;
         //       normalizeLLMCode couldn't auto-fix. Truncated output
         //       typically ends mid-expression with many more `{` than `}`.
         let renderCheck = validateRenderableUserCode(userCode);
+        if (renderCheck.ok && creationMode.value === "game") {
+          renderCheck = validateGeneratedGameCode(userCode);
+        }
         const openBraces  = (userCode.match(/\{/g) || []).length;
         const closeBraces = (userCode.match(/\}/g) || []).length;
         const truncated = userCode && (openBraces - closeBraces > 5
@@ -4059,22 +5381,24 @@ OUTPUT:`;
             `[3D] Phase-2 ${userCode ? (truncated ? 'produced truncated code' : renderCheck.reason) : 'produced empty code'} — retrying with terse prompt.`
           );
           lastStatus.value = "Retrying...";
-          _resetStream("Retrying", 8192, "First pass came back unsteady — re-rolling with a tighter prompt.");
+          const retryMaxTokens = isReferenceGeneration.value ? 4096 : 8192;
+          _resetStream("Retrying", retryMaxTokens, "First pass was invalid. Rebuilding a tighter scene.");
           await window.electronAPI.resetChat();
           const tersePrompt = `You are a Three.js developer. Output ONLY raw JavaScript. No markdown, no prose, no <think>. Start with setObjectInfo(...).
 
 TASK: ${blueprint}
 
-Pre-declared: THREE, scene, root, MAT, TEX, SHADER, FLUID, P, H, FX, CELESTIAL, addUpdateCallback, setObjectInfo. Cinematic post-FX baseline is already applied.
+Pre-declared: THREE, scene, root, MAT, TEX, SHADER, FLUID, P, H, FX, CELESTIAL, GAME, addUpdateCallback, setObjectInfo. Cinematic post-FX baseline is already applied.
 For water/potion/blood: use FLUID.oceanWater / FLUID.fountainBasin / FLUID.stream / H.fillLiquid+FLUID.upgradeFill.
 For glow: FX.withGlow(mesh, color, {scale, intensity}).
 For physics: await P.init(); P.body(mesh, {...}).
+${creationMode.value === "game" ? "This must be playable: create one GAME session, register a player and objectives, implement a win and fail state, then call game.start()." : ""}
 Every mesh goes on root. The code MUST include root.add(...) calls for visible objects. Keep object height 0.3-1.5. No imports. No markdown fences.
 
 OUTPUT CODE:`;
           const retry = await callLLM(
             tersePrompt,
-            { maxTokens: 8192, temperature: 0.6, thoughtTokens: 0, enableThinking: false },
+            { maxTokens: retryMaxTokens, temperature: 0.6, thoughtTokens: 0, enableThinking: false },
             ({ text, tokenCount, elapsedMs }) => {
               const visible = _stripThinkForPreview(text);
               stream.tokenCount = tokenCount;
@@ -4090,6 +5414,24 @@ OUTPUT CODE:`;
           );
           userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
           renderCheck = validateRenderableUserCode(userCode);
+          if (renderCheck.ok && creationMode.value === "game") {
+            renderCheck = validateGeneratedGameCode(userCode);
+          }
+        }
+
+        let usedReferenceFallback = false;
+        if (
+          isReferenceGeneration.value &&
+          (!userCode || truncated || !renderCheck.ok)
+        ) {
+          console.warn("[3D] Reconstruction code was invalid; using visible reference relief.");
+          code = draftReferenceCode;
+          userCodeMatch = code.match(
+            /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
+          );
+          userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
+          renderCheck = validateRenderableUserCode(userCode);
+          usedReferenceFallback = true;
         }
 
         console.log("User code:", userCode || "(empty — LLM produced no code)");
@@ -4110,7 +5452,24 @@ OUTPUT CODE:`;
         // Set a fake "almost done" progress so the bar reads right.
         stream.tokenCount = 1;
         stream.maxTokens = 1;
-        await viewer.applyModuleCode(code, "replace");
+        try {
+          await viewer.applyModuleCode(code, "replace");
+        } catch (renderError) {
+          if (!isReferenceGeneration.value || usedReferenceFallback) {
+            throw renderError;
+          }
+          console.warn(
+            "[3D] Generated reconstruction was not renderable; using visible reference relief.",
+            renderError,
+          );
+          code = draftReferenceCode;
+          userCodeMatch = code.match(
+            /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
+          );
+          userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
+          usedReferenceFallback = true;
+          await viewer.applyModuleCode(code, "replace");
+        }
         restoreViewerEnvironmentControls();
 
         // Store for refinement
@@ -4121,21 +5480,149 @@ OUTPUT CODE:`;
         const totalMs = blueprintResult.elapsedMs + codeResult.elapsedMs;
         const tokensPerSecond = totalMs > 0 ? ((totalTokens / totalMs) * 1000).toFixed(1) : null;
 
-        lastStatus.value = `Crafted! (${tokensPerSecond || '?'} tok/s)`;
-        const snapshot = await captureViewerSnapshot("Preview");
-        const savedRecord = await addObjectInference(form.prompt, code, {
+        lastStatus.value = usedReferenceFallback
+          ? "Draft rendered. Procedural reconstruction could not be validated."
+          : `Crafted! (${tokensPerSecond || '?'} tok/s)`;
+        let snapshot = await captureViewerSnapshot("Preview");
+        const screenshots = snapshot ? [snapshot] : [];
+        let fidelityReview = null;
+        const fidelityPasses = [];
+        if (
+          isReferenceGeneration.value &&
+          !usedReferenceFallback &&
+          snapshot?.dataUrl
+        ) {
+          lastStatus.value = "Reviewing fidelity...";
+          _resetStream(
+            "Reviewing Fidelity",
+            1,
+            "Comparing silhouette, proportions, materials and critical details.",
+          );
+          try {
+            fidelityReview = await reviewReferenceFidelity(
+              submittedReference.dataUrl,
+              snapshot.dataUrl,
+            );
+            fidelityPasses.push(fidelityReview);
+          } catch (reviewError) {
+            fidelityReview = {
+              score: null,
+              verdict: "unavailable",
+              raw: reviewError.message,
+            };
+            fidelityPasses.push(fidelityReview);
+          }
+
+          if (
+            Number.isFinite(Number(fidelityReview?.score)) &&
+            Number(fidelityReview.score) < 0.72
+          ) {
+            lastStatus.value = "Correcting reconstruction...";
+            const stableCode = code;
+            const stableUserCode = userCode;
+            const defects = Array.isArray(fidelityReview.defects)
+              ? fidelityReview.defects.join("; ")
+              : fidelityReview.raw || "Improve visible fidelity";
+            await window.electronAPI.resetChat();
+            const correction = await callLLM(
+              buildRefinePrompt(
+                userCode,
+                `Correct the reconstruction without redesigning it. Fix these measured defects: ${defects}. Preserve accurate geometry. Fix silhouette and proportions first, then material boundaries and identity-critical details. Return the complete corrected code.`,
+              ),
+              {
+                maxTokens: 8192,
+                temperature: 0.3,
+                thoughtTokens: 0,
+                enableThinking: false,
+              },
+            );
+            const correctedCode = normalizeLLMCode(correction.text);
+            const correctedMatch = correctedCode.match(
+              /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
+            );
+            const correctedUserCode = correctedMatch ? correctedMatch[1].trim() : "";
+            const correctedCheck = validateRenderableUserCode(correctedUserCode);
+
+            if (correctedCheck.ok) {
+              try {
+                await viewer.applyModuleCode(correctedCode, "replace");
+                restoreViewerEnvironmentControls();
+                code = correctedCode;
+                userCode = correctedUserCode;
+                lastGeneratedCode.value = correctedUserCode;
+                snapshot = await captureViewerSnapshot("Fidelity refinement");
+                if (snapshot) screenshots.push(snapshot);
+                if (snapshot?.dataUrl) {
+                  const correctedReview = await reviewReferenceFidelity(
+                    submittedReference.dataUrl,
+                    snapshot.dataUrl,
+                  );
+                  fidelityReview = correctedReview;
+                  fidelityPasses.push(correctedReview);
+                }
+              } catch (correctionError) {
+                console.warn(
+                  "[3D] Correction failed validation; restoring the last good reconstruction.",
+                  correctionError,
+                );
+                code = stableCode;
+                userCode = stableUserCode;
+                await viewer.applyModuleCode(stableCode, "replace");
+                restoreViewerEnvironmentControls();
+              }
+            }
+          }
+          lastStatus.value = Number(fidelityReview?.score) >= 0.72
+            ? `Reconstruction verified (${Math.round(Number(fidelityReview.score) * 100)}%)`
+            : "Reconstruction ready";
+        }
+        const savedRecord = await addObjectInference(submittedPrompt, code, {
           success: true,
+          mode: effectiveCreationMode.value,
+          assetKind: isReferenceGeneration.value ? "object" : creationMode.value,
           blueprint,
+          referenceAnalysis,
+          referenceImage: submittedReference,
+          usedReferenceFallback,
+          fidelityReview: fidelityReview
+            ? { ...fidelityReview, passes: fidelityPasses }
+            : null,
+          visionVerified: Number(fidelityReview?.score) >= 0.72,
           tokensPerSecond,
           model: currentModel.value.modelname,
-          screenshots: snapshot ? [snapshot] : [],
+          screenshots,
           thumbnail: snapshot?.dataUrl || "",
         });
         console.log("[3D] Inference saved to history:", savedRecord?.id);
+        if (creationMode.value === "level") {
+          const level = materializeBuildAsset({
+            libraryId: `history:${savedRecord.id}`,
+            inferenceId: savedRecord.id,
+            kind: "level",
+            title: submittedPrompt || `Level ${gameProject.value.levels.length + 1}`,
+            code,
+            thumbnail: snapshot?.dataUrl || "",
+            source: "history",
+          });
+          forgeLevelId.value = level.id;
+          projectStatus.value = `${level.title} added as level ${gameProject.value.levelOrder.length}.`;
+        }
         form.prompt = "";
+        if (isReferenceGeneration.value) referenceImage.value = null;
       } catch (e) {
         console.error("❌ Generation error:", e);
         lastStatus.value = "❌ Failed: " + e.message;
+        try {
+          await addObjectInference(submittedPrompt, "", {
+            success: false,
+            mode: effectiveCreationMode.value,
+            referenceImage: submittedReference,
+            error: e.message,
+            model: currentModel.value?.modelname || "",
+          });
+        } catch (historyError) {
+          console.warn("[3D] Failed to save generation error:", historyError);
+        }
       } finally {
         _endStream();
         isLoading.value = false;
@@ -4201,6 +5688,7 @@ OUTPUT CODE:`;
         const snapshot = await captureViewerSnapshot("Preview");
         await addObjectInference(`[Refine] ${refinePrompt.value}`, code, {
           success: true,
+          mode: effectiveCreationMode.value,
           tokensPerSecond,
           model: currentModel.value.modelname,
           screenshots: snapshot ? [snapshot] : [],
@@ -4310,8 +5798,89 @@ OUTPUT CODE:`;
       downloads,
       downloadTaskList,
       form,
+      workspaceTab,
+      workspaceTabs,
+      setWorkspaceTab,
+      creationMode,
+      objectInputMode,
+      gameProject,
+      forgeLevelId,
+      forgeObjectId,
+      forgePosition,
+      forgeRole,
+      interactionSourceId,
+      interactionTargetId,
+      interactionType,
+      draggedObjectId,
+      buildLibrary,
+      buildObjectLibrary,
+      orderedProjectLevels,
+      activeLevel,
+      activeLevelPlacements,
+      selectedPlacement,
+      selectedPlacementAsset,
+      selectedPlacementInteractions,
+      selectedRole,
+      selectedPlacementId,
+      pendingPaletteItemId,
+      buildTool,
+      buildTools,
+      gameplayInstruction,
+      gameplayUpdating,
+      gameplaySuggestions,
+      selectedBuildLevelLibraryId,
+      selectedBuildObjectLibraryIds,
+      buildEditorReady,
+      isPlaytesting,
+      historyLevelLibrary,
+      historyObjectLibrary,
+      canStartBuildWorkflow,
+      buildWorkflowComplete,
+      objectRoles,
+      projectPlacementCount,
+      projectStatus,
+      canTokenizeProject,
+      saveCurrentAsset,
+      placeForgeObject,
+      beginObjectDrag,
+      beginHistoryDrag,
+      useBuildAsset,
+      useBuildStarter,
+      createLevelFromBuild,
+      createObjectFromBuild,
+      selectBuildLevel,
+      moveActiveLevel,
+      selectPaletteAsset,
+      handleBuildCanvasClick,
+      commitSelectedPlacement,
+      deleteSelectedPlacement,
+      formatVector,
+      placementLabel,
+      placementLabelById,
+      dropObjectOnMap,
+      addForgeInteraction,
+      clearConditionIcon,
+      deleteClearCondition,
+      updateGameplayWithAI,
+      toggleBuildObject,
+      startBuildWorkflow,
+      removeActiveLevel,
+      startPlaytest,
+      stopPlaytest,
+      previewGameProject,
+      tokenizeGameProject,
+      openGameMarkets,
+      agentCompanions,
+      agentCompanionId,
+      agentCompanionName,
+      startCompanionPlay,
+      referenceImage,
+      onReferenceImagePicked,
+      removeReferenceImage,
       enablePhysics,
       examplePrompts,
+      activeExamples,
+      levelExamples,
       setTimeOfDay,
       setWeather,
       performancePresets,
@@ -4371,6 +5940,1100 @@ OUTPUT CODE:`;
 </script>
 
 <style scoped>
+.three-workspace-tabs {
+  position: sticky;
+  z-index: 40;
+  top: 0;
+  display: flex;
+  width: 100%;
+  margin: 0 0 var(--bz-space-5);
+  border-bottom: 1px solid var(--bz-border);
+  background: var(--bz-canvas);
+}
+
+.three-workspace-tabs button {
+  position: relative;
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 0 var(--bz-space-5);
+  border: 0;
+  background: transparent;
+  color: var(--bz-fg-low);
+  font: 600 var(--bz-size-meta) var(--bz-font-ui);
+  cursor: pointer;
+}
+
+.three-workspace-tabs button:hover {
+  color: var(--bz-fg);
+}
+
+.three-workspace-tabs button:focus-visible {
+  outline: 0;
+  color: var(--bz-fg);
+}
+
+.three-workspace-tabs button.is-active {
+  color: var(--bz-fg);
+}
+
+.three-workspace-tabs button.is-active::after {
+  position: absolute;
+  right: var(--bz-space-4);
+  bottom: -1px;
+  left: var(--bz-space-4);
+  height: 2px;
+  background: var(--bz-purple-300);
+  content: "";
+}
+
+.three-workspace-tabs .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.world-forge {
+  margin-top: var(--bz-space-6);
+  padding: var(--bz-space-5) 0;
+  border-top: 1px solid var(--bz-border);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.world-forge__head,
+.world-forge__toolbar,
+.world-forge__assembly,
+.world-forge__execution {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+}
+
+.world-forge__head {
+  justify-content: space-between;
+  margin-bottom: var(--bz-space-4);
+}
+
+.world-forge__counts {
+  display: flex;
+  gap: var(--bz-space-5);
+  color: var(--bz-fg-mid);
+  font-size: 12px;
+}
+
+.world-forge__counts b {
+  margin-right: var(--bz-space-1);
+  color: var(--bz-fg);
+  font-size: 18px;
+}
+
+.world-forge__toolbar,
+.world-forge__assembly {
+  padding: var(--bz-space-3) 0;
+}
+
+.world-forge__execution {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(160px, 220px) repeat(3, auto);
+  align-items: stretch;
+  padding: var(--bz-space-3) 0;
+}
+
+.world-forge__toolbar .bz-field-input,
+.world-forge__execution textarea {
+  flex: 1;
+}
+
+.world-forge__assembly {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(3, 72px) minmax(120px, 160px) 36px;
+}
+
+.world-forge__assembly label {
+  display: grid;
+  gap: var(--bz-space-1);
+  color: var(--bz-fg-mid);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.world-forge__execution textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.world-forge__interaction {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 140px minmax(160px, 1fr) 36px auto;
+  align-items: center;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-3) 0;
+}
+
+.viewer-wrapper.is-drop-target {
+  outline: 2px solid var(--bz-purple-300);
+  outline-offset: -2px;
+}
+
+.viewer-wrapper.is-drop-target::after {
+  position: absolute;
+  z-index: 20;
+  inset: var(--bz-space-4);
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--bz-purple-100);
+  border-radius: 6px;
+  background: var(--bz-scrim);
+  color: var(--bz-fg);
+  content: "Drop to place";
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.world-forge__status {
+  margin-top: var(--bz-space-2);
+  color: var(--bz-fg);
+  font-size: 13px;
+}
+
+.build-dock {
+  position: absolute;
+  z-index: 30;
+  top: var(--bz-space-3);
+  bottom: var(--bz-space-3);
+  left: var(--bz-space-3);
+  display: flex;
+  width: 264px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bz-panel) 94%, transparent);
+  box-shadow: 0 12px 36px var(--bz-scrim);
+  backdrop-filter: blur(16px);
+}
+
+.build-dock__project,
+.build-dock__head,
+.build-dock__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-3);
+}
+
+.build-dock__project {
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.build-dock__project > .material-symbols-outlined {
+  color: var(--bz-purple-200);
+  font-size: 19px;
+}
+
+.build-dock__project input,
+.build-dock__level select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--bz-fg);
+  font: 600 13px var(--bz-font-ui);
+}
+
+.build-dock__level {
+  display: grid;
+  gap: 4px;
+  padding: var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.build-dock__level label,
+.build-dock__head small,
+.build-dock__footer,
+.build-asset small {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+}
+
+.build-dock__level label {
+  text-transform: uppercase;
+}
+
+.build-dock__head {
+  justify-content: space-between;
+}
+
+.build-dock__head div {
+  display: grid;
+  gap: 2px;
+}
+
+.build-dock__head strong {
+  font-size: 12px;
+}
+
+.build-dock__assets {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  padding: 0 var(--bz-space-2) var(--bz-space-2);
+  overflow-y: auto;
+}
+
+.build-asset {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: var(--bz-space-2);
+  min-height: 52px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bz-fg);
+  text-align: left;
+  cursor: grab;
+}
+
+.build-asset:hover,
+.build-asset:focus-visible {
+  border-color: var(--bz-border);
+  background: var(--bz-raised);
+}
+
+.build-asset img,
+.build-asset > .material-symbols-outlined:first-child {
+  width: 38px;
+  height: 38px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.build-asset > .material-symbols-outlined:first-child {
+  display: grid;
+  place-items: center;
+  background: var(--bz-raised);
+  font-size: 18px;
+}
+
+.build-asset span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+}
+
+.build-asset strong,
+.build-asset small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-asset strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.build-asset__grip {
+  color: var(--bz-fg-low);
+  font-size: 16px;
+}
+
+.build-dock__empty {
+  display: grid;
+  gap: 4px;
+  margin: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.build-dock__empty p {
+  margin: var(--bz-space-2) 4px;
+  color: var(--bz-fg-low);
+  font: 500 10px var(--bz-font-ui);
+  text-transform: uppercase;
+}
+
+.build-dock__empty button {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: 0 var(--bz-space-2);
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font: 500 11px var(--bz-font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.build-dock__empty button:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.build-dock__empty .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.build-dock__footer {
+  justify-content: space-between;
+  margin-top: auto;
+  border-top: 1px solid var(--bz-border);
+}
+
+.build-dock__footer b {
+  color: var(--bz-fg);
+}
+
+.viewer-container.is-build {
+  height: calc(100vh - 220px);
+  min-height: 500px;
+  max-height: 720px;
+  aspect-ratio: auto;
+  border: 1px solid var(--bz-border-strong);
+  background: var(--bz-panel);
+  box-shadow: none;
+}
+
+.viewer-wrapper.has-builder :deep(.perf-stats),
+.viewer-wrapper.has-builder :deep(.controls-hint) {
+  display: none;
+}
+
+.build-levels,
+.build-inspector,
+.build-palette,
+.build-tools {
+  position: absolute;
+  z-index: 30;
+  border: 1px solid var(--bz-border);
+  background: var(--bz-panel);
+}
+
+.build-levels {
+  top: var(--bz-space-3);
+  bottom: 112px;
+  left: var(--bz-space-3);
+  display: flex;
+  width: 214px;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.build-levels__project,
+.build-levels__head,
+.build-levels__order {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.build-levels__project {
+  display: grid;
+  gap: 3px;
+}
+
+.build-levels__project span,
+.build-inspector__head span,
+.build-field > span,
+.build-transform > span {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.build-levels__project input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--bz-fg);
+  font: 600 13px var(--bz-font-ui);
+}
+
+.build-levels__head,
+.build-levels__order {
+  justify-content: space-between;
+}
+
+.build-levels__head strong {
+  font-size: 12px;
+}
+
+.build-levels__list {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  padding: var(--bz-space-2);
+  overflow-y: auto;
+}
+
+.build-level {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--bz-space-2);
+  min-height: 48px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  text-align: left;
+  cursor: pointer;
+}
+
+.build-level:hover,
+.build-level.is-active {
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.build-level.is-active {
+  border-color: var(--bz-border-brand);
+}
+
+.build-level__number {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 3px;
+  background: var(--bz-card);
+  font: 600 11px var(--bz-font-mono);
+}
+
+.build-level > span:last-child {
+  display: grid;
+  min-width: 0;
+}
+
+.build-level strong,
+.build-level small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-level strong {
+  font-size: 11px;
+}
+
+.build-level small,
+.build-levels__order {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+}
+
+.build-levels__order {
+  margin-top: auto;
+  border-top: 1px solid var(--bz-border);
+  border-bottom: 0;
+}
+
+.build-levels__empty {
+  display: grid;
+  gap: 4px;
+  padding: var(--bz-space-2);
+}
+
+.build-levels__empty p {
+  margin: 0 0 var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: 11px;
+}
+
+.build-levels__empty button {
+  min-height: 32px;
+  padding: 0 var(--bz-space-2);
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font: 400 11px var(--bz-font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.build-levels__empty button:hover {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.build-inspector {
+  top: var(--bz-space-3);
+  right: var(--bz-space-3);
+  bottom: 112px;
+  width: 236px;
+  overflow-y: auto;
+  border-radius: 6px;
+}
+
+.build-inspector__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.build-inspector__head > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.build-inspector__head strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-field,
+.build-transform,
+.build-connections {
+  display: grid;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-3);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.build-field select,
+.build-connections select,
+.build-transform input {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 3px;
+  outline: 0;
+  background: var(--bz-card);
+  color: var(--bz-fg);
+  font: 400 11px var(--bz-font-ui);
+}
+
+.build-role-note {
+  display: grid;
+  gap: 3px;
+  padding: var(--bz-space-3);
+  background: var(--bz-card);
+}
+
+.build-role-note strong {
+  font-size: 11px;
+}
+
+.build-role-note span,
+.build-inspector__hint {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.build-transform {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.build-transform > span {
+  grid-column: 1 / -1;
+}
+
+.build-transform label {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: center;
+  gap: 2px;
+}
+
+.build-transform small {
+  color: var(--bz-fg-low);
+  font-size: 9px;
+}
+
+.build-transform input {
+  min-width: 0;
+  padding: 0 4px;
+  font-family: var(--bz-font-mono);
+}
+
+.build-connections > strong {
+  font-size: 11px;
+}
+
+.build-connection-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: 10px;
+}
+
+.build-marker {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  align-items: center;
+  gap: var(--bz-space-2);
+  width: calc(100% - 24px);
+  min-height: 46px;
+  margin: var(--bz-space-3) var(--bz-space-3) 0;
+  padding: 0 var(--bz-space-2);
+  border: 1px solid var(--bz-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bz-fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.build-marker:hover {
+  background: var(--bz-raised);
+}
+
+.build-marker__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bz-fg-low);
+}
+
+.build-marker__dot.is-start { background: var(--bz-emerald-500); }
+.build-marker__dot.is-finish { background: var(--bz-purple-300); }
+
+.build-marker > span:last-child {
+  display: grid;
+}
+
+.build-marker strong { font-size: 11px; }
+.build-marker small { color: var(--bz-fg-low); font: 10px var(--bz-font-mono); }
+.build-inspector__hint { margin: var(--bz-space-4); }
+
+.build-tools {
+  top: var(--bz-space-3);
+  left: 50%;
+  display: flex;
+  padding: 3px;
+  border-radius: 5px;
+  transform: translateX(-50%);
+}
+
+.build-tools button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 var(--bz-space-3);
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font: 500 11px var(--bz-font-ui);
+  cursor: pointer;
+}
+
+.build-tools button:hover,
+.build-tools button.is-active {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.build-tools button.is-active {
+  box-shadow: inset 0 0 0 1px var(--bz-border-brand);
+}
+
+.build-tools .material-symbols-outlined { font-size: 16px; }
+
+.build-palette {
+  right: 252px;
+  bottom: var(--bz-space-3);
+  left: 230px;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  min-height: 88px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.build-palette__head {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: var(--bz-space-3);
+  border-right: 1px solid var(--bz-border);
+}
+
+.build-palette__head strong { font-size: 11px; }
+.build-palette__head span { color: var(--bz-fg-low); font: 10px var(--bz-font-mono); }
+
+.build-palette__items {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--bz-space-2);
+  overflow-x: auto;
+}
+
+.build-palette__items button {
+  display: grid;
+  flex: 0 0 64px;
+  justify-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  cursor: grab;
+}
+
+.build-palette__items button:hover {
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.build-palette__items button.is-selected {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.build-steps {
+  display: grid;
+  gap: var(--bz-space-3);
+  margin: 0;
+  padding: var(--bz-space-4);
+  list-style: none;
+}
+
+.build-steps li {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: start;
+  gap: var(--bz-space-2);
+  color: var(--bz-fg-low);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.build-steps b {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 3px;
+  background: var(--bz-card);
+  color: var(--bz-fg-mid);
+  font: 600 10px var(--bz-font-mono);
+}
+
+.build-palette__items img,
+.build-palette__items button > .material-symbols-outlined {
+  width: 42px;
+  height: 42px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.build-palette__items button > .material-symbols-outlined {
+  display: grid;
+  place-items: center;
+  background: var(--bz-card);
+  font-size: 18px;
+}
+
+.build-palette__items small {
+  width: 56px;
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-canvas-empty {
+  position: absolute;
+  z-index: 15;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: var(--bz-fg-mid);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.build-canvas-empty strong { font-size: 14px; }
+.build-canvas-empty span { color: var(--bz-fg-low); font-size: 11px; }
+
+.build-status {
+  position: absolute;
+  z-index: 28;
+  right: 252px;
+  bottom: 112px;
+  left: 230px;
+  margin: 0;
+  padding: 8px var(--bz-space-3);
+  border: 1px solid var(--bz-border);
+  border-radius: 4px;
+  background: var(--bz-panel);
+  color: var(--bz-fg-mid);
+  font-size: 10px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.distribution {
+  display: grid;
+  gap: var(--bz-space-5);
+}
+
+.distribution__readiness {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-block: 1px solid var(--bz-border);
+}
+
+.distribution__readiness div {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 2px var(--bz-space-2);
+  padding: var(--bz-space-4);
+  border-right: 1px solid var(--bz-border);
+}
+
+.distribution__readiness div:last-child {
+  border-right: 0;
+}
+
+.distribution__readiness .material-symbols-outlined {
+  grid-row: 1 / 3;
+  color: var(--bz-fg-low);
+}
+
+.distribution__readiness .is-ready .material-symbols-outlined {
+  color: var(--bz-emerald-500);
+}
+
+.distribution__readiness small,
+.distribution__actions p {
+  color: var(--bz-fg-low);
+}
+
+.distribution__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+}
+
+.distribution__actions > div {
+  flex: 1;
+}
+
+.distribution__actions p {
+  max-width: 62ch;
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .world-forge__head,
+  .world-forge__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .world-forge__assembly {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .world-forge__execution {
+    grid-template-columns: 1fr;
+  }
+
+  .world-forge__interaction {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .three-workspace-tabs {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .three-workspace-tabs button {
+    min-width: max-content;
+    padding: 0 var(--bz-space-3);
+  }
+
+  .build-dock {
+    top: var(--bz-space-2);
+    bottom: var(--bz-space-2);
+    left: var(--bz-space-2);
+    width: min(240px, 42%);
+  }
+
+  .viewer-container.is-build {
+    min-height: 560px;
+  }
+
+  .build-levels { width: 176px; }
+  .build-inspector { width: 196px; }
+  .build-palette { right: 212px; left: 192px; }
+  .build-status { right: 212px; left: 192px; }
+
+  .build-tools button span:last-child {
+    display: none;
+  }
+
+  .distribution__readiness {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .distribution__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.bz-3d-mode {
+  display: inline-flex;
+  margin: 0 0 var(--bz-space-3);
+  padding: 3px;
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border);
+  border-radius: 6px;
+}
+
+.bz-3d-mode button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  min-height: 34px;
+  padding: 0 var(--bz-space-3);
+  color: var(--bz-fg-mid);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    color var(--bz-dur-fast) var(--bz-ease-stand),
+    background-color var(--bz-dur-fast) var(--bz-ease-stand);
+}
+
+.bz-3d-mode button:hover {
+  color: var(--bz-fg);
+  background: var(--bz-raised);
+}
+
+.bz-3d-mode button:focus-visible {
+  outline: 2px solid var(--bz-purple-300);
+  outline-offset: 1px;
+}
+
+.bz-3d-mode button.is-selected {
+  color: var(--bz-fg);
+  background: var(--bz-raised);
+  box-shadow: inset 0 0 0 1px var(--bz-border-brand);
+}
+
+.bz-3d-mode .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.bz-3d-reference {
+  margin-bottom: var(--bz-space-3);
+}
+
+.bz-3d-reference__picker {
+  display: flex;
+  align-items: center;
+  gap: var(--bz-space-3);
+  min-height: 76px;
+  padding: var(--bz-space-3) var(--bz-space-4);
+  color: var(--bz-fg-mid);
+  background: var(--bz-panel);
+  border: 1px dashed var(--bz-border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    color var(--bz-dur-fast) var(--bz-ease-stand),
+    border-color var(--bz-dur-fast) var(--bz-ease-stand);
+}
+
+.bz-3d-reference__picker:hover,
+.bz-3d-reference__picker:focus-within {
+  color: var(--bz-fg);
+  border-color: var(--bz-border-brand);
+}
+
+.bz-3d-reference__picker input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.bz-3d-reference__picker .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 26px;
+}
+
+.bz-3d-reference__picker span:last-child {
+  display: grid;
+  gap: var(--bz-space-1);
+}
+
+.bz-3d-reference__picker strong {
+  color: var(--bz-fg);
+  font-size: 14px;
+}
+
+.bz-3d-reference__picker small {
+  color: var(--bz-fg-low);
+  font-size: 12px;
+}
+
+.bz-3d-reference__preview {
+  position: relative;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: var(--bz-space-3);
+  min-height: 88px;
+  padding: var(--bz-space-2);
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border);
+  border-radius: 6px;
+}
+
+.bz-3d-reference__preview img {
+  width: 88px;
+  height: 72px;
+  object-fit: contain;
+  background: var(--bz-canvas);
+  border-radius: 4px;
+}
+
+.bz-3d-reference__name {
+  overflow: hidden;
+  color: var(--bz-fg-mid);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .three-prompt-input {
   min-height: 7rem;
 }
@@ -4435,6 +7098,10 @@ h2.bz-h2 {
   box-shadow: 0 8px 32px var(--bz-scrim);
   aspect-ratio: 16 / 9;
   width: 100%;
+}
+.viewer-container.is-sell {
+  max-height: 190px;
+  aspect-ratio: 21 / 6;
 }
 .viewer-wrapper {
   position: relative;
@@ -5529,6 +8196,572 @@ ol.chat .history-item:not(:first-child) hr {
 
 .three-progress-card .download-list {
   margin-top: 12px;
+}
+
+.object-input-mode {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 0 var(--bz-space-3) var(--bz-space-3);
+  padding: 2px;
+  border: 1px solid var(--bz-border);
+  border-radius: 4px;
+  background: var(--bz-panel);
+}
+
+.object-input-mode button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: var(--bz-space-1);
+  padding: 0 var(--bz-space-3);
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font: 500 11px var(--bz-font-ui);
+  cursor: pointer;
+}
+
+.object-input-mode button.is-selected {
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.object-input-mode .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* Build is a canvas with an AI director, not a configuration dashboard. */
+.viewer-container.is-build {
+  height: calc(100vh - 220px);
+  min-height: 600px;
+  max-height: 780px;
+  margin-top: 0;
+  overflow: hidden;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 6px !important;
+  background: var(--bz-scrim-deep);
+  box-shadow: none;
+}
+
+.build-director {
+  position: absolute;
+  z-index: 34;
+  top: 12px;
+  right: 12px;
+  left: 12px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 6px;
+  background: var(--bz-panel);
+  box-shadow: 0 12px 30px var(--bz-scrim);
+}
+
+.build-director__levels {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.build-director__title {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--bz-border);
+  outline: 0;
+  background: transparent;
+  color: var(--bz-fg);
+  font: 650 13px var(--bz-font-ui);
+}
+
+.build-level-tabs {
+  display: flex;
+  min-width: 0;
+  gap: 3px;
+  overflow-x: auto;
+}
+
+.build-level-tabs button,
+.build-director__order button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font: 550 10px var(--bz-font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.build-level-tabs button:hover,
+.build-level-tabs button.is-active,
+.build-director__order button:hover {
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.build-level-tabs button.is-active {
+  border-color: var(--bz-border-brand);
+}
+
+.build-level-tabs__index {
+  color: var(--bz-fg-low);
+  font: 600 9px var(--bz-font-mono);
+}
+
+.build-level-tabs .build-level-tabs__add,
+.build-director__order button {
+  width: 40px;
+  justify-content: center;
+  padding: 0;
+}
+
+.build-level-tabs .material-symbols-outlined,
+.build-director__order .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.build-director__order {
+  display: flex;
+}
+
+.build-director__actions {
+  padding-left: var(--bz-space-2);
+  border-left: 1px solid var(--bz-border);
+}
+
+.build-director__order .build-action {
+  width: auto;
+  padding: 0 var(--bz-space-3);
+  gap: var(--bz-space-1);
+}
+
+.build-director__order .build-action.is-publish {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-500);
+  color: var(--bz-fg);
+}
+
+.build-director__order .build-action:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.gameplay-command {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 5px 6px 5px 12px;
+  border: 1px solid var(--bz-border-brand);
+  border-radius: 5px;
+  background: var(--bz-canvas);
+}
+
+.gameplay-command > .material-symbols-outlined {
+  color: var(--bz-purple-300);
+  font-size: 18px;
+}
+
+.gameplay-command textarea {
+  width: 100%;
+  min-height: 24px;
+  max-height: 72px;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--bz-fg);
+  font: 500 12px/1.45 var(--bz-font-ui);
+}
+
+.build-director__title::placeholder,
+.gameplay-command textarea::placeholder {
+  color: var(--bz-fg-mid) !important;
+  opacity: 0.78 !important;
+}
+
+.gameplay-command > button {
+  display: inline-flex;
+  min-width: 82px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--bz-fg);
+  color: var(--bz-canvas);
+  font: 650 11px var(--bz-font-ui);
+  cursor: pointer;
+}
+
+.gameplay-command > button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gameplay-command > button .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.clear-conditions,
+.gameplay-suggestions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.clear-conditions__label,
+.clear-conditions__mode {
+  flex: 0 0 auto;
+  color: var(--bz-fg-low);
+  font: 600 9px var(--bz-font-mono);
+  text-transform: uppercase;
+}
+
+.clear-conditions button,
+.gameplay-suggestions button {
+  display: inline-flex;
+  min-height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--bz-border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bz-fg-mid);
+  font: 500 9px var(--bz-font-ui);
+  cursor: pointer;
+}
+
+.clear-conditions button:hover,
+.gameplay-suggestions button:hover {
+  border-color: var(--bz-border-strong);
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+}
+
+.clear-conditions button .material-symbols-outlined {
+  font-size: 13px;
+}
+
+.clear-conditions__empty {
+  color: var(--bz-fg-low);
+  font-size: 10px;
+}
+
+.gameplay-suggestions {
+  padding-left: 32px;
+}
+
+.gameplay-suggestions button {
+  border-color: transparent;
+  color: var(--bz-fg-mid);
+  font-size: 10px;
+}
+
+.viewer-container.is-build .build-inspector {
+  top: 190px;
+  right: 12px;
+  bottom: 108px;
+  width: 224px;
+  border-radius: 5px;
+  box-shadow: 0 12px 30px var(--bz-scrim);
+}
+
+.viewer-container.is-build .build-palette {
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  min-height: 82px;
+  border-radius: 5px;
+  box-shadow: 0 12px 30px var(--bz-scrim);
+}
+
+.build-workflow {
+  position: absolute;
+  z-index: 35;
+  inset: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr) minmax(260px, 0.9fr);
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 6px;
+  background: var(--bz-border);
+  box-shadow: 0 16px 40px var(--bz-scrim);
+}
+
+.build-workflow__step {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--bz-space-3);
+  padding: var(--bz-space-5);
+  background: var(--bz-panel);
+}
+
+.build-workflow__step > span:first-child {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bz-raised);
+  color: var(--bz-purple-100);
+  font: 600 11px var(--bz-font-mono);
+}
+
+.build-workflow__step > strong {
+  color: var(--bz-fg);
+  font: 600 14px var(--bz-font-ui);
+}
+
+.build-workflow__levels,
+.build-workflow__objects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--bz-space-2);
+  max-height: 440px;
+  overflow-y: auto;
+}
+
+.build-workflow__levels button,
+.build-workflow__objects button {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--bz-border);
+  border-radius: 4px;
+  background: var(--bz-canvas);
+  color: var(--bz-fg-mid);
+  cursor: pointer;
+}
+
+.build-workflow__levels button {
+  display: grid;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-2);
+  text-align: left;
+}
+
+.build-workflow__levels button.is-selected,
+.build-workflow__objects button.is-selected {
+  border-color: var(--bz-purple-300);
+  box-shadow: inset 0 0 0 1px var(--bz-border-brand);
+}
+
+.build-workflow__levels img,
+.build-workflow__levels button > .material-symbols-outlined {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 2px;
+}
+
+.build-workflow__levels button > .material-symbols-outlined {
+  display: grid;
+  place-items: center;
+  background: var(--bz-raised);
+  font-size: 24px;
+}
+
+.build-workflow__levels small {
+  overflow: hidden;
+  color: var(--bz-fg-mid);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-workflow__objects {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.build-workflow__objects button {
+  aspect-ratio: 1;
+  padding: 3px;
+}
+
+.build-workflow__objects img,
+.build-workflow__objects button > .material-symbols-outlined {
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  object-fit: cover;
+}
+
+.build-workflow__objects button > .material-symbols-outlined {
+  display: grid;
+  place-items: center;
+  background: var(--bz-raised);
+  font-size: 20px;
+}
+
+.build-workflow__gameplay textarea {
+  min-height: 132px;
+  resize: vertical;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 4px;
+  outline: 0;
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
+  font: 400 12px/1.5 var(--bz-font-ui);
+}
+
+.build-workflow__gameplay textarea::placeholder {
+  color: var(--bz-fg-low) !important;
+}
+
+.build-workflow__gameplay > button,
+.build-workflow__blocked button,
+.playtest-bar button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bz-space-2);
+  padding: 0 var(--bz-space-3);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 4px;
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+  font: 600 11px var(--bz-font-ui);
+  cursor: pointer;
+}
+
+.build-workflow__gameplay > button:not(:disabled) {
+  border-color: var(--bz-border-brand);
+  background: var(--bz-purple-500);
+}
+
+.build-workflow__gameplay > button:disabled {
+  color: var(--bz-fg-low);
+  cursor: default;
+}
+
+.build-workflow__blocked {
+  grid-column: 1 / -1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--bz-space-5);
+  background: var(--bz-panel);
+}
+
+.build-workflow__blocked > strong {
+  color: var(--bz-fg);
+  font: 600 16px var(--bz-font-ui);
+}
+
+.build-workflow__blocked > div {
+  display: flex;
+  gap: var(--bz-space-2);
+}
+
+.build-workflow__blocked button.is-ready {
+  border-color: var(--bz-emerald-500);
+  color: var(--bz-emerald-300);
+}
+
+.playtest-bar {
+  position: absolute;
+  z-index: 36;
+  top: 12px;
+  right: 12px;
+  left: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr 160px auto;
+  align-items: center;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-2);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 5px;
+  background: var(--bz-panel);
+  box-shadow: 0 12px 30px var(--bz-scrim);
+}
+
+.playtest-bar strong {
+  color: var(--bz-fg);
+  font: 600 13px var(--bz-font-ui);
+}
+
+.playtest-bar select {
+  min-height: 38px;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 4px;
+  background: var(--bz-canvas);
+  color: var(--bz-fg);
+}
+
+.viewer-container.is-build .build-status {
+  right: auto;
+  bottom: 102px;
+  left: 50%;
+  max-width: min(560px, calc(100% - 280px));
+  transform: translateX(-50%);
+}
+
+.build-canvas-empty button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 4px;
+  background: var(--bz-panel);
+  color: var(--bz-fg);
+  font: 600 11px var(--bz-font-ui);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.viewer-container.is-build .build-canvas-empty strong {
+  color: var(--bz-fg) !important;
+}
+
+@media (max-width: 860px) {
+  .build-director__levels {
+    grid-template-columns: minmax(100px, 150px) minmax(0, 1fr);
+  }
+
+  .build-director__order,
+  .gameplay-suggestions {
+    display: none;
+  }
+
+  .viewer-container.is-build .build-inspector {
+    top: auto;
+    right: 12px;
+    bottom: 108px;
+    left: 12px;
+    width: auto;
+    max-height: 210px;
+  }
+
+  .build-workflow {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .playtest-bar {
+    grid-template-columns: auto 1fr;
+  }
 }
 
 @keyframes bz-caret {

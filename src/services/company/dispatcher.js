@@ -206,7 +206,7 @@ export async function tickCEO(charter) {
  */
 export async function tickRole(charter, roleKey) {
   const companyId = charter.id;
-  const out = { executed: 0, queued: 0, vetoed: 0, error: 0 };
+  const out = { executed: 0, queued: 0, vetoed: 0, error: 0, receipts: [] };
 
   if (charter.status !== "active") return out;
 
@@ -328,6 +328,7 @@ export async function tickRole(charter, roleKey) {
         status: "vetoed", note: "outside role's allowed-action mask",
       });
       out.vetoed++;
+      out.receipts.push(_actionReceipt(action, "vetoed", null, "Outside this role's permissions."));
       continue;
     }
     // Counsel veto pass (content classifier)
@@ -337,6 +338,7 @@ export async function tickRole(charter, roleKey) {
         status: "vetoed", note: "general counsel veto (content/classifier)",
       });
       out.vetoed++;
+      out.receipts.push(_actionReceipt(action, "vetoed", null, "Blocked by the company content policy."));
       continue;
     }
     // Governance gate
@@ -351,9 +353,13 @@ export async function tickRole(charter, roleKey) {
         });
       } catch {}
     }
-    if (!gate.pass) { out.queued++; continue; }
+    if (!gate.pass) {
+      out.queued++;
+      out.receipts.push(_actionReceipt(action, "queued", null, "Waiting for owner approval."));
+      continue;
+    }
     try {
-      const result = await dispatchAction(charter, resolved.roleKey, resolved.companion, action, { cap });
+      const result = await dispatchAction(charter, resolved.roleKey, resolved.companion, action, { cap, issueId: issue?.id });
       // A skill executor (or any handler) signaling failure via `{ ok: false, error }`
       // must NOT count as executed — issues whose only action failed should
       // land in `blocked`, not `done`. Treat the falsy-ok return identically
@@ -363,9 +369,12 @@ export async function tickRole(charter, roleKey) {
         await append(companyId, {
           kind: "action", role: resolved.roleKey, action: action.type,
           status: "error", note: (result.error || "skill returned ok=false").slice(0, 200),
+          issueId: issue?.id,
         });
+        out.receipts.push(_actionReceipt(action, "error", result, result.error || "The action failed."));
       } else {
         out.executed++;
+        out.receipts.push(_actionReceipt(action, "executed", result));
         // Capture link / receipt for issue attempt log
         if (issue && result?.shareLink) out.lastTxOrLink = result.shareLink;
         else if (issue && result?.id) out.lastTxOrLink = String(result.id);
@@ -375,7 +384,9 @@ export async function tickRole(charter, roleKey) {
       await append(companyId, {
         kind: "action", role: resolved.roleKey, action: action.type,
         status: "error", note: err.message?.slice(0, 200) || "execution failed",
+        issueId: issue?.id,
       });
+      out.receipts.push(_actionReceipt(action, "error", null, err.message || "Execution failed."));
     }
   }
 
@@ -391,6 +402,16 @@ export async function tickRole(charter, roleKey) {
     status: outcomeStatus,
     txOrLink: out.lastTxOrLink || null,
     error: out.error > 0 ? `${out.error} error(s) during dispatch` : null,
+    result: {
+      summary: plan?.summary || _workSummary(issue, out),
+      justification: plan?.justification || goal.goalRationale || issue.description || `This work advances ${parentGoal?.title || charter.mission}.`,
+      objective: issue.title,
+      goalTitle: parentGoal?.title || null,
+      actions: out.receipts,
+      contentIds: [...new Set(out.receipts.map((receipt) => receipt.contentId).filter(Boolean))],
+      completedBy: resolved.companion,
+      role: resolved.roleKey,
+    },
   });
 
   // Goal rollup — if every sibling issue has reached a terminal state,
@@ -451,7 +472,8 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
         currency: charter.rules?.currency || "USD",
         role: roleKey,
         companion,
-        meta,
+        meta: { ...meta, issueId: ctx.issueId || null },
+        issueId: ctx.issueId || null,
       });
       return record;
     }
@@ -474,6 +496,8 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
         currency: charter.rules?.currency || "USD",
         role: roleKey,
         companion,
+        meta: { issueId: ctx.issueId || null },
+        issueId: ctx.issueId || null,
       });
     }
 
@@ -485,6 +509,7 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
         status: "executed",
         note: `→ ${action.channel || "default"}: ${(action.copy || "").slice(0, 200)}`,
         txOrLink: action.contentLink || null,
+        issueId: ctx.issueId || null,
       });
       return { ok: true };
     }
@@ -497,6 +522,7 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
         kind: "action", role: roleKey, action: action.type,
         status: "executed",
         note: (action.text || action.note || "").slice(0, 240),
+        issueId: ctx.issueId || null,
       });
       return { ok: true };
     }
@@ -528,7 +554,8 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
         currency: charter.rules?.currency,
         role: roleKey,
         companion,
-        meta: { kind: "report", reportType: action.type },
+        meta: { kind: "report", reportType: action.type, issueId: ctx.issueId || null },
+        issueId: ctx.issueId || null,
       });
       return record;
     }
@@ -704,6 +731,8 @@ ${goal.goalTitle ? `PARENT GOAL: "${goal.goalTitle}"${goal.goalRationale ? `\nWH
 
 OUTPUT (strict JSON, no commentary):
 {
+  "summary": "A concise explanation of what this work will accomplish and what success looks like.",
+  "justification": "Why these actions are the right response to the issue, grounded in the goal and available company context.",
   "actions": [
     ${isProducer
       ? `{ "type": "produce", "pipeline": "${pipeline}", "prompt": "<the actual prompt for the inference engine>", "price": 0 }`
@@ -723,6 +752,8 @@ EXAMPLES per action type:
 - paySupplier:         { "type": "paySupplier", "amount": 5, "recipient": "API vendor", "memo": "Twitter API key" }
 
 CRITICAL:
+- summary and justification are mandatory and must be specific to this work
+- each action should include a short "reason" explaining why it is necessary
 - emit between 1 and 3 actions
 - every action must be one complete JSON object with a "type" field
 - spend actions must respect the budget cap above
@@ -736,6 +767,29 @@ function _summarize(action) {
   if (action.prompt) return action.prompt.slice(0, 200);
   if (action.amount) return `${action.amount} → ${action.recipient || "?"}`;
   return action.type;
+}
+
+function _actionReceipt(action, status, result, fallback = "") {
+  const contentId = result?.pipeline && result?.id ? String(result.id) : null;
+  return {
+    type: action?.type || "unknown",
+    status,
+    reason: action?.reason || action?.justification || fallback || "Required to complete the assigned work.",
+    description: _summarize(action || {}),
+    contentId,
+    evidence: {
+      id: result?.id ? String(result.id) : null,
+      externalId: result?.externalId || result?.transactionId || result?.txHash || null,
+      link: result?.shareLink || result?.txOrLink || result?.url || null,
+      message: result?.message || result?.note || null,
+    },
+  };
+}
+
+function _workSummary(issue, out) {
+  if (out.executed > 0) return `Completed ${out.executed} action${out.executed === 1 ? "" : "s"} for “${issue.title}”.`;
+  if (out.queued > 0) return `Prepared the work for “${issue.title}” and sent it for approval.`;
+  return `Could not complete “${issue.title}”; review the recorded evidence and errors.`;
 }
 
 function _roleMediaPipelines(charter, roleKey) {

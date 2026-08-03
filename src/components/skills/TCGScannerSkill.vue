@@ -781,9 +781,7 @@ export default {
     }
 
     // ─── Model Download & Readiness ─────────────────────────────────
-    // TCG Scanner needs two pipelines: "ocr" (GLM-OCR-4bit) and "vision"
-    // (Qwen3.5-0.8B VLM). Both must be fully downloaded before scanning.
-    // We prefetch both, poll for completion, then set modelReady.
+    // OCR and visual grading share the cross-platform GGUF vision runtime.
     const downloadProgress = ref(0);
     const downloadStatus = ref("");
 
@@ -826,7 +824,7 @@ export default {
       downloadProgress.value = 0;
 
       try {
-        // Prefetch Vision pipeline (Qwen3.5-0.8B — used for both OCR and visual analysis)
+        // One model serves OCR and visual analysis.
         downloadStatus.value = "Downloading Vision model...";
         const visionResult = await prefetchPipeline("vision");
         if (visionResult.status === 202 && visionResult.data?.pipeline_id) {

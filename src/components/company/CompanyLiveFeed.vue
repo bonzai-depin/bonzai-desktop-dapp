@@ -249,6 +249,7 @@ import { computed, ref, onMounted, onUnmounted } from "vue";
 import companyStore from "../../stores/companyStore.js";
 import BzCloseButton from "../BzCloseButton.vue";
 import { i18n } from "../../i18n/index.js";
+import { formatRoleTitle } from "../../services/company/presentation.js";
 
 export default {
   name: "CompanyLiveFeed",
@@ -266,12 +267,14 @@ export default {
     const carouselIndex = ref(0);
     const now = ref(Date.now());
 
-    // Tick now-ref every second so relative-time labels update without
-    // touching the audit feed itself.
+    // Relative labels do not need a frame-rate clock. A five-second tick
+    // keeps live durations legible without waking the whole feed each second.
     let _now = null;
     let _carousel = null;
     onMounted(() => {
-      _now = setInterval(() => (now.value = Date.now()), 1000);
+      _now = setInterval(() => {
+        if (!document.hidden) now.value = Date.now();
+      }, 5000);
       _carousel = setInterval(() => {
         if (!props.horizontal || filtered.value.length <= 3) return;
         carouselIndex.value = (carouselIndex.value + 1) % filtered.value.length;
@@ -284,11 +287,11 @@ export default {
 
     const filters = [
       { id: "all",       label: "All" },
-      { id: "llm",       label: "Thoughts" },
+      { id: "llm",       label: "Feedback" },
       { id: "system",    label: "System" },
-      { id: "issue",     label: "Tasks" },
+      { id: "issue",     label: "Work" },
       { id: "action",    label: "Actions" },
-      { id: "production",label: "Outputs" },
+      { id: "production",label: "Results" },
       { id: "veto",      label: "Vetoes" },
       { id: "treasury",  label: "Treasury" },
     ];
@@ -484,21 +487,7 @@ export default {
     }
 
     function roleDisplayName(roleKey) {
-      if (!roleKey) return "";
-      if (roleKey.startsWith("Producer:")) {
-        const p = roleKey.split(":")[1] || "";
-        let label;
-        if (p === "3d") label = "3D";
-        else if (p === "fineTune") label = "Fine-Tune";
-        else label = p.charAt(0).toUpperCase() + p.slice(1);
-        return `${label} Producer`;
-      }
-      const TITLES = {
-        CEO: "Coordinator", CFO: "Finance", CPO: "Product", CMO: "Marketing", CSO: "Sales", COO: "Operations",
-        GeneralCounsel: "General Counsel", RnDLead: "R&D Lead",
-        FieldTech: "Field Tech", Packer: "Packer",
-      };
-      return TITLES[roleKey] || roleKey;
+      return formatRoleTitle(roleKey);
     }
 
     /**

@@ -1,516 +1,178 @@
-# BonzAI v0.9
+# BonzAI Desktop
 
-## 🚀 Revolutionary Features
+BonzAI is a local-first AI workspace for creating media, running agentic teams, building companions, and producing playable 3D experiences. Models and business memory run on the user's machine by default. Peer discovery can extend local capacity without turning private work into a centralized SaaS dataset.
 
-BonzAI v0.9 represents a paradigm shift in how AI is created, owned, and shared. This release transforms BonzAI from a local AI application into a **decentralized, privacy-preserving, peer-to-peer AI network** with true digital ownership through NFTs.
+The application combines an Electron and Vue desktop client, local language and multimodal inference, a private company operations layer, a libp2p inference mesh, and optional onchain ownership. AI generation is free to run locally; staking and collectibles apply to publishing, ownership, and protocol participation rather than access to inference.
 
----
+> BonzAI is under active development. Review the configuration and deployment checks before using onchain features with real assets.
 
-## 🎯 Core Innovations
+## What BonzAI Does
 
-### 1. **Universal Inference Storage System**
-Every AI generation is now persistently stored and accessible:
-- ✅ Text (LLM responses)
-- ✅ Images (FLUX, SDXL, etc.)
-- ✅ Videos (LTX, Wan2.2)
-- ✅ Audio/Music (MusicGen)
-- ✅ Robotic Datasets (LeRobot)
-- ✅ Generated Games
+### Create locally
 
-**Implementation**: `src/store/inferenceStore.js`
+- Chat and code with downloadable GGUF language models.
+- Generate and edit images with local diffusion pipelines.
+- Create speech, voices, and music.
+- Generate text-to-video and image-to-video clips.
+- Build 3D objects from text or from a prompt plus reference image.
+- Generate complete Three.js levels and refine them conversationally.
+- Fine-tune supported models and retain the resulting artifacts.
 
-All inferences are stored in Electron's persistent storage and can be accessed across sessions.
+Generation history persists locally and can move between modalities, such as text to image and image to video.
 
-### 2. **NFT Minting for All Outputs**
-Transform any AI generation into a tradeable NFT on Arbitrum:
-- Automatic IPFS upload via Pinata
-- Rich metadata with provenance tracking
-- Smart contract integration for on-chain verification
-- One-click minting from any inference result
+### Run an agentic company
 
-**Implementation**: `src/services/nftMinter.js`
+BonzAI Company turns companions and workflow skills into a private operating team for small businesses. An owner can brief one team or the whole company through chat, inspect goals and task progress, review durable deliverables inline, and approve sensitive actions. Company memory, work records, and artifacts are stored locally in SQLite.
 
-**Requirements**:
-- MetaMask installed
-- Connected to Arbitrum network
-- Pinata API credentials (set in `.env`)
+The connector layer covers common small-business systems, including accounting, payments, commerce, CRM, communications, and productivity tools. Sage remains a first-class accounting integration. Credentials are stored locally and connector actions are routed through explicit permission and approval policies.
+
+### Build companions
+
+Companions are persistent agentic personas with memory, multimodal conversations, voices, scenarios, wallets, and workflow skills. They can work directly with a user or join a BonzAI Company team. Their identity and work remain useful without blockchain access; optional ownership features can publish companion identities and tokens.
+
+### Create games
+
+The 3D workspace is organized around a concise Generate and Build workflow:
+
+1. Generate a reusable object from text or a reference image.
+2. Generate a complete level as a Three.js scene.
+3. Assemble levels and place history objects directly on the canvas.
+4. Describe gameplay, roles, interactions, and clear conditions in natural language.
+5. Playtest the result or let a companion play it autonomously.
+6. Publish a validated game as an optional collectible and issue a game token.
+
+The runtime supports level transitions, players and actors, collision and trigger volumes, checkpoints, camera control, object interactions, agentic play, and collect, score, defeat, reach, survive, or custom objectives. See [the 3D and game engine notes](docs/BONZAI_3D_GAME_ENGINE.md).
+
+### Share compute privately
+
+The libp2p mesh discovers nearby or configured BonzAI peers and advertises model capabilities. Local mode keeps inference on the current machine. Provider mode can contribute available compute to the network. Peer presence is deliberately separated from access to private prompts, memory, and company data.
+
+### Own and publish work
+
+Web3 features are optional. The protocol layer supports:
+
+- BONZAI staking-based publishing levels
+- content, companion, model, 3D object, level, and game collectibles
+- companion and model tokens
+- game tokens and game registration
+- skill access based on ownership of a skill owner's companion token
+- mint pools, royalties, contribution accounting, and provider rewards
+
+Robinhood Chain is the default economy network in the current configuration. Ethereum, Arbitrum, Base, LUKSO, and Robinhood testnet integrations remain available where their corresponding contracts and environment variables are configured. The canonical BONZAI asset must be bridged; deployment scripts must not create an independently mintable replacement token.
+
+## Architecture
+
+```text
+Vue 3 renderer
+  |- Create: text, image, audio, video, 3D, training
+  |- Automate: companions, skills, company teams
+  |- Earn: ownership, markets, rewards
+  `- Pinia state and local generation history
+          |
+          | Electron context bridge / IPC
+          v
+Electron main process
+  |- SQLite company memory and artifacts
+  |- model downloads and llama.cpp processes
+  |- libp2p peer discovery and inference routing
+  |- secure local file and credential access
+  `- Python inference server lifecycle
+          |
+          +--> OpenAI-compatible local LLM endpoints
+          `--> Flask multimodal pipelines on port 65000
+
+Optional protocol layer
+  `- EVM contracts, wallets, decentralized storage, and markets
+```
+
+Important locations:
+
+| Path | Responsibility |
+| --- | --- |
+| `src/App.vue` | Desktop shell and product navigation |
+| `src/components/` | Vue product surfaces |
+| `src/components/gen3d/` | Three.js generation, project compiler, and game runtime |
+| `src/main.js` | Electron lifecycle, IPC, models, and networking |
+| `src/main/db/` | SQLite schema, migrations, and repositories |
+| `src/server/diffuser.py` | Local image, audio, video, and vision inference |
+| `src/services/` | Company, inference, storage, wallet, and protocol services |
+| `src/skills/flagship.js` | Built-in companions, scenarios, models, and skills |
+| `src/contracts/` | Solidity protocol contracts |
+| `test/` | Contract, runtime, connector, and service tests |
+
+## Requirements
+
+- Node.js 20 or later and npm
+- Python 3.10 or later
+- Git and a C/C++ build toolchain for native Node modules
+- macOS, Windows, or Linux
+- Sufficient disk and memory for the models you choose to download
+- A supported GPU is strongly recommended for image, audio, and video generation
+
+Model availability varies by operating system and hardware. BonzAI presents model requirements before download; contributors should not hard-code Apple-only or MLX-only execution paths.
+
+## Development Setup
 
 ```bash
-VITE_PINATA_JWT=your_jwt_token
-VITE_NFT_CONTRACT=0x... # BonzAI NFT contract address
-```
+git clone https://github.com/bonzai-depin/bonzai-desktop-dapp.git
+cd bonzai-desktop-dapp
 
-### 3. **Audio Generation with MusicGen**
-Full-featured music generation pipeline:
-- Text-to-music synthesis
-- Multiple quality levels (7s, 15s, 30s)
-- Real-time progress tracking via WebSocket
-- Auto-download capability for missing models
-
-**Endpoint**: `/audio/music` (Flask server)
-**Component**: `src/components/GenerativeMusic.vue`
-
-### 4. **Robotic Neural Network Training**
-Revolutionary LeRobot integration for embodied AI:
-- Support for multiple robot platforms (ALOHA, SO-100, Koch)
-- Dataset recording and management
-- Multiple architectures (ACT, Diffusion Policy, VQ-BeT, TD-MPC)
-- Real-time training progress
-- Model evaluation and deployment
-- NFT minting for trained models
-
-**Endpoints**: `/robot/*` (Flask server)
-**Component**: `src/components/GenerativeRobot.vue`
-
-### 5. **Cross-Modal Workflows**
-Seamless transitions between modalities:
-- **Text → Image**: Queue LLM output directly to image generation
-- **Image → Video**: Send generated images to video pipeline
-
-**Usage**:
-```javascript
-// From text generation
-inferenceStore.queueTextToImage(generatedText);
-
-// From image generation
-inferenceStore.queueImageToVideo(imageBase64);
-```
-
-### 6. **Flagship Multi-Modal Skills**
-Pre-packaged AI skills that combine LLM reasoning with image, video, and audio generation:
-
-| Skill | Category | Description |
-|-------|----------|-------------|
-| **Story Studio** | Entertainment | Generates illustrated stories with narrated audio and animated scenes |
-| **Meditation Forge** | Healthcare | Creates personalized guided meditations with ambient soundscapes and calming visuals |
-| **Virtual Staging Pro** | Housing | Transforms empty rooms into beautifully staged interiors with multiple design styles |
-| **Personal Lookbook** | Fashion | Creates complete outfit visualizations with styling recommendations |
-| **Chef's Table** | Food | Generates recipes with step-by-step visuals and cooking technique videos |
-| **Lesson Animator** | Education | Turns educational topics into animated explainer videos |
-| **Music Video Forge** | Entertainment | Creates music videos with AI-generated visuals synced to audio |
-| **Game Asset Foundry** | Entertainment | Generates game assets (characters, environments, items) with turnaround views |
-| **Book Trailer Studio** | Reading | Creates cinematic book trailers with narration and atmospheric music |
-| **Hairstyle Studio** | Personal Care | Visualizes hairstyles and colors on your photo before your salon visit |
-
-**Architecture**: Each skill uses a two-phase execution pattern:
-1. **Phase 1 (LLM)**: Load language model, generate creative content/analysis
-2. **Phase 2 (Media)**: Unload LLM to free memory, generate images/video/audio
-
-**Implementation**: `src/skills/flagship.js`
-
-### 7. **Fixed Video Playback**
-Videos now play correctly in the Electron app:
-- Custom `app://` protocol for secure local file access
-- Proper security checks preventing directory traversal
-- Support for all video formats (MP4, MOV, AVI)
-
-**Implementation**: Enhanced `main.js` with secure protocol handler
-
-### 8. **Zero-Knowledge Privacy Layer**
-End-to-end encryption for all inferences:
-- ECDH key exchange for secure communication
-- AES-256-GCM encryption
-- Zero-knowledge proofs for authenticity verification
-- No plaintext data leaves your machine unless you choose to share
-
-**Implementation**: `src/services/zkPrivacy.js`
-
-**Usage**:
-```javascript
-// Initialize
-await zkPrivacy.init();
-
-// Encrypt for peer
-const encrypted = zkPrivacy.encryptForPeer(peerId, inferenceData);
-
-// Generate ZK proof
-const proof = zkPrivacy.generateProof(inferenceData);
-
-// Verify proof
-const isValid = zkPrivacy.verifyProof(proof, inferenceData);
-```
-
-### 9. **P2P Inference Network (Path-Style)**
-Distributed AI inference with your friends:
-- **Maximum 50 friends** (intimate network design inspired by Path)
-- WebRTC-based peer-to-peer connections
-- Vetted friend system with invite codes
-- Capability discovery (who can run which models)
-- Request routing to available peers
-- Load balancing across friend network
-
-**Implementation**: `src/services/p2pNetwork.js`
-
-**Key Features**:
-- **Decentralized**: No central server for inference
-- **Private**: ZK encryption on all peer communications
-- **Efficient**: Requests automatically routed to capable peers
-- **Social**: Tight-knit network of trusted friends
-- **Rewarding**: Earn $TAO tokens for serving inference requests
-
----
-
-## 🏗️ Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     BonzAI v0.9 Frontend                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ GenerativeText│  │ GenerativeImage│  │GenerativeVideo│     │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬────────┘     │
-│         │                  │                   │              │
-│         └──────────────────┴───────────────────┘             │
-│                           │                                   │
-│  ┌────────────────────────▼────────────────────────────┐    │
-│  │  Flagship Skills (Multi-Modal Agentic Workflows)     │    │
-│  │  Story Studio | Meditation Forge | Virtual Staging   │    │
-│  │  Chef's Table | Lesson Animator | Hairstyle Studio   │    │
-│  └────────────────────────┬────────────────────────────┘    │
-│                           │                                   │
-│               ┌───────────▼──────────┐                       │
-│               │  Inference Store      │                       │
-│               │  (Persistent Storage) │                       │
-│               └───────────┬───────────┘                       │
-│                           │                                   │
-│         ┌─────────────────┴──────────────────┐               │
-│         │                                     │               │
-│  ┌──────▼──────┐                    ┌────────▼────────┐     │
-│  │  NFT Minter │                    │   ZK Privacy    │     │
-│  │  (Web3/IPFS)│                    │  (Encryption)   │     │
-│  └─────────────┘                    └────────┬────────┘     │
-│                                               │               │
-│                                      ┌────────▼────────┐     │
-│                                      │  P2P Network    │     │
-│                                      │  (WebRTC/Peers) │     │
-│                                      └─────────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Flask Media Server (Python)                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │  FLUX    │  │   LTX    │  │   Wan    │  │ MusicGen │   │
-│  │ (Images) │  │ (Video)  │  │ (Video)  │  │ (Audio)  │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-│  ┌──────────┐                                               │
-│  │ LeRobot  │  (Robotic Training)                          │
-│  └──────────┘                                               │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     Electron Main Process                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │ node-llama-cpp│  │ Protocol     │  │ File Manager │     │
-│  │ (Local LLM)  │  │ (app://)     │  │ (Save/Load)  │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 📦 Installation & Setup
-
-### Prerequisites
-```bash
-# Node.js 18+ and npm
-node --version  # v18.0.0+
-npm --version   # 8.0.0+
-
-# Python 3.10+ for Flask server
-python3 --version  # 3.10+
-
-# MetaMask browser extension for NFT minting
-```
-
-### Environment Variables
-Create `.env` file in project root:
-
-```bash
-# Pinata (for IPFS uploads)
-VITE_PINATA_JWT=your_pinata_jwt_token_here
-VITE_PINATA_API_KEY=your_api_key_here
-VITE_PINATA_SECRET_KEY=your_secret_key_here
-
-# BonzAI NFT Contract (deploy your own or use official)
-VITE_NFT_CONTRACT=0x...
-
-# P2P Signaling Server (optional - defaults to bonzai.ai)
-VITE_SIGNALING_SERVER=https://signal.bonzai.ai
-
-# Flask Server Port (optional - defaults to 65000)
-BONZAI_SERVER_PORT=65000
-```
-
-### Installation Steps
-
-```bash
-# 1. Clone repository
-git clone https://github.com/yourusername/bonzai.git
-cd bonzai
-
-# 2. Install dependencies
 npm install
-
-# 3. Install Python dependencies for Flask server
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r src/server/requirements.txt
 
-# 4. Build and run
-npm run dev
+cp .env.example .env
+npm start
 ```
 
----
+`npm start` builds the Electron main and preload bundles, starts the Vite renderer, and launches Electron. The Python server is spawned by the desktop process in development.
 
-## 🎮 Usage Guide
+Most local creation features do not require wallet configuration. Populate only the environment variables needed for the integrations you are developing. Never commit private keys, access tokens, mnemonics, connector credentials, or production `.env` files.
 
-### Basic Text Generation
-1. Open BonzAI
-2. Navigate to **Chat** tab
-3. Download a model (e.g., DeepSeek R1 7B)
-4. Click "Chat with [Model]"
-5. Enter your prompt and press Enter
+## Verification
 
-### Minting an NFT
-1. Generate any content (text, image, video, music)
-2. Click the **"Mint NFT"** button on the inference result
-3. MetaMask will prompt for approval
-4. Confirm transaction on Arbitrum
-5. Receive your NFT token ID and Arbiscan link
+Run the checks relevant to your change before opening a pull request:
 
-### Cross-Modal Workflow: Text → Image → Video
-```
-1. Chat Tab → Generate descriptive text
-2. Click "Generate Image" on text output
-3. Image Tab → Image is auto-generated from text
-4. Click "Animate" on generated image
-5. Video Tab → Video is created from image
-6. Download or mint as NFT
+```bash
+npm run build:vite          # Electron and renderer production bundles
+npm test                    # Hardhat contract suite
+npm run test:game-runtime   # 3D game runtime
+npm run test:connectors     # Company connector contracts
+npm run test:web3           # Protocol payment services
+npm run test:demo           # Product demo pipeline
+npm run test:i18n           # Translation catalog consistency
+npm run web3:verify:offline # Static production configuration checks
+gitleaks git .              # Full-history credential scan
 ```
 
-### Using Flagship Skills
-```
-1. Navigate to Smart Agent tab
-2. Browse skills by category or search
-3. Select a skill (e.g., "Story Studio")
-4. Configure inputs using visual selectors
-5. Click "Run Skill" to start execution
-6. Watch as the skill:
-   - Loads the LLM and generates creative content
-   - Unloads LLM to free memory
-   - Generates images, audio, and video
-7. View rich results with image galleries, audio players
-8. Mint any output as an NFT
+The current `lint` script covers TypeScript files only. Do not describe the repository as fully lint-clean unless the command and its scope have both been verified.
+
+## Packaging
+
+```bash
+npm run package   # Package the current macOS arm64 build
+npm run make      # Produce a macOS DMG
+npm run make:x64  # Produce a macOS x64 DMG
 ```
 
-**Note**: Skills automatically manage memory by loading/unloading models between phases.
+Cross-platform signed releases are built through the workflows in `.github/workflows`. Release jobs require the relevant signing, notarization, and GitHub secrets. Local packaging can omit bundled Python and llama.cpp runtimes when their platform binaries have not been built.
 
-### Training a Robot Model
-1. Navigate to **Robot** tab
-2. Select robot type (e.g., ALOHA)
-3. Choose task (e.g., Pick and Place)
-4. Record or load dataset
-5. Configure training (architecture, epochs, etc.)
-6. Click "Start Training"
-7. Monitor real-time progress
-8. Evaluate and deploy when complete
-9. Mint trained model as NFT
+## Contributing
 
-### Using P2P Inference
-1. Enable **"P2P Inference"** toggle
-2. Click "Manage Friends" to add friends (max 50)
-3. Share invite codes with trusted friends
-4. When friends are online, your inference requests automatically route to available peers
-5. Friends with the required capability respond first
-6. All communication is ZK-encrypted
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). It explains setup, change scope, privacy and protocol requirements, testing expectations, and the pull-request process. Every commit must follow [COMMIT_CONVENTIONS.md](COMMIT_CONVENTIONS.md).
 
-### Enabling Zero-Knowledge Privacy
-1. Toggle **"Zero-Knowledge Privacy"** in any generation view
-2. All inference requests/responses are now encrypted end-to-end
-3. ZK proofs ensure authenticity without revealing content
-4. Perfect for sensitive or proprietary AI work
+Security-sensitive issues should not be disclosed in a public issue. Follow the private reporting process in [SECURITY.md](SECURITY.md).
 
----
+## Documentation
 
-## 🔐 Security & Privacy
+- [Company architecture and product intent](docs/BONZAI_BACK_OFFICE.md)
+- [3D and game engine](docs/BONZAI_3D_GAME_ENGINE.md)
+- [Companion wallet security plan](docs/COMPANION_WALLET_SECURITY_PLAN.md)
+- [Environment configuration](.env.example)
 
-### ZK Privacy Architecture
-- **ECDH Key Exchange**: Secure key derivation between peers
-- **AES-256-GCM**: Military-grade encryption
-- **Zero-Knowledge Proofs**: Verify without revealing
-- **No Plaintext Transmission**: Data never leaves unencrypted
+Product documentation is published at [docs.bonzai.sh](https://docs.bonzai.sh).
 
-### P2P Network Security
-- **Invite-Only**: No random peer connections
-- **Friend Limit**: Maximum 50 vetted friends (Path model)
-- **WebRTC E2E**: Built-in WebRTC encryption
-- **Capability Verification**: Peers can't lie about capabilities
+## License
 
-### File Access Security
-- **Sandboxed Protocol**: Custom `app://` protocol with security checks
-- **Directory Traversal Prevention**: Cannot access system files
-- **Scoped Access**: Only app data directory and CWD accessible
-
----
-
-## 💎 NFT Smart Contract
-
-### BonzAI NFT Contract Features
-```solidity
-// Simplified interface
-interface IBonzAINFT {
-    function mint(address to, string memory tokenURI) external returns (uint256);
-    function tokenURI(uint256 tokenId) external view returns (string memory);
-    function ownerOf(uint256 tokenId) external view returns (address);
-}
-```
-
-### Metadata Schema
-```json
-{
-  "name": "BonzAI Generated Image #abc123",
-  "description": "Generated by BonzAI v0.9 using prompt: '...'",
-  "image": "ipfs://...",
-  "animation_url": "ipfs://...", // For video/audio
-  "external_url": "https://bonzai.ai",
-  "attributes": [
-    { "trait_type": "Type", "value": "image" },
-    { "trait_type": "Model", "value": "Z-Image Turbo" },
-    { "trait_type": "Timestamp", "value": "2025-01-..." },
-    { "trait_type": "BonzAI Version", "value": "0.9" }
-  ],
-  "properties": {
-    "content_url": "ipfs://...",
-    "content_hash": "Qm...",
-    "prompt": "A serene mountain landscape...",
-    "inference_id": "abc123..."
-  }
-}
-```
-
----
-
-## 🤝 P2P Network Economics
-
-### Earning $TAO Tokens
-When you serve inference requests for friends:
-1. Friend sends encrypted inference request
-2. Your local models process the request
-3. You return encrypted result
-4. Smart contract credits you $TAO tokens
-5. Tokens accumulate in your wallet
-
-### Token Distribution
-- **Per Inference**: 0.1 - 10 $TAO (based on computational cost)
-- **Text**: 0.1 $TAO
-- **Image**: 1 $TAO
-- **Video**: 5 $TAO
-- **Audio**: 0.5 $TAO
-- **Robotic Training**: 10 $TAO
-
----
-
-## 🎨 UI/UX Highlights
-
-### Beautiful Glassmorphism Design
-- Backdrop blur effects
-- Subtle gradients
-- High-contrast text
-- Material Symbols icons
-
-### Real-Time Progress
-- WebSocket-based progress updates
-- Per-file download progress
-- Training epoch tracking
-- Generation step visualization
-
-### Responsive Layout
-- Adapts to all screen sizes
-- Maximized on launch
-- Overlay modals for selections
-- Intuitive navigation
-
----
-
-## 🚧 Roadmap
-
-### v0.9.1 (Q1 2025)
-- [ ] Voice-to-text input
-- [ ] Multi-modal embeddings search
-- [ ] Advanced friend discovery
-- [ ] P2P load balancing optimizer
-
-### v1.0 (Q2 2025)
-- [ ] Mobile app (React Native)
-- [ ] Browser extension
-- [ ] Marketplace for trained models
-- [ ] DAO governance
-
----
-
-## 🐛 Known Issues & Troubleshooting
-
-### Video Won't Play
-**Solution**: Ensure videos are saved in the app directory or current working directory. Check console for path errors.
-
-### NFT Minting Fails
-**Solution**: 
-1. Check MetaMask is connected to Arbitrum
-2. Ensure you have ETH for gas fees
-3. Verify Pinata credentials in `.env`
-
-### P2P Peer Won't Connect
-**Solution**:
-1. Check firewall settings
-2. Verify signaling server is reachable
-3. Ensure both peers have accepted friend invite
-
-### Python Server Won't Start
-**Solution**:
-1. Check port 65000 is not in use
-2. Verify Python dependencies installed
-3. Check models directory permissions
-
----
-
-## 📄 License
-
-MIT License - See LICENSE file for details
-
----
-
-## 🌟 Contributing
-
-We welcome contributions! Please see CONTRIBUTING.md for guidelines.
-
-Key areas for contribution:
-- Additional model support
-- UI/UX improvements
-- Security audits
-- Documentation
-- Bug fixes
-
----
-
-## 🙏 Acknowledgments
-
-- **Hugging Face**: For incredible diffusion models
-- **Anthropic**: For Claude and inspiration
-- **Meta**: For LLaMA and LeRobot
-- **Path**: For the intimate social network design philosophy
-- **Arbitrum**: For scalable L2 infrastructure
-- **IPFS/Pinata**: For decentralized storage
-
----
-
-## 📞 Support
-
-- **Discord**: https://discord.gg/bonzai
-- **Twitter**: @BonzAI_AI
-- **Email**: support@bonzai.ai
-- **Docs**: https://docs.bonzai.ai
-
----
-
-**Built with ❤️ by the BonzAI Team**
-
-*"The future of AI is decentralized, private, and owned by creators."*
+BonzAI is licensed under the [Apache License 2.0](LICENSE). Contributions are accepted under the same license.

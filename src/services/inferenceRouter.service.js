@@ -41,6 +41,7 @@ const ENDPOINT_TO_PIPELINE = Object.freeze({
   '/video':                  'video_fast',
   '/video/quality':          'video_quality',
   '/vision/analyze':         'vision',
+  '/vision/caption':         'vision_caption',
   '/vision/ocr':             'ocr',
 });
 

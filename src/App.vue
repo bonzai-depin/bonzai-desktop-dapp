@@ -76,6 +76,7 @@
             </button>
           </div>
         </div>
+        <MeshPresence embedded />
       </div>
 
       <div class="bz-sidebar__nav-shell" :class="{ 'has-more': sidebarCanScroll && !sidebarAtBottom }">
@@ -340,6 +341,7 @@ import AgentJobBoard from "./components/AgentJobBoard.vue";
 import LanguageSelector from "./components/LanguageSelector.vue";
 import RewardsModal from "./components/RewardsModal.vue";
 import NetworkSettings from "./components/NetworkSettings.vue";
+import MeshPresence from "./components/MeshPresence.vue";
 import { authService, userInitiatedReAuth, refreshToken } from "./services/auth.service.js";
 import { authVault } from "./services/authVault.service.js";
 import { themeService } from "./services/theme.service.js";
@@ -347,6 +349,7 @@ import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
 import { modelStore } from "./stores/modelStore.js";
 import companyStore from "./stores/companyStore.js";
+import meshStore from "./stores/meshStore.js";
 import generationStore from "./stores/generationStore.js";
 import { modelPicker } from "./services/modelPicker.service.js";
 import { getPerformanceStats, getHardwareSpecs, initializeStore } from "./stores/inferenceStore.js";
@@ -364,7 +367,7 @@ export default {
     Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView,
     ContributionOwnershipDashboard, Markets, MemoryGraph, ModelLicenses, AgentJobBoard, LanguageSelector,
     BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
-    GenerationInspector, RewardsModal, NetworkSettings,
+    GenerationInspector, RewardsModal, NetworkSettings, MeshPresence,
   },
   setup() {
     const i18n = useI18n();
@@ -451,14 +454,14 @@ export default {
       if (p2pMode.value === "consumer") return "cloud_download";
       if (p2pMode.value === "provider" && p2pStatus.value.started) return "sensors";
       if (p2pMode.value === "provider") return "cloud_upload";
-      return "wifi_off";
+      return p2pStatus.value.started ? "hub" : "wifi_off";
     });
 
     const p2pModeLabel = computed(() => {
       if (p2pMode.value === "consumer") return "Consumer Mode";
       if (p2pMode.value === "provider" && p2pStatus.value.started) return "Now Serving";
       if (p2pMode.value === "provider") return "Provider Mode";
-      return "Private Mode";
+      return p2pStatus.value.started ? "Mesh · Private" : "Mesh Offline";
     });
 
     const refreshP2PStatus = async () => {
@@ -709,6 +712,7 @@ const {
       });
       initializeStore();
       companyStore.init().catch((e) => console.warn("Failed to boot companies:", e?.message || e));
+      meshStore.init().catch((e) => console.warn("Failed to join inference mesh:", e?.message || e));
       generationStore.ensureGenerationSocket();
 
       const loadSystemInfo = async () => {
@@ -774,6 +778,7 @@ const {
       if (sysInfoInterval) clearInterval(sysInfoInterval);
       if (p2pStatusInterval) clearInterval(p2pStatusInterval);
       if (generationToastTimer) clearTimeout(generationToastTimer);
+      meshStore.teardown();
       modelStore.stopListening();
       window.removeEventListener("bonzai:open-browse-models", showBrowseModels);
       window.removeEventListener("bonzai:set-mode", onSetModeEvent);

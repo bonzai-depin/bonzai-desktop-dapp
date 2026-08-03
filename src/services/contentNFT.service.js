@@ -556,6 +556,7 @@ export async function mintContent({
         : 'https://bonzai.sh',
       attributes: [
         { trait_type: 'Generation Type', value: generation.type || 'unknown' },
+        ...(generation.assetKind ? [{ trait_type: '3D Asset Kind', value: generation.assetKind }] : []),
         { trait_type: 'Model', value: modelSlug },
         { trait_type: 'Platform', value: 'BonzAI' },
         ...(generation.tokensPerSecond ? [{ trait_type: 'Tokens Per Second', value: String(generation.tokensPerSecond) }] : []),
@@ -568,6 +569,8 @@ export async function mintContent({
         { trait_type: 'Content Safety', value: contentSafety.nsfw ? 'NSFW' : 'SFW' },
       ],
       properties: {
+        assetKind: generation.assetKind || null,
+        projectManifest: generation.projectManifest || null,
         marketplace,
         trainingMaterial,
         contentSafety,

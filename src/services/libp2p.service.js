@@ -52,6 +52,11 @@ class BonzaiP2PNode {
     this.peerConnections = new Map();
     this.relayConnections = new Set();
     this.lanPeers = new Map(); // peerId → { multiaddrs, discoveredAt, free: true }
+    this._onNetworkEvent = null;
+  }
+
+  _emitNetworkEvent(type, detail = {}) {
+    try { this._onNetworkEvent?.({ type, ts: Date.now(), ...detail }); } catch {}
   }
 
   /**
@@ -420,8 +425,10 @@ class BonzaiP2PNode {
         if (isNew && this._onLANPeerDiscovered) {
           this._onLANPeerDiscovered(peerId, lanIP);
         }
+        if (isNew) this._emitNetworkEvent('peer_discovered', { peerId, scope: 'lan' });
       } else {
         console.log('[libp2p] Discovered peer:', peerId);
+        this._emitNetworkEvent('peer_discovered', { peerId, scope: 'mesh' });
       }
     });
 
@@ -430,6 +437,7 @@ class BonzaiP2PNode {
       const peerId = evt.detail.toString();
       console.log('[libp2p] Connected to peer:', peerId);
       this.peerConnections.set(peerId, Date.now());
+      this._emitNetworkEvent('peer_connected', { peerId });
     });
 
     // Peer disconnect
@@ -438,6 +446,7 @@ class BonzaiP2PNode {
       console.log('[libp2p] Disconnected from peer:', peerId);
       this.peerConnections.delete(peerId);
       this.lanPeers.delete(peerId);
+      this._emitNetworkEvent('peer_disconnected', { peerId });
     });
 
     // Self peer update (new addresses)

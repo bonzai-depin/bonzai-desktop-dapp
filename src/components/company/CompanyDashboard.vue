@@ -32,22 +32,6 @@
         </div>
         <div class="company-cockpit__actions">
           <button
-            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-            @click="openNewGoalModal"
-            title="Add a concrete request for this team to break into tasks."
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">add_task</span>
-            Add work
-          </button>
-          <button
-            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-            @click="runCEO"
-            title="Review the team goal, connector state, approvals, blockers, and open work, then create the next useful tasks."
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">account_tree</span>
-            Plan next tasks
-          </button>
-          <button
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic company-mode-button"
             @click="toggleDemoMode"
             :title="charter.demoMode
@@ -90,100 +74,24 @@
       compact
     />
 
+    <div v-if="missingRoleModels.length && active !== 'command'" class="company-model-alert" role="alert">
+      <span class="material-symbols-outlined" aria-hidden="true">download_for_offline</span>
+      <div>
+        <strong>Required models are missing</strong>
+        <p>{{ missingRoleModels.map((model) => model.label).join(' · ') }}</p>
+      </div>
+      <button class="bz-btn bz-btn--primary" :disabled="missingRoleModelsDownloading" @click="downloadMissingRoleModels">
+        <span class="material-symbols-outlined" aria-hidden="true">download</span>
+        {{ missingRoleModelsDownloading ? 'Downloading...' : 'Download all' }}
+      </button>
+    </div>
+
     <div class="company-dashboard-shell">
       <!-- ════════════ Sub-tab body ════════════ -->
       <section class="dash-body">
       <!-- ─── Command center ─── -->
       <div v-if="active === 'command'" class="company-command">
-        <div class="today-command__head">
-          <h2 class="fira-sans-condensed-black-italic">Today</h2>
-          <span class="today-command__status">
-            <span class="status-dot" :class="charter.status === 'active' ? 'status-active' : 'status-paused'"></span>
-            {{ charter.status === 'active' ? 'Team is working' : 'Team is paused' }}
-          </span>
-        </div>
-
-        <div class="today-command__grid">
-          <section class="today-lane today-lane--attention">
-            <div class="today-lane__head">
-              <h3 class="fira-sans-condensed-black-italic">Needs attention</h3>
-              <span>{{ state.approvals.length + blockedIssues.length }}</span>
-            </div>
-            <div v-if="state.approvals.length || blockedIssues.length" class="today-lane__list">
-              <article v-for="item in state.approvals.slice(0, 3)" :key="`approval-${item.id}`" class="today-action-row">
-                <span class="material-symbols-outlined today-action-row__icon">rule</span>
-                <div class="today-action-row__body">
-                  <strong>{{ sentenceCaseTask(item.action?.type || 'Approval requested') }}</strong>
-                  <span>{{ roleDisplayName(item.role) }} · {{ fmtTime(item.requestedAt) }}</span>
-                </div>
-                <div class="today-action-row__actions">
-                  <button class="bz-iconbtn bz-iconbtn--sm" title="Approve" aria-label="Approve" @click="approve(item.id)">
-                    <span class="material-symbols-outlined">check</span>
-                  </button>
-                  <button class="bz-iconbtn bz-iconbtn--sm bz-iconbtn--danger" title="Reject" aria-label="Reject" @click="reject(item.id)">
-                    <span class="material-symbols-outlined">close</span>
-                  </button>
-                </div>
-              </article>
-              <article v-for="issue in blockedIssues.slice(0, 3)" :key="`blocked-${issue.id}`" class="today-action-row">
-                <span class="material-symbols-outlined today-action-row__icon">block</span>
-                <div class="today-action-row__body">
-                  <strong>{{ sentenceCaseTask(issue.title) }}</strong>
-                  <span>{{ roleDisplayName(issue.assigneeRole) }} · blocked</span>
-                </div>
-                <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="active = 'issues'">Open</button>
-              </article>
-            </div>
-            <div v-else class="today-lane__empty">
-              <span class="material-symbols-outlined">check_circle</span>
-              All clear
-            </div>
-            <button v-if="state.approvals.length + blockedIssues.length > 6" class="today-lane__link" @click="active = state.approvals.length ? 'approvals' : 'issues'">
-              View all
-            </button>
-          </section>
-
-          <section class="today-lane">
-            <div class="today-lane__head">
-              <h3 class="fira-sans-condensed-black-italic">Work</h3>
-              <span>{{ inProgressIssues.length + openIssues.length }}</span>
-            </div>
-            <div v-if="todayActiveWork.length" class="today-lane__list">
-              <article v-for="issue in todayActiveWork" :key="issue.id" class="today-action-row">
-                <span class="today-action-row__state" :class="`is-${issue.status}`"></span>
-                <div class="today-action-row__body">
-                  <strong>{{ sentenceCaseTask(issue.title) }}</strong>
-                  <span>{{ roleDisplayName(issue.assigneeRole) }} · {{ issue.status.replace('_', ' ') }}</span>
-                </div>
-                <button
-                  v-if="issue.status === 'open'"
-                  class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
-                  @click="store.tickRoleNow(issue.assigneeRole)"
-                >
-                  Run
-                </button>
-              </article>
-            </div>
-            <div v-else class="today-lane__empty">No work queued</div>
-            <button class="today-lane__link" @click="active = 'issues'">Open work</button>
-          </section>
-        </div>
-
-        <section class="today-output">
-          <div class="today-lane__head">
-            <h3 class="fira-sans-condensed-black-italic">Latest output</h3>
-            <button class="today-lane__link" @click="active = 'deliverables'">All outputs</button>
-          </div>
-          <article v-if="latestProduced" class="today-output__content">
-            <div class="today-output__meta">
-              <span class="company-pill company-pill--info">{{ latestProduced.pipeline }}</span>
-              <span>{{ roleDisplayName(latestProduced.role) }}</span>
-              <span>{{ fmtTime(latestProduced.createdAt) }}</span>
-            </div>
-            <pre>{{ outputPreview(latestProduced) }}</pre>
-          </article>
-          <div v-else class="today-lane__empty">No output yet</div>
-        </section>
+        <CompanyGoalRoom :charter="charter" :state="state" @open-view="active = $event" @open-result="openWorkResult" />
       </div>
 
       <!-- ─── Workflow team ─── -->
@@ -221,12 +129,27 @@
                 Hybrid
               </span>
             </div>
-            <div class="org-card__companion fira-sans-condensed-black-italic">
-              {{ companionName(charter.roles[roleKey].companion) }}
+            <div class="org-card__identity">
+              <span class="org-card__avatar">
+                <img v-if="companionImage(charter.roles[roleKey].companion)" :src="companionImage(charter.roles[roleKey].companion)" :alt="companionName(charter.roles[roleKey].companion)" />
+                <span v-else class="material-symbols-outlined" aria-hidden="true">person</span>
+              </span>
+              <div class="org-card__companion fira-sans-condensed-black-italic">
+                {{ companionName(charter.roles[roleKey].companion) }}
+              </div>
             </div>
             <div class="org-card__llm">
               <span class="material-symbols-outlined">memory</span>
               {{ llmLabel(charter.roles[roleKey].llm) }}
+              <button
+                v-if="modelNeedsDownload(charter.roles[roleKey].llm)"
+                class="org-card__model-action"
+                :disabled="modelDownloading[charter.roles[roleKey].llm]"
+                @click="downloadRoleModel(charter.roles[roleKey].llm)"
+              >
+                {{ modelDownloading[charter.roles[roleKey].llm] != null ? `${modelDownloading[charter.roles[roleKey].llm]}%` : 'Download' }}
+              </button>
+              <span v-else-if="charter.roles[roleKey].llm" class="org-card__model-ready" title="Model downloaded">ready</span>
             </div>
             <div
               v-if="roleConnectorCount(roleKey) > 0"
@@ -308,7 +231,7 @@
               Work
             </h2>
             <p class="muted">
-              Outcomes become tasks. Teammates move one task at a time, and anything risky waits for approval.
+              Every brief becomes assigned work. See what is running, what needs you, and what the team completed.
             </p>
           </div>
           <div class="section-head__actions">
@@ -330,43 +253,6 @@
         </div>
 
         <hr />
-
-        <!-- Filter chips: source + status -->
-        <div class="goals-filters">
-          <div class="goals-filters__group">
-            <span class="goals-filters__label">Created by:</span>
-            <button
-              v-for="f in [
-                { id: 'all', label: 'All' },
-                { id: 'ceo', label: 'Coordinator' },
-                { id: 'user', label: 'You' },
-              ]"
-              :key="'src-' + f.id"
-              class="issue-filter__chip"
-              :class="{ 'is-active': goalSourceFilter === f.id }"
-              @click="goalSourceFilter = f.id"
-            >
-              {{ f.label }}
-            </button>
-          </div>
-          <div class="goals-filters__group">
-            <span class="goals-filters__label">Status:</span>
-            <button
-              v-for="f in [
-                { id: 'active', label: 'Active' },
-                { id: 'completed', label: 'Completed' },
-                { id: 'cancelled', label: 'Cancelled' },
-                { id: 'all', label: 'All' },
-              ]"
-              :key="'st-' + f.id"
-              class="issue-filter__chip"
-              :class="{ 'is-active': goalStatusFilter === f.id }"
-              @click="goalStatusFilter = f.id"
-            >
-              {{ f.label }}
-            </button>
-          </div>
-        </div>
 
         <div class="work-status-tabs" aria-label="Work status filter">
           <button
@@ -451,6 +337,14 @@
                 Reopen
               </button>
               <button
+                v-if="item.type === 'issue' && item.issue.status === 'done'"
+                class="bz-btn bz-btn--sm bz-btn--primary fira-sans-condensed-black-italic"
+                @click="openWorkResult(item.issue.id)"
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
+                Open result
+              </button>
+              <button
                 v-if="item.type === 'goal' && item.goal.status === 'active'"
                 class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                 @click="cancelGoal(item.goal.id)"
@@ -458,7 +352,7 @@
                 Cancel
               </button>
               <button
-                v-if="item.type === 'issue'"
+                v-if="item.type === 'issue' && item.issue.status !== 'done'"
                 class="bz-iconbtn bz-iconbtn--sm issue-card__delete"
                 @click="requestDeleteIssue(item.issue)"
                 aria-label="Delete issue"
@@ -477,19 +371,19 @@
           </button>
         </div>
         <div v-else class="empty">
-          No work matches your filters. Create an outcome for the team to plan,
-          or create a task when you already know the exact owner.
+          Nothing here yet. Brief the team in Goals and BonzAI will assign and run the work.
         </div>
       </div>
 
-      <!-- ─── Outputs / catalog ─── -->
+      <!-- ─── Results / catalog ─── -->
       <div v-else-if="active === 'deliverables'" class="panel models__activity--payouts">
         <div class="section-head section-head--stack">
           <div>
             <h2 class="panel-title fira-sans-condensed-black-italic">
-              <span class="material-symbols-outlined">factory</span>
-              Outputs
+              <span class="material-symbols-outlined">task_alt</span>
+              Results
             </h2>
+            <p class="muted">Permanent work records with rationale, execution evidence and every generated artifact.</p>
           </div>
           <div class="section-head__actions">
             <button
@@ -500,17 +394,49 @@
               <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
               More
             </button>
-            <button
-              class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
-              :disabled="!state.catalog.length"
-              @click="clearCatalog"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>
-              Clear all
-            </button>
+            <span class="company-pill company-pill--success">Retained locally</span>
           </div>
         </div>
+        <section v-if="completedWorkRows.length" class="result-work">
+          <h3>Work dossiers</h3>
+          <article v-for="row in completedWorkRows" :key="row.id" class="result-work__row" :class="{ 'is-open': expandedWorkResults.has(row.id) }">
+            <button type="button" class="result-work__summary" @click="toggleWorkResult(row.id)">
+              <span class="result-work__icon material-symbols-outlined" aria-hidden="true">check_circle</span>
+              <span class="result-work__main">
+                <strong>{{ sentenceCaseTask(row.title) }}</strong>
+                <span>{{ row.goalTitle || 'Direct task' }} · {{ roleDisplayName(row.assigneeRole) }} · {{ fmtTime(row.completedAt) }}</span>
+                <span>{{ row.summary }}</span>
+              </span>
+              <span class="result-work__open">{{ expandedWorkResults.has(row.id) ? 'Close' : 'Open dossier' }}<span class="material-symbols-outlined">{{ expandedWorkResults.has(row.id) ? 'expand_less' : 'expand_more' }}</span></span>
+            </button>
+            <section v-if="expandedWorkResults.has(row.id)" class="work-dossier">
+              <div class="work-dossier__context">
+                <div><span>Objective</span><p>{{ row.title }}</p></div>
+                <div><span>Why this work</span><p>{{ row.justification }}</p></div>
+                <div><span>Outcome</span><p>{{ row.summary }}</p></div>
+              </div>
+              <div v-if="row.actions.length" class="work-dossier__actions">
+                <h4>Execution record</h4>
+                <article v-for="(action, index) in row.actions" :key="`${row.id}:${index}`">
+                  <span class="work-dossier__step bz-mono">{{ String(index + 1).padStart(2, '0') }}</span>
+                  <div><strong>{{ humanizeAction(action.type) }}</strong><p>{{ action.description }}</p><small>{{ action.reason }}</small></div>
+                  <span class="company-pill" :class="action.status === 'executed' ? 'company-pill--success' : action.status === 'error' ? 'company-pill--danger' : 'company-pill--warning'">{{ action.status }}</span>
+                </article>
+              </div>
+              <div v-if="row.artifacts.length" class="work-dossier__artifacts">
+                <h4>Produced artifacts</h4>
+                <article v-for="artifact in row.artifacts" :key="artifact.id">
+                  <CompanyArtifactPreview :row="artifact" />
+                  <div class="work-dossier__artifact-meta"><span class="bz-mono">{{ artifact.id }}</span><button class="bz-btn bz-btn--sm bz-btn--ghost" @click="downloadDeliverable(artifact)"><span class="material-symbols-outlined">download</span>Download</button></div>
+                </article>
+              </div>
+              <footer class="work-dossier__footer"><span>Record</span><code>{{ row.recordId }}</code><span>{{ fmtTime(row.completedAt) }}</span></footer>
+            </section>
+          </article>
+        </section>
+
         <div v-if="state.catalog.length" class="deliverable-board">
+          <h3>Files and generated assets</h3>
           <article
             v-for="row in visibleCatalogRows"
             :key="row.id"
@@ -522,7 +448,7 @@
               <span>{{ fmtTime(row.createdAt) }}</span>
             </div>
             <div class="catalog-output catalog-output--full deliverable-markdown">
-              <VueMarkdown :source="deliverableDisplay(row)" />
+              <CompanyArtifactPreview :row="row" />
             </div>
             <div v-if="row.prompt" class="deliverable-card__prompt">
               <span class="material-symbols-outlined">notes</span>
@@ -543,19 +469,16 @@
                   <span class="material-symbols-outlined" aria-hidden="true">download</span>
                   Download
                 </button>
-                <button class="bz-iconbtn bz-iconbtn--sm bz-iconbtn--danger" @click="requestDeleteContent(row)" title="Delete artifact">
-                  <span class="material-symbols-outlined">delete</span>
-                </button>
               </div>
             </div>
           </article>
         </div>
         <BonzaiEmptyState
-          v-else
+          v-if="!completedWorkRows.length && !state.catalog.length"
           size="compact"
-          icon="factory"
-          title="No outputs yet"
-          subtitle="Create an outcome with a concrete output, then run the assigned teammate."
+          icon="task_alt"
+          title="No results yet"
+          subtitle="Brief the team in Goals. Completed actions and generated files will appear here automatically."
           :show-orb="false"
         />
       </div>
@@ -834,6 +757,44 @@
 
           <section class="charter-card">
             <div class="charter-card__head">
+              <span class="material-symbols-outlined">chat</span>
+              <h3 class="fira-sans-condensed-black-italic">Working style</h3>
+            </div>
+            <div class="charter-card__grid">
+              <label class="charter-field charter-field--wide">
+                <span>Team voice</span>
+                <select v-model="charterDraft.tone" class="company-admin-select">
+                  <option value="direct">Direct and concise</option>
+                  <option value="analytical">Analytical</option>
+                  <option value="warm">Warm and collaborative</option>
+                  <option value="formal">Formal</option>
+                </select>
+              </label>
+              <label class="charter-field">
+                <span>Working language</span>
+                <select v-model="charterDraft.language" class="company-admin-select">
+                  <option value="auto">Match the owner</option>
+                  <option value="en">English</option>
+                  <option value="fr">French</option>
+                </select>
+              </label>
+              <label class="charter-field">
+                <span>Response detail</span>
+                <select v-model="charterDraft.responseDetail" class="company-admin-select">
+                  <option value="brief">Brief</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="thorough">Thorough</option>
+                </select>
+              </label>
+              <label class="charter-field charter-field--wide">
+                <span>Standing instructions</span>
+                <textarea v-model.trim="charterDraft.instructions" class="textarea" rows="4" placeholder="Priorities, terminology, customer promises and constraints for this team."></textarea>
+              </label>
+            </div>
+          </section>
+
+          <section class="charter-card">
+            <div class="charter-card__head">
               <span class="material-symbols-outlined">savings</span>
               <h3 class="fira-sans-condensed-black-italic">Money guardrails</h3>
             </div>
@@ -851,6 +812,39 @@
               <label class="charter-field">
                 <span>Per run spend cap</span>
                 <input v-model.number="charterDraft.perHeartbeatSpendCap" class="input is-medium" type="number" min="0" step="1" />
+              </label>
+            </div>
+          </section>
+
+          <section class="charter-card">
+            <div class="charter-card__head">
+              <span class="material-symbols-outlined">verified_user</span>
+              <h3 class="fira-sans-condensed-black-italic">Autonomy and memory</h3>
+            </div>
+            <div class="charter-card__grid">
+              <label class="charter-field">
+                <span>Autonomy</span>
+                <select v-model="charterDraft.autonomy" class="company-admin-select">
+                  <option value="guided">Guided</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="autonomous">Autonomous within guardrails</option>
+                </select>
+              </label>
+              <label class="charter-field">
+                <span>Conversation memory</span>
+                <select v-model="charterDraft.memory" class="company-admin-select">
+                  <option value="full">Full local history</option>
+                  <option value="summarized">Summaries and decisions</option>
+                  <option value="session">Current session only</option>
+                </select>
+              </label>
+              <label class="charter-field">
+                <span>Timezone</span>
+                <input v-model.trim="charterDraft.timezone" class="input is-medium" placeholder="Europe/Paris" />
+              </label>
+              <label class="charter-field">
+                <span>Daily brief</span>
+                <input v-model="charterDraft.dailyBrief" type="checkbox" class="charter-toggle" />
               </label>
             </div>
           </section>
@@ -944,14 +938,14 @@
       <section class="rail-panel llm-strip">
         <div class="rail-panel__head">
           <div>
-            <p class="command-center__eyebrow">Model capacity</p>
-            <h3 class="rail-panel__title fira-sans-condensed-black-italic">LLM Pool</h3>
+            <p class="command-center__eyebrow">Local execution</p>
+            <h3 class="rail-panel__title fira-sans-condensed-black-italic">Team capacity</h3>
           </div>
           <button
             class="bz-iconbtn bz-iconbtn--sm"
             @click="refreshPool"
-            title="Refresh pool"
-            aria-label="Refresh LLM pool"
+            title="Refresh team capacity"
+            aria-label="Refresh team capacity"
           >
             <span class="material-symbols-outlined">refresh</span>
           </button>
@@ -1388,20 +1382,24 @@ import { getCompanySkillsForCompanion } from "../../skills/companionSkillRoadmap
 import { SKILL_MANIFESTS } from "../../services/company/skillManifests.js";
 import CompanyConnectors from "./CompanyConnectors.vue";
 import CompanyLiveFeed from "./CompanyLiveFeed.vue";
+import CompanyGoalRoom from "./CompanyGoalRoom.vue";
+import CompanyArtifactPreview from "./CompanyArtifactPreview.vue";
 import BzCloseButton from "../BzCloseButton.vue";
 import BonzaiDataTable from "../BonzaiDataTable.vue";
 import BonzaiEmptyState from "../BonzaiEmptyState.vue";
 import ModeChipBar from "../generative/ModeChipBar.vue";
-import VueMarkdown from "vue-markdown-render";
 import { i18n } from "../../i18n/index.js";
+import { companionAvatar, formatModelLabel, formatRoleTitle } from "../../services/company/presentation.js";
 
 export default {
   name: "CompanyDashboard",
   components: {
-    BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyConnectors, CompanyLiveFeed, ModeChipBar, VueMarkdown },
+    BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyArtifactPreview, CompanyConnectors, CompanyLiveFeed, CompanyGoalRoom, ModeChipBar },
   props: {
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
+    initialView: { type: String, default: "command" },
+    initialResultId: { type: String, default: "" },
   },
   emits: ["edit", "reload", "new-company", "delete-company"],
   setup(props) {
@@ -1410,6 +1408,11 @@ export default {
     const manual = reactive({ amount: 0, memo: "" });
     const goalLimit = ref(20);
     const catalogLimit = ref(30);
+    const expandedWorkResults = reactive(new Set());
+    watch(() => [props.initialView, props.initialResultId], ([view, resultId]) => {
+      active.value = view || "command";
+      if (resultId) expandedWorkResults.add(resultId);
+    }, { immediate: true });
     const approvalLimit = ref(25);
     const auditLimit = ref(80);
     const charterBusy = ref(false);
@@ -1427,7 +1430,17 @@ export default {
       llmMaxConcurrent: 2,
       diffusionMode: "sequential",
       diffusionMaxConcurrent: 1,
+      tone: "direct",
+      language: "auto",
+      responseDetail: "balanced",
+      instructions: "",
+      autonomy: "balanced",
+      memory: "full",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      dailyBrief: true,
     });
+    const modelAvailability = reactive({});
+    const modelDownloading = reactive({});
     const companyDisplayName = computed(() =>
       (props.charter.name || "Untitled Company").replace(/\s+\(Draft\)$/i, ""),
     );
@@ -1444,6 +1457,14 @@ export default {
       charterDraft.llmMaxConcurrent = props.charter.execution?.llm?.maxConcurrent || 2;
       charterDraft.diffusionMode = props.charter.execution?.diffusion?.mode || "sequential";
       charterDraft.diffusionMaxConcurrent = props.charter.execution?.diffusion?.maxConcurrent || 1;
+      charterDraft.tone = props.charter.experience?.tone || "direct";
+      charterDraft.language = props.charter.experience?.language || "auto";
+      charterDraft.responseDetail = props.charter.experience?.responseDetail || "balanced";
+      charterDraft.instructions = props.charter.experience?.instructions || "";
+      charterDraft.autonomy = props.charter.experience?.autonomy || "balanced";
+      charterDraft.memory = props.charter.experience?.memory || "full";
+      charterDraft.timezone = props.charter.experience?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      charterDraft.dailyBrief = props.charter.experience?.dailyBrief !== false;
     }
 
     watch(() => props.charter?.id, resetCharterDraft, { immediate: true });
@@ -1485,6 +1506,17 @@ export default {
         next.identity = {
           ...(next.identity || {}),
           brandName: next.name,
+        };
+        next.experience = {
+          ...(next.experience || {}),
+          tone: charterDraft.tone,
+          language: charterDraft.language,
+          responseDetail: charterDraft.responseDetail,
+          instructions: charterDraft.instructions,
+          autonomy: charterDraft.autonomy,
+          memory: charterDraft.memory,
+          timezone: charterDraft.timezone,
+          dailyBrief: charterDraft.dailyBrief,
         };
         await store.update(next);
       } catch (err) {
@@ -1528,9 +1560,11 @@ export default {
         .filter((model) => !model.draft)
         .map((model) => ({
           key: model.key,
-          label: model.name,
+          label: formatModelLabel(model.name),
           params: model.parameters || 0,
           filesizeBytes: model.filesizeBytes || 0,
+          filename: model.filename,
+          url: model.url,
         }))
         .sort((a, b) => a.params - b.params || a.label.localeCompare(b.label)),
     );
@@ -1836,15 +1870,11 @@ export default {
     }
 
     // ─── Goals (parent of issues) — filters + grouping ──────────────
-    const goalSourceFilter = ref("all");
-    const goalStatusFilter = ref("active");
-    const workStatusFilter = ref("open");
+    const workStatusFilter = ref("active");
     const workStatusFilters = [
-      { id: "open", label: "Open" },
-      { id: "in_progress", label: "In Progress" },
-      { id: "blocked", label: "Blocked" },
-      { id: "done", label: "Done" },
-      { id: "cancelled", label: "Cancelled" },
+      { id: "active", label: "Active" },
+      { id: "attention", label: "Needs attention" },
+      { id: "completed", label: "Completed" },
       { id: "all", label: "All" },
     ];
     function goalStatusClass(s) {
@@ -1855,10 +1885,7 @@ export default {
       })[s] || "company-pill--neutral";
     }
     const filteredGoals = computed(() => {
-      let all = props.state.goals || [];
-      if (goalSourceFilter.value !== "all") all = all.filter((g) => g.createdBy === goalSourceFilter.value);
-      if (goalStatusFilter.value !== "all") all = all.filter((g) => g.status === goalStatusFilter.value);
-      return all;
+      return (props.state.goals || []).slice().sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
     });
     const visibleGoals = computed(() => filteredGoals.value.slice(0, goalLimit.value));
     function issuesForGoal(goalId) {
@@ -1885,12 +1912,6 @@ export default {
       if (goal.status === "cancelled") return "cancelled";
       return "open";
     }
-    function issueMatchesGoalStatus(issue) {
-      if (goalStatusFilter.value === "all") return true;
-      if (goalStatusFilter.value === "completed") return issue.status === "done";
-      if (goalStatusFilter.value === "cancelled") return issue.status === "cancelled";
-      return issue.status === "open" || issue.status === "in_progress" || issue.status === "blocked";
-    }
     const kanbanColumns = computed(() => {
       const items = [];
       for (const goal of visibleGoals.value) {
@@ -1914,16 +1935,14 @@ export default {
           });
         }
       }
-      if (goalSourceFilter.value === "all") {
-        for (const issue of ungroupedIssues.value.filter(issueMatchesGoalStatus)) {
-          items.push({
-            id: `issue-${issue.id}`,
-            type: "issue",
-            column: issue.status || "open",
-            goal: null,
-            issue,
-          });
-        }
+      for (const issue of ungroupedIssues.value) {
+        items.push({
+          id: `issue-${issue.id}`,
+          type: "issue",
+          column: issue.status || "open",
+          goal: null,
+          issue,
+        });
       }
       return kanbanColumnDefs.map((column) => ({
         ...column,
@@ -1935,11 +1954,17 @@ export default {
     ));
     const todoWorkItems = computed(() => {
       if (workStatusFilter.value === "all") return allWorkItems.value;
-      return allWorkItems.value.filter((item) => item.column === workStatusFilter.value);
+      if (workStatusFilter.value === "active") return allWorkItems.value.filter((item) => ["open", "in_progress"].includes(item.column));
+      if (workStatusFilter.value === "attention") return allWorkItems.value.filter((item) => item.column === "blocked");
+      if (workStatusFilter.value === "completed") return allWorkItems.value.filter((item) => item.column === "done");
+      return allWorkItems.value;
     });
     function workStatusCount(status) {
       if (status === "all") return allWorkItems.value.length;
-      return allWorkItems.value.filter((item) => item.column === status).length;
+      if (status === "active") return allWorkItems.value.filter((item) => ["open", "in_progress"].includes(item.column)).length;
+      if (status === "attention") return allWorkItems.value.filter((item) => item.column === "blocked").length;
+      if (status === "completed") return allWorkItems.value.filter((item) => item.column === "done").length;
+      return 0;
     }
 
     // ─── New outcome modal ─────────────────────────────────────────
@@ -2004,6 +2029,7 @@ export default {
     });
     let _poolTimer = null;
     async function refreshPool() {
+      if (document.hidden) return;
       if (!window.electronAPI?.poolInventory) {
         pool.err = "Pool IPC not available — restart the app to pick up the new build.";
         return;
@@ -2030,13 +2056,23 @@ export default {
     function startPoolPolling() {
       stopPoolPolling();
       refreshPool();
-      _poolTimer = setInterval(refreshPool, 5000);
+      _poolTimer = setInterval(refreshPool, 15000);
     }
     function stopPoolPolling() {
       if (_poolTimer) { clearInterval(_poolTimer); _poolTimer = null; }
     }
-    onMounted(() => startPoolPolling());
-    onUnmounted(() => stopPoolPolling());
+    function onVisibilityChange() {
+      if (!document.hidden) refreshPool();
+    }
+    onMounted(() => {
+      startPoolPolling();
+      refreshModelAvailability();
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    });
+    onUnmounted(() => {
+      stopPoolPolling();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    });
 
     function fmtBytes(b) {
       if (!Number.isFinite(b) || b <= 0) return "0 GB";
@@ -2053,7 +2089,7 @@ export default {
         const key = role.llm || "__current__";
         const existing = grouped.get(key) || {
           key,
-          label: key === "__current__" ? "Current chat model" : llmLabel(key),
+          label: key === "__current__" ? "CURRENT CHAT MODEL" : llmLabel(key),
           roles: [],
         };
         existing.roles.push(roleDisplayName(roleKey));
@@ -2083,13 +2119,14 @@ export default {
     );
 
     const subtabs = computed(() => [
-      { value: "command", label: "Today", icon: "dashboard" },
+      { value: "command", label: "Goals", icon: "forum" },
       { value: "org", label: "Teams", icon: "groups" },
       { value: "issues", label: "Work", icon: "flag",
         badge: props.state.goalCounts?.active || props.state.issueCounts?.open || null },
       { value: "approvals", label: "Approvals", icon: "rule",
         badge: props.state.approvals.length || null },
-      { value: "deliverables", label: "Outputs", icon: "inventory_2" },
+      { value: "deliverables", label: "Results", icon: "task_alt",
+        badge: props.state.issueCounts?.done || null },
       { value: "connectors", label: "Tools", icon: "cable",
         badge: (props.state.connectorHealth?.needs_auth || 0) + (props.state.connectorHealth?.broken || 0) || null },
       { value: "charter", label: "Settings", icon: "edit_note" },
@@ -2111,6 +2148,50 @@ export default {
     const catalogRows = computed(() =>
       (props.state.catalog || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
     );
+    const completedWorkRows = computed(() => {
+      const goals = new Map((props.state.goals || []).map((goal) => [goal.id, goal]));
+      const catalog = props.state.catalog || [];
+      return (props.state.issues || [])
+        .filter((issue) => issue.status === "done")
+        .map((issue) => {
+          const attempt = (issue.attempts || []).slice().sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0] || null;
+          const report = attempt?.result || {};
+          const issueEvents = (props.state.audit || [])
+            .filter((event) => event.issueId === issue.id)
+            .sort((a, b) => (a.ts || a.createdAt || 0) - (b.ts || b.createdAt || 0));
+          const receipt = (props.state.audit || [])
+            .filter((event) => event.issueId === issue.id && (event.txOrLink || (event.kind === "action" && event.note)))
+            .sort((a, b) => (b.ts || b.createdAt || 0) - (a.ts || a.createdAt || 0))[0];
+          const contentIds = new Set([
+            ...(report.contentIds || []),
+            ...issueEvents.map((event) => event.contentId).filter(Boolean),
+            attempt?.txOrLink,
+          ].filter(Boolean).map(String));
+          const artifacts = catalog.filter((row) => contentIds.has(String(row.id)) || row.meta?.issueId === issue.id);
+          const actions = Array.isArray(report.actions) && report.actions.length
+            ? report.actions
+            : issueEvents.filter((event) => ["action", "production", "treasury"].includes(event.kind)).map((event) => ({
+                type: event.action,
+                status: event.status || "executed",
+                description: event.note || humanizeAction(event.action),
+                reason: "Recorded while completing this work.",
+              }));
+          const goal = goals.get(issue.goalId);
+          return {
+            ...issue,
+            goalTitle: goal?.title || "",
+            resultLink: receipt?.txOrLink || "",
+            resultNote: receipt?.note || "",
+            recordId: attempt?.id || issue.id,
+            completedAt: attempt?.finishedAt || issue.updatedAt || issue.createdAt,
+            summary: report.summary || receipt?.note || `Completed “${issue.title}”.`,
+            justification: report.justification || goal?.rationale || goal?.missionAlignment || issue.description || "This work was assigned to advance the active company goal.",
+            actions,
+            artifacts,
+          };
+        })
+        .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+    });
     const visibleCatalogRows = computed(() => catalogRows.value.slice(0, catalogLimit.value));
     const visibleApprovals = computed(() =>
       (props.state.approvals || []).slice(0, approvalLimit.value),
@@ -2209,39 +2290,52 @@ export default {
      * ("Producer:text", "GeneralCounsel", "RnDLead") because they're
      * persisted in charters; this helper only changes the rendering.
      */
-    function roleDisplayName(roleKey) {
-      if (!roleKey) return "";
-      if (roleKey.startsWith("Producer:")) {
-        const pipeline = roleKey.split(":")[1] || "";
-        let label;
-        if (pipeline === "3d") label = "3D";
-        else if (pipeline === "fineTune") label = "Fine-Tune";
-        else label = pipeline.charAt(0).toUpperCase() + pipeline.slice(1);
-        return `${label} Producer`;
-      }
-      const TITLES = {
-        CEO: "Coordinator",
-        CFO: "Finance",
-        CPO: "Product",
-        CMO: "Marketing",
-        CSO: "Sales",
-        COO: "Operations",
-        GeneralCounsel: "General Counsel",
-        RnDLead: "R&D Lead",
-        BusinessDevelopment: "Business Development",
-        ClientSuccess: "Client Success",
-        InvoicingSpecialist: "Invoicing",
-        PaymentsSpecialist: "Payments",
-        AccountingSpecialist: "Accounting",
-        ProcessAnalyst: "Process Analyst",
-      };
-      return TITLES[roleKey] || roleKey;
-    }
+    function roleDisplayName(roleKey) { return formatRoleTitle(roleKey); }
     function llmLabel(llmKey) {
-      if (!llmKey) return "current model";
+      if (!llmKey) return "CURRENT MODEL";
       const model = llmOptionsList.value.find((item) => item.key === llmKey);
-      if (model) return model.label;
-      return llmKey.replace(/^llm_/, "").replace(/_/g, " ");
+      return formatModelLabel(model?.label || llmKey);
+    }
+    function companionImage(id) { return companionAvatar(id); }
+    function modelSpec(llmKey) { return llmOptionsList.value.find((item) => item.key === llmKey); }
+    function modelNeedsDownload(llmKey) {
+      const spec = modelSpec(llmKey);
+      return Boolean(spec?.filename && modelAvailability[spec.filename] === false);
+    }
+    const missingRoleModels = computed(() => {
+      const seen = new Set();
+      return Object.values(props.charter.roles || {})
+        .map((role) => role?.llm)
+        .filter((key) => key && modelNeedsDownload(key) && !seen.has(key) && seen.add(key))
+        .map((key) => ({ key, label: llmLabel(key) }));
+    });
+    const missingRoleModelsDownloading = computed(() => missingRoleModels.value.some((model) => modelDownloading[model.key] != null));
+    async function refreshModelAvailability() {
+      if (!window.electronAPI?.checkModel) return;
+      const used = [...new Set(Object.values(props.charter.roles || {}).map((role) => role?.llm).filter(Boolean))];
+      await Promise.all(used.map(async (key) => {
+        const spec = modelSpec(key);
+        if (spec?.filename) modelAvailability[spec.filename] = await window.electronAPI.checkModel(spec.filename);
+      }));
+    }
+    async function downloadRoleModel(llmKey) {
+      const spec = modelSpec(llmKey);
+      if (!spec?.url || !spec?.filename || modelDownloading[llmKey] != null) return;
+      modelDownloading[llmKey] = 0;
+      const unsubscribe = window.electronAPI?.onDownloadProgress?.((_event, data) => {
+        if (data.filename === spec.filename) modelDownloading[llmKey] = Math.round((data.percent || 0) * 100);
+      });
+      try {
+        const result = await window.electronAPI.downloadModel(spec.url, spec.filename);
+        modelAvailability[spec.filename] = Boolean(result === true || result?.savedPath);
+        if (result?.error) alert(`Model download failed: ${result.error}`);
+      } finally {
+        unsubscribe?.();
+        delete modelDownloading[llmKey];
+      }
+    }
+    async function downloadMissingRoleModels() {
+      for (const model of missingRoleModels.value) await downloadRoleModel(model.key);
     }
     function pipelineLabel(key) {
       return mediaPipelineOptions.find((pipeline) => pipeline.key === key)?.label || key;
@@ -2273,16 +2367,20 @@ export default {
       if (row.shareLink) return row.shareLink;
       return "Artifact recorded. Payload is stored externally or was not returned by the connector.";
     }
-    function deliverableDisplay(row) {
-      if (!row) return "";
-      if (typeof row.payload === "string") return stripReasoningTags(row.payload);
-      if (row.blobId) return `${row.pipeline || "media"} artifact saved as ${row.blobExt || "blob"} (${row.blobId})`;
-      if (row.shareLink) return row.shareLink;
-      return deliverableBody(row);
-    }
     function truncate(s, n) {
       if (!s) return "";
       return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+    }
+    function toggleWorkResult(id) {
+      if (expandedWorkResults.has(id)) expandedWorkResults.delete(id);
+      else expandedWorkResults.add(id);
+    }
+    function openWorkResult(id) {
+      expandedWorkResults.add(id);
+      active.value = "deliverables";
+    }
+    function humanizeAction(value) {
+      return String(value || "Action").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
     }
     function stripReasoningTags(value) {
       return String(value || "")
@@ -2423,17 +2521,19 @@ export default {
       store, active, subtabs, manual,
       isFullscreen,
       charterDraft, charterBusy, companyDisplayName, saveCharter, resetCharterDraft,
-      goalLimit, catalogLimit, approvalLimit, auditLimit,
+      goalLimit, catalogLimit, approvalLimit, auditLimit, expandedWorkResults,
       filledRoles, treasuryEntries, totalSales,
       openIssues,
-      visibleGoals, catalogRows, visibleCatalogRows, visibleApprovals, visibleAuditEntries,
+      visibleGoals, catalogRows, visibleCatalogRows, completedWorkRows, visibleApprovals, visibleAuditEntries,
       catalogColumns, treasuryColumns, auditColumns,
-      companionName, roleDisplayName, llmLabel, pipelineLabel, skillShortName, fmtMoney, fmtCount, fmtTime,
+      companionName, companionImage, roleDisplayName, llmLabel, pipelineLabel, skillShortName, fmtMoney, fmtCount, fmtTime,
+      modelAvailability, modelDownloading, modelNeedsDownload, downloadRoleModel,
+      missingRoleModels, missingRoleModelsDownloading, downloadMissingRoleModels,
       roleConnectorCount, roleSkillCount, auditActionLabel,
       approve, reject, approveAll, rejectAll,
       clearCatalog, removeContent, requestDeleteIssue, requestDeleteContent,
       pendingDelete, dismissDelete, confirmDelete,
-      downloadDeliverable, copyDeliverable,
+      downloadDeliverable, copyDeliverable, toggleWorkResult, openWorkResult, humanizeAction,
       clearAuditConfirm,
       recordRevenue, recordSpend, copy, toggleDemoMode,
       toggleExecution, exportCompany,
@@ -2446,7 +2546,7 @@ export default {
       priorityClass, statusClass,
       sentenceCaseTask,
       // goals
-      goalSourceFilter, goalStatusFilter, workStatusFilter, workStatusFilters,
+      workStatusFilter, workStatusFilters,
       filteredGoals, ungroupedIssues, kanbanColumns, todoWorkItems, workStatusCount,
       issuesForGoal, goalProgress, goalStatusClass,
       goalModalOpen, goalBusy, goalDraft,
@@ -2454,7 +2554,7 @@ export default {
       submitNewGoal, cancelGoal,
       // command center
       operatingMetrics,
-      latestProduced, outputPreview, deliverableDisplay,
+      latestProduced, outputPreview,
       blockedIssues, inProgressIssues, todayActiveWork, runCEO,
       // role-edit modal
       editingRoleKey, editDraft, editBusy,
@@ -3153,7 +3253,8 @@ hr {
   gap: var(--bz-space-3);
 }
 .charter-studio {
-  grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: minmax(0, 760px);
+  justify-content: center;
   align-items: start;
 }
 .charter-card {
@@ -3164,10 +3265,10 @@ hr {
   background: var(--bz-canvas);
 }
 .charter-card--identity {
-  grid-row: span 3;
+  grid-row: auto;
 }
 .charter-card--execution {
-  grid-column: 2;
+  grid-column: auto;
 }
 .charter-card__head {
   display: grid;
@@ -3220,8 +3321,17 @@ hr {
   margin-top: var(--bz-space-1);
 }
 .charter-field .textarea {
-  min-height: 220px;
+  min-height: 120px;
 }
+.charter-toggle { width: 20px; height: 20px; accent-color: var(--bz-purple-500); }
+.org-card__identity { display: flex; align-items: center; gap: var(--bz-space-3); }
+.org-card__avatar { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--bz-border); border-radius: 50%; background: var(--bz-raised); color: var(--bz-fg-mid); }
+.org-card__avatar img { width: 100%; height: 100%; object-fit: cover; }
+.org-card__model-action { margin-left: auto; padding: 2px 7px; border: 1px solid var(--bz-border-brand); border-radius: var(--bz-r-sm); background: var(--bz-purple-soft); color: var(--bz-purple-100); font: inherit; cursor: pointer; }
+.org-card__model-ready { margin-left: auto; color: var(--bz-emerald-500); font-size: var(--bz-size-micro); }
+.work-todo-list { gap: var(--bz-space-3); }
+.work-todo { padding: var(--bz-space-4); }
+.work-todo__main { display: grid; gap: var(--bz-space-2); }
 .charter-actions {
   display: flex;
   align-items: center;
@@ -3235,6 +3345,11 @@ hr {
   flex-direction: column;
   gap: 1em;
 }
+.company-model-alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--bz-space-3); padding: var(--bz-space-3) var(--bz-space-4); border: 1px solid var(--bz-warning); border-radius: var(--bz-r-sm); background: var(--bz-warning-soft); color: var(--bz-fg); }
+.company-model-alert > .material-symbols-outlined { color: var(--bz-warning); font-size: 26px; }
+.company-model-alert strong { font-size: var(--bz-size-body); }
+.company-model-alert p { margin: 2px 0 0; color: var(--bz-fg-mid); font: 400 var(--bz-size-micro)/1.3 var(--bz-font-mono); }
+.company-model-alert .bz-btn { min-height: 36px; padding: 0 var(--bz-space-3); font-size: var(--bz-size-meta); white-space: nowrap; }
 .today-command__head,
 .today-lane__head,
 .today-output__meta,
@@ -3888,6 +4003,56 @@ hr {
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: var(--bz-space-3);
 }
+.deliverable-board > h3,
+.result-work > h3 {
+  grid-column: 1 / -1;
+  margin: 0 0 var(--bz-space-2);
+  color: var(--bz-fg);
+  font-size: 15px;
+  font-weight: 500;
+}
+.result-work {
+  display: grid;
+  gap: var(--bz-space-2);
+  margin-bottom: var(--bz-space-6);
+}
+.result-work__row {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-canvas);
+}
+.result-work__row.is-open { border-color: var(--bz-border-brand); }
+.result-work__summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: var(--bz-space-3); width: 100%; padding: var(--bz-space-3) var(--bz-space-4); border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.result-work__summary:hover { background: var(--bz-raised); }
+.result-work__icon { color: var(--bz-emerald-500); font-size: 22px; }
+.result-work__main { display: grid; gap: 3px; min-width: 0; }
+.result-work__main strong { color: var(--bz-fg); font-size: 14px; font-weight: 500; }
+.result-work__main span,
+.result-work__receipt { color: var(--bz-fg-low); font-size: 11px; }
+.result-work__main p { margin: var(--bz-space-1) 0 0; color: var(--bz-fg-mid); font-size: 12px; line-height: 1.45; }
+.result-work__open { display: flex; align-items: center; gap: var(--bz-space-1); color: var(--bz-purple-100); font-size: var(--bz-size-meta); white-space: nowrap; }
+.result-work__open .material-symbols-outlined { font-size: 17px; }
+.work-dossier { display: grid; gap: var(--bz-space-5); padding: var(--bz-space-5); border-top: 1px solid var(--bz-border); background: var(--bz-panel); }
+.work-dossier__context { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--bz-space-4); }
+.work-dossier__context div { min-width: 0; }
+.work-dossier__context span, .work-dossier h4 { color: var(--bz-fg-low); font-size: var(--bz-size-micro); font-weight: 400; text-transform: uppercase; }
+.work-dossier__context p { margin: var(--bz-space-2) 0 0; color: var(--bz-fg-mid); font-size: var(--bz-size-meta); line-height: 1.5; }
+.work-dossier h4 { margin: 0; }
+.work-dossier__actions, .work-dossier__artifacts { display: grid; gap: var(--bz-space-2); }
+.work-dossier__actions article { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: start; gap: var(--bz-space-3); padding: var(--bz-space-3) 0; border-top: 1px solid var(--bz-border); }
+.work-dossier__actions article div { display: grid; gap: var(--bz-space-1); min-width: 0; }
+.work-dossier__actions strong { color: var(--bz-fg); font-size: var(--bz-size-meta); font-weight: 400; text-transform: capitalize; }
+.work-dossier__actions p { margin: 0; color: var(--bz-fg-mid); font-size: var(--bz-size-meta); line-height: 1.45; }
+.work-dossier__actions small { color: var(--bz-fg-low); font-size: var(--bz-size-micro); line-height: 1.4; }
+.work-dossier__step { color: var(--bz-purple-100); font-size: var(--bz-size-meta); }
+.work-dossier__artifacts > article { overflow: hidden; border: 1px solid var(--bz-border); border-radius: var(--bz-r-sm); background: var(--bz-canvas); }
+.work-dossier__artifact-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--bz-space-3); padding: var(--bz-space-2) var(--bz-space-3); border-top: 1px solid var(--bz-border); }
+.work-dossier__artifact-meta > span { min-width: 0; overflow: hidden; color: var(--bz-fg-low); font-size: var(--bz-size-micro); text-overflow: ellipsis; white-space: nowrap; }
+.work-dossier__footer { display: flex; align-items: center; gap: var(--bz-space-2); color: var(--bz-fg-low); font-size: var(--bz-size-micro); }
+.work-dossier__footer code { min-width: 0; overflow: hidden; color: var(--bz-fg-mid); text-overflow: ellipsis; }
+@media (max-width: 980px) { .work-dossier__context { grid-template-columns: minmax(0, 1fr); } }
 .deliverable-card {
   min-width: 0;
   display: flex;

@@ -144,6 +144,7 @@ export async function chat({ modelKey, prompt, messages, temperature, maxTokens,
   const port = await acquire({
     modelKey,
     modelPath: reg.modelPath,
+    mmprojPath: reg.mmprojPath,
     sizeBytes: reg.sizeBytes,
     ctxSize: reg.ctxSize,
     parallelSlots: reg.parallelSlots,
@@ -251,6 +252,7 @@ async function _spawn(spec, sizeBytes) {
     "--reasoning-format", "none",
     "--chat-template-kwargs", JSON.stringify({ enable_thinking: false }),
   ];
+  if (spec.mmprojPath) args.push("--mmproj", spec.mmprojPath);
   if (spec.chatTemplate) args.push("--chat-template", spec.chatTemplate);
   if (isMtpSpecDecode) {
     args.push("--spec-type", "draft-mtp", "--spec-draft-n-max", String(spec.specDraftNMax ?? 2));
@@ -378,6 +380,7 @@ const _modelPaths = new Map();
 export function registerModelPath(modelKey, modelPath, sizeBytes, extras = {}) {
   _modelPaths.set(modelKey, {
     modelPath,
+    mmprojPath: extras.mmprojPath || null,
     sizeBytes,
     ctxSize: extras.ctxSize || null,
     parameters: extras.parameters || null,

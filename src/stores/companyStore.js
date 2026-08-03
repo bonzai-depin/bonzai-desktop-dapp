@@ -62,6 +62,23 @@ const _state = shallowReactive({
 
 let _auditUnsub = null;
 let _streamUnsub = null;
+let _auditRefreshTimer = null;
+let _refreshPromise = null;
+let _refreshRequested = false;
+let _streamFlushTimer = null;
+let _auditGeneration = 0;
+let _refreshCoveredGeneration = 0;
+const _streamRecords = new Map();
+
+function scheduleStreamPublish(immediate = false) {
+  if (_streamFlushTimer) return;
+  const publish = () => {
+    _streamFlushTimer = null;
+    _state.activeStreams = Object.fromEntries(_streamRecords);
+  };
+  if (immediate) publish();
+  else _streamFlushTimer = setTimeout(publish, 80);
+}
 
 export async function init() {
   if (_state.ready) return;
@@ -69,40 +86,46 @@ export async function init() {
   _state.ready = true;
 
   // Re-subscribe to audit changes — auto-refresh the active view
-  _auditUnsub = svc.onAuditChange(async () => {
-    if (_state.activeId) await refreshActive();
+  _auditUnsub = svc.onAuditChange(() => {
+    const generation = ++_auditGeneration;
+    clearTimeout(_auditRefreshTimer);
+    _auditRefreshTimer = setTimeout(() => {
+      _auditRefreshTimer = null;
+      if (_state.activeId && _refreshCoveredGeneration < generation) void refreshActive();
+    }, 120);
   });
 
   // Bridge the dispatcher's stream bus into the reactive activeStreams
   // map so the live feed renders in-flight LLM thoughts token-by-token.
   _streamUnsub = streamBus.subscribe((ev) => {
     if (ev.type === "begin") {
-      _state.activeStreams = {
-        ..._state.activeStreams,
-        [ev.streamId]: {
-          streamId: ev.streamId,
-          role: ev.role,
-          action: ev.action,
-          response: "",
-          startedAt: Date.now(),
-        },
-      };
+      _streamRecords.set(ev.streamId, {
+        streamId: ev.streamId,
+        role: ev.role,
+        action: ev.action,
+        response: "",
+        startedAt: Date.now(),
+      });
+      scheduleStreamPublish(true);
     } else if (ev.type === "chunk") {
-      const cur = _state.activeStreams[ev.streamId];
+      const cur = _streamRecords.get(ev.streamId);
       if (!cur) return;
-      _state.activeStreams = {
-        ..._state.activeStreams,
-        [ev.streamId]: { ...cur, response: cur.response + (ev.chunk || "") },
-      };
+      _streamRecords.set(ev.streamId, { ...cur, response: cur.response + (ev.chunk || "") });
+      scheduleStreamPublish();
     } else if (ev.type === "end" || ev.type === "error") {
-      const next = { ..._state.activeStreams };
-      delete next[ev.streamId];
-      _state.activeStreams = next;
+      _streamRecords.delete(ev.streamId);
+      scheduleStreamPublish(true);
     }
   });
 }
 
 export function teardown() {
+  clearTimeout(_auditRefreshTimer);
+  _auditRefreshTimer = null;
+  clearTimeout(_streamFlushTimer);
+  _streamFlushTimer = null;
+  _streamRecords.clear();
+  _state.activeStreams = {};
   if (_auditUnsub) _auditUnsub();
   _auditUnsub = null;
   if (_streamUnsub) _streamUnsub();
@@ -126,8 +149,9 @@ export const activeCompany = computed(() =>
 // Refresh — pulls fresh data for the currently active company
 // ─────────────────────────────────────────────────────────────────────────
 
-export async function refreshActive() {
+async function loadActiveSnapshot() {
   const id = _state.activeId;
+  _refreshCoveredGeneration = _auditGeneration;
   if (!id) {
     _state.audit = []; _state.approvals = []; _state.catalog = [];
     _state.treasuryState = null; _state.queueDepths = {};
@@ -149,6 +173,7 @@ export async function refreshActive() {
       svc.listConnectors(id),
       svc.connectorHealth(id),
     ]);
+  if (_state.activeId !== id) return;
   _state.audit = audit;
   _state.approvals = approvals;
   _state.catalog = catalog;
@@ -168,6 +193,20 @@ export async function refreshActive() {
   }
 }
 
+export function refreshActive() {
+  _refreshRequested = true;
+  if (_refreshPromise) return _refreshPromise;
+  _refreshPromise = (async () => {
+    while (_refreshRequested) {
+      _refreshRequested = false;
+      await loadActiveSnapshot();
+    }
+  })().finally(() => {
+    _refreshPromise = null;
+  });
+  return _refreshPromise;
+}
+
 export async function refreshList() {
   _state.companies = await svc.listCompanies();
 }
@@ -175,16 +214,35 @@ export async function refreshList() {
 export async function loadAllTeamWork() {
   const companies = await svc.listCompanies();
   return Promise.all(companies.map(async (company) => {
-    const [issues, goals, approvals, catalog, summary, depths] = await Promise.all([
+    const [issues, goals, approvals, catalog, summary, depths, audit] = await Promise.all([
       svc.listIssues(company.id),
       svc.listGoals(company.id),
       svc.pendingApprovals(company.id),
       svc.listCatalog(company.id),
       svc.summarizeAudit(company.id),
       svc.getQueueDepths(company.id),
+      svc.recentAudit(company.id, 120),
     ]);
-    return { company, issues, goals, approvals, catalog, summary, queueDepths: depths };
+    return { company, issues, goals, approvals, catalog, summary, queueDepths: depths, audit };
   }));
+}
+
+export async function createGoalForCompany(companyId, input) {
+  const goal = await svc.createGoal(companyId, plain(input));
+  if (_state.activeId === companyId) await refreshActive();
+  return goal;
+}
+
+export async function tickCompanyNow(companyId) {
+  const result = await svc.tickNow(companyId);
+  if (_state.activeId === companyId) await refreshActive();
+  return result;
+}
+
+export async function tickRoleForCompany(companyId, roleKey) {
+  const result = await svc.tickRoleNow(companyId, roleKey);
+  if (_state.activeId === companyId) await refreshActive();
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -222,26 +280,21 @@ export const previewTemplate = (templateId, answers, owner) =>
  * the live feed picks up reactively.
  */
 export function beginStream(streamId, meta) {
-  _state.activeStreams = {
-    ..._state.activeStreams,
-    [streamId]: { ...meta, response: "", startedAt: Date.now(), streamId },
-  };
+  _streamRecords.set(streamId, { ...meta, response: "", startedAt: Date.now(), streamId });
+  scheduleStreamPublish(true);
 }
-/** Append a chunk to an active stream. Reactive — live feed re-renders. */
+/** Append a chunk to an active stream, publishing at most once per frame window. */
 export function appendStream(streamId, chunk) {
-  const cur = _state.activeStreams[streamId];
+  const cur = _streamRecords.get(streamId);
   if (!cur) return;
-  _state.activeStreams = {
-    ..._state.activeStreams,
-    [streamId]: { ...cur, response: cur.response + chunk },
-  };
+  _streamRecords.set(streamId, { ...cur, response: cur.response + chunk });
+  scheduleStreamPublish();
 }
 /** Remove a stream after the final audit entry has been written. */
 export function endStream(streamId) {
-  if (!_state.activeStreams[streamId]) return;
-  const next = { ..._state.activeStreams };
-  delete next[streamId];
-  _state.activeStreams = next;
+  if (!_streamRecords.has(streamId)) return;
+  _streamRecords.delete(streamId);
+  scheduleStreamPublish(true);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -452,6 +505,9 @@ export const companyStore = {
   refreshActive,
   refreshList,
   loadAllTeamWork,
+  createGoalForCompany,
+  tickCompanyNow,
+  tickRoleForCompany,
   setActive,
   form,
   update,

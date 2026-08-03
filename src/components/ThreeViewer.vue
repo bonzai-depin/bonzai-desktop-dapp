@@ -381,6 +381,7 @@ export default {
   created() {
     this._animationId = null;
     this._updateCallbacks = [];
+    this._activeEngine = null;
     this._sceneObjects = new Map();
     this._lights = {};
     this._ro = null;
@@ -621,6 +622,23 @@ export default {
     },
   },
   methods: {
+    screenToGroundPosition(clientX, clientY, groundY = 0) {
+      const element = this.renderer?.domElement || this.$refs.threeContainer;
+      if (!element || !this.camera) throw new Error("3D viewer is not ready");
+      const rect = element.getBoundingClientRect();
+      const pointer = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(pointer, this.camera);
+      const point = new THREE.Vector3();
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -Number(groundY || 0));
+      if (!raycaster.ray.intersectPlane(plane, point)) {
+        throw new Error("Drop position is outside the level");
+      }
+      return { x: point.x, y: point.y, z: point.z };
+    },
     initPhysicsWorld() {
       const world = new CANNON.World();
       world.gravity.set(0, -9.82, 0);
@@ -5375,6 +5393,8 @@ export default {
     },
     clear() {
       if (!this.scene) return;
+      this._activeEngine?.GAME?.dispose?.();
+      this._activeEngine = null;
       this._updateCallbacks = [];
       // Reset post-FX that a previous scene might have enabled.
       if (this._dropletPass) this._dropletPass.uniforms.get("uDensity").value = 0;
@@ -5965,7 +5985,14 @@ export default {
         // Engine library surface (MAT/TEX/SHADER/FLUID/P). Lazy import so
         // the module loader only pays for it when generation actually runs.
         const { makeLibs } = await import('./gen3d/engine.js');
-        const _engine = makeLibs({ THREE, addUpdateCallback });
+        const _engine = makeLibs({
+          THREE,
+          addUpdateCallback,
+          camera: this.camera,
+          controls: this.controls,
+          renderer: this.renderer,
+        });
+        this._activeEngine = _engine;
 
         const ctx = {
           THREE,
@@ -6021,6 +6048,36 @@ export default {
         // (clear() already ran above — do NOT call it again here or the
         // update callbacks the generator just registered would be wiped.)
         if (result && result.isObject3D) {
+          let visibleGeometryCount = 0;
+          const generatedBounds = new THREE.Box3();
+          generatedBounds.makeEmpty();
+          const childBounds = new THREE.Box3();
+          result.updateMatrixWorld(true);
+          result.traverse((child) => {
+            if (
+              child.visible === false ||
+              (!child.isMesh && !child.isPoints && !child.isLine) ||
+              !child.geometry
+            ) {
+              return;
+            }
+            childBounds.setFromObject(child);
+            if (!childBounds.isEmpty()) {
+              visibleGeometryCount += 1;
+              generatedBounds.union(childBounds);
+            }
+          });
+          const generatedSize = generatedBounds.getSize(new THREE.Vector3());
+          const hasFiniteBounds = [generatedSize.x, generatedSize.y, generatedSize.z]
+            .every(Number.isFinite);
+          if (
+            visibleGeometryCount === 0 ||
+            generatedBounds.isEmpty() ||
+            !hasFiniteBounds ||
+            Math.max(generatedSize.x, generatedSize.y, generatedSize.z) < 0.0001
+          ) {
+            throw new Error("Generated scene contains no visible geometry");
+          }
           this.autoEnhanceObject(result, THREE);
           // Engine-level liquid auto-fill — detects vessel-shaped
           // LatheGeometry (concave profile, open top) and fills any
@@ -6056,6 +6113,8 @@ export default {
           result.name = "GeneratedObject";
           this.scene.add(result);
           this._applyGeneratedLookdev(result);
+        } else {
+          throw new Error("Generator returned no Three.js object");
         }
         this.$emit?.("generation-success", { mode, hasResult: !!result });
         return result;
@@ -6068,6 +6127,8 @@ export default {
       }
     },
     cleanup() {
+      this._activeEngine?.GAME?.dispose?.();
+      this._activeEngine = null;
       window.removeEventListener("resize", this.onWindowResize);
       if (this._animationId) cancelAnimationFrame(this._animationId);
       if (this._ro) this._ro.disconnect?.();
@@ -6082,10 +6143,96 @@ export default {
       } catch (_) {}
       this._updateCallbacks = [];
     },
+    startAgenticPlay(companionId) {
+      const session = this._activeEngine?.GAME?.active;
+      if (!session) throw new Error("Load a playable game before starting agentic play");
+      session.agent({ companionId });
+      session.start();
+      return session.agentic;
+    },
+    stopAgenticPlay() {
+      return this._activeEngine?.GAME?.active?.stopAgent?.();
+    },
   },
 };
 </script>
 <style scoped>
+:deep(.bonzai-game-hud) {
+  position: absolute;
+  inset: var(--bz-space-4) var(--bz-space-4) auto;
+  z-index: 12;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  color: var(--bz-fg);
+  pointer-events: none;
+  font-family: "Fira Sans", sans-serif;
+}
+
+:deep(.bonzai-game-hud__status),
+:deep(.bonzai-game-hud__metrics),
+:deep(.bonzai-game-hud__message) {
+  background: var(--bz-overlay);
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 6px;
+  box-shadow: var(--bz-elev-2);
+}
+
+:deep(.bonzai-game-hud__status) {
+  display: grid;
+  gap: var(--bz-space-1);
+  padding: var(--bz-space-3) var(--bz-space-4);
+}
+
+:deep(.bonzai-game-hud__status strong) {
+  font-family: "Fira Sans Condensed", sans-serif;
+  font-size: 18px;
+  font-style: italic;
+  font-weight: 900;
+}
+
+:deep(.bonzai-game-hud__status span) {
+  color: var(--bz-fg-mid);
+  font-size: 12px;
+}
+
+:deep(.bonzai-game-hud__metrics) {
+  display: flex;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  color: var(--bz-fg-mid);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+:deep(.bonzai-game-hud__metrics b) {
+  margin-left: var(--bz-space-1);
+  color: var(--bz-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+:deep(.bonzai-game-hud__message) {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  max-width: min(520px, 80%);
+  padding: var(--bz-space-3) var(--bz-space-5);
+  transform: translateX(-50%);
+  color: var(--bz-fg);
+  font-size: 14px;
+  text-align: center;
+}
+
+:deep(.bonzai-game-hud[data-phase="won"] .bonzai-game-hud__message) {
+  border-color: var(--bz-emerald-500);
+}
+
+:deep(.bonzai-game-hud[data-phase="lost"] .bonzai-game-hud__message) {
+  border-color: var(--bz-danger);
+}
+
 .material-symbols-outlined {
   font-variation-settings:
     "FILL" 0,

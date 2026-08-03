@@ -39,6 +39,7 @@
         :class="{ 'bz-chat__stream--empty': shouldCenterStream }"
         aria-live="polite"
         :aria-busy="busy ? 'true' : 'false'"
+        @scroll="onStreamScroll"
       >
         <slot name="stream">
           <div v-if="hasMessages" class="bz-chat__messages">
@@ -53,6 +54,7 @@
               :streaming="msg.streaming"
               :attachments="msg.attachments"
               :tool-calls="msg.toolCalls"
+              :fresh="isFresh(msg)"
               @inspect="$emit('inspect', msg)"
               @regenerate="$emit('regenerate', msg)"
             >
@@ -75,6 +77,17 @@
         </slot>
       </section>
 
+      <button
+        v-if="!isNearBottom && hasMessages"
+        class="bz-chat__scroll-bottom"
+        type="button"
+        title="Scroll to latest message"
+        aria-label="Scroll to latest message"
+        @click="scrollToBottom(true)"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">arrow_downward</span>
+      </button>
+
       <!-- Input docked at the bottom -->
       <footer class="bz-chat__input">
         <slot name="input" />
@@ -90,7 +103,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, useSlots, watch } from "vue";
+import { computed, nextTick, onMounted, ref, useSlots, watch } from "vue";
 import ChatMessage from "./ChatMessage.vue";
 import EmptyChat from "./EmptyChat.vue";
 
@@ -129,6 +142,7 @@ const emit = defineEmits([
 
 const slots = useSlots();
 const streamEl = ref(null);
+const isNearBottom = ref(true);
 const hasMessages = computed(
   () => Array.isArray(props.messages) && props.messages.length > 0,
 );
@@ -138,17 +152,31 @@ function onPickPrompt(p) {
   emit("pick-prompt", p);
 }
 
+function onStreamScroll() {
+  const el = streamEl.value;
+  if (!el) return;
+  isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 96;
+}
+
+async function scrollToBottom(force = false) {
+  if (!props.autoscroll || (!force && !isNearBottom.value)) return;
+  await nextTick();
+  const el = streamEl.value;
+  if (!el) return;
+  el.scrollTo({ top: el.scrollHeight, behavior: force ? "smooth" : "auto" });
+  isNearBottom.value = true;
+}
+
+function isFresh(message) {
+  const ts = Number(message?.ts || message?.timestamp || 0);
+  return ts > 0 && Date.now() - ts < 2200;
+}
+
 watch(
   () => props.messages?.length,
-  () => {
-    if (!props.autoscroll) return;
-    nextTick(() => {
-      const el = streamEl.value;
-      if (!el) return;
-      el.scrollTop = el.scrollHeight;
-    });
-  },
+  () => scrollToBottom(false),
 );
+onMounted(() => scrollToBottom(true));
 </script>
 
 <style scoped>
@@ -222,12 +250,29 @@ watch(
 }
 
 .bz-chat__main {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   overflow: hidden;
+}
+.bz-chat__scroll-bottom {
+  position: absolute;
+  right: var(--bz-space-5);
+  bottom: 92px;
+  z-index: 3;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--bz-border-strong);
+  border-radius: 50%;
+  background: var(--bz-raised);
+  color: var(--bz-fg);
+  box-shadow: var(--bz-shadow-lg);
+  cursor: pointer;
 }
 
 .bz-chat__header {

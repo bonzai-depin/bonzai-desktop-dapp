@@ -35,6 +35,7 @@ export async function publishContent(companyId, opts) {
       status: "executed", contentId: row.id,
       note: (opts?.prompt || "").slice(0, 160),
       txOrLink: row.shareLink || null,
+      issueId: opts?.issueId || opts?.meta?.issueId || null,
     });
     _notify();
   }

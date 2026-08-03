@@ -280,6 +280,36 @@
                 </div>
               </div>
 
+              <div v-if="generation.assetKind === 'game'" class="game-token-issue">
+                <div class="game-token-issue__head">
+                  <strong>Game economy</strong>
+                  <span>One token can be issued for this collectible.</span>
+                </div>
+                <div v-if="!gameTokenResult" class="game-token-issue__form">
+                  <input
+                    v-model="gameTokenSymbol"
+                    class="bz-field-input"
+                    maxlength="12"
+                    aria-label="Game token symbol"
+                    placeholder="SYMBOL"
+                  />
+                  <button
+                    type="button"
+                    class="bz-btn bz-btn--primary"
+                    :disabled="issuingGameToken || gameTokenSymbol.trim().length < 2"
+                    @click="startGameTokenIssue"
+                  >
+                    <span class="material-symbols-outlined">token</span>
+                    {{ issuingGameToken ? 'Issuing…' : 'Issue game token' }}
+                  </button>
+                </div>
+                <p v-if="gameTokenError" class="game-token-issue__error">{{ gameTokenError }}</p>
+                <div v-if="gameTokenResult" class="detail-row">
+                  <span class="label">Game token</span>
+                  <span class="value monospace">{{ gameTokenResult.tokenAddress }}</span>
+                </div>
+              </div>
+
               <button
                 type="button"
                 class="bz-btn bz-btn--success bz-btn--lg mint-result-done"
@@ -341,6 +371,7 @@ import { canMintContentType, checkAllLevels } from "../services/level.service.js
 import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
 import { CONTENT_TYPE_MAP } from "../constants/index.js";
+import { issueGameToken } from "../services/gameToken.service.js";
 import audioBgSrc from "../assets/bonzai_music.webp";
 import videoPosterSrc from "../assets/bonzai_video.webp";
 import logoSrc from "../assets/bonzai_logo-full.png";
@@ -375,6 +406,10 @@ const progressPercent = ref(0);
 const progressMessage = ref("");
 const currentStage = ref("upload");
 const mintResult = ref({});
+const issuingGameToken = ref(false);
+const gameTokenResult = ref(null);
+const gameTokenError = ref("");
+const gameTokenSymbol = ref("");
 const errorMessage = ref("");
 
 // Editable fields
@@ -403,6 +438,25 @@ const previewIcon = computed(() => {
 const generationType = computed(() => {
   return props.generation?.type || props.inferenceType || "Content";
 });
+
+async function startGameTokenIssue() {
+  issuingGameToken.value = true;
+  gameTokenError.value = "";
+  try {
+    gameTokenResult.value = await issueGameToken({
+      collectible: mintResult.value.contractAddress,
+      collectibleTokenId: mintResult.value.tokenId,
+      name: `${mintTitle.value.trim()} Token`,
+      symbol: gameTokenSymbol.value,
+      metadataURI: mintResult.value.metadataUrl,
+      projectManifest: props.generation?.projectManifest,
+    });
+  } catch (error) {
+    gameTokenError.value = error.message;
+  } finally {
+    issuingGameToken.value = false;
+  }
+}
 
 function hasNsfwSignal(value) {
   return /\b(nsfw|adult|explicit|porn|erotic|nude|nudity|sex|sexual|gore)\b/i.test(String(value || ""));
@@ -585,6 +639,12 @@ watch(
       mintTitle.value =
         (props.prompt || "").substring(0, 50) ||
         `BonzAI ${generationType.value}`;
+      gameTokenResult.value = null;
+      gameTokenError.value = "";
+      gameTokenSymbol.value = mintTitle.value
+        .replace(/[^a-z0-9]/gi, "")
+        .slice(0, 8)
+        .toUpperCase();
       mintDescription.value = `AI-generated ${generationType.value} by BonzAI.`;
       if (isNsfwGeneration.value) marketplaceDiscoverable.value = false;
     }
@@ -1177,6 +1237,40 @@ function handleClose() {
 .mint-result-done {
   width: 100%;
   margin-top: var(--bz-space-4);
+}
+
+.game-token-issue {
+  display: grid;
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-4);
+  padding: var(--bz-space-4) 0;
+  text-align: left;
+  border-top: 1px solid var(--bz-border);
+  border-bottom: 1px solid var(--bz-border);
+}
+
+.game-token-issue__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--bz-space-3);
+}
+
+.game-token-issue__head span {
+  color: var(--bz-fg-mid);
+  font-size: 12px;
+}
+
+.game-token-issue__form {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.45fr) 1fr;
+  gap: var(--bz-space-2);
+}
+
+.game-token-issue__error {
+  margin: 0;
+  color: var(--bz-danger);
+  font-size: 12px;
 }
 
 .error-actions {

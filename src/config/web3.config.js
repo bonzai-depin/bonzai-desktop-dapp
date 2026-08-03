@@ -19,10 +19,17 @@ export const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 const ROBINHOOD_RPC = env.VITE_ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
 const ROBINHOOD_TESTNET_RPC = env.VITE_ROBINHOOD_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com";
 const BONZAI_ROBINHOOD = env.VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS || null;
+const BONZAI_ROBINHOOD_TESTNET = env.VITE_BONZAI_TOKEN_ROBINHOODTESTNET_ADDRESS || null;
 const USDG_ROBINHOOD = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
 const WETH_ROBINHOOD = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
 const ECONOMY_CHAIN_ID = Number(env.VITE_BONZAI_ECONOMY_CHAIN_ID || ROBINHOOD_CHAIN_ID);
-const ECONOMY_NETWORK_KEYS = { 1: 'ethereum', 42161: 'arbitrum', 8453: 'base', 4663: 'robinhood' };
+const ECONOMY_NETWORK_KEYS = {
+  1: 'ethereum',
+  42161: 'arbitrum',
+  8453: 'base',
+  4663: 'robinhood',
+  46630: 'robinhoodTestnet',
+};
 export const ECONOMY_NETWORK_KEY = ECONOMY_NETWORK_KEYS[ECONOMY_CHAIN_ID];
 if (!ECONOMY_NETWORK_KEY) {
   throw new Error(`Unsupported VITE_BONZAI_ECONOMY_CHAIN_ID: ${ECONOMY_CHAIN_ID}`);
@@ -37,6 +44,7 @@ const BONZAI_ECONOMY = {
   42161: "0x0a84edf70f30325151631ce7a61307d1f4d619a3",
   8453: BONZAI_BASE,
   4663: BONZAI_ROBINHOOD,
+  46630: BONZAI_ROBINHOOD_TESTNET,
 }[ECONOMY_CHAIN_ID];
 
 const economyAddress = (name, ...legacyKeys) => {
@@ -68,6 +76,8 @@ const ECONOMY_CONTRACTS = {
   p2pPayment: economyAddress('P2P_PAYMENT', 'VITE_BONZAI_P2P_PAYMENT_ETHEREUM_ADDRESS'),
   pipelinePayment: economyAddress('PIPELINE_PAYMENT', 'VITE_BONZAI_PIPELINE_PAYMENT_ETHEREUM_ADDRESS'),
   companionTokenFactory: economyAddress('COMPANION_TOKEN_FACTORY'),
+  gameRegistry: economyAddress('GAME_REGISTRY'),
+  gameTokenFactory: economyAddress('GAME_TOKEN_FACTORY'),
 };
 
 const parseSkillIdMap = () => {
@@ -683,6 +693,20 @@ export const CONFIG = {
 
     // Description
     description: "Launch burnable ERC-20 tokens with V4 LP (unruggable, hook fees)",
+  },
+
+  gameTokenFactory: {
+    contractAddress: ECONOMY_CONTRACTS.gameTokenFactory,
+    chainId: ECONOMY_CHAIN_ID,
+    totalSupply: "1000000000",
+    liquidityMode: "external",
+    description: "Issue one burnable ERC-20 for each creator-owned game collectible",
+  },
+
+  gameRegistry: {
+    contractAddress: ECONOMY_CONTRACTS.gameRegistry,
+    chainId: ECONOMY_CHAIN_ID,
+    description: "Canonical manifest hashes for BonzAI game collectibles",
   },
 
   // ═══════════════════════════════════════════════════════════════════════════

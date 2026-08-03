@@ -7,6 +7,8 @@
  * Shipped as a single helper-factory so the LLM-generated code stays
  * small: `const { MAT, TEX, SHADER, FLUID, P } = makeLibs({ THREE, addUpdateCallback, root });`
  */
+
+import { createGameRuntime } from "./gameRuntime.js";
 import { Water } from 'three/examples/jsm/objects/Water.js';
 // Faraz Shaikh's toolkit — TCSM patches built-in PBR materials with
 // custom shader snippets (csm_DiffuseColor, csm_Roughness, csm_Bump, etc.),
@@ -39,7 +41,7 @@ function getSoftSprite(THREE) {
   return _softSprite;
 }
 
-export function makeLibs({ THREE, addUpdateCallback }) {
+export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer }) {
   const SOFT = getSoftSprite(THREE);
   // ═══════════════════════════════════════════════════════════════════════
   // MAT — physical materials. Generous surface so the LLM rarely needs to
@@ -3082,5 +3084,13 @@ export function makeLibs({ THREE, addUpdateCallback }) {
     },
   };
 
-  return { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX };
+  const GAME = createGameRuntime({
+    THREE,
+    addUpdateCallback,
+    camera,
+    controls,
+    renderer,
+  });
+
+  return { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX, GAME };
 }

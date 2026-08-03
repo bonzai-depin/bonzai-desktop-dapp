@@ -399,7 +399,14 @@ export async function createGoal(companyId, input) {
     deadline: clean.deadline,
     createdBy: "user",
   });
-  const tasks = Array.isArray(clean.tasks) && clean.tasks.length ? clean.tasks : [];
+  const tasks = Array.isArray(clean.tasks) && clean.tasks.length
+    ? clean.tasks
+    : [{
+        title: clean.title,
+        description: clean.rationale || clean.missionAlignment || "",
+        priority: "normal",
+      }];
+  const createdIssues = [];
   // Lazy import — avoid circular reference, route via charter helper for routing.
   const { routeGoalToRole, ROLE_LIBRARY } = await import("./company/charter.js");
   for (const task of tasks) {
@@ -407,7 +414,7 @@ export async function createGoal(companyId, input) {
     if (!taskTitle) continue;
     const explicit = task.assigneeRole && ROLE_LIBRARY[task.assigneeRole] ? task.assigneeRole : null;
     const roleKey = explicit || routeGoalToRole({ directive: taskTitle });
-    await issues.create(companyId, {
+    const issue = await issues.create(companyId, {
       title: taskTitle,
       description: task.description || "",
       priority: task.priority || "normal",
@@ -415,8 +422,9 @@ export async function createGoal(companyId, input) {
       goalId: goal.id,
       createdBy: "user",
     });
+    if (issue) createdIssues.push(issue);
   }
-  return goal;
+  return { ...goal, createdIssues };
 }
 
 export const listGoals = (id, filter) => goalsSvc.list(id, _plain(filter));

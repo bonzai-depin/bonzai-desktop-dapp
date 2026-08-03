@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public BonzAI contract addresses and protocol data keys"
+regexTarget = "match"
+regexes = [
+  '''0xc4d137def384ee0f8857887f5950669ba04984ec''',
+  '''0x0a84edf70f30325151631ce7a61307d1f4d619a3''',
+  '''0x9afb95cacc9f95858ec44aa8c3b685511002e30ae54415823f406128b85b238e''',
+  '''0x5ef83ad9559033e6e941db7d7c495acdce616347d28e90c7ce47cbfcfcad3bc5''',
+  '''0xdf30dba06db6a30e65354d9a64c609861f089545ca58c6b4dbe31a5f338cb0e3''',
+  '''0x0cfc51aec37c55a4d0b1a65c6255c4bf2fbdf6277f3cc0730c45b828b6db8b47''',
+  '''bonzai-contribution-ledger-v1''',
+  '''(?:GameToken|CompanionToken|FineTuneToken) is ERC20, ERC20Burnable''',
+]

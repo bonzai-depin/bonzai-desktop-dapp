@@ -490,7 +490,7 @@ export default {
         const res = await fetch(`${API_BASE}/pipelines/prefetch`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ pipeline: "vision_mlx" }),
+          body: JSON.stringify({ pipeline: "vision_caption" }),
         });
         if (res.ok) {
           modelReady.value = true;

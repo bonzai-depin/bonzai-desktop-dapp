@@ -1456,7 +1456,7 @@ export default {
         video_fast: "video_fast",
         video_quality: "video_quality",
         vision: "qwen3_vision",
-        vision_mlx: "vision_mlx",
+        vision_caption: "vision_caption",
         forecast_quality: "forecast",
       };
 

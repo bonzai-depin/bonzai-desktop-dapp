@@ -1,7 +1,7 @@
 <template>
   <div class="markets bz-tab-shell">
     <header class="markets__header bz-screen-header">
-      <div class="bz-screen-titleblock"><p class="bz-eyebrow">{{ i18n.t('views.markets.eyebrow') }}</p><h1 class="bz-h1">{{ i18n.t('views.markets.title') }}</h1><p class="bz-screen-subtitle">Live companion and model markets.</p></div>
+      <div class="bz-screen-titleblock"><p class="bz-eyebrow">{{ i18n.t('views.markets.eyebrow') }}</p><h1 class="bz-h1">{{ i18n.t('views.markets.title') }}</h1><p class="bz-screen-subtitle">Live companion, model, and game markets.</p></div>
       <button class="bz-iconbtn" type="button" :title="i18n.t('common.refresh')" :disabled="loading" @click="refresh"><span class="material-symbols-outlined">refresh</span></button>
     </header>
     <div class="markets__filters" role="tablist">
@@ -13,7 +13,7 @@
     <div v-else class="markets__layout">
       <aside class="markets__list">
         <button v-for="asset in visible" :key="asset.address" :class="['markets__asset', { 'is-active': selected?.address === asset.address }]" type="button" @click="selected = asset">
-          <img v-if="asset.imageURI" :src="asset.imageURI" alt="" /><span v-else class="material-symbols-outlined">{{ asset.kind === 'companion' ? 'smart_toy' : 'model_training' }}</span>
+          <img v-if="asset.imageURI" :src="asset.imageURI" alt="" /><span v-else class="material-symbols-outlined">{{ assetIcon(asset.kind) }}</span>
           <span><strong>{{ asset.name }}</strong><small>${{ asset.symbol }} · {{ kindLabel(asset.kind) }}</small></span>
           <span class="markets__quote"><strong>{{ usd(asset.market?.priceUsd) }}</strong><small :class="changeClass(asset.market?.priceChange?.h24)">{{ percent(asset.market?.priceChange?.h24) }}</small></span>
         </button>
@@ -25,8 +25,15 @@
         <div class="markets__metrics">
           <div><small>{{ i18n.t('views.markets.price') }}</small><strong>{{ usd(selected.market?.priceUsd) }}</strong></div><div><small>{{ i18n.t('views.markets.liquidity') }}</small><strong>{{ usd(selected.market?.liquidity?.usd) }}</strong></div><div><small>{{ i18n.t('views.markets.volume') }}</small><strong>{{ usd(selected.market?.volume?.h24) }}</strong></div><div><small>{{ i18n.t('views.markets.change') }}</small><strong :class="changeClass(selected.market?.priceChange?.h24)">{{ percent(selected.market?.priceChange?.h24) }}</strong></div>
         </div>
-        <section class="markets__tokenomics"><h3>{{ i18n.t('views.markets.tokenomics') }}</h3><div class="markets__allocation"><span style="--size:96">96% liquidity</span><span style="--size:4">4% creators</span></div><p v-if="selected.kind === 'companion'">Swap fees route to the companion, owner, protocol, and contribution pools.</p><p v-else>Model revenue follows the immutable contributor route recorded at launch.</p></section>
-        <footer><span class="bz-mono">{{ selected.address }}</span><span>1,000,000,000 fixed supply · LP locked</span></footer>
+        <section class="markets__tokenomics">
+          <h3>{{ i18n.t('views.markets.tokenomics') }}</h3>
+          <div v-if="selected.kind === 'game'" class="markets__allocation markets__allocation--game"><span style="--size:100">100% creator issuance</span></div>
+          <div v-else class="markets__allocation"><span style="--size:96">96% liquidity</span><span style="--size:4">4% creators</span></div>
+          <p v-if="selected.kind === 'companion'">Swap fees route to the companion, owner, protocol, and contribution pools.</p>
+          <p v-else-if="selected.kind === 'game'">The token is permanently linked to its registered game collectible. Distribution and liquidity remain explicit creator actions.</p>
+          <p v-else>Model revenue follows the immutable contributor route recorded at launch.</p>
+        </section>
+        <footer><span class="bz-mono">{{ selected.address }}</span><span>1,000,000,000 fixed supply · {{ selected.kind === 'game' ? 'collectible-backed' : 'LP locked' }}</span></footer>
       </main>
       <main v-else class="markets__state">{{ i18n.t('views.markets.select') }}</main>
     </div>
@@ -39,12 +46,13 @@ import { createChart, ColorType } from 'lightweight-charts'
 import { loadMarkets } from '../services/markets.service.js'
 import { useI18n } from '../i18n/index.js'
 const i18n=useI18n()
-const filters=computed(()=>[{id:'all',label:i18n.t('common.all')},{id:'companion',label:'Companions'},{id:'fine_tuned',label:'Fine-tuned'},{id:'abliterated',label:'Abliterated'}])
+const filters=computed(()=>[{id:'all',label:i18n.t('common.all')},{id:'companion',label:'Companions'},{id:'game',label:'Games'},{id:'fine_tuned',label:'Fine-tuned'},{id:'abliterated',label:'Abliterated'}])
 const filter=ref('all'), assets=ref([]), selected=ref(null), loading=ref(true), error=ref(''), chartEl=ref(null); let chart
 const visible=computed(()=>filter.value==='all'?assets.value:assets.value.filter(a=>a.kind===filter.value))
 const usd=value=>value==null?'Not indexed':i18n.number(Number(value),{style:'currency',currency:'USD',maximumSignificantDigits:6})
 const percent=value=>value==null?'—':new Intl.NumberFormat(i18n.state.locale,{style:'percent',signDisplay:'exceptZero',minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value)/100); const changeClass=value=>Number(value)>=0?'is-up':'is-down'
-const kindLabel=kind=>({companion:'Companion',fine_tuned:'Fine-tuned model',abliterated:'Abliterated model'}[kind]||kind)
+const kindLabel=kind=>({companion:'Companion',game:'Game',fine_tuned:'Fine-tuned model',abliterated:'Abliterated model'}[kind]||kind)
+const assetIcon=kind=>({companion:'smart_toy',game:'sports_esports'}[kind]||'model_training')
 async function refresh(){loading.value=true;error.value='';try{assets.value=await loadMarkets();selected.value=assets.value.find(a=>a.address===selected.value?.address)||assets.value[0]||null}catch(e){error.value=e.message}finally{loading.value=false}}
 async function draw(){await nextTick();chart?.remove();chart=null;if(!chartEl.value||!selected.value)return;chart=createChart(chartEl.value,{height:280,layout:{background:{type:ColorType.Solid,color:'transparent'},textColor:'#8f8a9b'},grid:{vertLines:{color:'rgba(128,110,150,.12)'},horzLines:{color:'rgba(128,110,150,.12)'}},rightPriceScale:{borderVisible:false},timeScale:{borderVisible:false}});const series=chart.addAreaSeries({lineColor:'#a855f7',topColor:'rgba(168,85,247,.28)',bottomColor:'rgba(168,85,247,0)',lineWidth:2});let data=selected.value.history||[];if(data.length<2&&selected.value.market?.priceUsd){const now=Math.floor(Date.now()/1000);data=[{time:now-60,value:Number(selected.value.market.priceUsd)},{time:now,value:Number(selected.value.market.priceUsd)}]}series.setData(data);chart.timeScale().fitContent()}
 watch(selected,draw);watch(filter,()=>{if(!visible.value.includes(selected.value))selected.value=visible.value[0]||null});onMounted(refresh);onBeforeUnmount(()=>chart?.remove())
@@ -84,6 +92,7 @@ watch(selected,draw);watch(filter,()=>{if(!visible.value.includes(selected.value
 .markets__allocation { display: flex; height: 32px; overflow: hidden; border: 1px solid var(--bz-border); border-radius: var(--bz-r-sm); background: var(--bz-canvas); }
 .markets__allocation span { flex: var(--size); display: grid; place-items: center; min-width: 100px; background: var(--bz-purple-500); color: var(--bz-on-accent); font-size: var(--bz-size-micro); }
 .markets__allocation span + span { background: var(--bz-raised); color: var(--bz-fg-mid); }
+.markets__allocation--game span { background: var(--bz-emerald-700); }
 .markets__tokenomics p { max-width: 65ch; margin: var(--bz-space-3) 0 0; color: var(--bz-fg-mid); line-height: 1.5; }
 .markets__detail footer { display: flex; justify-content: space-between; gap: var(--bz-space-4); margin-top: var(--bz-space-6); padding-top: var(--bz-space-3); border-top: 1px solid var(--bz-border); color: var(--bz-fg-low); font-size: var(--bz-size-micro); }
 .markets__state { display: grid; place-items: center; min-height: 240px; padding: var(--bz-space-6); color: var(--bz-fg-low); }

@@ -341,11 +341,11 @@ KOKORO_DEFAULT_VOICE = {
     "neutral": "af_nova",
 }
 
-# Qwen3.5-0.8B MLX 4-bit - Vision-language model (Apple Silicon, mlx_vlm)
-QWEN35_MLX_MODEL_ID = "mlx-community/Qwen3.5-0.8B-MLX-4bit"
-
-# GLM-OCR 4-bit (MLX) - State-of-the-art OCR for documents, tables, formulas (Apple Silicon)
-GLM_OCR_MLX_MODEL_ID = "mlx-community/GLM-OCR-4bit"
+# Shared cross-platform llama.cpp vision model, aligned with BonzAI+.
+VISION_GGUF_NAME = "meetara-qwen3.5-0.8b-q4_k_m.gguf"
+VISION_GGUF_URL = "https://huggingface.co/meetara-lab/meetara-qwen3.5-0.8b-gguf/resolve/main/meetara-qwen3.5-0.8b-Q4_K_M.gguf"
+VISION_MMPROJ_NAME = "meetara-vl-qwen3.5-0.8b.gguf"
+VISION_MMPROJ_URL = "https://huggingface.co/meetara-lab/meetara-qwen3.5-0.8b-gguf/resolve/main/meetara-vl-qwen3.5-0.8b.gguf"
 
 # Qwen3-TTS - High-quality TTS with voice cloning and voice design
 QWEN3_TTS_BASE_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"  # For voice cloning
@@ -601,7 +601,7 @@ LEVEL_REQUIREMENTS = {
     "audio": 2,
     "image": 3,
     "vision": 3,  # Vision analysis uses same level as image
-    "vision_mlx": 3,  # MLX vision (Qwen3.5-0.8B) for video captioning
+    "vision_caption": 3,
     "ocr": 3,  # OCR (GLM-OCR-4bit) for text extraction
     "video": 4,
     "3d": 5,
@@ -1363,12 +1363,18 @@ class DownloadManager:
                           namespace="/downloads", room=pipeline_id)
             socketio.sleep(0)
 
-    def new(self, name: str) -> PipelineDownload:
-        pid = hashlib.md5(f"{name}_{time.time()}".encode()).hexdigest()[:16]
-        pl = PipelineDownload(pipeline_id=pid, pipeline_name=name)
+    def new_or_active(self, name: str) -> tuple[PipelineDownload, bool]:
         with self._lock:
+            matches = [
+                pl for pl in self.pipelines.values()
+                if pl.pipeline_name == name and pl.status in ("pending", "downloading")
+            ]
+            if matches:
+                return matches[-1], False
+            pid = hashlib.md5(f"{name}_{time.time()}".encode()).hexdigest()[:16]
+            pl = PipelineDownload(pipeline_id=pid, pipeline_name=name)
             self.pipelines[pid] = pl
-        return pl
+            return pl, True
 
     def add_repo_task(self, pl: PipelineDownload, repo_id: str, total_estimate: int = 0) -> str:
         tid = _tid_repo(repo_id)
@@ -1509,16 +1515,6 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
             "vae/**",
             "audio_vae/**",
         ]
-    if repo_id == GLM_OCR_MLX_MODEL_ID:
-        # GLM-OCR 4-bit MLX model
-        return [
-            "*.json",
-            "*.txt",
-            "*.safetensors",
-            "*.model",
-            "tokenizer.model",
-            "*.py",
-        ]
     return None
 
 
@@ -1589,22 +1585,6 @@ REPO_SPECS = {
         "must_files": ["config.json"],
         "must_tokenizers": [],
         "must_weight_dirs": [],
-        "fallback_any_weights": True,
-    },
-    # Qwen3.5-0.8B MLX 4-bit: Vision-language model for vision/captioning (Apple Silicon)
-    "mlx-community/Qwen3.5-0.8B-MLX-4bit": {
-        "must_files": ["config.json"],
-        "must_tokenizers": [],
-        "must_weight_dirs": [],
-        "extra_dirs": [],
-        "fallback_any_weights": True,
-    },
-    # GLM-OCR 4-bit MLX: OCR model for text extraction (Apple Silicon)
-    "mlx-community/GLM-OCR-4bit": {
-        "must_files": ["config.json"],
-        "must_tokenizers": [],
-        "must_weight_dirs": [],
-        "extra_dirs": [],
         "fallback_any_weights": True,
     },
     # Google TimesFM 2.0 (500M): ships as torch_model.ckpt (not safetensors).
@@ -1927,17 +1907,11 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             ],
         }
 
-    # Vision pipeline (Qwen3.5-0.8B 4-bit MLX — Apple Silicon)
-    if pipeline in ("vision", "qwen35_vision"):
-        return {"repos_to_fetch": [QWEN35_MLX_MODEL_ID], "single_files": []}
-
-    # MLX Vision (Qwen3.5-0.8B) for video captioning (Apple Silicon)
-    if pipeline in ("vision_mlx", "qwen35_mlx"):
-        return {"repos_to_fetch": [QWEN35_MLX_MODEL_ID], "single_files": []}
-
-    # OCR pipeline (GLM-OCR 4-bit MLX — Apple Silicon)
-    if pipeline in ("ocr", "glm_ocr"):
-        return {"repos_to_fetch": [GLM_OCR_MLX_MODEL_ID], "single_files": []}
+    if pipeline in ("vision", "vision_caption", "ocr"):
+        return {"repos_to_fetch": [], "single_files": [
+            _sf(VISION_GGUF_NAME, VISION_GGUF_URL),
+            _sf(VISION_MMPROJ_NAME, VISION_MMPROJ_URL),
+        ]}
 
     # Time-series forecast pipeline (Google TimesFM 2.0 500M)
     if pipeline in ("forecast", "timesfm"):
@@ -2047,7 +2021,20 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
 
 def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
     plan = _cached_plan_for(pipeline)
-    pl = download_manager.new(pipeline)
+    pl, created = download_manager.new_or_active(pipeline)
+    if not created:
+        logger.info(
+            f"[Download] Reusing active pipeline {pl.pipeline_id} for {pipeline}"
+        )
+        return {
+            "json": {
+                "ok": True,
+                "message": "Prefetch already in progress",
+                "pipeline_id": pl.pipeline_id,
+                "pipeline": pl.to_dict(),
+            },
+            "http_status": 202,
+        }
     download_manager.set_status(pl, "downloading")
     logger.info(f"[Download] Starting pipeline {pipeline}, id={pl.pipeline_id}")
 
@@ -2070,6 +2057,14 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                 try:
                     _download_repo_files(pl, tid, rid, manifest)
                     if not pl.cancelled:
+                        _readiness_cache.pop(rid, None)
+                        readiness = _repo_readiness(rid)
+                        _readiness_cache[rid] = (readiness, time.time())
+                        if not readiness.get("ok", False):
+                            missing = ", ".join(readiness.get("missing", []))
+                            raise ValueError(
+                                f"Downloaded repository {rid} failed validation: {missing}"
+                            )
                         download_manager.mark_completed(pl, tid)
                 except Exception as e:
                     if pl.cancelled:
@@ -2149,7 +2144,14 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
         rsz = int(f.get("size") or 0)
         dest = base / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists() and (rsz == 0 or dest.stat().st_size == rsz):
+        cached_file_valid = dest.exists() and (rsz == 0 or dest.stat().st_size == rsz)
+        if cached_file_valid and dest.suffix == ".safetensors":
+            cached_file_valid = _is_valid_safetensors(dest)
+            if not cached_file_valid:
+                logger.warning(f"[Download] Removing invalid safetensors file: {dest}")
+                dest.unlink(missing_ok=True)
+                dest.with_suffix(dest.suffix + ".part").unlink(missing_ok=True)
+        if cached_file_valid:
             if use_bytes:
                 done += (rsz or dest.stat().st_size)
             else:
@@ -7660,435 +7662,81 @@ def training_info():
 # =============================================================================
 
 # =============================================================================
-# VISION ANALYSIS (Qwen3.5-0.8B 4-bit via mlx_vlm — Apple Silicon)
-# Shares the same model as /vision/caption (both use QWEN35_MLX_MODEL_ID)
+# CROSS-PLATFORM VISION / OCR / CAPTIONING (llama.cpp GGUF + mmproj)
 # =============================================================================
 
+def _vision_bridge(image_b64, prompt, max_tokens):
+    raw = image_b64.split(",", 1)[1] if image_b64.startswith("data:") else image_b64
+    image = Image.open(io.BytesIO(base64.b64decode(raw))).convert("RGB")
+    normalized = io.BytesIO()
+    image.save(normalized, format="JPEG", quality=92)
+    response = requests.post(
+        "http://127.0.0.1:3002/api/vision/analyze",
+        json={
+            "image_base64": base64.b64encode(normalized.getvalue()).decode("ascii"),
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+        },
+        timeout=900,
+    )
+    payload = response.json()
+    if not response.ok or payload.get("error"):
+        raise RuntimeError(payload.get("error") or f"Vision bridge HTTP {response.status_code}")
+    return (payload.get("response") or "").strip()
+
+def _run_shared_vision(endpoint, pipeline, prompt, max_tokens, text_key="response", mode=None):
+    data = request.get_json(silent=True) or {}
+    image_b64 = data.get("image_base64") or data.get("image")
+    if not image_b64:
+        return jsonify({"error": "image_base64 is required"}), 400
+    guard = _ensure_files_present_or_start(pipeline, auto_download=bool(data.get("auto_download", False)))
+    if guard:
+        return guard
+    gen_id = genbus.new(pipeline, {"endpoint": endpoint, "prompt": prompt[:100]})
+    try:
+        genbus.progress(gen_id, "Analyzing image", 5, 10)
+        text = _vision_bridge(image_b64, prompt, max_tokens)
+        genbus.progress(gen_id, "Complete", 10, 10)
+        genbus.finish(gen_id)
+        result = {"success": True, text_key: text, "generation_id": gen_id}
+        if mode is not None:
+            result["mode"] = mode
+        return jsonify(_json_sanitize(result))
+    except Exception as e:
+        logger.exception(f"[Vision] {endpoint} failed: {e}")
+        genbus.error(gen_id, str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/vision/analyze", methods=["POST"])
 def vision_analyze():
-    """
-    Analyze an image using Qwen3.5-0.8B 4-bit (MLX, Apple Silicon).
-    Shares the same model cache as /vision/caption.
-
-    Request body:
-    {
-        "image_base64": "...",  # Base64 encoded image (required)
-        "prompt": "...",        # Analysis prompt (optional, defaults to describe)
-        "max_tokens": 512,      # Max response tokens (optional)
-        "auto_download": false  # Start download if model missing (optional)
-    }
-    """
     data = request.get_json(silent=True) or {}
-
-    image_b64 = data.get("image_base64") or data.get("image")
-    if not image_b64:
-        return jsonify({"error": "image_base64 is required"}), 400
-
     prompt = (data.get("prompt") or "Describe this image in detail.").strip()
-    max_tokens = int(data.get("max_tokens", 512))
-    auto_dl = bool(data.get("auto_download", False))
-
-    guard = _ensure_files_present_or_start("vision", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("vision", {"endpoint": "/vision/analyze", "prompt": prompt[:100]})
-
-    try:
-        genbus.progress(gen_id, "Loading vision model", 1, 10)
-        model, processor = _load_mlx_vlm()
-
-        genbus.progress(gen_id, "Processing image", 3, 10)
-
-        if image_b64.startswith("data:"):
-            _, b64_data = image_b64.split(",", 1)
-        else:
-            b64_data = image_b64
-
-        image_bytes = base64.b64decode(b64_data)
-        image = Image.open(io.BytesIO(image_bytes))
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-
-        logger.info(f"[Vision] Input image size: {image.size}")
-        genbus.progress(gen_id, "Analyzing image", 5, 10)
-
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            image.save(tmp, format="JPEG", quality=90)
-            tmp_path = tmp.name
-
-        from mlx_vlm import generate
-        from mlx_vlm.prompt_utils import apply_chat_template
-
-        formatted_prompt = apply_chat_template(
-            processor, model.config, prompt, num_images=1,
-        )
-
-        response = generate(
-            model, processor,
-            prompt=formatted_prompt,
-            image=tmp_path,
-            max_tokens=max_tokens,
-        )
-
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-
-        text = response.text if hasattr(response, 'text') else str(response)
-
-        genbus.progress(gen_id, "Complete", 10, 10)
-        genbus.finish(gen_id)
-
-        return jsonify(_json_sanitize({
-            "success": True,
-            "response": text.strip(),
-            "generation_id": gen_id,
-        }))
-
-    except ImportError:
-        genbus.error(gen_id, "mlx-vlm not installed")
-        return jsonify({"error": "mlx-vlm is not installed. Vision requires Apple Silicon with mlx-vlm."}), 500
-
-    except Exception as e:
-        logger.exception(f"[Vision] Analysis failed: {e}")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/vision/unload", methods=["POST"])
-def vision_unload():
-    """Unload the vision model to free memory."""
-    _unload_mlx_vlm()
-    return jsonify({"success": True, "message": "Vision model unloaded"})
-
-
-# =============================================================================
-# OCR (GLM-OCR 4-bit via mlx_vlm — Apple Silicon)
-# =============================================================================
-
-_glm_ocr_model = None
-_glm_ocr_processor = None
-_glm_ocr_lock = threading.Lock()
-
-
-def _load_glm_ocr():
-    """Load GLM-OCR 4-bit via mlx_vlm for OCR."""
-    global _glm_ocr_model, _glm_ocr_processor
-
-    with _glm_ocr_lock:
-        if _glm_ocr_model is not None:
-            return _glm_ocr_model, _glm_ocr_processor
-
-        from mlx_vlm import load
-
-        local_dir = repo_local_dir(GLM_OCR_MLX_MODEL_ID)
-        model_path = str(local_dir) if local_dir.exists() else GLM_OCR_MLX_MODEL_ID
-
-        logger.info(f"[OCR] Loading GLM-OCR 4-bit from {model_path}")
-        model, processor = load(model_path)
-        _glm_ocr_model = model
-        _glm_ocr_processor = processor
-        logger.info("[OCR] GLM-OCR 4-bit loaded successfully")
-        return model, processor
-
-
-def _unload_glm_ocr():
-    """Unload GLM-OCR model to free memory."""
-    global _glm_ocr_model, _glm_ocr_processor
-
-    with _glm_ocr_lock:
-        if _glm_ocr_model is not None:
-            del _glm_ocr_model
-            _glm_ocr_model = None
-        if _glm_ocr_processor is not None:
-            del _glm_ocr_processor
-            _glm_ocr_processor = None
-        gc.collect()
-        logger.info("[OCR] GLM-OCR model unloaded")
-
+    return _run_shared_vision("/vision/analyze", "vision", prompt, int(data.get("max_tokens", 512)))
 
 @app.route("/vision/ocr", methods=["POST"])
 def vision_ocr():
-    """
-    Extract text from an image using GLM-OCR 4-bit (MLX, Apple Silicon).
-
-    Request body:
-    {
-        "image_base64": "...",     # Base64 encoded image (required)
-        "mode": "text",            # "text" | "formula" | "table" | "full" (optional)
-        "max_tokens": 4096,        # Max response tokens (optional)
-        "auto_download": false     # Start download if model missing (optional)
-    }
-
-    Returns:
-    {
-        "success": true,
-        "text": "...",             # Extracted text / markdown
-        "mode": "text",
-        "generation_id": "..."
-    }
-    """
     data = request.get_json(silent=True) or {}
-
-    image_b64 = data.get("image_base64") or data.get("image")
-    if not image_b64:
-        return jsonify({"error": "image_base64 is required"}), 400
-
     mode = (data.get("mode") or "text").strip().lower()
-    max_tokens = int(data.get("max_tokens", 4096))
-    auto_dl = bool(data.get("auto_download", False))
-
-    # Map mode to GLM-OCR prompt convention
-    mode_prompts = {
-        "text": "Text Recognition:",
-        "formula": "Formula Recognition:",
-        "table": "Table Recognition:",
-        "full": "Text Recognition:",
+    prompts = {
+        "text": "Transcribe every visible character exactly. Preserve reading order and line breaks.",
+        "formula": "Transcribe all formulas exactly in LaTeX. Return no commentary.",
+        "table": "Transcribe the table as Markdown, preserving rows, columns, and values.",
+        "full": "Transcribe all visible text, formulas, and tables in reading order as Markdown.",
     }
-    prompt = mode_prompts.get(mode, "Text Recognition:")
-
-    guard = _ensure_files_present_or_start("ocr", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("ocr", {"endpoint": "/vision/ocr", "mode": mode})
-
-    try:
-        genbus.progress(gen_id, "Loading OCR model", 1, 10)
-        model, processor = _load_glm_ocr()
-
-        genbus.progress(gen_id, "Processing image", 3, 10)
-
-        if image_b64.startswith("data:"):
-            _, b64_data = image_b64.split(",", 1)
-        else:
-            b64_data = image_b64
-
-        image_bytes = base64.b64decode(b64_data)
-        image = Image.open(io.BytesIO(image_bytes))
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-
-        logger.info(f"[OCR] Input image size: {image.size}, mode: {mode}")
-        genbus.progress(gen_id, "Extracting text", 5, 10)
-
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            image.save(tmp, format="JPEG", quality=95)
-            tmp_path = tmp.name
-
-        from mlx_vlm import generate
-        from mlx_vlm.prompt_utils import apply_chat_template
-
-        formatted_prompt = apply_chat_template(
-            processor, model.config, prompt, num_images=1,
-        )
-
-        response = generate(
-            model, processor,
-            prompt=formatted_prompt,
-            image=tmp_path,
-            max_tokens=max_tokens,
-        )
-
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-
-        text = response.text if hasattr(response, 'text') else str(response)
-
-        genbus.progress(gen_id, "Complete", 10, 10)
-        genbus.finish(gen_id)
-
-        return jsonify(_json_sanitize({
-            "success": True,
-            "text": text.strip(),
-            "mode": mode,
-            "generation_id": gen_id,
-        }))
-
-    except ImportError:
-        genbus.error(gen_id, "mlx-vlm not installed")
-        return jsonify({"error": "mlx-vlm is not installed. OCR requires Apple Silicon with mlx-vlm."}), 500
-
-    except Exception as e:
-        logger.exception(f"[OCR] Extraction failed: {e}")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/vision/ocr/unload", methods=["POST"])
-def vision_ocr_unload():
-    """Unload the OCR model to free memory."""
-    _unload_glm_ocr()
-    return jsonify({"success": True, "message": "OCR model unloaded"})
-
-
-# =============================================================================
-# VIDEO CAPTIONING (Qwen3.5-0.8B via mlx_vlm — Apple Silicon only)
-# =============================================================================
-
-_mlx_vlm_model = None
-_mlx_vlm_processor = None
-_mlx_vlm_lock = threading.Lock()
-
-
-def _load_mlx_vlm():
-    """Load Qwen3.5-0.8B via mlx_vlm for vision-language inference."""
-    global _mlx_vlm_model, _mlx_vlm_processor
-
-    with _mlx_vlm_lock:
-        if _mlx_vlm_model is not None:
-            return _mlx_vlm_model, _mlx_vlm_processor
-
-        from mlx_vlm import load
-
-        # Use local repo path if available (manual repo management), otherwise HuggingFace ID
-        local_dir = repo_local_dir(QWEN35_MLX_MODEL_ID)
-        model_path = str(local_dir) if local_dir.exists() else QWEN35_MLX_MODEL_ID
-
-        logger.info(f"[VisionMLX] Loading Qwen3.5-0.8B from {model_path}...")
-        model, processor = load(model_path)
-        _mlx_vlm_model = model
-        _mlx_vlm_processor = processor
-        logger.info("[VisionMLX] Qwen3.5-0.8B loaded successfully")
-        return model, processor
-
-
-def _unload_mlx_vlm():
-    """Unload mlx_vlm model to free memory."""
-    global _mlx_vlm_model, _mlx_vlm_processor
-
-    with _mlx_vlm_lock:
-        if _mlx_vlm_model is not None:
-            del _mlx_vlm_model
-            _mlx_vlm_model = None
-        if _mlx_vlm_processor is not None:
-            del _mlx_vlm_processor
-            _mlx_vlm_processor = None
-        gc.collect()
-        logger.info("[VisionMLX] Qwen3.5-0.8B model unloaded")
-
+    return _run_shared_vision("/vision/ocr", "ocr", prompts.get(mode, prompts["text"]),
+                              int(data.get("max_tokens", 4096)), "text", mode)
 
 @app.route("/vision/caption", methods=["POST"])
 def vision_caption():
-    """
-    Analyze a video frame using Qwen3.5-0.8B via mlx_vlm (Apple Silicon).
-
-    Request body:
-    {
-        "image_base64": "...",  # Base64-encoded JPEG frame (required)
-        "prompt": "...",        # Analysis prompt (optional)
-        "max_tokens": 200       # Max response tokens (optional)
-    }
-
-    Returns:
-    {
-        "success": true,
-        "response": "...",
-        "generation_id": "..."
-    }
-    """
     data = request.get_json(silent=True) or {}
-
-    image_b64 = data.get("image_base64") or data.get("image")
-    if not image_b64:
-        return jsonify({"error": "image_base64 is required"}), 400
-
     prompt = (data.get("prompt") or "Describe the current video frame concisely.").strip()
-    max_tokens = int(data.get("max_tokens", 200))
+    return _run_shared_vision("/vision/caption", "vision_caption", prompt, int(data.get("max_tokens", 200)))
 
-    # Check if model is available (manual repo management)
-    auto_dl = bool(data.get("auto_download", False))
-    guard = _ensure_files_present_or_start("vision_mlx", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("vision_mlx", {"endpoint": "/vision/caption", "prompt": prompt[:100]})
-
-    try:
-        genbus.progress(gen_id, "Loading MLX vision model", 1, 10)
-
-        model, processor = _load_mlx_vlm()
-
-        genbus.progress(gen_id, "Processing frame", 3, 10)
-
-        # Decode base64 to temp file (mlx_vlm.generate accepts file paths or PIL images)
-        if image_b64.startswith("data:"):
-            _, b64_data = image_b64.split(",", 1)
-        else:
-            b64_data = image_b64
-
-        image_bytes = base64.b64decode(b64_data)
-        image = Image.open(io.BytesIO(image_bytes))
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-
-        # Save to temp file for mlx_vlm
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            image.save(tmp, format="JPEG", quality=90)
-            tmp_path = tmp.name
-
-        genbus.progress(gen_id, "Analyzing frame", 5, 10)
-
-        from mlx_vlm import generate
-        from mlx_vlm.prompt_utils import apply_chat_template
-
-        # Format prompt through chat template (injects image placeholder tokens)
-        formatted_prompt = apply_chat_template(
-            processor,
-            model.config,
-            prompt,
-            num_images=1,
-        )
-
-        response = generate(
-            model,
-            processor,
-            prompt=formatted_prompt,
-            image=tmp_path,
-            max_tokens=max_tokens,
-        )
-
-        # Clean up temp file
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-
-        genbus.progress(gen_id, "Complete", 10, 10)
-        genbus.finish(gen_id)
-
-        # response is a GenerationResult object
-        text = response.text if hasattr(response, 'text') else str(response)
-
-        return jsonify(_json_sanitize({
-            "success": True,
-            "response": text.strip(),
-            "generation_id": gen_id,
-        }))
-
-    except ImportError:
-        genbus.error(gen_id, "mlx-vlm not installed")
-        return jsonify({"error": "mlx-vlm is not installed. Install with: pip install mlx-vlm"}), 500
-
-    except Exception as e:
-        logger.exception(f"[VisionMLX] Caption failed: {e}")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
-
-
+@app.route("/vision/unload", methods=["POST"])
+@app.route("/vision/ocr/unload", methods=["POST"])
 @app.route("/vision/caption/unload", methods=["POST"])
-def vision_caption_unload():
-    """Unload the MLX vision caption model to free memory."""
-    _unload_mlx_vlm()
-    return jsonify({"success": True, "message": "MLX vision model unloaded"})
+def vision_unload():
+    return jsonify({"success": True, "message": "Vision is managed by the cross-platform llama.cpp pool"})
 
 
 @app.route("/")
@@ -8192,37 +7840,6 @@ def memory_clear():
             _qwen3_tts_design = None
             unloaded.append("qwen3_tts_design")
 
-        # Unload MLX Vision model (Qwen3.5-0.8B)
-        global _mlx_vlm_model, _mlx_vlm_processor
-        if _mlx_vlm_model is not None:
-            try:
-                del _mlx_vlm_model
-            except:
-                pass
-            _mlx_vlm_model = None
-            unloaded.append("mlx_vlm")
-        if _mlx_vlm_processor is not None:
-            try:
-                del _mlx_vlm_processor
-            except:
-                pass
-            _mlx_vlm_processor = None
-
-        # Unload GLM-OCR model
-        global _glm_ocr_model, _glm_ocr_processor
-        if _glm_ocr_model is not None:
-            try:
-                del _glm_ocr_model
-            except:
-                pass
-            _glm_ocr_model = None
-            unloaded.append("glm_ocr")
-        if _glm_ocr_processor is not None:
-            try:
-                del _glm_ocr_processor
-            except:
-                pass
-            _glm_ocr_processor = None
 
         # Voice prompt cache: preserve when preserve_tts=True (small, enables voice consistency)
         global _voice_prompt_cache
@@ -8287,10 +7904,6 @@ def memory_status():
             status["cached_models"].append("qwen3_tts_base")
         if _qwen3_tts_design is not None:
             status["cached_models"].append("qwen3_tts_design")
-        if _mlx_vlm_model is not None:
-            status["cached_models"].append("mlx_vlm")
-        if _glm_ocr_model is not None:
-            status["cached_models"].append("glm_ocr")
         if _voice_prompt_cache:
             status["cached_models"].append(f"voice_cache({len(_voice_prompt_cache)})")
 

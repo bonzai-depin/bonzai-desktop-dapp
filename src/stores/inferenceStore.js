@@ -436,6 +436,8 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     hardware: hardware || null,
     code: String(code || ''),
     mode: String(metadata.mode || 'normal'),
+    assetKind: String(metadata.assetKind || metadata.mode || 'object'),
+    projectManifest: metadata.projectManifest || undefined,
     model: metadata.model ? String(metadata.model) : undefined,
     screenshots: Array.isArray(metadata.screenshots) ? metadata.screenshots : [],
     thumbnail: metadata.thumbnail ? String(metadata.thumbnail) : undefined,
@@ -444,6 +446,9 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     title: metadata.title ? String(metadata.title) : undefined,
     notes: metadata.notes ? String(metadata.notes) : undefined,
     blueprint: metadata.blueprint ? String(metadata.blueprint) : undefined,
+    referenceAnalysis: metadata.referenceAnalysis ? String(metadata.referenceAnalysis) : undefined,
+    referenceImage: metadata.referenceImage || undefined,
+    fidelityReview: metadata.fidelityReview || undefined,
     tokensPerSecond: metadata.tokensPerSecond ? String(metadata.tokensPerSecond) : undefined,
   });
   record = await attachBonzaiUtility(record);
@@ -467,6 +472,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
       prompt: String(prompt || ''),
       code: String(code || ''),
       mode: String(metadata.mode || 'normal'),
+      assetKind: String(metadata.assetKind || metadata.mode || 'object'),
       success: Boolean(metadata.success ?? true),
       screenshots: [],
       thumbnail: metadata.thumbnail ? String(metadata.thumbnail) : undefined,
