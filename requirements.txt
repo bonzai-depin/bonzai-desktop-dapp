@@ -35,6 +35,10 @@ dlinfo==2.0.0
 dnspython==2.8.0
 docopt==0.6.2
 einops==0.8.0
+# EIP-191 (personal_sign) signature recovery for wallet challenge verification
+# in src/server/bonzai_security.py. The only Ethereum dependency pulled in for
+# auth; nothing else from the web3 stack is required for local inference.
+eth-account==0.13.4
 espeakng-loader==0.2.4
 eventlet==0.40.3
 executing==2.2.0
@@ -180,3 +184,8 @@ basicsr==1.4.2
 # Abliteration (training/abliterate endpoint) — removes refusal behaviors from LLMs.
 # Not on PyPI; install from git. Needs transformers/accelerate/torch (already present).
 obliteratus @ git+https://github.com/elder-plinius/OBLITERATUS.git
+
+# Test runner for the Python security suite: `npm run test:security` ->
+# scripts/run-pytest.mjs -> test/diffuser-security.test.py. Dev/CI dependency
+# only; not imported by the runtime.
+pytest==8.3.5

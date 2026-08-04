@@ -209,6 +209,7 @@
 import { ref, computed, onBeforeUnmount, nextTick, watch } from 'vue';
 import BonzaiPulse from '../BonzaiPulse.vue';
 import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
+import { authFetch } from '../../services/auth.service.js';
 
 const SKILL_ID = 'chart-forecaster-v1.0.0';
 
@@ -266,7 +267,7 @@ const FORECAST_COLORS = ['#91caff', '#95de64', '#ffd666'];
 // proxy sidesteps that (and also normalizes the response shape so the
 // component only parses one payload format).
 async function fetchHistoryViaProxy(symbol, assetType, days) {
-  const r = await fetch(`${API_BASE}/forecast/history`, {
+  const r = await authFetch(`${API_BASE}/forecast/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ symbol, assetType, days }),
@@ -373,7 +374,7 @@ export default {
     };
 
     const callForecast = async (series, horizon) => {
-      const r = await fetch(`${API_BASE}/forecast`, {
+      const r = await authFetch(`${API_BASE}/forecast`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
