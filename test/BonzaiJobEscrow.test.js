@@ -81,6 +81,29 @@ describe("BonzAI smart-agent job escrow", function () {
     expect((await escrow.jobs(jobId)).status).to.equal(Status.Cancelled);
   });
 
+  describe("withdrawal event emission (B10)", function () {
+    it("emits Withdrawal with the exact amount on a successful withdraw", async function () {
+      const { employer, worker, escrow } = await fixture();
+      const jobId = ethers.id("withdrawal-event");
+      const { value } = await fundJob(escrow, employer, worker, jobId);
+      await escrow.connect(worker).acceptJob(jobId);
+      await escrow.connect(worker).submitWork(jobId, ethers.id("evidence"));
+      await escrow.connect(employer).approveWork(jobId);
+
+      const workerAmount = await escrow.pendingWithdrawals(worker.address);
+      expect(workerAmount).to.be.above(0);
+      await expect(escrow.connect(worker).withdraw())
+        .to.emit(escrow, "Withdrawal")
+        .withArgs(worker.address, workerAmount);
+      expect(await escrow.pendingWithdrawals(worker.address)).to.equal(0);
+    });
+
+    it("does not emit Withdrawal when there is nothing to withdraw", async function () {
+      const { other, escrow } = await fixture();
+      await expect(escrow.connect(other).withdraw()).to.be.revertedWith("Nothing to withdraw");
+    });
+  });
+
   describe("period bounds (R1 / AC1)", function () {
     const cases = [
       { name: "submission", field: "submissionPeriod", min: MIN_SUBMISSION_PERIOD, max: MAX_SUBMISSION_PERIOD },

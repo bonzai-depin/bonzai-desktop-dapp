@@ -1009,6 +1009,180 @@ test("AC4 (P10): initializeOrUnlockFromSignature never silently overwrites a vau
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// B5 (bonzai-sec-fix3): a failed vault switch must clear the PREVIOUS
+// wallet's in-memory secrets before returning, on every failure path -
+// including the legacy LEGACY_VAULT_UNRECOVERABLE early return, which used
+// to skip cleanup entirely and leave the prior wallet's secrets unlocked.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("B5 (P10): switching to a legacy vault fails AND the previously unlocked wallet's secrets are no longer readable", async () => {
+  const { store } = installVaultGlobals();
+  const restoreTime = freezeTime("2026-04-04T00:00:00.000Z");
+  try {
+    const walletA = VAULT_ADDRESS_A.toLowerCase();
+    const walletB = VAULT_ADDRESS_B.toLowerCase();
+
+    // Unlock wallet A normally and populate it with secrets.
+    await authVault.initializeVault(makeVaultSigner(walletA));
+    await authVault.setMoltbookCredentials("companion-1", { apiKey: "secret-a", username: "user-a" });
+    await authVault.setAgentWallet("companion-1", {
+      address: "0x1111111111111111111111111111111111aaaa",
+      privateKey: "0x" + "11".repeat(32),
+    });
+    authVault.setAuthTokens("tok-a", Date.now() + 3600_000, "refresh-a");
+    await delay(1100); // flush the debounced save
+
+    assert.equal(authVault.state.isUnlocked, true, "wallet A is unlocked");
+    assert.equal(authVault.getMoltbookCredentials("companion-1").apiKey, "secret-a", "wallet A secrets readable before switch");
+
+    // Now attempt to switch to wallet B, whose stored envelope is a legacy
+    // ciphertext with no derivation metadata - unrecoverable.
+    const legacyKey = vaultStorageKey(walletB);
+    store._map.set(legacyKey, { version: 1, address: walletB, encrypted: "legacy-ciphertext-blob==" });
+
+    const switchSigner = makeVaultSigner(walletB);
+    const result = await authVault.unlockVault(switchSigner);
+
+    assert.deepEqual(result, {
+      ok: false,
+      recoverable: false,
+      reason: LEGACY_VAULT_UNRECOVERABLE,
+      requiresReset: true,
+    });
+
+    // The switch failed, so wallet A's secrets must no longer be readable.
+    assert.equal(authVault.state.isUnlocked, false, "vault locked after failed switch");
+    assert.equal(authVault.getMoltbookCredentials("companion-1"), null, "moltbook credentials no longer readable");
+    assert.equal(await authVault.getAgentWallet("companion-1"), null, "agent wallet no longer readable");
+
+    // Wallet A's own storage record is untouched by the failed switch attempt.
+    const walletAEnvelope = store._map.get(vaultStorageKey(walletA));
+    assert.ok(walletAEnvelope, "wallet A's envelope still exists in storage");
+  } finally {
+    restoreTime();
+  }
+});
+
+test("B5 (P10): a validation failure (tampered metadata) during a switch also clears the previous wallet's secrets", async () => {
+  const { store } = installVaultGlobals();
+  const restoreTime = freezeTime("2026-05-05T00:00:00.000Z");
+  try {
+    const walletA = VAULT_ADDRESS_A.toLowerCase();
+    const walletB = VAULT_ADDRESS_B.toLowerCase();
+
+    await authVault.initializeVault(makeVaultSigner(walletA));
+    await authVault.setMoltbookCredentials("companion-2", { apiKey: "secret-a2", username: "user-a2" });
+    await delay(1100);
+    assert.equal(authVault.state.isUnlocked, true);
+
+    // Wallet B exists with derivation metadata, but it has been tampered with.
+    await authVault.initializeVault(makeVaultSigner(walletB));
+    await delay(1100);
+    // Re-unlock wallet A so it is the CURRENTLY unlocked wallet again before
+    // attempting the (failing) switch to tampered wallet B.
+    authVault.lockVault();
+    await authVault.unlockVault(makeVaultSigner(walletA));
+    await authVault.setMoltbookCredentials("companion-2", { apiKey: "secret-a2", username: "user-a2" });
+    await delay(1100);
+    assert.equal(authVault.state.isUnlocked, true);
+
+    const bKey = vaultStorageKey(walletB);
+    const bEnvelope = store._map.get(bKey);
+    store._map.set(bKey, { ...bEnvelope, derivation: { ...bEnvelope.derivation, version: 99 } });
+
+    await assert.rejects(() => authVault.unlockVault(makeVaultSigner(walletB)), /invalid or has been altered/);
+
+    assert.equal(authVault.state.isUnlocked, false, "vault locked after failed switch validation");
+    assert.equal(authVault.getMoltbookCredentials("companion-2"), null, "wallet A secrets no longer readable");
+  } finally {
+    restoreTime();
+  }
+});
+
+test("B5 (P10): a failed switch clears getAuthTokens() and every field on the exported state, not just the two gated credential getters", async () => {
+  installVaultGlobals();
+  const restoreTime = freezeTime("2026-06-06T00:00:00.000Z");
+  try {
+    const walletA = VAULT_ADDRESS_A.toLowerCase();
+    const walletB = VAULT_ADDRESS_B.toLowerCase();
+
+    await authVault.initializeVault(makeVaultSigner(walletA));
+    await authVault.setMoltbookCredentials("companion-3", { apiKey: "secret-a3", username: "user-a3" });
+    authVault.setAuthTokens("tok-a3", Date.now() + 3600_000, "refresh-a3");
+    authVault.queueOperation({ type: "some-op" });
+    await delay(1100);
+
+    assert.equal(authVault.state.isUnlocked, true);
+    assert.equal(authVault.getAuthTokens().accessToken, "tok-a3", "tokens readable before switch");
+
+    // Wallet B has no vault at all - unlockVault throws before it ever
+    // reaches the legacy/decrypt failure branches that previously called
+    // clearVaultSwitchFailure().
+    await assert.rejects(() => authVault.unlockVault(makeVaultSigner(walletB)), /No vault found/);
+
+    assert.equal(authVault.state.isUnlocked, false, "vault locked after failed switch");
+    assert.deepEqual(
+      authVault.getAuthTokens(),
+      { accessToken: null, tokenExpiry: null, refreshToken: null },
+      "getAuthTokens() must not return the previous wallet's tokens once locked",
+    );
+    assert.equal(authVault.state.accessToken, null, "state.accessToken cleared");
+    assert.equal(authVault.state.refreshTokenStored, null, "state.refreshTokenStored cleared");
+    assert.deepEqual(authVault.state.moltbook, {}, "state.moltbook cleared");
+    assert.deepEqual(authVault.state.agentWallets, {}, "state.agentWallets cleared");
+    assert.equal(authVault.state.openclaw, null, "state.openclaw cleared");
+    assert.equal(authVault.state.p2p, null, "state.p2p cleared");
+    assert.deepEqual(authVault.state.pendingOperations, [], "state.pendingOperations cleared");
+  } finally {
+    restoreTime();
+  }
+});
+
+test("B5 (P10): cleanup runs before address validation, storage lookup, and record lookup - not only after them", async () => {
+  const { store } = installVaultGlobals();
+  const restoreTime = freezeTime("2026-07-07T00:00:00.000Z");
+  try {
+    const walletA = VAULT_ADDRESS_A.toLowerCase();
+
+    // Case 1: target wallet has no stored vault at all - unlockVault throws
+    // at the storage-lookup step, well before the legacy/derivation-failure
+    // branches this cleanup used to be gated behind.
+    await authVault.initializeVault(makeVaultSigner(walletA));
+    await authVault.setMoltbookCredentials("companion-4", { apiKey: "secret-a4", username: "user-a4" });
+    await delay(1100);
+    assert.equal(authVault.state.isUnlocked, true);
+
+    const noVaultWallet = "0x" + "ee".repeat(20);
+    await assert.rejects(() => authVault.unlockVault(makeVaultSigner(noVaultWallet)), /No vault found/);
+    assert.equal(authVault.state.isUnlocked, false, "wallet A locked even though target has no vault");
+    assert.equal(authVault.getMoltbookCredentials("companion-4"), null, "wallet A secrets cleared");
+
+    // Case 2: the stored envelope's address field doesn't match the wallet
+    // being switched to - unlockVault throws at the address-mismatch check,
+    // also before the legacy/derivation-failure branches.
+    await authVault.unlockVault(makeVaultSigner(walletA));
+    await authVault.setMoltbookCredentials("companion-4", { apiKey: "secret-a4", username: "user-a4" });
+    await delay(1100);
+    assert.equal(authVault.state.isUnlocked, true);
+
+    const mismatchWallet = "0x" + "ff".repeat(20);
+    store._map.set(vaultStorageKey(mismatchWallet), {
+      version: 1,
+      address: VAULT_ADDRESS_B.toLowerCase(), // deliberately mismatched
+      encrypted: "irrelevant==",
+    });
+    await assert.rejects(
+      () => authVault.unlockVault(makeVaultSigner(mismatchWallet)),
+      /Vault address mismatch/,
+    );
+    assert.equal(authVault.state.isUnlocked, false, "wallet A locked even though target envelope address mismatched");
+    assert.equal(authVault.getMoltbookCredentials("companion-4"), null, "wallet A secrets cleared");
+  } finally {
+    restoreTime();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P11 — storage.service.js: Pinata publishing moves to the main process
 // (src/main/pinataPublish.js / storage:publish IPC in main.js, see
 // test/main-security.test.mjs for the main-process-side coverage). Exercises:

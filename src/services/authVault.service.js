@@ -110,6 +110,31 @@ let refreshTimer = null;
 // message-reconstruction metadata (initializeOrUnlockFromSignature).
 let vaultDerivation = null;
 
+/**
+ * Clear all in-memory/reactive vault state when a vault switch does not
+ * complete (legacy-unrecoverable result, or a decrypt failure). Nulling only
+ * masterKey/isUnlocked is not enough: several getters (getMoltbookCredentials,
+ * getAgentWallet, etc.) gate on state.isUnlocked, but state.accessToken and
+ * getAuthTokens() do not, and the readonly `state` export exposes everything
+ * directly regardless of gating. A failed switch must never leave the
+ * PREVIOUS wallet's cached credentials or tokens reachable through either
+ * path, so every sensitive field is reset here, not just the two flags.
+ */
+function clearVaultSwitchFailure() {
+  masterKey = null;
+  vaultDerivation = null;
+  state.isUnlocked = false;
+  state.walletAddress = null;
+  state.moltbook = {};
+  state.agentWallets = {};
+  state.openclaw = null;
+  state.p2p = null;
+  state.accessToken = null;
+  state.tokenExpiry = null;
+  state.refreshTokenStored = null;
+  state.pendingOperations = [];
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ENCRYPTION UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -226,6 +251,13 @@ export async function hasVault(address) {
  * @param {string} signature - Existing signature to try against a stored vault
  */
 export async function initializeOrUnlockFromSignature(address, signature) {
+  // Tear down any previously unlocked wallet's cached secrets before doing
+  // any lookups for the wallet we're switching to, so an early throw below
+  // (invalid address/signature, address mismatch, no vault to recover from)
+  // can never leave the previous wallet's secrets reachable. See
+  // clearVaultSwitchFailure() and the matching fix in unlockVault().
+  clearVaultSwitchFailure();
+
   address = address.toLowerCase();
 
   // Validate before touching storage or deriving anything from the signature.
@@ -285,13 +317,12 @@ export async function initializeOrUnlockFromSignature(address, signature) {
       // overwrite the existing encrypted record - that would destroy any
       // secrets already stored. Surface a dedicated recoverability result;
       // only an explicitly confirmed resetVault() call may replace it.
-      masterKey = null;
       // A previous call may have left the vault unlocked (isUnlocked=true)
       // in this same in-memory session. Without a masterKey nothing can
       // actually be decrypted or persisted, so isUnlocked must reflect that
       // now - otherwise getters keep serving stale cached secrets and
       // setters/saveVault silently no-op instead of failing visibly.
-      state.isUnlocked = false;
+      clearVaultSwitchFailure();
       console.warn("[Vault] Existing vault could not be unlocked with this signature; recovery required");
       return {
         ok: false,
@@ -407,6 +438,13 @@ export async function initializeVault(signer) {
  * identical to the original. Never recomputes the timestamp itself.
  */
 export async function unlockVault(signer) {
+  // Tear down any previously unlocked wallet's cached secrets BEFORE doing
+  // any lookups for the wallet we're switching to. If we waited until a
+  // failure branch below to call this, an early throw (invalid address,
+  // storage unavailable, no vault found, address mismatch) would skip
+  // cleanup entirely and leave the previous wallet fully unlocked.
+  clearVaultSwitchFailure();
+
   const address = (await signer.getAddress()).toLowerCase();
   const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
 
@@ -433,7 +471,9 @@ export async function unlockVault(signer) {
     // so we refuse to guess at a key rather than risk decrypt failure
     // cascading into a "just recreate it" fallback that clobbers data.
     // Preserve the record verbatim; only an explicitly confirmed
-    // resetVault() call may replace it.
+    // resetVault() call may replace it. Cleanup already ran at the top of
+    // this function, but is repeated here defensively.
+    clearVaultSwitchFailure();
     console.warn("[Vault] Legacy vault has no derivation metadata; recovery required");
     return {
       ok: false,
@@ -446,6 +486,7 @@ export async function unlockVault(signer) {
   // Validate the persisted metadata BEFORE requesting a signature or
   // touching storage - an altered address/version/timestamp is rejected here.
   if (!isValidDerivationMetadata(stored.derivation, address) || stored.version !== VAULT_VERSION) {
+    clearVaultSwitchFailure();
     throw new Error("Vault derivation metadata is invalid or has been altered");
   }
 
@@ -483,12 +524,11 @@ export async function unlockVault(signer) {
 
     return true;
   } catch (e) {
-    masterKey = null;
     // Mirror the same-named fix in initializeOrUnlockFromSignature: without
     // a masterKey nothing can actually be decrypted or persisted, so a
     // stale isUnlocked=true from an earlier session must not survive a
     // failed re-unlock attempt.
-    state.isUnlocked = false;
+    clearVaultSwitchFailure();
     console.error("[Vault] Failed to unlock vault:", e);
     state.error = e.message;
     throw e;
@@ -698,6 +738,9 @@ export function setAuthTokens(accessToken, tokenExpiry, refreshToken = null) {
  * Get stored auth tokens
  */
 export function getAuthTokens() {
+  if (!state.isUnlocked) {
+    return { accessToken: null, tokenExpiry: null, refreshToken: null };
+  }
   return {
     accessToken: state.accessToken,
     tokenExpiry: state.tokenExpiry,

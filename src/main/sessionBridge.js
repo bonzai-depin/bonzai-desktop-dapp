@@ -183,7 +183,7 @@ export function normalizeSessionEvent(event, mainWindow) {
  *        Invoked by rotate AFTER the generation is bumped and BEFORE the
  *        replacement is returned, so restarted local services read the
  *        fresh credential from childEnvSecrets.
- * @returns {{ obtain:(sender)=>object, rotate:(sender)=>Promise<object> }}
+ * @returns {{ obtain:(sender)=>object, rotate:(sender)=>Promise<object>, invalidate:(sender)=>object }}
  */
 export function createSessionBridge({ registry, authorize, rekeyDependents } = {}) {
   if (!registry) throw new Error("createSessionBridge requires a credential registry");
@@ -217,19 +217,19 @@ export function createSessionBridge({ registry, authorize, rekeyDependents } = {
     return { ok: true, descriptor, token };
   }
 
-  return { obtain, rotate, invalidate };
-}
+  /**
+   * Synchronous invalidation for logout: kills the current registry
+   * generation immediately so every previously issued credential dies at
+   * once, without waiting for a rotate/rekey round-trip. The renderer calls
+   * this over sendSync; the old generation is rejected by the registry from
+   * this point on.
+   */
+  function invalidate(sender) {
+    const decision = authz(sender);
+    if (!decision.ok) return { ok: false, reason: decision.reason };
+    registry.invalidate();
+    return { ok: true };
+  }
 
-/**
- * Synchronous invalidation for logout: kills the current registry
- * generation immediately so every previously issued credential dies at
- * once, without waiting for a rotate/rekey round-trip. The renderer calls
- * this over sendSync; the old generation is rejected by the registry from
- * this point on.
- */
-function invalidate(sender) {
-  const decision = authz(sender);
-  if (!decision.ok) return { ok: false, reason: decision.reason };
-  registry.invalidate();
-  return { ok: true };
+  return { obtain, rotate, invalidate };
 }

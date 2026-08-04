@@ -824,6 +824,65 @@ test("P2 AC4: obtain fails closed when no live credential exists", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// B1 (bonzai-sec-fix3): invalidate is defined INSIDE createSessionBridge so it
+// closes over `authz`/`registry`. Previously it was a module-level function
+// referencing out-of-scope identifiers, so calling it threw a ReferenceError
+// at logout instead of ever reaching the registry.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("B1: bridge.invalidate is callable and does not throw a ReferenceError", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(206) });
+  registry.issue();
+  const bridge = createSessionBridge({ registry, authorize: () => ({ ok: true }) });
+
+  assert.doesNotThrow(() => bridge.invalidate(trustedSender(DEV_URL)));
+});
+
+test("B1: logout via invalidate kills the generation - obtain and validate fail afterwards", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(207) });
+  registry.issue();
+  const bridge = createSessionBridge({ registry, authorize: () => ({ ok: true }) });
+
+  const obtained = bridge.obtain(trustedSender(DEV_URL));
+  assert.equal(obtained.ok, true, "credential obtainable before logout");
+  const token = obtained.token;
+  const generation = obtained.descriptor.generation;
+  assert.equal(
+    registry.validate({ token, type: "local-session", scope: "local-session", generation }),
+    true,
+    "credential validates before logout",
+  );
+
+  const result = bridge.invalidate(trustedSender(DEV_URL));
+  assert.deepEqual(result, { ok: true });
+
+  assert.equal(
+    registry.validate({ token, type: "local-session", scope: "local-session", generation }),
+    false,
+    "credential rejected after logout invalidates",
+  );
+  assert.deepEqual(
+    bridge.obtain(trustedSender(DEV_URL)),
+    { ok: false, reason: "no-credential" },
+    "obtain fails closed after logout",
+  );
+});
+
+test("B1: invalidate denies an untrusted sender without touching the registry", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(208) });
+  registry.issue();
+  const bridge = createSessionBridge({
+    registry,
+    authorize: (s) => authorizeSessionSender(s, { isPackaged: false, mainWindowUrl: DEV_URL }),
+  });
+
+  const remote = trustedSender("https://evil.example.com/");
+  assert.deepEqual(bridge.invalidate(remote), { ok: false, reason: "remote" });
+  // The legitimate session must still be live - the denied call had no effect.
+  assert.equal(bridge.obtain(trustedSender(DEV_URL)).ok, true);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P6 — Authenticate and validate the OpenClaw API (src/main/openclawServer.js)
 //
 // The server factory takes plain injected dependencies (no Electron), so

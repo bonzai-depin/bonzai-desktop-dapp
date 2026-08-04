@@ -78,6 +78,7 @@ contract BonzaiJobEscrow is Ownable, ReentrancyGuard {
         pendingWithdrawals[msg.sender] = 0;
         (bool sent,) = msg.sender.call{value: amount}("");
         require(sent, "Withdrawal failed");
+        emit Withdrawal(msg.sender, amount);
     }
 
     function fundJob(
