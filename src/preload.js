@@ -25,6 +25,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   session: {
     /** Obtain the current local session credential (token + descriptor). */
     obtainCredential: () => ipcRenderer.invoke("session:obtain-credential"),
+    /**
+     * Obtain the current external (OpenClaw/Hermes-scoped) credential — the
+     * same one main writes into OpenClaw/Hermes' own on-disk configs and the
+     * OpenClaw API server validates. Returns { ok: false } when the sender
+     * is denied OR when no external credential has been minted yet
+     * (integration never enabled this launch) — callers must treat both as
+     * "do not fire the request".
+     */
+    obtainExternalCredential: () => ipcRenderer.invoke("session:obtain-external-credential"),
     /** Rotate the local session credential (invalidates the old generation). */
     rotateCredential: () => ipcRenderer.invoke("session:rotate-credential"),
     /** Synchronously invalidate the current local session credential (logout). */

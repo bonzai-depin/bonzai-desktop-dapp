@@ -85,6 +85,21 @@ import {
   BULMA_STYLESHEET_URL,
   BULMA_INTEGRITY,
 } from "../src/main/csp.js";
+import {
+  isOpenClawIntegrationEnabled,
+  isHermesIntegrationEnabled,
+  refreshOpenClawCredential,
+  refreshHermesCredential,
+  mintStartupExternalCredentials,
+} from "../src/main/externalCredentials.js";
+// R2/R3 (branch-review fix 2): renderer-side consumers under test below.
+// Both read `window`/`fetch` lazily inside their functions (never at module
+// load), so importing them here — before any test installs global.window/
+// global.fetch — is safe, same seam service-security.test.mjs relies on for
+// auth.service.js.
+import { setLocalCredential as setPipelineLocalCredential } from "../src/services/auth.service.js";
+import { ContentPipeline } from "../src/services/social/content-pipeline.js";
+import { isBonzaiDesktopReady } from "../src/services/openclaw.handler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_JS = path.resolve(__dirname, "..", "src", "main.js");
@@ -645,14 +660,21 @@ test("P2 AC2: a packaged build rejects http dev origins and vice versa", () => {
 // methods in this step).
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("P2 AC3: preload exposes exactly obtain + rotate under the session namespace", () => {
+test("P2 AC3: preload exposes exactly obtain + obtain-external + rotate under the session namespace", () => {
   const src = fs.readFileSync(PRELOAD_JS, "utf8");
   const sessionInvokes = [...src.matchAll(/ipcRenderer\.invoke\(\s*["']session:([^"']+)["']/g)]
     .map((m) => `session:${m[1]}`);
   assert.deepEqual(
     sessionInvokes.sort(),
-    ["session:obtain-credential", "session:rotate-credential"].sort(),
-    "preload session namespace must expose exactly obtain + rotate",
+    [
+      "session:obtain-credential",
+      // R3 (branch-review fix 2): renderer consumers of the local OpenClaw
+      // API server (openclaw.handler.js health checks) need the external
+      // credential too — see session:obtain-external-credential in main.js.
+      "session:obtain-external-credential",
+      "session:rotate-credential",
+    ].sort(),
+    "preload session namespace must expose exactly obtain + obtain-external + rotate",
   );
 });
 
@@ -3050,4 +3072,310 @@ test("P12 AC6: the renderer entry point builds successfully in both packaged (pr
   } finally {
     fs.rmSync(scratchBase, { recursive: true, force: true });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Branch-review fix 2 — Migrate internal consumers to authenticated requests
+//
+// Findings B4/B8/B9: the OpenClaw/Hermes external credential was only ever
+// minted by the enable toggles, so an already-enabled integration had no
+// live credential after a restart (R1); content-pipeline.js and
+// openclaw.handler.js called the now-authenticated Flask/OpenClaw endpoints
+// with no credential at all (R2/R3).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 — src/main/externalCredentials.js: keep OpenClaw/Hermes' on-disk
+// external credential current, including at startup when an integration was
+// left enabled from a PRIOR launch (whose token died with that process).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeIntegrationFixtures() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bonzai-r1-ext-cred-"));
+  return {
+    dir,
+    openclawConfigPath: path.join(dir, "openclaw.json"),
+    openclawModelsPath: path.join(dir, "models.json"),
+    hermesEnvPath: path.join(dir, ".env"),
+    hermesSkillPath: path.join(dir, "SKILL.md"),
+  };
+}
+
+test("R1: isOpenClawIntegrationEnabled/isHermesIntegrationEnabled reflect persisted on-disk state and fail closed on malformed JSON", () => {
+  const f = makeIntegrationFixtures();
+  try {
+    // isOpenClawIntegrationEnabled must read models.json's top-level
+    // `providers.bonzai` — the exact shape openclaw-set-enabled writes
+    // (main.js) and refreshOpenClawCredential rewrites — not openclaw.json,
+    // which never receives a `models.providers.bonzai` key.
+    assert.equal(isOpenClawIntegrationEnabled(f.openclawModelsPath), false, "no models file yet");
+    assert.equal(isHermesIntegrationEnabled(f.hermesSkillPath), false, "no skill manifest yet");
+
+    fs.writeFileSync(f.openclawModelsPath, JSON.stringify({ providers: { bonzai: {} } }));
+    fs.writeFileSync(f.hermesSkillPath, "# BonzAI skill");
+
+    assert.equal(isOpenClawIntegrationEnabled(f.openclawModelsPath), true);
+    assert.equal(isHermesIntegrationEnabled(f.hermesSkillPath), true);
+
+    fs.writeFileSync(f.openclawModelsPath, "{not json");
+    assert.equal(isOpenClawIntegrationEnabled(f.openclawModelsPath), false, "malformed JSON fails closed");
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("R1: refreshOpenClawCredential/refreshHermesCredential rewrite an existing credential slot but never create one", () => {
+  const f = makeIntegrationFixtures();
+  try {
+    // Neither integration enabled yet (no models.json/.env at all) — no-op.
+    assert.equal(refreshOpenClawCredential("tok-1", f.openclawModelsPath), false);
+    assert.equal(refreshHermesCredential("tok-1", f.hermesEnvPath), false);
+    assert.equal(fs.existsSync(f.openclawModelsPath), false, "must not create models.json");
+    assert.equal(fs.existsSync(f.hermesEnvPath), false, "must not create .env");
+
+    fs.writeFileSync(
+      f.openclawModelsPath,
+      JSON.stringify({ providers: { bonzai: { apiKey: "old-tok", baseUrl: "http://x" } } }),
+    );
+    assert.equal(refreshOpenClawCredential("new-tok", f.openclawModelsPath), true);
+    const models = JSON.parse(fs.readFileSync(f.openclawModelsPath, "utf8"));
+    assert.equal(models.providers.bonzai.apiKey, "new-tok");
+    assert.equal(models.providers.bonzai.baseUrl, "http://x", "unrelated fields preserved");
+
+    fs.writeFileSync(f.hermesEnvPath, "BONZAI_BASE_URL=http://x\nBONZAI_API_KEY=old-tok\n");
+    assert.equal(refreshHermesCredential("new-tok", f.hermesEnvPath), true);
+    const env = fs.readFileSync(f.hermesEnvPath, "utf8");
+    assert.match(env, /BONZAI_API_KEY=new-tok/);
+    assert.match(env, /BONZAI_BASE_URL=http:\/\/x/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("R1 AC1: mintStartupExternalCredentials mints a live credential and refreshes the on-disk copy only when an integration is enabled", () => {
+  const f = makeIntegrationFixtures();
+  try {
+    const registry = createCredentialRegistry({ rng: makeDeterministicRng(301) });
+
+    // Neither integration enabled: a fresh process must mint nothing.
+    const noneToken = mintStartupExternalCredentials({
+      registry,
+      scope: OPENCLAW_CREDENTIAL_SCOPE,
+      isOpenClawEnabled: () => false,
+      isHermesEnabled: () => false,
+      refreshOpenClaw: () => { throw new Error("must not be called"); },
+      refreshHermes: () => { throw new Error("must not be called"); },
+    });
+    assert.equal(noneToken, null);
+    assert.equal(registry.getExternalCredential(), null, "fresh process still has no external credential");
+
+    // OpenClaw was left enabled from a PRIOR launch — its on-disk apiKey is
+    // that dead launch's token, and this registry (this launch) has never
+    // minted an external credential at all.
+    fs.writeFileSync(
+      f.openclawModelsPath,
+      JSON.stringify({ providers: { bonzai: { apiKey: "dead-prev-launch-token" } } }),
+    );
+    const refreshedOpenClaw = [];
+    const refreshedHermes = [];
+    const token = mintStartupExternalCredentials({
+      registry,
+      scope: OPENCLAW_CREDENTIAL_SCOPE,
+      isOpenClawEnabled: () => true,
+      isHermesEnabled: () => false,
+      refreshOpenClaw: (t) => { refreshedOpenClaw.push(t); refreshOpenClawCredential(t, f.openclawModelsPath); },
+      refreshHermes: (t) => { refreshedHermes.push(t); },
+    });
+
+    assert.ok(token, "a fresh external credential is minted");
+    assert.equal(registry.getExternalCredential(), token, "the registry now has a LIVE external credential");
+    assert.notEqual(token, "dead-prev-launch-token");
+    assert.deepEqual(refreshedOpenClaw, [token]);
+    assert.deepEqual(refreshedHermes, [token], "refreshHermes is still invoked (a harmless no-op) alongside OpenClaw");
+
+    const models = JSON.parse(fs.readFileSync(f.openclawModelsPath, "utf8"));
+    assert.equal(models.providers.bonzai.apiKey, token, "on-disk OpenClaw copy is refreshed to the fresh token");
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test('R1 AC1: main.js mints a startup external credential inside app.on("ready") instead of relying on the no-op rotation refresh', () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.ok(
+    /from ["']\.\/main\/externalCredentials\.js["']/.test(src),
+    "main.js must import from src/main/externalCredentials.js",
+  );
+  const readyMatch = src.match(/app\.on\(\s*["']ready["']\s*,\s*\(\)\s*=>\s*\{[\s\S]*?\n\}\);/);
+  assert.ok(readyMatch, 'could not locate app.on("ready", ...) handler');
+  const body = readyMatch[0];
+  assert.ok(
+    /mintStartupCredentialsIfIntegrationsEnabled\(\)/.test(body),
+    'app.on("ready") must mint a fresh startup external credential for already-enabled integrations',
+  );
+  // refreshExternalIntegrationCredentials() alone at startup is the exact bug
+  // this fixes — it's a no-op with no external credential yet live in a
+  // fresh process's registry, since it's only ever minted by openclaw-set-
+  // enabled/hermes-set-enabled or the startup mint above.
+  assert.ok(
+    !/refreshExternalIntegrationCredentials\(\)/.test(body),
+    'app.on("ready") must not rely on refreshExternalIntegrationCredentials() alone (a no-op on a fresh registry)',
+  );
+});
+
+test("R1: mintStartupCredentialsIfIntegrationsEnabled wires the enabled-checks, the refresh helpers, and the same per-instance registry", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const fnMatch = src.match(
+    /function mintStartupCredentialsIfIntegrationsEnabled\s*\([^)]*\)\s*\{[\s\S]*?\n\}/,
+  );
+  assert.ok(fnMatch, "could not locate mintStartupCredentialsIfIntegrationsEnabled in main.js");
+  const body = fnMatch[0];
+  assert.ok(/isOpenClawIntegrationEnabled\(/.test(body), "must check OpenClaw's persisted enabled state");
+  assert.ok(/isHermesIntegrationEnabled\(/.test(body), "must check Hermes' persisted enabled state");
+  assert.ok(/refreshOpenClawCredential\(/.test(body), "must reuse the existing OpenClaw refresh helper");
+  assert.ok(/refreshHermesCredential\(/.test(body), "must reuse the existing Hermes refresh helper");
+  assert.ok(/credentialRegistry/.test(body), "must mint through the same per-instance credential registry");
+});
+
+test('R4: P6 server-side auth guard (isRequestAuthenticated) is untouched by branch-review fix 2', () => {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, "..", "src", "main", "openclawServer.js"),
+    "utf8",
+  );
+  assert.ok(
+    /if \(!isRequestAuthenticated\(req, registry\)\) \{/.test(src),
+    "the central P6 auth guard must still gate every non-preflight route",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R2 — content-pipeline.js: scheduled social generation must attach the
+// local desktop session credential (x-bonzai-session) to every request
+// against the now-authenticated Flask/OpenClaw endpoints, and fail with a
+// clear error instead of firing unauthenticated when no credential has been
+// obtained yet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let contentPipelineFetchCalls;
+
+function installContentPipelineGlobals() {
+  contentPipelineFetchCalls = [];
+  global.window = { electronAPI: { session: {} } };
+  global.fetch = async (url, opts = {}) => {
+    contentPipelineFetchCalls.push({ url: String(url), opts });
+    const u = String(url);
+    if (u.includes("/v1/chat/completions")) {
+      return { ok: true, json: async () => ({ choices: [{ message: { content: "hello" } }] }) };
+    }
+    if (u.includes("/image/turbo")) {
+      return { ok: true, json: async () => ({ image: Buffer.from("img").toString("base64") }) };
+    }
+    if (u.includes("/video")) {
+      return { ok: true, json: async () => ({ video: Buffer.from("vid").toString("base64") }) };
+    }
+    if (u.includes("/audio/turbo")) {
+      return { ok: true, json: async () => ({ audio: Buffer.from("aud").toString("base64") }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+}
+
+test("R2 AC2: content-pipeline attaches x-bonzai-session to every Flask request (image/video/audio) and the OpenClaw LLM request", async () => {
+  installContentPipelineGlobals();
+  setPipelineLocalCredential({ token: "pipeline-session-tok", descriptor: { issued: true } });
+
+  const pipeline = new ContentPipeline();
+  await pipeline._callLLM("system prompt", "user prompt");
+  await pipeline._generateImage("a cat");
+  await pipeline._generateVideo("a dog");
+  await pipeline._generateAudio("hello there", { voiceStyle: "af_heart" });
+
+  assert.equal(contentPipelineFetchCalls.length, 4, "all four local-server calls fired");
+  for (const call of contentPipelineFetchCalls) {
+    assert.equal(
+      call.opts.headers?.["x-bonzai-session"],
+      "pipeline-session-tok",
+      `${call.url} must carry the local session credential`,
+    );
+  }
+});
+
+test("R2: content-pipeline fails closed with a clear error — never an unauthenticated request — when no local session credential is available", async () => {
+  installContentPipelineGlobals();
+  setPipelineLocalCredential(null);
+
+  const pipeline = new ContentPipeline();
+  const results = await Promise.all([
+    pipeline._callLLM("system prompt", "user prompt"),
+    pipeline._generateImage("a cat"),
+    pipeline._generateVideo("a dog"),
+    pipeline._generateAudio("hello there", { voiceStyle: "af_heart" }),
+  ]);
+
+  assert.deepEqual(results, [null, null, null, null], "every call fails soft (null), not with an uncaught throw");
+  assert.equal(contentPipelineFetchCalls.length, 0, "no fetch may fire without a session credential");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R3 — openclaw.handler.js: health checks (and any other call to the local
+// OpenClaw API server) must present the external credential the server
+// validates, and must never fire when no credential exists yet (integration
+// not enabled this launch) — no unauthenticated polling of a route that is
+// guaranteed to 401.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let openclawHealthFetchCalls;
+let obtainExternalCredentialResult;
+
+function installOpenClawHandlerGlobals() {
+  openclawHealthFetchCalls = [];
+  obtainExternalCredentialResult = { ok: false, reason: "not-enabled" };
+  global.window = {
+    electronAPI: {
+      session: {
+        obtainExternalCredential: async () => obtainExternalCredentialResult,
+      },
+    },
+  };
+  global.fetch = async (url, opts = {}) => {
+    openclawHealthFetchCalls.push({ url: String(url), opts });
+    return { ok: true, json: async () => ({ status: "ok", llmLoaded: false }) };
+  };
+}
+
+test("R3 AC3: isBonzaiDesktopReady presents the external credential from main and correctly reads the server's { status: \"ok\" } response", async () => {
+  installOpenClawHandlerGlobals();
+  obtainExternalCredentialResult = { ok: true, token: "external-cred-tok" };
+
+  const ready = await isBonzaiDesktopReady();
+
+  assert.equal(ready, true);
+  assert.equal(openclawHealthFetchCalls.length, 1);
+  assert.equal(openclawHealthFetchCalls[0].url, "http://localhost:3002/health");
+  assert.equal(openclawHealthFetchCalls[0].opts.headers?.["x-bonzai-session"], "external-cred-tok");
+});
+
+test("R3 AC3: isBonzaiDesktopReady never fires an unauthenticated request — it treats a missing external credential as not-ready", async () => {
+  installOpenClawHandlerGlobals();
+  obtainExternalCredentialResult = { ok: false, reason: "not-enabled" };
+
+  const ready = await isBonzaiDesktopReady();
+
+  assert.equal(ready, false);
+  assert.equal(openclawHealthFetchCalls.length, 0, "must never poll /health without a credential to present");
+});
+
+test("R3: isBonzaiDesktopReady is not fooled by a bare 401 body — it requires status === \"ok\", matching the server's actual /health response shape", async () => {
+  installOpenClawHandlerGlobals();
+  obtainExternalCredentialResult = { ok: true, token: "external-cred-tok" };
+  global.fetch = async (url, opts = {}) => {
+    openclawHealthFetchCalls.push({ url: String(url), opts });
+    // What an unauthenticated call used to get back — openclawServer.js's
+    // actual 401 body has no `status` field at all.
+    return { ok: false, json: async () => ({ error: "Unauthorized" }) };
+  };
+
+  const ready = await isBonzaiDesktopReady();
+
+  assert.equal(ready, false);
 });

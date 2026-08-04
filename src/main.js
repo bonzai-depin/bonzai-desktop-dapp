@@ -68,6 +68,13 @@ import {
 } from "./main/egressPolicy.js";
 import { publishToPinata } from "./main/pinataPublish.js";
 import { installCsp, DEV_VITE_HOST, DEV_VITE_PORT } from "./main/csp.js";
+import {
+  isOpenClawIntegrationEnabled,
+  isHermesIntegrationEnabled,
+  refreshOpenClawCredential,
+  refreshHermesCredential,
+  mintStartupExternalCredentials,
+} from "./main/externalCredentials.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -1059,6 +1066,24 @@ ipcMain.handle("session:obtain-credential", async (event) => {
 ipcMain.handle("session:rotate-credential", async (event) => {
   const sender = normalizeSessionEvent(event, mainWindow);
   return sessionBridge.rotate(sender);
+});
+
+// R3 (branch-review fix 2): renderer-side consumers that call the local
+// OpenClaw API server directly (openclaw.handler.js health checks) need to
+// present the SAME external credential that server's isRequestAuthenticated
+// validates and that main writes into OpenClaw/Hermes' own on-disk configs
+// (see refreshExternalIntegrationCredentials/mintStartupExternalCredentials
+// below) — never a credential the renderer mints or holds itself. P2
+// sender-authorized like the other session IPC above. Returns
+// { ok: false } both for a denied sender and for "no external credential
+// minted yet" (integration never enabled this launch), so callers can treat
+// "not authorized" and "not ready" the same way: don't fire the request.
+ipcMain.handle("session:obtain-external-credential", async (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const authz = sessionAuthorize(sender);
+  if (!authz.ok) return { ok: false, reason: authz.reason };
+  const token = credentialRegistry.getExternalCredential();
+  return token ? { ok: true, token } : { ok: false, reason: "not-enabled" };
 });
 
 // Synchronous invalidation for logout: kills the current registry generation
@@ -3603,19 +3628,7 @@ function resolveBundledSkillManifest(name) {
   return null;
 }
 
-ipcMain.handle("openclaw-get-enabled", async () => {
-  try {
-    if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
-      const content = fs.readFileSync(OPENCLAW_CONFIG_PATH, "utf8");
-      const config = JSON.parse(content);
-      // Check if bonzai provider exists
-      return !!config.models?.providers?.bonzai;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-});
+ipcMain.handle("openclaw-get-enabled", async () => isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH));
 
 ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
   try {
@@ -3735,6 +3748,7 @@ const HERMES_CONFIG_PATH = path.join(os.homedir(), ".hermes", "config.yaml");
 const HERMES_SKILLS_DIR = path.join(os.homedir(), ".hermes", "skills");
 const HERMES_ENV_PATH = path.join(os.homedir(), ".hermes", ".env");
 const HERMES_BONZAI_SKILL_DIR = path.join(HERMES_SKILLS_DIR, "ai", "bonzai");
+const HERMES_SKILL_MANIFEST_PATH = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
 
 ipcMain.handle("hermes-is-installed", async () => {
   const hermesDir = path.join(os.homedir(), ".hermes");
@@ -3744,8 +3758,7 @@ ipcMain.handle("hermes-is-installed", async () => {
 ipcMain.handle("hermes-get-enabled", async () => {
   try {
     // Check if bonzai skill is installed in Hermes skills directory
-    const skillPath = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
-    return fs.existsSync(skillPath);
+    return isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH);
   } catch {
     return false;
   }
@@ -3864,58 +3877,45 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
 // fresh value, invalidating the old one) — until the user disables and
 // re-enables it manually.
 //
-// Both helpers are no-ops (not an error) when the integration was never
-// enabled: they only rewrite a credential slot that already exists in the
-// respective config file, never create one.
+// Both refresh helpers (src/main/externalCredentials.js) are no-ops (not an
+// error) when the integration was never enabled: they only rewrite a
+// credential slot that already exists in the respective config file, never
+// create one.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function refreshOpenClawCredential(token) {
-  try {
-    if (!token || !fs.existsSync(OPENCLAW_MODELS_PATH)) return;
-    const content = fs.readFileSync(OPENCLAW_MODELS_PATH, "utf8");
-    let modelsConfig;
-    try {
-      modelsConfig = JSON.parse(content);
-    } catch {
-      return;
-    }
-    if (!modelsConfig.providers?.bonzai) return; // integration not enabled
-    modelsConfig.providers.bonzai.apiKey = token;
-    fs.writeFileSync(OPENCLAW_MODELS_PATH, JSON.stringify(modelsConfig, null, 2));
-    try { fs.chmodSync(OPENCLAW_MODELS_PATH, 0o600); } catch {}
-  } catch (error) {
-    console.error("[OpenClaw] Failed to refresh credential:", error);
-  }
-}
-
-function refreshHermesCredential(token) {
-  try {
-    if (!token || !fs.existsSync(HERMES_ENV_PATH)) return;
-    let envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
-    if (!envContent.includes("BONZAI_API_KEY")) return; // integration not enabled
-    envContent = envContent
-      .split("\n")
-      .map((line) => (line.startsWith("BONZAI_API_KEY=") ? `BONZAI_API_KEY=${token}` : line))
-      .join("\n");
-    fs.writeFileSync(HERMES_ENV_PATH, envContent);
-    try { fs.chmodSync(HERMES_ENV_PATH, 0o600); } catch {}
-  } catch (error) {
-    console.error("[Hermes] Failed to refresh credential:", error);
-  }
-}
 
 function refreshExternalIntegrationCredentials() {
   // Nothing to rotate if neither integration has ever been enabled — that's
   // exactly what a null getExternalCredential() means, since it's only ever
-  // minted by openclaw-set-enabled/hermes-set-enabled above.
+  // minted by openclaw-set-enabled/hermes-set-enabled or the startup mint
+  // below.
   if (!credentialRegistry.getExternalCredential()) return;
   // Re-mint on every rotation, same as the session credential: a stale copy
   // of the external credential already written to disk must stop working
   // the moment we hand out a fresh one, not linger until the file is
   // rewritten by a future toggle.
   const token = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
-  refreshOpenClawCredential(token);
-  refreshHermesCredential(token);
+  refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
+  refreshHermesCredential(token, HERMES_ENV_PATH);
+}
+
+// R1 (branch-review fix 2): refreshExternalIntegrationCredentials() above is
+// a no-op unless an external credential ALREADY exists in this process's
+// registry — but a fresh launch's registry never has one until something
+// mints it. Without this, an integration left enabled from a PRIOR launch
+// is stuck holding that launch's now-dead token (refreshExternalIntegration-
+// Credentials never fires for it) until the user notices 401s and manually
+// re-toggles. Called once at startup (app.on("ready") below), before
+// startOpenClawAPIServer's consumers (content-pipeline.js scheduled posts,
+// openclaw.handler.js health checks) can make a request.
+function mintStartupCredentialsIfIntegrationsEnabled() {
+  mintStartupExternalCredentials({
+    registry: credentialRegistry,
+    scope: OPENCLAW_CREDENTIAL_SCOPE,
+    isOpenClawEnabled: () => isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH),
+    isHermesEnabled: () => isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH),
+    refreshOpenClaw: (token) => refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH),
+    refreshHermes: (token) => refreshHermesCredential(token, HERMES_ENV_PATH),
+  });
 }
 
 // Open URL in default browser
@@ -7331,9 +7331,14 @@ function startOpenClawAPIServer() {
 app.on("ready", () => {
   startOpenClawAPIServer();
   // Every launch issues a brand-new session credential (credentialRegistry
-  // .issue() above), so an already-enabled OpenClaw/Hermes integration is
-  // holding the *previous* launch's token at this point — refresh it now
-  // rather than waiting for the user to notice 401s and re-toggle.
-  refreshExternalIntegrationCredentials();
+  // .issue() above) AND starts with no external credential minted at all —
+  // so an already-enabled OpenClaw/Hermes integration is holding the
+  // *previous* launch's (now-dead) token at this point. Mint a fresh one now
+  // (R1) rather than waiting for the user to notice 401s and re-toggle; the
+  // in-process rotation refresh alone cannot do this because it requires a
+  // credential to already be live in THIS process (see
+  // refreshExternalIntegrationCredentials, defined with the rest of the
+  // OpenClaw/Hermes integration config below).
+  mintStartupCredentialsIfIntegrationsEnabled();
 });
 
