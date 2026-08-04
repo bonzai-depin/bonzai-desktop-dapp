@@ -699,6 +699,7 @@ import {
 } from '../services/contributionRegistry.service.js'
 import { fineTuneTokenService } from '../services/fineTuneToken.service.js'
 import { bonzaiRevenueRouterService } from '../services/bonzaiRevenueRouter.service.js'
+import { socketAuthPayload } from '../services/auth.service.js'
 import { i18n } from '../i18n/index.js'
 
 /* ── Props ─────────────────────────────────────────────────────── */
@@ -1033,7 +1034,7 @@ async function publishContributionPack() {
 let socket = null
 
 function setupSocket() {
-  socket = io(`${API_BASE}/training`, { transports: ['websocket'] })
+  socket = io(`${API_BASE}/training`, { transports: ['websocket'], auth: socketAuthPayload() })
 
   socket.on('training_progress', (data) => {
     // Abliteration pipeline stages

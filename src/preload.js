@@ -19,6 +19,45 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Platform info (exposed synchronously from preload context)
   platform: process.platform,
   arch: process.arch,
+  // Trusted local-session lifecycle (P2 Security). Only these two scoped
+  // operations expose the in-memory credential to the renderer; the Flask
+  // signing secret is never disclosed here. See src/main/sessionBridge.js.
+  session: {
+    /** Obtain the current local session credential (token + descriptor). */
+    obtainCredential: () => ipcRenderer.invoke("session:obtain-credential"),
+    /**
+     * Obtain the current external (OpenClaw/Hermes-scoped) credential — the
+     * same one main writes into OpenClaw/Hermes' own on-disk configs and the
+     * OpenClaw API server validates. Returns { ok: false } when the sender
+     * is denied OR when no external credential has been minted yet
+     * (integration never enabled this launch) — callers must treat both as
+     * "do not fire the request".
+     */
+    obtainExternalCredential: () => ipcRenderer.invoke("session:obtain-external-credential"),
+    /** Rotate the local session credential (invalidates the old generation). */
+    rotateCredential: () => ipcRenderer.invoke("session:rotate-credential"),
+    /** Synchronously invalidate the current local session credential (logout). */
+    invalidateCredential: () => ipcRenderer.sendSync("session:invalidate-credential"),
+    /**
+     * Fired after main autonomously rotates the credential ahead of its
+     * declared expiry (see scheduleCredentialRotation in main.js). The
+     * renderer must re-obtain the credential — the old token it is holding
+     * has already been rejected by the rekeyed Flask/rpc-server.
+     */
+    onRotated: (cb) => {
+      const handler = () => cb();
+      ipcRenderer.on("session:credential-rotated", handler);
+      return () => ipcRenderer.removeListener("session:credential-rotated", handler);
+    },
+    /**
+     * Mint a short-lived (5 min) signed /media/stream URL for a local media
+     * path, so an <img>/<video>/<audio> element can load it without the
+     * x-bonzai-session header. Sender-validated (P2) and confined to the
+     * configured media roots (P4) in main.js; returns { ok: false } for a
+     * denied sender or a path outside those roots.
+     */
+    signMediaUrl: (path) => ipcRenderer.invoke("media:sign-url", path),
+  },
   copyText: (text) => ipcRenderer.invoke("clipboard-copy-text", text),
   startServer: () => ipcRenderer.invoke("start-server"),
   stopServer: () => ipcRenderer.invoke("stop-server"),
@@ -420,6 +459,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
     deleteSecret: (companyId, connectorId) => ipcRenderer.invoke("company-connector:delete-secret", { companyId, connectorId }),
     request: (request) => ipcRenderer.invoke("company-connector:request", request),
     validate: (companyId, connectorId) => ipcRenderer.invoke("company-connector:validate", { companyId, connectorId }),
+  },
+  // Pinata publishing (P11 Security) — the only Pinata-related bridge
+  // exposed to the renderer. The Pinata JWT / API key+secret are read and
+  // injected in the main process (src/main/pinataPublish.js); this call
+  // carries content/metadata out and an upload receipt back, never
+  // credential material. See storage:publish in main.js.
+  storage: {
+    publish: (payload) => ipcRenderer.invoke("storage:publish", payload),
+  },
+  // Wallet secrets (P9 Security) — narrow safeStorage-backed storage for the
+  // agent wallet master derivation secret and per-companion private keys.
+  // See wallet-secret:* handlers in main.js / src/main/secretStore.js.
+  walletSecret: {
+    set: (key, secret, { address } = {}) => ipcRenderer.invoke("wallet-secret:set", { key, secret, address }),
+    get: (key) => ipcRenderer.invoke("wallet-secret:get", { key }),
+    has: (key) => ipcRenderer.invoke("wallet-secret:has", { key }),
+    delete: (key) => ipcRenderer.invoke("wallet-secret:delete", { key }),
   },
   // Agent wallet transaction confirmation (P0 Security)
   confirmTransaction: (details) =>

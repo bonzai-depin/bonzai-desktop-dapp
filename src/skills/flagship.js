@@ -10,6 +10,7 @@ import { createSkillDefinition } from "./types.js";
 import { getMarketplaceSkillOwners } from "./companionSkillRoadmap.js";
 import {
   getAuthHeaders,
+  getLocalSessionHeaders,
   authFetch,
   ensureAuth,
 } from "../services/auth.service.js";
@@ -5621,7 +5622,7 @@ async function generateSceneryBackground(scenarioOrLocation, options = {}) {
 async function clearGenerationMemory(aggressive = false, preserveTTS = false) {
   try {
     const port = getFlaskPort();
-    const response = await fetch(`http://localhost:${port}/memory/clear`, {
+    const response = await authFetch(`http://localhost:${port}/memory/clear`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ preserve_tts: preserveTTS }),
@@ -5636,9 +5637,9 @@ async function clearGenerationMemory(aggressive = false, preserveTTS = false) {
     // If aggressive mode, clear multiple times with delays
     if (aggressive) {
       await new Promise((r) => setTimeout(r, 300));
-      await fetch(`http://localhost:${port}/memory/clear`, { method: "POST" });
+      await authFetch(`http://localhost:${port}/memory/clear`, { method: "POST" });
       await new Promise((r) => setTimeout(r, 300));
-      await fetch(`http://localhost:${port}/memory/clear`, { method: "POST" });
+      await authFetch(`http://localhost:${port}/memory/clear`, { method: "POST" });
       console.log("[Flagship] Aggressive memory clear complete");
     }
   } catch (e) {
@@ -5650,7 +5651,7 @@ async function clearGenerationMemory(aggressive = false, preserveTTS = false) {
 async function getMemoryStatus() {
   try {
     const port = getFlaskPort();
-    const response = await fetch(`http://localhost:${port}/memory/status`);
+    const response = await authFetch(`http://localhost:${port}/memory/status`);
     return await response.json();
   } catch (e) {
     console.warn("[Flagship] Failed to get memory status:", e.message);
@@ -9975,10 +9976,10 @@ Write ONLY the video description paragraph, nothing else:`;
           );
 
           const port = window.BONZAI_SERVER_PORT || 65000;
-          const authHeaders = getAuthHeaders();
           const videoHeaders = {
             "Content-Type": "application/json",
-            ...authHeaders,
+            ...getLocalSessionHeaders(),
+            ...getAuthHeaders(),
           };
           // Extract audio base64 for video conditioning (companion voice sync)
           let audioBase64ForVideo = null;
@@ -11890,7 +11891,7 @@ export const chartForecaster = createSkillDefinition({
         (typeof window !== "undefined"
           ? window.electronAPI?.env?.API_BASE
           : null) || "http://127.0.0.1:65000";
-      const r = await fetch(`${apiBase}/forecast`, {
+      const r = await authFetch(`${apiBase}/forecast`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -14,6 +14,7 @@
 import { isTooSimilar } from './adapter.js';
 import { SCHEDULING_CONFIG, PLATFORM_CONTENT_SPECS } from '../../config/social.platforms.config.js';
 import { BONZAI_KNOWLEDGE, THOUGHT_LEADERSHIP_TOPICS } from '../moltbook.service.js';
+import { getLocalSessionHeaders } from '../auth.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONTENT PIPELINE
@@ -300,13 +301,29 @@ SPEECH: [what you'll say out loud]`;
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
+   * Headers for a request to a local BonzAI server (Flask or the OpenClaw
+   * gateway on :3002), carrying the same local desktop session credential
+   * (x-bonzai-session) the renderer's authFetch/getLocalSessionHeaders use
+   * elsewhere — both servers reject every route without it. Throws instead
+   * of firing an unauthenticated request when no credential has been
+   * obtained yet, so callers fail with a clear error rather than a 401.
+   */
+  _authHeaders(extra = {}) {
+    const headers = { ...extra, ...getLocalSessionHeaders() };
+    if (!headers['x-bonzai-session']) {
+      throw new Error('No active BonzAI session credential — cannot authenticate content-pipeline request');
+    }
+    return headers;
+  }
+
+  /**
    * Call the LLM via OpenClaw (port 3002).
    */
   async _callLLM(systemPrompt, userPrompt) {
     try {
       const res = await fetch('http://localhost:3002/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           messages: [
             { role: 'system', content: systemPrompt },
@@ -338,7 +355,7 @@ SPEECH: [what you'll say out loud]`;
     try {
       const res = await fetch('http://localhost:65000/image/turbo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           prompt,
           width: 1080,
@@ -368,7 +385,7 @@ SPEECH: [what you'll say out loud]`;
     try {
       const res = await fetch('http://localhost:65000/video', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           prompt,
           width: 768,
@@ -400,7 +417,7 @@ SPEECH: [what you'll say out loud]`;
     try {
       const res = await fetch('http://localhost:65000/audio/turbo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this._authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           text,
           voice: companion.voiceStyle || 'af_heart',
