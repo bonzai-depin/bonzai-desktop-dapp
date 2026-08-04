@@ -184,3 +184,8 @@ basicsr==1.4.2
 # Abliteration (training/abliterate endpoint) — removes refusal behaviors from LLMs.
 # Not on PyPI; install from git. Needs transformers/accelerate/torch (already present).
 obliteratus @ git+https://github.com/elder-plinius/OBLITERATUS.git
+
+# Test runner for the Python security suite: `npm run test:security` ->
+# scripts/run-pytest.mjs -> test/diffuser-security.test.py. Dev/CI dependency
+# only; not imported by the runtime.
+pytest==8.3.5
