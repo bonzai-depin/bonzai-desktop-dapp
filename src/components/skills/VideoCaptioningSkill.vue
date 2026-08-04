@@ -344,7 +344,7 @@
 <script>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import BonzaiPulse from "../BonzaiPulse.vue";
-import { getAuthHeaders } from "../../services/auth.service.js";
+import { getAuthHeaders, getLocalSessionHeaders } from "../../services/auth.service.js";
 import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 
 const STORAGE_KEY = "video-captioning-sessions";
@@ -489,7 +489,7 @@ export default {
         // Trigger prefetch which downloads the model if needed
         const res = await fetch(`${API_BASE}/pipelines/prefetch`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: { "Content-Type": "application/json", ...getLocalSessionHeaders(), ...getAuthHeaders() },
           body: JSON.stringify({ pipeline: "vision_caption" }),
         });
         if (res.ok) {
@@ -505,10 +505,10 @@ export default {
     // ─── Video Loading ───────────────────────────────────────────────
     const selectVideoFile = async () => {
       try {
-        const filePath = await window.electronAPI?.selectVideoFile?.();
-        if (filePath) {
-          videoFilename.value = filePath.split("/").pop() || "video";
-          videoSrc.value = `local-video://${filePath}`;
+        const selected = await window.electronAPI?.selectVideoFile?.();
+        if (selected) {
+          videoFilename.value = selected.path.split("/").pop() || "video";
+          videoSrc.value = selected.videoUrl;
           return;
         }
       } catch (e) {
@@ -625,7 +625,7 @@ export default {
 
         const response = await fetch(`${API_BASE}/vision/caption`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: { "Content-Type": "application/json", ...getLocalSessionHeaders(), ...getAuthHeaders() },
           body: JSON.stringify({
             image_base64: base64Data,
             prompt,

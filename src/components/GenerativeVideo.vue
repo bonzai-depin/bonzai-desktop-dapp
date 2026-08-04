@@ -409,6 +409,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { socketAuthPayload, authFetch } from "../services/auth.service.js";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import AccessRequirements from "./AccessRequirements.vue";
 import MintModal from "./MintModal.vue";
@@ -419,6 +420,7 @@ import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addVideoInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
+import { signedMediaStreamSrc, isLocalMediaPath } from "../services/media.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -887,6 +889,7 @@ export default {
       reconnectionAttempts: 60,
       reconnectionDelay: 1000,
       path: "/socket.io",
+      auth: socketAuthPayload(),
     };
 
     const mergeTask = (dst, src) => {
@@ -1479,7 +1482,7 @@ export default {
         auto_download: true,
       });
       for (let attempt = 0; attempt < 12; attempt++) {  // ≤ 60s wait window
-        const r = await fetch(`${API_BASE}/video/enhance`, {
+        const r = await authFetch(`${API_BASE}/video/enhance`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
@@ -1612,7 +1615,7 @@ export default {
       // Free GPU memory: unload local LLM + clear cached Flask models
       try {
         await window.electronAPI?.unloadModel?.();
-        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
+        await authFetch(`${API_BASE}/memory/clear`, { method: "POST" });
       } catch (e) {
         console.warn("[GenerativeVideo] Memory clear:", e.message);
       }
@@ -1714,11 +1717,14 @@ export default {
       if (!data) return "";
       // Prefer HTTP streaming URL if already provided
       if (data.video_url) return data.video_url;
-      // Use streaming endpoint for local file paths
+      // Use streaming endpoint for local file paths (POSIX or Windows
+      // drive-letter -- R1-R3, R3 Windows path fix)
       if (data.video_path) {
-        if (/^https?:\/\//i.test(data.video_path)) return data.video_path;
-        // Use the streaming endpoint for local files
-        return `${API_BASE}/media/stream?path=${encodeURIComponent(data.video_path)}`;
+        if (isLocalMediaPath(data.video_path)) {
+          // Signed URL (R1-R3): the video element can't send x-bonzai-session.
+          return signedMediaStreamSrc(data.video_path);
+        }
+        return data.video_path;
       }
       return "";
     };
@@ -1767,11 +1773,12 @@ export default {
       });
     };
 
-    // Convert local path to streaming URL
+    // Convert local path to streaming URL (signed -- R1-R3). Local paths
+    // include Windows drive-letter paths (e.g. C:\...), not just POSIX ones.
     const fileUrl = (p) => {
       if (!p) return "";
-      if (/^https?:\/\//i.test(p)) return p;
-      return `${API_BASE}/media/stream?path=${encodeURIComponent(p)}`;
+      if (isLocalMediaPath(p)) return signedMediaStreamSrc(p);
+      return p;
     };
 
     const downloadVideo = async (idx) => {

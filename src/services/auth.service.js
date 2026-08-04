@@ -17,6 +17,46 @@ const API_BASE =
   "http://127.0.0.1:65000";
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TOKEN TYPES — kept strictly separate so one type cannot masquerade as another
+// ═══════════════════════════════════════════════════════════════════════════
+//   BEARER        — wallet/JWT access token, sent as `Authorization: Bearer`.
+//   LOCAL_SESSION — per-launch desktop credential (P2 registry), sent under a
+//                   dedicated header. Sufficient for local creation on its own.
+//   REFRESH       — HttpOnly cookie ONLY; it must NEVER appear in any
+//                   Authorization / session header, so refresh-token misuse
+//                   (presenting it as a bearer) produces no header and fails.
+export const TOKEN_TYPES = Object.freeze({
+  BEARER: "bearer",
+  LOCAL_SESSION: "local-session",
+  REFRESH: "refresh",
+});
+
+// Dedicated header for the local desktop session credential. Kept distinct
+// from Authorization so local services can require the desktop session even
+// when no wallet bearer is present (wallet-optional local creation, R5).
+const LOCAL_SESSION_HEADER = "x-bonzai-session";
+
+/**
+ * Build an auth header for a token of an explicit type. Bearer tokens go in
+ * Authorization; local-session tokens use LOCAL_SESSION_HEADER; refresh
+ * tokens never produce a header (cookie-only). Returns {} for an unknown
+ * type or empty token, so misuse fails closed instead of sending garbage.
+ */
+export const buildAuthHeader = (token, type) => {
+  if (typeof token !== "string" || token.length === 0) return {};
+  switch (type) {
+    case TOKEN_TYPES.BEARER:
+      return { Authorization: `Bearer ${token}` };
+    case TOKEN_TYPES.LOCAL_SESSION:
+      return { [LOCAL_SESSION_HEADER]: token };
+    case TOKEN_TYPES.REFRESH:
+      return {}; // cookie-only — never serialized as a request header
+    default:
+      return {};
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -35,6 +75,25 @@ const state = reactive({
 let refreshTimer = null;
 let signerGetter = null; // Function to get signer for re-authentication
 let reAuthPromise = null; // Prevent concurrent re-auth attempts
+
+// Local desktop session credential (P2). Held in memory ONLY — never written
+// to electron-store, the auth vault, or any cookie. Obtained from the main
+// process via the scoped `session:obtain-credential` IPC. Sufficient for
+// local creation without a wallet (R5); rotated on logout (R4).
+let localCredential = null; // { token, descriptor } | null
+
+/**
+ * Absent level data maps to NO economy privilege. Never synthesize or
+ * persist a maximum (or any) level when the server returns none — level
+ * gating is derived exclusively from onchain stake (see level.service.js).
+ */
+const normalizeLevel = (data) => ({
+  level: data && data.level != null ? data.level : null,
+  levelValue:
+    data && Number.isFinite(Number(data.level_value))
+      ? Number(data.level_value)
+      : 0,
+});
 
 /**
  * Sync auth state to electron store so main process can enforce access control
@@ -144,8 +203,7 @@ export const authenticate = async (signer) => {
     setAccessToken(data.access_token, data.expires_in);
 
     state.walletAddress = address.toLowerCase();
-    state.level = data.level;
-    state.levelValue = data.level_value;
+    ({ level: state.level, levelValue: state.levelValue } = normalizeLevel(data));
     state.isAuthenticated = true;
 
     // Sync auth state to electron store so main process can check it
@@ -169,11 +227,18 @@ export const authenticate = async (signer) => {
 };
 
 /**
- * Combined authentication + vault initialization with ONE signature.
+ * Combined authentication + vault initialization.
  *
- * This is the preferred method - user signs once, we:
+ * User signs the server auth challenge, then:
  * 1. Authenticate with server
- * 2. Initialize/unlock the auth vault using the same signature
+ * 2. Initialize/unlock the auth vault
+ *
+ * Step 2 requires its OWN signature (a second wallet prompt), separate from
+ * the challenge signature above. The challenge embeds a per-login random
+ * nonce for replay protection, so it can never be reused to reproduce a
+ * vault encryption key on a later login - only a message this service
+ * controls (see initializeVault/unlockVault in authVault.service.js) can be
+ * reconstructed byte-for-byte to derive the same key again.
  *
  * @param {object} signer - ethers.js Signer from connected wallet
  * @returns {Promise<{address, level, levelValue}>}
@@ -229,24 +294,62 @@ export const authenticateWithVault = async (signer) => {
 
     // 4. Store tokens and state
     const data = await verifyRes.json();
+
+    // 5. Initialize/unlock the vault for THIS wallet BEFORE setAccessToken()
+    // runs below. This needs a reproducible key derivation, which the
+    // (randomized, per-login) challenge signature above cannot provide, so
+    // it goes through initializeVault/unlockVault - both sign a message
+    // this service controls and persist/reconstruct the derivation metadata
+    // needed to derive the identical key next time.
+    //
+    // Order matters: if a DIFFERENT wallet's vault is still unlocked when
+    // this runs (e.g. switching wallets without an intervening logout),
+    // setAccessToken() persists the freshly issued token into whichever
+    // vault is unlocked at the moment it's called. Unlocking/creating this
+    // wallet's own vault first - which tears down the previous wallet's
+    // session (see clearVaultSwitchFailure in authVault.service.js) - makes
+    // sure setAccessToken() below always writes into the vault that actually
+    // belongs to the wallet that just authenticated.
+    try {
+      const vaultAlreadyExists = await authVault.hasVault(address.toLowerCase());
+      const vaultResult = vaultAlreadyExists
+        ? await authVault.unlockVault(signer)
+        : await authVault.initializeVault(signer);
+
+      if (vaultResult && vaultResult.ok === false) {
+        // The stored vault could not be decrypted with a reproducible key
+        // (e.g. legacy ciphertext, or metadata that no longer matches).
+        // It is left untouched on disk; only an explicit, user-confirmed
+        // authVault.resetVault() call may replace it.
+        console.warn(
+          "[Auth] Vault could not be unlocked and requires an explicit reset:",
+          vaultResult.reason
+        );
+        state.error = "Local vault could not be unlocked and needs to be reset.";
+      } else {
+        console.log("[Auth] Vault initialized/unlocked");
+      }
+    } catch (vaultError) {
+      // Vault is non-critical - log but don't fail auth
+      console.warn("[Auth] Vault initialization failed:", vaultError.message);
+      // D2: if the vault could not be initialized for the authenticating
+      // wallet, never leave a PREVIOUS wallet's vault unlocked and writable:
+      // setAccessToken() persists into the currently unlocked vault and would
+      // otherwise write this wallet's token into a foreign vault.
+      try { await authVault.clearVaultSwitchFailure(); } catch {}
+    }
+
+    // Now that the correct wallet's vault (if any) is unlocked, persist the
+    // access token - authVault.setAuthTokens() below lands in this wallet's
+    // own vault, not a stale previous session.
     setAccessToken(data.access_token, data.expires_in);
 
     state.walletAddress = address.toLowerCase();
-    state.level = data.level;
-    state.levelValue = data.level_value;
+    ({ level: state.level, levelValue: state.levelValue } = normalizeLevel(data));
     state.isAuthenticated = true;
 
     // Sync auth state to electron store so main process can check it
     syncAuthToStore();
-
-    // 5. Initialize/unlock vault using the SAME signature (no new popup)
-    try {
-      await authVault.initializeOrUnlockFromSignature(address.toLowerCase(), signature);
-      console.log("[Auth] Vault initialized/unlocked from auth signature");
-    } catch (vaultError) {
-      // Vault is non-critical - log but don't fail auth
-      console.warn("[Auth] Vault initialization failed:", vaultError.message);
-    }
 
     console.log(`[Auth] Authenticated as ${address} with ${data.level}`);
 
@@ -305,6 +408,12 @@ const scheduleRefresh = (ms) => {
   }, ms);
 };
 
+// Test hook: cancel the auto-refresh timer so node:test runners (which keep
+// the process alive while any timer is pending) can exit naturally.
+export function __testCancelTimers() {
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+};
+
 /**
  * Refresh access token using refresh token cookie
  */
@@ -322,9 +431,13 @@ export const refreshToken = async () => {
   const data = await res.json();
   setAccessToken(data.access_token, data.expires_in);
 
-  // Update level in case it changed
-  state.level = data.level;
-  state.levelValue = data.level_value;
+  // A successful refresh means the user is authenticated.
+  state.isAuthenticated = true;
+
+  // Update level in case it changed (absent level => no privilege)
+  const lvl = normalizeLevel(data);
+  state.level = lvl.level;
+  state.levelValue = lvl.levelValue;
 
   // Sync auth state to electron store so main process can check it
   syncAuthToStore();
@@ -340,9 +453,66 @@ export const refreshToken = async () => {
 /**
  * Get authorization headers for API requests
  */
-export const getAuthHeaders = () => {
-  if (!state.accessToken) return {};
-  return { Authorization: `Bearer ${state.accessToken}` };
+export const getAuthHeaders = () => buildAuthHeader(state.accessToken, TOKEN_TYPES.BEARER);
+
+/**
+ * Headers attaching the in-memory local desktop session credential (P2).
+ * Used ALONGSIDE the wallet bearer for local services — never persisted.
+ * Returns {} when no local session has been obtained yet.
+ */
+export const getLocalSessionHeaders = () =>
+  buildAuthHeader(localCredential?.token, TOKEN_TYPES.LOCAL_SESSION);
+
+/** Test/config seam: hold the local credential obtained from main (memory only). */
+export const setLocalCredential = (cred) => {
+  localCredential =
+    cred && typeof cred.token === "string" && cred.token
+      ? { token: cred.token, descriptor: cred.descriptor }
+      : null;
+};
+
+/** Current local session token (or null). For diagnostics/tests only. */
+export const getLocalCredential = () =>
+  localCredential ? localCredential.token : null;
+
+/**
+ * Pull the current local session credential from the main process and hold
+ * it in memory. Wallet-optional: local-first creation works once this has
+ * run, with no signer and no chain endpoint. Never written to store/vault.
+ */
+export const initLocalSession = async () => {
+  try {
+    const res = await window?.electronAPI?.session?.obtainCredential?.();
+    if (res?.ok && typeof res.token === "string" && res.token) {
+      setLocalCredential({ token: res.token, descriptor: res.descriptor });
+    } else {
+      localCredential = null;
+    }
+  } catch {
+    localCredential = null;
+  }
+  return !!localCredential;
+};
+
+// Main rotates the desktop session credential on its own, ahead of its
+// declared expiry, and rekeys Flask/rpc-server to the replacement before
+// this fires (see scheduleCredentialRotation in main.js). The token held
+// above is for the now-dead generation, so every local request would start
+// 401ing until the app is restarted; re-obtain immediately instead.
+if (typeof window !== "undefined") {
+  window?.electronAPI?.session?.onRotated?.(() => {
+    initLocalSession().catch(() => {});
+  });
+}
+
+/**
+ * Socket.IO auth payload attaching the local session credential without
+ * persisting it. The wallet bearer (if any) rides on the transport; callers
+ * spread this into the socket's `auth`/`extraHeaders` handshake.
+ */
+export const socketAuthPayload = (extra = {}) => {
+  const tok = localCredential?.token;
+  return tok ? { ...extra, session: tok } : { ...extra };
 };
 
 /**
@@ -355,7 +525,10 @@ export const isAuthenticated = () => {
 /**
  * Logout and clear all auth state
  */
-export const logout = () => {
+export const logout = async () => {
+  // Clear wallet / economy identity. The local desktop session is NOT
+  // dropped here — it is rotated below so local-first creation survives a
+  // wallet disconnect (R4: logout clears wallet state and invokes rotation).
   state.isAuthenticated = false;
   state.accessToken = null;
   state.tokenExpiry = null;
@@ -363,6 +536,17 @@ export const logout = () => {
   state.level = null;
   state.levelValue = 0;
   state.error = null;
+
+  // Invalidate the local session credential SYNCHRONOUSLY (sendSync) so the
+  // old generation dies immediately, before any caller can use it again.
+  // No caller has to await this for the invalidation to take effect.
+  localCredential = null;
+  try {
+    window?.electronAPI?.session?.invalidateCredential?.();
+  } catch {
+    // Fall back to renderer-side clearing only — the rotate below still
+    // bumps the generation.
+  }
 
   // Sync cleared auth state to electron store
   syncAuthToStore();
@@ -377,6 +561,16 @@ export const logout = () => {
     method: "POST",
     credentials: "include",
   }).catch(() => {});
+
+  // Rotate the local session credential (invalidates the old generation and
+  // rekeys dependent local services before returning) then re-obtain the
+  // replacement, so the desktop session stays valid without a wallet.
+  try {
+    await window?.electronAPI?.session?.rotateCredential?.();
+    await initLocalSession();
+  } catch (e) {
+    console.warn("[Auth] Session rotation on logout failed:", e?.message);
+  }
 
   console.log("[Auth] Logged out");
 };
@@ -461,7 +655,8 @@ export const reAuthenticate = async (allowWalletSignature = false) => {
 export const authFetch = async (url, options = {}) => {
   const headers = {
     ...options.headers,
-    ...getAuthHeaders(),
+    ...getLocalSessionHeaders(), // local desktop session (wallet-optional)
+    ...getAuthHeaders(),         // wallet bearer (optional, economy identity only)
   };
 
   const res = await fetch(url, {
@@ -479,6 +674,7 @@ export const authFetch = async (url, options = {}) => {
         ...options,
         headers: {
           ...options.headers,
+          ...getLocalSessionHeaders(),
           ...getAuthHeaders(),
         },
         credentials: "include",
@@ -612,7 +808,7 @@ export const authService = {
 
   // Authentication
   authenticate,
-  authenticateWithVault, // Combined auth + vault (ONE signature)
+  authenticateWithVault, // Combined auth + vault (auth challenge + reproducible vault signature)
   refreshToken,
   logout,
   reAuthenticate,
@@ -626,6 +822,15 @@ export const authService = {
   getHttpErrorMessage,
   isAuthenticated,
   authFetch,
+
+  // Local desktop session (P2) — wallet-optional, memory-only credential
+  TOKEN_TYPES,
+  buildAuthHeader,
+  initLocalSession,
+  setLocalCredential,
+  getLocalCredential,
+  getLocalSessionHeaders,
+  socketAuthPayload,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

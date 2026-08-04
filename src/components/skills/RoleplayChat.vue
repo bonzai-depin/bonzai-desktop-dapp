@@ -3449,6 +3449,8 @@ import {
   switchNetwork,
   web3Service,
 } from "../../services/web3.service.js";
+import { authFetch, socketAuthPayload } from "../../services/auth.service.js";
+import { signedMediaStreamSrc, isLocalMediaPath } from "../../services/media.service.js";
 
 // Pre-load bundled companion and scenario images using Vite's import.meta.glob
 // This ensures images are bundled with the app and available on first run
@@ -3844,7 +3846,7 @@ export default {
       const checks = Object.entries(PIPELINE_MAP).map(
         async ([modelKey, pipeline]) => {
           try {
-            const response = await fetch(
+            const response = await authFetch(
               `http://localhost:${port}/pipelines/plan`,
               {
                 method: "POST",
@@ -3893,7 +3895,7 @@ export default {
         console.log(
           `[RoleplayChat] Starting download for ${modelKey} (pipeline: ${pipeline})`,
         );
-        const response = await fetch(
+        const response = await authFetch(
           `http://localhost:${port}/pipelines/prefetch`,
           {
             method: "POST",
@@ -3945,6 +3947,7 @@ export default {
           reconnection: true,
           reconnectionDelay: 1000,
           reconnectionAttempts: 5,
+          auth: socketAuthPayload(),
         });
 
         downloadsSocket.value.on("connect", () => {
@@ -7341,7 +7344,7 @@ export default {
         );
 
         // Call the voice design endpoint with return_sample to get the voice for persistence
-        const response = await fetch(
+        const response = await authFetch(
           "http://127.0.0.1:65000/audio/quality/persona",
           {
             method: "POST",
@@ -7376,7 +7379,7 @@ export default {
           // Also get the generated speech as a preview
           let previewAudio = null;
           if (result.audio_path) {
-            const audioResponse = await fetch(
+            const audioResponse = await authFetch(
               `http://127.0.0.1:65000/files/${result.audio_path.split("/").pop()}`,
             );
             if (audioResponse.ok) {
@@ -8117,10 +8120,10 @@ export default {
       if (image.startsWith("/assets/") || image.startsWith("/src/assets/") || image.startsWith("./assets/")) {
         return image;
       }
-      // Local file path - use Flask media stream endpoint
-      if (image.startsWith("/")) {
-        const port = window.BONZAI_SERVER_PORT || 65000;
-        return `http://localhost:${port}/media/stream?path=${encodeURIComponent(image)}`;
+      // Local file path (POSIX or Windows drive-letter) - use Flask media
+      // stream endpoint (signed -- R1-R3)
+      if (isLocalMediaPath(image)) {
+        return signedMediaStreamSrc(image);
       }
       return `data:image/png;base64,${image}`;
     };
@@ -8131,10 +8134,10 @@ export default {
       if (audio.startsWith("bonzai-blob://")) return audio;
       if (audio.startsWith("http")) return audio;
       if (audio.startsWith("file:") || audio.startsWith("blob:")) return audio;
-      // Local file path - use Flask media stream endpoint
-      if (audio.startsWith("/")) {
-        const port = window.BONZAI_SERVER_PORT || 65000;
-        return `http://localhost:${port}/media/stream?path=${encodeURIComponent(audio)}`;
+      // Local file path (POSIX or Windows drive-letter) - use Flask media
+      // stream endpoint (signed -- R1-R3)
+      if (isLocalMediaPath(audio)) {
+        return signedMediaStreamSrc(audio);
       }
       return `data:audio/wav;base64,${audio}`;
     };
@@ -8199,10 +8202,10 @@ export default {
       if (video.startsWith("data:")) return video;
       if (video.startsWith("bonzai-blob://")) return video;
       if (video.startsWith("http")) return video;
-      // Local file path - use Flask media stream endpoint
-      if (video.startsWith("/")) {
-        const port = window.BONZAI_SERVER_PORT || 65000;
-        return `http://localhost:${port}/media/stream?path=${encodeURIComponent(video)}`;
+      // Local file path (POSIX or Windows drive-letter) - use Flask media
+      // stream endpoint (signed -- R1-R3)
+      if (isLocalMediaPath(video)) {
+        return signedMediaStreamSrc(video);
       }
       return video;
     };
@@ -8512,7 +8515,7 @@ export default {
 
       try {
         const port = window.BONZAI_SERVER_PORT || 65000;
-        const response = await fetch(
+        const response = await authFetch(
           `http://localhost:${port}/vision/analyze`,
           {
             method: "POST",

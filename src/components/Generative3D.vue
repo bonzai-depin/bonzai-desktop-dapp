@@ -796,6 +796,7 @@ import { routeFlaskRequest } from "../services/inferenceRouter.service.js";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { socketAuthPayload } from "../services/auth.service.js";
 import {
   addObjectInference,
   loadObjectInferences,
@@ -1877,6 +1878,7 @@ export default {
       reconnectionDelay: 1000,
       reconnectionAttempts: 5,
       timeout: 10000,
+      auth: socketAuthPayload(),
     };
 
     // Merge task data

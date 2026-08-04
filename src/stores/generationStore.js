@@ -6,7 +6,7 @@
 
 import { reactive, readonly } from 'vue';
 import { io } from 'socket.io-client';
-import { getHttpErrorMessage } from '../services/auth.service.js';
+import { getHttpErrorMessage, socketAuthPayload } from '../services/auth.service.js';
 
 const API_BASE =
   (typeof process !== 'undefined' && process.env?.VITE_API_BASE) ||
@@ -117,8 +117,10 @@ export const ensureGenerationSocket = () => {
     return genSocket;
   }
 
-  // Create new socket
-  genSocket = io(WS_GEN, socketOpts);
+  // Create new socket. auth carries the local desktop session credential
+  // (wallet-optional) so the /generation namespace's connect guard accepts
+  // it (see authenticate_socketio_connect in bonzai_security.py).
+  genSocket = io(WS_GEN, { ...socketOpts, auth: socketAuthPayload() });
 
   genSocket.on('connect', () => {
     state.connected = true;
