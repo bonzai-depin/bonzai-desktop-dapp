@@ -443,6 +443,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     request: (request) => ipcRenderer.invoke("company-connector:request", request),
     validate: (companyId, connectorId) => ipcRenderer.invoke("company-connector:validate", { companyId, connectorId }),
   },
+  // Pinata publishing (P11 Security) — the only Pinata-related bridge
+  // exposed to the renderer. The Pinata JWT / API key+secret are read and
+  // injected in the main process (src/main/pinataPublish.js); this call
+  // carries content/metadata out and an upload receipt back, never
+  // credential material. See storage:publish in main.js.
+  storage: {
+    publish: (payload) => ipcRenderer.invoke("storage:publish", payload),
+  },
   // Wallet secrets (P9 Security) — narrow safeStorage-backed storage for the
   // agent wallet master derivation secret and per-companion private keys.
   // See wallet-secret:* handlers in main.js / src/main/secretStore.js.

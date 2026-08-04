@@ -65,6 +65,7 @@ import {
   performEgressRequest,
   EgressPolicyError,
 } from "./main/egressPolicy.js";
+import { publishToPinata } from "./main/pinataPublish.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -1659,6 +1660,56 @@ ipcMain.handle("wallet-secret:has", (event, { key } = {}) => {
 ipcMain.handle("wallet-secret:delete", (event, { key } = {}) => {
   authorizeWalletSecretSender(event);
   return walletSecrets.deleteSecret(key);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pinata publishing (P11 Security) — the only Pinata-related IPC exposed to
+// the renderer (see preload.js's `storage.publish`). The Pinata JWT / API
+// key+secret are read only in publishToPinata (src/main/pinataPublish.js),
+// via process.env, and are never returned across this bridge — a rejected
+// or failed publish reports a plain error string, never credential material.
+// Same sender-authorization the session bridge (P2) and wallet secrets (P9)
+// above use: only the current BonzAI top-level renderer may call.
+//
+// Vite only injects VITE_* names into the renderer bundle, not the Electron
+// main process, and there is no general dotenv load in this app (see
+// _loadEnvPrivy above) — so PINATA_JWT / PINATA_API_KEY+SECRET from .env
+// need the same narrow loader or `npm start`'s plain `.env` never reaches
+// `process.env` here and every publish reports "not configured".
+// ─────────────────────────────────────────────────────────────────────────────
+function _loadEnvPinata() {
+  if (process.env.PINATA_JWT || (process.env.PINATA_API_KEY && process.env.PINATA_API_SECRET)) return;
+  try {
+    const envPath = path.join(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, "utf8").split("\n");
+      for (const line of lines) {
+        const match = line.match(/^(PINATA_JWT|PINATA_API_KEY|PINATA_API_SECRET)\s*=\s*(.+)/);
+        if (match) process.env[match[1]] = match[2].trim().replace(/^["']|["']$/g, "");
+      }
+    }
+  } catch { /* */ }
+}
+_loadEnvPinata();
+
+function authorizeStoragePublishSender(event) {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const decision = sessionAuthorize(sender);
+  if (!decision.ok) {
+    throw new Error(`Unauthorized storage-publish access (${decision.reason})`);
+  }
+}
+
+ipcMain.handle("storage:publish", (event, payload) => {
+  authorizeStoragePublishSender(event);
+  // kind: "file" publishes need the same P7 owned-root/native-dialog-grant
+  // authorization read-file-as-base64 uses (src/main/fileAccess.js) — the
+  // renderer-supplied filePath is otherwise unauthorized attacker input.
+  return publishToPinata(payload, {
+    senderId: event.sender.id,
+    roots: fileAccessRoots(),
+    grants: fileGrants,
+  });
 });
 
 /**

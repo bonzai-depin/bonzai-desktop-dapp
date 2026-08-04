@@ -18,9 +18,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
+import { build as viteBuild } from "vite";
 
 import {
   createCredentialRegistry,
@@ -37,6 +39,8 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_JS = path.resolve(__dirname, "..", "src", "main.js");
 const PRELOAD_JS = path.resolve(__dirname, "..", "src", "preload.js");
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+const STORAGE_SERVICE_JS = path.resolve(__dirname, "..", "src", "services", "storage.service.js");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deterministic globals + helpers
@@ -1002,4 +1006,170 @@ test("AC4 (P10): initializeOrUnlockFromSignature never silently overwrites a vau
     "existing vault is not silently recreated/overwritten on a decrypt failure",
   );
   assert.equal(authVault.state.isUnlocked, false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P11 — storage.service.js: Pinata publishing moves to the main process
+// (src/main/pinataPublish.js / storage:publish IPC in main.js, see
+// test/main-security.test.mjs for the main-process-side coverage). Exercises:
+//   - a production renderer build of storage.service.js never embeds
+//     VITE_PINATA_* values, even when they're set at build time (R1).
+//   - uploadContent/uploadMetadata/uploadBase64/uploadFile route through
+//     window.electronAPI.storage.publish and never build/forward an
+//     Authorization or pinata_api_key-shaped field themselves.
+//   - a missing bridge or a rejected publish surfaces as a clear thrown
+//     Error, not a crash or silent partial state.
+//   - init/getStorage/isInitialized/disconnect work with no Pinata
+//     credentials and no storage bridge present at all — local
+//     (non-publishing) use is independent of credential availability (R3).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SENTINEL_VITE_PINATA_JWT = `SENTINEL_VITE_PINATA_JWT_${"f".repeat(24)}`;
+const SENTINEL_VITE_PINATA_API_KEY = `SENTINEL_VITE_PINATA_KEY_${"a".repeat(24)}`;
+const SENTINEL_VITE_PINATA_API_SECRET = `SENTINEL_VITE_PINATA_SECRET_${"b".repeat(24)}`;
+
+test("P11 AC1 (R1): a production renderer build of storage.service.js contains none of the legacy VITE_PINATA_* sentinel values", async () => {
+  const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "bonzai-pinata-env-"));
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "bonzai-pinata-out-"));
+  try {
+    fs.writeFileSync(
+      path.join(envDir, ".env.production"),
+      [
+        `VITE_PINATA_JWT=${SENTINEL_VITE_PINATA_JWT}`,
+        `VITE_PINATA_API_KEY=${SENTINEL_VITE_PINATA_API_KEY}`,
+        `VITE_PINATA_API_SECRET=${SENTINEL_VITE_PINATA_API_SECRET}`,
+      ].join("\n"),
+    );
+
+    await viteBuild({
+      configFile: false,
+      root: PROJECT_ROOT,
+      envDir,
+      envPrefix: "VITE_",
+      logLevel: "silent",
+      build: {
+        write: true,
+        outDir,
+        emptyOutDir: true,
+        minify: false,
+        lib: {
+          entry: STORAGE_SERVICE_JS,
+          formats: ["es"],
+          fileName: () => "storage.service.js",
+        },
+        rollupOptions: { external: ["ethers"] },
+      },
+    });
+
+    const bundle = fs.readFileSync(path.join(outDir, "storage.service.js"), "utf8");
+    for (const sentinel of [SENTINEL_VITE_PINATA_JWT, SENTINEL_VITE_PINATA_API_KEY, SENTINEL_VITE_PINATA_API_SECRET]) {
+      assert.ok(!bundle.includes(sentinel), `production bundle must not embed ${sentinel}`);
+    }
+    assert.ok(!bundle.includes("VITE_PINATA"), "production bundle must not reference VITE_PINATA_* at all");
+  } finally {
+    fs.rmSync(envDir, { recursive: true, force: true });
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("P11 (R1): storage.service.js source no longer reads import.meta.env / any VITE_PINATA_* variable", () => {
+  const src = fs.readFileSync(STORAGE_SERVICE_JS, "utf8");
+  assert.ok(!/VITE_PINATA/.test(src));
+  assert.ok(!/import\.meta\.env/.test(src));
+});
+
+function installStorageGlobals({ publishImpl } = {}) {
+  const publishCalls = [];
+  if (publishImpl) {
+    global.window = {
+      electronAPI: {
+        storage: {
+          publish: async (payload) => {
+            publishCalls.push(payload);
+            return publishImpl(payload);
+          },
+        },
+      },
+    };
+  } else {
+    global.window = {};
+  }
+  return { publishCalls };
+}
+
+let storageService;
+test.before(async () => {
+  storageService = await import("../src/services/storage.service.js");
+});
+
+test("P11 (R1/R2): uploadContent/uploadMetadata/uploadBase64/uploadFile route through window.electronAPI.storage.publish and send no header/credential field", async () => {
+  const { publishCalls } = installStorageGlobals({
+    publishImpl: async (payload) => ({
+      ok: true,
+      transactionId: `cid-${payload.kind}`,
+      timestamp: "t",
+      signature: null,
+      url: "ipfs://x",
+      gatewayUrl: "https://gw/x",
+      size: 1,
+      tags: [],
+    }),
+  });
+
+  await storageService.uploadContent({ data: new Uint8Array([1, 2, 3]), contentType: "image/png", generation: { type: "image" } });
+  await storageService.uploadMetadata({ a: 1 }, { type: "meta" });
+  await storageService.uploadBase64({ base64Data: "aGVsbG8=", contentType: "text/plain" });
+  await storageService.uploadFile("/tmp/x.png");
+
+  assert.equal(publishCalls.length, 4);
+  assert.deepEqual(publishCalls.map((c) => c.kind).sort(), ["content", "content", "file", "metadata"]);
+
+  const forbiddenFields = ["headers", "mainHeaders", "Authorization", "authorization", "pinata_api_key", "pinata_secret_api_key", "jwt", "apiKey", "apiSecret"];
+  for (const call of publishCalls) {
+    for (const key of forbiddenFields) {
+      assert.equal(call[key], undefined, `${call.kind} publish call must not carry a ${key} field`);
+    }
+  }
+  const filePublish = publishCalls.find((c) => c.kind === "file");
+  assert.equal(filePublish.filePath, "/tmp/x.png");
+});
+
+test("P11 (R3/R5): uploadContent throws a clear error, not a crash, when the storage bridge is unavailable (e.g. outside Electron)", async () => {
+  installStorageGlobals();
+  await assert.rejects(
+    () => storageService.uploadContent({ data: new Uint8Array([1]), contentType: "text/plain" }),
+    (err) => err instanceof Error && /only available inside the BonzAI desktop app/.test(err.message),
+  );
+});
+
+test("P11 (R5): a rejected publish (e.g. missing Pinata credentials) surfaces the main-process error string, and no local state is left behind", async () => {
+  installStorageGlobals({
+    publishImpl: async () => ({
+      ok: false,
+      error: "Pinata credentials not configured. Set PINATA_JWT (or PINATA_API_KEY + PINATA_API_SECRET) in the environment.",
+    }),
+  });
+  await assert.rejects(
+    () => storageService.uploadMetadata({ a: 1 }),
+    (err) => err instanceof Error && /not configured/.test(err.message),
+  );
+});
+
+test("P11 (R3): initStorage/getStorage/isInitialized/disconnect succeed with no Pinata credentials and no storage bridge present at all", async () => {
+  installStorageGlobals();
+  assert.equal(await storageService.initStorage(), true);
+  assert.equal(storageService.isInitialized(), true);
+  assert.equal(await storageService.getStorage(), true);
+  storageService.disconnect();
+  assert.equal(storageService.isInitialized(), false);
+});
+
+test("P11 (R2): an oversized uploadContent call is rejected before the IPC bridge is ever invoked", async () => {
+  const { publishCalls } = installStorageGlobals({ publishImpl: async () => ({ ok: true }) });
+  const oversized = new Uint8Array(100 * 1024 * 1024 + 1);
+  await assert.rejects(
+    () => storageService.uploadContent({ data: oversized, contentType: "application/octet-stream" }),
+    /too large/i,
+  );
+  assert.equal(publishCalls.length, 0, "the oversized upload must never reach the IPC bridge");
 });

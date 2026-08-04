@@ -518,7 +518,7 @@ async function discardResponseBody(response) {
  * connector (irrelevant once `fetchImpl` is faked).
  */
 export async function performEgressRequest(request, deps = {}) {
-  const { policy, url, method, headers = {}, body, accessToken } = request || {};
+  const { policy, url, method, headers = {}, body, accessToken, mainHeaders } = request || {};
   const {
     lookup = defaultLookup,
     fetchImpl = undiciFetch,
@@ -542,6 +542,13 @@ export async function performEgressRequest(request, deps = {}) {
     if (route.authFrom === "accessTokenField" && accessToken) {
       injected.Authorization = `Bearer ${accessToken}`;
     }
+    // `mainHeaders` is built entirely by the calling main-process module
+    // (never derived from caller/renderer input — storage:publish's
+    // pinataPublish.js is the current user) and is layered on top of any
+    // accessToken-derived header, so it can only add or override headers a
+    // trusted caller explicitly constructed, never something request.headers
+    // (renderer-supplied) contains.
+    if (mainHeaders) Object.assign(injected, mainHeaders);
     const finalHeaders = sanitizeRequestHeaders(headers, route, injected);
 
     const init = { method: currentMethod, headers: finalHeaders, redirect: "manual" };

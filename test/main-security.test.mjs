@@ -58,6 +58,15 @@ import {
   performEgressRequest,
   EgressPolicyError,
 } from "../src/main/egressPolicy.js";
+import {
+  PINATA_POLICY,
+  PINATA_ORIGIN,
+  PINATA_GATEWAY,
+  MAX_UPLOAD_BYTES,
+  MAX_METADATA_BYTES,
+  readPinataCredentials,
+  publishToPinata,
+} from "../src/main/pinataPublish.js";
 import os from "node:os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2234,4 +2243,223 @@ test("P8 R5: preload argument shapes for social.apiCall, social.mediaUpload, and
     /fetch:\s*\(url,\s*options\s*=\s*\{\}\)\s*=>[\s\S]{0,40}ipcRenderer\.invoke\(\s*["']proxy:fetch["']\s*,\s*\{\s*url,\s*options\s*\}\s*\)/.test(preloadSrc),
     "externalProxy.fetch signature must be unchanged",
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P11 — Pinata IPFS publishing moves into the main process
+// (src/main/pinataPublish.js), wired as storage:publish in main.js. Reuses
+// the P2 sender-validation the session bridge / P9 wallet secrets use, and
+// egressPolicy.js's SSRF-safe DNS pinning + manual redirect re-validation
+// (P8) against a fixed two-route Pinata policy. preload.js exposes only the
+// publish operation — no separate credential-status or raw-fetch bridge.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P11 AC1: storage:publish is registered in main.js, sender-validated like the session bridge / wallet secrets, and preload exposes only storage.publish", () => {
+  const mainSrc = fs.readFileSync(MAIN_JS, "utf8");
+  const preloadSrc = fs.readFileSync(PRELOAD_JS, "utf8");
+
+  assert.ok(mainSrc.includes('"storage:publish"'), "main.js registers storage:publish");
+  assert.ok(mainSrc.includes("publishToPinata"), "main.js wires publishToPinata");
+  assert.ok(mainSrc.includes("./main/pinataPublish.js"), "main.js imports the pinataPublish seam");
+  assert.ok(/function authorizeStoragePublishSender/.test(mainSrc), "a dedicated sender authorizer exists");
+  assert.ok(
+    /authorizeStoragePublishSender[\s\S]{0,200}normalizeSessionEvent\(event, mainWindow\)[\s\S]{0,200}sessionAuthorize\(sender\)/.test(mainSrc),
+    "storage-publish sender validation reuses the same normalizeSessionEvent + sessionAuthorize pipeline as wallet secrets (P2/P9)",
+  );
+
+  assert.ok(preloadSrc.includes('"storage:publish"'), "preload invokes storage:publish");
+  const bridgeMatch = preloadSrc.match(/storage:\s*\{([^}]*)\}/);
+  assert.ok(bridgeMatch, "preload defines a storage bridge object");
+  assert.ok(/publish\s*:/.test(bridgeMatch[1]), "the storage bridge exposes publish");
+  const invokeCalls = bridgeMatch[1].match(/ipcRenderer\.invoke/g) || [];
+  assert.equal(invokeCalls.length, 1, "the storage bridge exposes exactly one IPC operation");
+});
+
+test("P11 AC1: PINATA_POLICY declares exactly the two Pinata upload routes, HTTPS-only, POST-only, immutable", () => {
+  assert.ok(Object.isFrozen(PINATA_POLICY));
+  assert.ok(Object.isFrozen(PINATA_POLICY.routes));
+  const paths = PINATA_POLICY.routes.map((r) => r.pathPrefix).sort();
+  assert.deepEqual(paths, ["/pinning/pinFileToIPFS", "/pinning/pinJSONToIPFS"]);
+  for (const route of PINATA_POLICY.routes) {
+    assert.ok(Object.isFrozen(route));
+    assert.equal(route.origin, PINATA_ORIGIN);
+    assert.ok(route.origin.startsWith("https://"));
+    assert.deepEqual(route.methods, ["POST"]);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC2 (R2): main-owned auth for allowed Pinata endpoints only; renderer/
+// caller header overrides fail; results never carry credential material.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P11 AC2: metadata publish reaches only pinJSONToIPFS with main-owned JWT auth, and the receipt carries no credential material", async () => {
+  const fetchSpy = makeFetchSpy(jsonResponse(200, { IpfsHash: "bafy-meta-1", Timestamp: "2024-01-01T00:00:00Z", PinSize: 42 }));
+  const result = await publishToPinata(
+    { kind: "metadata", metadata: { hello: "world" }, generation: { type: "meta" } },
+    { env: { PINATA_JWT: "sentinel-real-jwt-abc123" }, fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+  );
+
+  assert.equal(fetchSpy.calls.length, 1);
+  assert.equal(fetchSpy.calls[0].url, `${PINATA_ORIGIN}/pinning/pinJSONToIPFS`);
+  assert.equal(fetchSpy.calls[0].init.headers.Authorization, "Bearer sentinel-real-jwt-abc123");
+  assert.equal(fetchSpy.calls[0].init.method, "POST");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.transactionId, "bafy-meta-1");
+  assert.equal(result.gatewayUrl, `${PINATA_GATEWAY}/bafy-meta-1`);
+  const serialized = JSON.stringify(result);
+  assert.ok(!serialized.includes("sentinel-real-jwt-abc123"), "the receipt never embeds the credential");
+  assert.deepEqual(Object.keys(result).sort(), ["gatewayUrl", "ok", "signature", "size", "tags", "timestamp", "transactionId", "url"].sort());
+});
+
+test("P11 AC2: content publish reaches only pinFileToIPFS with main-owned API-key auth when no JWT is set", async () => {
+  const fetchSpy = makeFetchSpy(jsonResponse(200, { IpfsHash: "bafy-file-1", Timestamp: "2024-01-01T00:00:00Z", PinSize: 7 }));
+  const result = await publishToPinata(
+    { kind: "content", data: new Uint8Array([1, 2, 3]), contentType: "image/png", generation: { type: "image" } },
+    {
+      env: { PINATA_API_KEY: "sentinel-key", PINATA_API_SECRET: "sentinel-secret" },
+      fetchImpl: fetchSpy,
+      lookup: lookupOf({ address: "203.0.113.10", family: 4 }),
+      buildDispatcher: noDispatcher,
+    },
+  );
+
+  assert.equal(fetchSpy.calls.length, 1);
+  assert.equal(fetchSpy.calls[0].url, `${PINATA_ORIGIN}/pinning/pinFileToIPFS`);
+  assert.equal(fetchSpy.calls[0].init.headers.pinata_api_key, "sentinel-key");
+  assert.equal(fetchSpy.calls[0].init.headers.pinata_secret_api_key, "sentinel-secret");
+  assert.equal(result.ok, true);
+  assert.ok(!JSON.stringify(result).includes("sentinel-secret"));
+});
+
+test("P11 AC2: a caller/renderer-supplied header field on the payload can never override the main-owned auth header", async () => {
+  const fetchSpy = makeFetchSpy(jsonResponse(200, { IpfsHash: "bafy-2", Timestamp: "t", PinSize: 1 }));
+  await publishToPinata(
+    {
+      kind: "metadata",
+      metadata: { a: 1 },
+      // Forged fields an attacker-controlled renderer might try to smuggle
+      // in — publishToPinata never reads payload.headers/mainHeaders at all.
+      headers: { Authorization: "Bearer forged-by-renderer" },
+      mainHeaders: { Authorization: "Bearer forged-by-renderer" },
+    },
+    { env: { PINATA_JWT: "real-main-jwt" }, fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+  );
+  assert.equal(fetchSpy.calls[0].init.headers.Authorization, "Bearer real-main-jwt");
+});
+
+test("P11 AC2/R2: missing credentials produce a clear, non-destructive error and no network attempt", async () => {
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  const result = await publishToPinata(
+    { kind: "metadata", metadata: { a: 1 } },
+    { env: {}, fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /not configured/i);
+  assert.equal(fetchSpy.calls.length, 0, "no fetch is attempted without credentials");
+});
+
+test("P11 AC2/R2: an unapproved redirect target is rejected and never fetched", async () => {
+  const fetchSpy = makeFetchSpy(redirectResponse(302, "https://evil.example.com/steal"));
+  const result = await publishToPinata(
+    { kind: "metadata", metadata: { a: 1 } },
+    { env: { PINATA_JWT: "real-jwt" }, fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(fetchSpy.calls.length, 1, "the disallowed redirect target must never itself be fetched");
+  assert.ok(!result.error.includes("real-jwt"));
+});
+
+test("P11 AC2/R2: an approved same-origin/same-route Pinata redirect is revalidated and then followed", async () => {
+  let calls = 0;
+  const fetchSpy = async (url, init) => {
+    calls++;
+    fetchSpy.calls.push({ url, init });
+    if (calls === 1) return redirectResponse(307, `${PINATA_ORIGIN}/pinning/pinFileToIPFS?retry=1`);
+    return jsonResponse(200, { IpfsHash: "bafy-redirected", Timestamp: "t", PinSize: 3 });
+  };
+  fetchSpy.calls = [];
+
+  const result = await publishToPinata(
+    { kind: "content", data: new Uint8Array([9, 9, 9]), contentType: "application/octet-stream" },
+    { env: { PINATA_JWT: "real-jwt" }, fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+  );
+
+  assert.equal(calls, 2, "the redirect target is only fetched after revalidation");
+  assert.equal(result.ok, true);
+  assert.equal(result.transactionId, "bafy-redirected");
+  assert.equal(fetchSpy.calls[1].init.headers.Authorization, "Bearer real-jwt", "auth is re-injected on the followed hop, not forwarded from the caller");
+});
+
+test("P11 R2: oversized content/file/metadata payloads are rejected before any fetch", async () => {
+  const fetchSpy = makeFetchSpy(jsonResponse(200, {}));
+  const oversizedContent = await publishToPinata(
+    { kind: "content", data: new Uint8Array(MAX_UPLOAD_BYTES + 1), contentType: "application/octet-stream" },
+    { env: { PINATA_JWT: "x" }, fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+  );
+  assert.equal(oversizedContent.ok, false);
+  assert.match(oversizedContent.error, /too large/i);
+
+  const oversizedMetadata = await publishToPinata(
+    { kind: "metadata", metadata: { blob: "x".repeat(MAX_METADATA_BYTES + 1) } },
+    { env: { PINATA_JWT: "x" }, fetchImpl: fetchSpy, lookup: lookupOf({ address: "203.0.113.10", family: 4 }), buildDispatcher: noDispatcher },
+  );
+  assert.equal(oversizedMetadata.ok, false);
+  assert.match(oversizedMetadata.error, /too large/i);
+
+  assert.equal(fetchSpy.calls.length, 0, "no fetch is attempted for an oversized payload");
+});
+
+test("P11 R2/R3: file publish bounds the file by disk size before ever reading it, and never returns a filesystem path", async () => {
+  const fetchSpy = makeFetchSpy(jsonResponse(200, { IpfsHash: "bafy-file", Timestamp: "t", PinSize: 5 }));
+  let readCalled = false;
+  // The P7 authorizeRead gate now sits in front of the size check, so this
+  // path must actually clear it (real file, inside an owned root) for the
+  // test to exercise the size bound rather than the authorization denial.
+  const hugeFile = path.join(OWNED_ROOT, "huge.bin");
+  fs.writeFileSync(hugeFile, "not actually huge — statFile is mocked below");
+  const result = await publishToPinata(
+    { kind: "file", filePath: hugeFile, contentType: "video/mp4" },
+    {
+      env: { PINATA_JWT: "x" },
+      fetchImpl: fetchSpy,
+      lookup: lookupOf({ address: "203.0.113.10", family: 4 }),
+      buildDispatcher: noDispatcher,
+      roots: [OWNED_ROOT],
+      statFile: async () => ({ isFile: () => true, size: MAX_UPLOAD_BYTES + 1 }),
+      readFile: async () => { readCalled = true; return Buffer.from("nope"); },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /too large/i);
+  assert.equal(readCalled, false, "the oversized file must never actually be read");
+  assert.equal(fetchSpy.calls.length, 0);
+});
+
+test("P11 R2/R3: file publish is denied by the P7 authorization gate before any size check or read, for a path outside every owned root/grant", async () => {
+  const fetchSpy = makeFetchSpy(jsonResponse(200, { IpfsHash: "bafy-file", Timestamp: "t", PinSize: 5 }));
+  let readCalled = false;
+  const result = await publishToPinata(
+    { kind: "file", filePath: outsideFile, contentType: "video/mp4" },
+    {
+      env: { PINATA_JWT: "x" },
+      fetchImpl: fetchSpy,
+      lookup: lookupOf({ address: "203.0.113.10", family: 4 }),
+      buildDispatcher: noDispatcher,
+      roots: [OWNED_ROOT],
+      readFile: async () => { readCalled = true; return Buffer.from("nope"); },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "File access denied");
+  assert.equal(readCalled, false, "an unauthorized filePath must never be read");
+  assert.equal(fetchSpy.calls.length, 0);
+});
+
+test("P11 R3: readPinataCredentials prefers PINATA_JWT over the API key/secret pair, and returns null when nothing is configured", () => {
+  assert.deepEqual(readPinataCredentials({ PINATA_JWT: "j", PINATA_API_KEY: "k", PINATA_API_SECRET: "s" }), { kind: "jwt", jwt: "j" });
+  assert.deepEqual(readPinataCredentials({ PINATA_API_KEY: "k", PINATA_API_SECRET: "s" }), { kind: "apiKey", apiKey: "k", apiSecret: "s" });
+  assert.equal(readPinataCredentials({ PINATA_API_KEY: "k" }), null, "a lone API key without the secret is not usable");
+  assert.equal(readPinataCredentials({}), null);
 });
