@@ -3393,11 +3393,13 @@ test("R1 AC1: mintStartupExternalCredentials mints a live credential and refresh
       scope: OPENCLAW_CREDENTIAL_SCOPE,
       isOpenClawEnabled: () => true,
       isHermesEnabled: () => false,
-      refreshOpenClaw: (t) => { refreshedOpenClaw.push(t); refreshOpenClawCredential(t, f.openclawModelsPath); },
-      refreshHermes: (t) => { refreshedHermes.push(t); },
+      refreshOpenClaw: (t) => { refreshedOpenClaw.push(t); return refreshOpenClawCredential(t, f.openclawModelsPath); },
+      refreshHermes: (t) => { refreshedHermes.push(t); return true; },
     });
-    // G1: the call now reports per-integration write results alongside the token.
+    // G1/H3: the call reports per-integration write results alongside the token.
     const token = minted?.token;
+    assert.equal(minted.openclawOk, true, "OpenClaw on-disk refresh reported success");
+    assert.equal(minted.hermesOk, true, "Hermes refresh reported success");
 
     assert.ok(token, "a fresh external credential is minted");
     assert.equal(registry.getExternalCredential(), token, "the registry now has a LIVE external credential");

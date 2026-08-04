@@ -301,6 +301,12 @@ export async function initializeOrUnlockFromSignature(address, signature) {
       masterKey = candidateKey;
       const vaultData = await decrypt(existingVault.encrypted);
 
+      // H2: an explicit reset that landed during decryption wins — the state
+      // must not be restored after the reset.
+      if (resetEpoch !== targetResetEpoch) {
+        throw new Error("Vault was reset during recovery");
+      }
+
       // Restore state from vault
       state.walletAddress = address;
       state.moltbook = vaultData.services?.moltbook || {};
@@ -417,6 +423,11 @@ export async function initializeVault(signer) {
 
   // Derive master key
   masterKey = await deriveKeyFromSignature(signature);
+  // H1: an explicit reset that landed during derivation wins too — the vault
+  // must not be recreated/unlocked in memory after the reset.
+  if (resetEpoch !== targetResetEpoch) {
+    throw new Error("Vault was reset during initialization");
+  }
   vaultDerivation = derivation;
 
   // Initialize vault data
