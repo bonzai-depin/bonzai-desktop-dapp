@@ -175,10 +175,11 @@ async function deriveKeyFromSignature(signature) {
 }
 
 /**
- * Encrypt data with the master key
+ * Encrypt data with the master key (or an explicit key, used during vault
+ * initialization before the derived key is committed to module state).
  */
-async function encrypt(data) {
-  if (!masterKey) throw new Error("Vault is locked");
+async function encrypt(data, key = masterKey) {
+  if (!key) throw new Error("Vault is locked");
 
   const encoder = new TextEncoder();
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -186,7 +187,7 @@ async function encrypt(data) {
 
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
-    masterKey,
+    key,
     encoded
   );
 
@@ -423,16 +424,14 @@ export async function initializeVault(signer) {
     throw new Error("Vault was reset during initialization");
   }
 
-  // Derive master key
-  masterKey = await deriveKeyFromSignature(signature);
-  // H1 + I2: an explicit reset that landed during derivation wins too — the
-  // vault must not be recreated/unlocked in memory after the reset, and the
-  // freshly derived key must not stay resident after the abort.
+  // Derive master key — kept LOCAL until every reset guard has passed, so an
+  // abort can never clear a key that belongs to a newer concurrent session
+  // (J3) and never leaves key material resident after a failure (J2).
+  const derivedKey = await deriveKeyFromSignature(signature);
+  // H1: an explicit reset that landed during derivation wins too.
   if (resetEpoch !== targetResetEpoch) {
-    masterKey = null;
     throw new Error("Vault was reset during initialization");
   }
-  vaultDerivation = derivation;
 
   // Initialize vault data
   const vaultData = {
@@ -454,16 +453,16 @@ export async function initializeVault(signer) {
   };
 
   // Encrypt and store
-  const encrypted = await encrypt(vaultData);
+  const encrypted = await encrypt(vaultData, derivedKey);
   // I1: an explicit reset that landed during encryption wins — never write.
   if (resetEpoch !== targetResetEpoch) {
-    masterKey = null;
-    vaultDerivation = null;
     throw new Error("Vault was reset during initialization");
   }
   const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
 
   if (window.electronAPI?.store?.set) {
+    // J2: a storage rejection must abort without leaving any state behind —
+    // nothing has been committed to module state yet, so rethrow as-is.
     await window.electronAPI.store.set(storageKey, {
       version: VAULT_VERSION,
       address,
@@ -472,13 +471,18 @@ export async function initializeVault(signer) {
     });
   }
 
-  // I1: a reset that landed during the store write must not mark the vault
-  // initialized — the reset wins, state stays locked.
+  // I1 + J1: a reset that landed during the store write wins. The write may
+  // already have landed on disk, so compensate by deleting the record the
+  // reset deleted, and never mark the vault initialized.
   if (resetEpoch !== targetResetEpoch) {
-    masterKey = null;
-    vaultDerivation = null;
+    try { await window.electronAPI?.store?.delete?.(storageKey); } catch {}
     throw new Error("Vault was reset during initialization");
   }
+
+  // All reset guards passed — only now commit the derived key and derivation
+  // to module state (J3).
+  masterKey = derivedKey;
+  vaultDerivation = derivation;
 
   // Update state
   state.isUnlocked = true;
