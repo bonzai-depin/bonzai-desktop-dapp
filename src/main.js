@@ -66,6 +66,7 @@ import {
   EgressPolicyError,
 } from "./main/egressPolicy.js";
 import { publishToPinata } from "./main/pinataPublish.js";
+import { installCsp, DEV_VITE_HOST, DEV_VITE_PORT } from "./main/csp.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -120,7 +121,12 @@ const fileAccessRoots = () => [
 
 // Dev/prod detection - app.isPackaged is true when running from packaged app
 const isDev = !app.isPackaged;
-const VITE_DEV_SERVER_URL = isDev ? "http://localhost:5173" : null;
+// Pinned to the loopback IP (not "localhost", which can resolve
+// differently depending on host DNS/hosts-file config) and the fixed port
+// vite.renderer.config.ts binds the dev server + HMR socket to (P12/R3) —
+// this keeps the CSP's development allowance (src/main/csp.js) a single
+// deterministic origin instead of a wildcard.
+const VITE_DEV_SERVER_URL = isDev ? `http://${DEV_VITE_HOST}:${DEV_VITE_PORT}` : null;
 
 let subpy = null;
 const PY_SERVER_PORT = 65000;
@@ -5220,6 +5226,18 @@ app.on("ready", async () => {
       callback({ requestHeaders: details.requestHeaders });
     }
   );
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Content-Security-Policy (P12 Security)
+  //
+  // Installed as a response header — never also as an index.html <meta>
+  // tag, see src/main/csp.js — and wired before createWindow() below ever
+  // navigates, so the renderer's very first document load already carries
+  // the policy. Packaged loads (file://) get the restrictive policy as-is;
+  // development loads get that same policy plus the one fixed loopback
+  // Vite/HMR origin (never a wildcard host/port).
+  // ─────────────────────────────────────────────────────────────────────────────
+  installCsp(session.defaultSession, { isPackaged: app.isPackaged });
 
   // Create window immediately to prevent crash when clicking dock icon
   // The Vue app will show loading state while server starts

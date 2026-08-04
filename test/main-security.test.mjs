@@ -68,12 +68,31 @@ import {
   publishToPinata,
 } from "../src/main/pinataPublish.js";
 import os from "node:os";
+import { execFileSync } from "node:child_process";
+import {
+  PACKAGED_CSP,
+  DEV_CSP,
+  getPolicyDirectives,
+  parseCsp,
+  directiveAllowsOrigin,
+  installCsp,
+  DEV_VITE_HOST,
+  DEV_VITE_PORT,
+  DEV_VITE_HTTP_ORIGIN,
+  DEV_VITE_WS_ORIGIN,
+  BULMA_STYLE_ORIGIN,
+  BULMA_STYLESHEET_URL,
+  BULMA_INTEGRITY,
+} from "../src/main/csp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_JS = path.resolve(__dirname, "..", "src", "main.js");
 const PRELOAD_JS = path.resolve(__dirname, "..", "src", "preload.js");
 const REGISTRY_JS = path.resolve(__dirname, "..", "src", "main", "credentialRegistry.js");
 const ENV_EXAMPLE = path.resolve(__dirname, "..", ".env.example");
+const INDEX_HTML = path.resolve(__dirname, "..", "index.html");
+const VITE_RENDERER_CONFIG = path.resolve(__dirname, "..", "vite.renderer.config.ts");
+const REPO_ROOT = path.resolve(__dirname, "..");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deterministic seams
@@ -2462,4 +2481,369 @@ test("P11 R3: readPinataCredentials prefers PINATA_JWT over the API key/secret p
   assert.deepEqual(readPinataCredentials({ PINATA_API_KEY: "k", PINATA_API_SECRET: "s" }), { kind: "apiKey", apiKey: "k", apiSecret: "s" });
   assert.equal(readPinataCredentials({ PINATA_API_KEY: "k" }), null, "a lone API key without the secret is not usable");
   assert.equal(readPinataCredentials({}), null);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P12 — Renderer Content-Security-Policy (src/main/csp.js, wired in
+// src/main.js before the renderer navigates; index.html carries no <meta>
+// CSP of its own, see the notes on src/main/csp.js).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A minimal stand-in for Electron's session.webRequest, just enough to
+// drive installCsp() and its onHeadersReceived listener directly.
+function makeFakeSession() {
+  let listener = null;
+  return {
+    webRequest: {
+      onHeadersReceived(fn) {
+        listener = fn;
+      },
+    },
+    fire(details) {
+      return new Promise((resolve) => {
+        listener(details, resolve);
+      });
+    },
+  };
+}
+
+const mainFrameDetails = (extra = {}) => ({
+  resourceType: "mainFrame",
+  responseHeaders: {},
+  url: "file:///index.html",
+  ...extra,
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC1 (R1): the packaged policy restricts scripts/styles/connections/
+// frames/objects/base-uri as specified.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P12 AC1: packaged CSP restricts script/object/frame/base-uri/frame-ancestors to nothing but self/none", () => {
+  const d = parseCsp(PACKAGED_CSP);
+  assert.deepEqual(d["default-src"], ["'none'"]);
+  assert.deepEqual(d["script-src"], ["'self'"]);
+  assert.deepEqual(d["object-src"], ["'none'"]);
+  assert.deepEqual(d["frame-src"], ["blob:"], "only MintModal's blob: 3D-preview iframe is allowed, no origin");
+  assert.deepEqual(d["frame-ancestors"], ["'none'"]);
+  assert.deepEqual(d["base-uri"], ["'self'"]);
+  assert.deepEqual(d["form-action"], ["'self'"]);
+});
+
+test("P12 AC1: packaged style-src is 'self' plus the exact Bulma origin only, no wildcard", () => {
+  const d = parseCsp(PACKAGED_CSP);
+  assert.deepEqual(d["style-src"], ["'self'", BULMA_STYLE_ORIGIN]);
+  assert.equal(BULMA_STYLE_ORIGIN, new URL(BULMA_STYLESHEET_URL).origin, "style-src origin must be the stylesheet's actual origin");
+  assert.equal(d["style-src"].some((v) => v.includes("*")), false, "no wildcard style origin");
+});
+
+test("P12 AC1: packaged connect-src is scoped to self, loopback, and https/wss — never a bare wildcard", () => {
+  const d = parseCsp(PACKAGED_CSP);
+  assert.ok(d["connect-src"].includes("'self'"));
+  assert.ok(d["connect-src"].includes("http://127.0.0.1:*"), "own loopback services (Flask/OpenClaw/rpc-server)");
+  assert.ok(d["connect-src"].includes("ws://127.0.0.1:*"));
+  assert.ok(d["connect-src"].includes("https:"));
+  assert.ok(d["connect-src"].includes("wss:"));
+  assert.equal(d["connect-src"].includes("*"), false);
+  assert.equal(d["connect-src"].some((v) => v.includes("0.0.0.0")), false, "must never widen to all-interfaces");
+});
+
+test("P12 AC1: parseCsp round-trips the packaged policy string", () => {
+  const d = parseCsp(PACKAGED_CSP);
+  for (const name of ["default-src", "script-src", "style-src", "connect-src", "img-src", "font-src", "media-src", "worker-src", "object-src", "frame-src", "base-uri", "form-action", "frame-ancestors"]) {
+    assert.ok(Array.isArray(d[name]) && d[name].length > 0, `packaged policy must declare ${name}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC2 (R2): packaged startup gets the packaged policy; development startup
+// gets only the deterministic loopback Vite/HMR additions on top of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P12 AC2: installCsp sets the packaged policy verbatim on main-frame document responses", async () => {
+  const fakeSession = makeFakeSession();
+  const policy = installCsp(fakeSession, { isPackaged: true });
+  assert.equal(policy, PACKAGED_CSP);
+
+  const result = await fakeSession.fire(mainFrameDetails());
+  assert.deepEqual(result.responseHeaders["Content-Security-Policy"], [PACKAGED_CSP]);
+});
+
+test("P12 AC2: installCsp sets the development policy on main-frame document responses", async () => {
+  const fakeSession = makeFakeSession();
+  const policy = installCsp(fakeSession, { isPackaged: false });
+  assert.equal(policy, DEV_CSP);
+
+  const result = await fakeSession.fire(mainFrameDetails({ url: `${DEV_VITE_HTTP_ORIGIN}/` }));
+  assert.deepEqual(result.responseHeaders["Content-Security-Policy"], [DEV_CSP]);
+});
+
+test("P12 AC2: installCsp leaves non-document (subresource) responses untouched", async () => {
+  const fakeSession = makeFakeSession();
+  installCsp(fakeSession, { isPackaged: true });
+  const original = { "content-type": ["text/css"] };
+  const result = await fakeSession.fire({ resourceType: "stylesheet", responseHeaders: original });
+  assert.equal(result.responseHeaders["Content-Security-Policy"], undefined);
+  assert.deepEqual(result.responseHeaders, original);
+});
+
+test("P12 AC2: installCsp replaces rather than merges a pre-existing Content-Security-Policy header", async () => {
+  const fakeSession = makeFakeSession();
+  installCsp(fakeSession, { isPackaged: true });
+  const result = await fakeSession.fire(
+    mainFrameDetails({ responseHeaders: { "Content-Security-Policy": ["default-src *"] } }),
+  );
+  assert.deepEqual(result.responseHeaders["Content-Security-Policy"], [PACKAGED_CSP]);
+});
+
+// A1: installCsp is wired on session.defaultSession, which every
+// unpartitioned BrowserWindow shares — including the bonzai.sh/wallet
+// BrowserView (wallet:open) and the social-OAuth popup windows
+// (openSocialAuthWindow), neither of which sets its own session partition.
+// A resourceType-only filter would blanket-overwrite those windows' own
+// CSPs on every top-level navigation and could break their scripts/styles
+// or the auth/wallet flows depending on them, so the handler must also
+// check the navigated URL belongs to this app's own renderer.
+test("P12 AC2: installCsp leaves other windows' mainFrame documents on the same (default) session untouched — wallet/OAuth origins never get the renderer CSP", async () => {
+  const fakeSession = makeFakeSession();
+  installCsp(fakeSession, { isPackaged: true });
+
+  const wallet = await fakeSession.fire(mainFrameDetails({ url: "https://bonzai.sh/wallet?mode=embedded" }));
+  assert.equal(wallet.responseHeaders["Content-Security-Policy"], undefined);
+
+  const oauth = await fakeSession.fire(mainFrameDetails({ url: "https://accounts.google.com/o/oauth2/auth" }));
+  assert.equal(oauth.responseHeaders["Content-Security-Policy"], undefined);
+});
+
+test("P12 AC2: installCsp leaves a mainFrame document outside the pinned Vite origin untouched in development mode", async () => {
+  const fakeSession = makeFakeSession();
+  installCsp(fakeSession, { isPackaged: false });
+
+  const result = await fakeSession.fire(mainFrameDetails({ url: "http://localhost:1337/wallet?mode=embedded" }));
+  assert.equal(result.responseHeaders["Content-Security-Policy"], undefined);
+});
+
+test("P12 AC2: development policy differs from packaged ONLY by the fixed loopback Vite/HMR connect-src additions and dev-only style 'unsafe-inline'", () => {
+  const packaged = getPolicyDirectives({ isPackaged: true });
+  const dev = getPolicyDirectives({ isPackaged: false });
+
+  for (const name of Object.keys(packaged)) {
+    if (name === "connect-src" || name === "style-src") continue;
+    assert.deepEqual(dev[name], packaged[name], `${name} must be identical between packaged and dev`);
+  }
+
+  assert.deepEqual(
+    dev["connect-src"],
+    [...packaged["connect-src"], DEV_VITE_HTTP_ORIGIN, DEV_VITE_WS_ORIGIN],
+    "dev connect-src must be exactly packaged + the two fixed loopback Vite/HMR origins",
+  );
+  assert.deepEqual(
+    dev["style-src"],
+    [...packaged["style-src"], "'unsafe-inline'"],
+    "dev style-src must be exactly packaged + unsafe-inline (Vite's dev-mode style injection), nothing else",
+  );
+});
+
+test("P12 AC2: the loopback Vite/HMR additions are the fixed deterministic origins, never a wildcard host/port", () => {
+  assert.equal(DEV_VITE_HTTP_ORIGIN, "http://127.0.0.1:5173");
+  assert.equal(DEV_VITE_WS_ORIGIN, "ws://127.0.0.1:5173");
+  assert.equal(DEV_VITE_HTTP_ORIGIN.includes("*"), false);
+  assert.equal(DEV_VITE_WS_ORIGIN.includes("*"), false);
+});
+
+test("P12 AC2: main.js installs the CSP via session.defaultSession before createWindow() navigates, and never adds a duplicate meta CSP to index.html", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const installIdx = src.indexOf("installCsp(session.defaultSession");
+  const createWindowIdx = src.indexOf("await createWindow();");
+  assert.ok(installIdx !== -1, "expected installCsp(session.defaultSession, ...) in main.js");
+  assert.ok(createWindowIdx !== -1, "expected the await createWindow() call site in main.js");
+  assert.ok(installIdx < createWindowIdx, "CSP must be installed before the renderer navigates");
+  assert.ok(/isPackaged:\s*app\.isPackaged/.test(src.slice(installIdx, installIdx + 120)), "installCsp must be mode-aware via app.isPackaged");
+
+  const html = fs.readFileSync(INDEX_HTML, "utf8");
+  assert.equal(/<meta[^>]*http-equiv=["']Content-Security-Policy["']/i.test(html), false, "index.html must not carry a meta CSP alongside the header policy");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC3 (R3): the dev server/HMR host and port are deterministic and
+// loopback-only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P12 AC3: DEV_VITE_HOST/PORT are pinned to loopback and the fixed Vite default port", () => {
+  assert.equal(DEV_VITE_HOST, "127.0.0.1");
+  assert.equal(DEV_VITE_PORT, 5173);
+});
+
+test("P12 AC3: vite.renderer.config.ts pins server + HMR host/port to loopback with strictPort", () => {
+  const src = fs.readFileSync(VITE_RENDERER_CONFIG, "utf8");
+  const serverBlockMatch = src.match(/server:\s*\{[\s\S]*?\n\s{2}\},/);
+  assert.ok(serverBlockMatch, "expected a top-level server: {...} block");
+  const block = serverBlockMatch[0];
+  assert.match(block, /host:\s*['"]127\.0\.0\.1['"]/);
+  assert.match(block, /port:\s*5173/);
+  assert.match(block, /strictPort:\s*true/, "port must not silently float to another value if 5173 is taken");
+  assert.match(block, /hmr:\s*\{[\s\S]*?host:\s*['"]127\.0\.0\.1['"][\s\S]*?\}/);
+  assert.match(block, /hmr:\s*\{[\s\S]*?port:\s*5173[\s\S]*?\}/);
+  assert.equal(block.includes("0.0.0.0"), false, "dev server must never bind all interfaces");
+});
+
+test("P12 AC3: main.js derives VITE_DEV_SERVER_URL from the deterministic DEV_VITE_HOST/PORT constants, not a hardcoded hostname", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  assert.match(src, /VITE_DEV_SERVER_URL\s*=\s*isDev\s*\?\s*`http:\/\/\$\{DEV_VITE_HOST\}:\$\{DEV_VITE_PORT\}`/);
+  assert.equal(/http:\/\/localhost:5173/.test(src), false, "must not hardcode a separate, driftable dev URL");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC4 (R4): every retained remote stylesheet/script has a valid matching
+// integrity digest and crossorigin metadata; Bulma keeps its exact origin.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P12 AC4: BULMA_INTEGRITY is a well-formed sha384 digest", () => {
+  assert.match(BULMA_INTEGRITY, /^sha384-[A-Za-z0-9+/]{64}$/);
+});
+
+test("P12 AC4: index.html's Bulma <link> carries the verified digest, crossorigin=anonymous, and the exact pinned origin", () => {
+  const html = fs.readFileSync(INDEX_HTML, "utf8");
+  const linkMatch = html.match(/<link[^>]*href=["']https:\/\/cdn\.jsdelivr\.net\/npm\/bulma[^"']*["'][^>]*>/);
+  assert.ok(linkMatch, "expected a Bulma <link> tag in index.html");
+  const tag = linkMatch[0];
+  assert.ok(tag.includes(`href="${BULMA_STYLESHEET_URL}"`), "href must match the pinned stylesheet URL exactly");
+  assert.ok(tag.includes(`integrity="${BULMA_INTEGRITY}"`), "integrity must match the verified digest exactly");
+  assert.match(tag, /crossorigin=["']anonymous["']/);
+});
+
+test("P12 AC4: every remote (http/https) <script> or stylesheet <link> in index.html has matching integrity + crossorigin", () => {
+  const html = fs.readFileSync(INDEX_HTML, "utf8");
+  const tags = [
+    ...html.matchAll(/<script[^>]*src=["']https?:\/\/[^"']+["'][^>]*>/g),
+    ...html.matchAll(/<link[^>]*rel=["']stylesheet["'][^>]*href=["']https?:\/\/[^"']+["'][^>]*>/g),
+  ].map((m) => m[0]);
+  assert.ok(tags.length >= 1, "expected at least the Bulma stylesheet tag to exercise this check");
+  for (const tag of tags) {
+    assert.match(tag, /integrity=["']sha(256|384|512)-[A-Za-z0-9+/=]+["']/, `remote resource missing integrity: ${tag}`);
+    assert.match(tag, /crossorigin=["']anonymous["']/, `remote resource missing crossorigin=anonymous: ${tag}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC5 (R5): no unsafe inline scripts; only the required custom local media
+// schemes are listed, and only where required (img-src/media-src).
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P12 AC5: script-src never allows unsafe-inline/unsafe-eval, in either mode", () => {
+  for (const isPackaged of [true, false]) {
+    const d = getPolicyDirectives({ isPackaged });
+    assert.equal(d["script-src"].includes("'unsafe-inline'"), false);
+    assert.equal(d["script-src"].includes("'unsafe-eval'"), false);
+    assert.equal(directiveAllowsOrigin(d["script-src"], "inline"), false);
+  }
+});
+
+test("P12 AC5: index.html and preload.js contain no inline <script> bodies or javascript: URLs", () => {
+  const html = fs.readFileSync(INDEX_HTML, "utf8");
+  const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+  assert.deepEqual(inlineScripts, [], "index.html must not contain inline script bodies");
+  assert.equal(/\bon[a-z]+\s*=\s*["']/i.test(html), false, "no inline event-handler attributes");
+  assert.equal(/javascript:/i.test(html), false);
+});
+
+test("P12 AC5: only local-video:, app:, and bonzai-blob: are listed as custom schemes, and only under img-src/media-src", () => {
+  const packaged = getPolicyDirectives({ isPackaged: true });
+  const standardSchemes = new Set(["data:", "blob:", "https:", "wss:"]);
+  const requiredCustom = new Set(["local-video:", "app:", "bonzai-blob:"]);
+  const foundCustomByDirective = {};
+
+  for (const [name, values] of Object.entries(packaged)) {
+    for (const v of values) {
+      if (!v.endsWith(":") || v.startsWith("'")) continue; // skip keywords like 'self'
+      if (standardSchemes.has(v)) continue;
+      (foundCustomByDirective[name] ??= new Set()).add(v);
+    }
+  }
+
+  const allFound = new Set(Object.values(foundCustomByDirective).flatMap((s) => [...s]));
+  assert.deepEqual(allFound, requiredCustom, "exactly the three custom media schemes must appear, nothing else");
+
+  for (const [name, values] of Object.entries(foundCustomByDirective)) {
+    assert.ok(
+      name === "img-src" || name === "media-src",
+      `custom scheme(s) ${[...values].join(",")} must only be granted to img-src/media-src, found under ${name}`,
+    );
+  }
+  // Confirm they are explicitly absent from the security-sensitive directives.
+  for (const name of ["script-src", "connect-src", "object-src", "style-src", "frame-src", "default-src", "base-uri"]) {
+    for (const scheme of requiredCustom) {
+      assert.equal(packaged[name].includes(scheme), false, `${scheme} must not be granted to ${name}`);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AC6 (R6): injected inline/unlisted remote scripts, object/frame
+// embedding, and foreign base navigation are denied; renderer entry builds
+// in both configuration modes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P12 AC6: an unlisted remote script origin and an injected inline script are both denied, in either mode", () => {
+  for (const isPackaged of [true, false]) {
+    const d = getPolicyDirectives({ isPackaged });
+    assert.equal(directiveAllowsOrigin(d["script-src"], "https://evil.example.com"), false);
+    assert.equal(directiveAllowsOrigin(d["script-src"], "inline"), false);
+    assert.equal(directiveAllowsOrigin(d["script-src"], "'self'"), true);
+  }
+});
+
+test("P12 AC6: object and frame embedding are denied outright, in either mode", () => {
+  for (const isPackaged of [true, false]) {
+    const d = getPolicyDirectives({ isPackaged });
+    assert.equal(directiveAllowsOrigin(d["object-src"], "https://evil.example.com"), false);
+    assert.equal(directiveAllowsOrigin(d["object-src"], "'self'"), false);
+    assert.equal(directiveAllowsOrigin(d["frame-src"], "https://evil.example.com"), false);
+    assert.equal(directiveAllowsOrigin(d["frame-src"], "'self'"), false);
+    assert.equal(directiveAllowsOrigin(d["frame-ancestors"], "https://evil.example.com"), false, "must not be embeddable by a foreign frame either");
+  }
+});
+
+test("P12 AC6: base-uri denies foreign base navigation, in either mode", () => {
+  for (const isPackaged of [true, false]) {
+    const d = getPolicyDirectives({ isPackaged });
+    assert.equal(directiveAllowsOrigin(d["base-uri"], "https://evil.example.com"), false);
+    assert.equal(directiveAllowsOrigin(d["base-uri"], "'self'"), true);
+  }
+});
+
+test("P12 AC6: style-src allows only self and the pinned Bulma origin — any other remote stylesheet origin is denied", () => {
+  for (const isPackaged of [true, false]) {
+    const d = getPolicyDirectives({ isPackaged });
+    assert.equal(directiveAllowsOrigin(d["style-src"], BULMA_STYLE_ORIGIN), true);
+    assert.equal(directiveAllowsOrigin(d["style-src"], "https://evil.example.com"), false);
+  }
+});
+
+test("P12 AC6: the renderer entry point builds successfully in both packaged (production) and development configuration modes", () => {
+  const scratchBase = fs.mkdtempSync(path.join(os.tmpdir(), "bonzai-p12-build-"));
+  try {
+    for (const mode of ["production", "development"]) {
+      const outDir = path.join(scratchBase, mode);
+      execFileSync(
+        process.execPath,
+        [
+          path.join(REPO_ROOT, "node_modules", "vite", "bin", "vite.js"),
+          "build",
+          "--config",
+          "vite.renderer.config.ts",
+          "--outDir",
+          outDir,
+          "--mode",
+          mode,
+        ],
+        { cwd: REPO_ROOT, stdio: "pipe", timeout: 120_000 },
+      );
+      assert.ok(fs.existsSync(path.join(outDir, "index.html")), `${mode} build must emit index.html`);
+    }
+  } finally {
+    fs.rmSync(scratchBase, { recursive: true, force: true });
+  }
 });
