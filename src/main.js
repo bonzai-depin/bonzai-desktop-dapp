@@ -1043,13 +1043,17 @@ const rekeySessionDependents = async () => {
     }
   } catch {}
 
-  // OpenClaw/Hermes are external processes we don't spawn, so Flask/
-  // rpc-server rekeying above never touches them — refresh their on-disk
-  // credential too, otherwise an already-enabled integration keeps
-  // presenting the now-invalid pre-rotation token (see refreshExternal-
-  // IntegrationCredentials, defined below with the rest of the OpenClaw/
-  // Hermes integration config).
-  refreshExternalIntegrationCredentials();
+  // Deliberately does NOT touch the OpenClaw/Hermes external credential.
+  // That credential has its own independent lifecycle (minted by the
+  // *-set-enabled handlers, refreshed at startup by
+  // mintStartupCredentialsIfIntegrationsEnabled) and is never invalidated by
+  // a session-only rotate (see credentialRegistry.invalidate's "session"
+  // scope default). Re-minting it here — as an earlier fix did — replaced
+  // the still-valid token OpenClaw/Hermes already have loaded in memory with
+  // one only the on-disk config knows about, so every session rotation
+  // (including wallet logout's rotateCredential() call) broke those already-
+  // running integrations with 401s, since rewriting their config file cannot
+  // update a process we don't control.
 };
 
 const sessionBridge = createSessionBridge({
@@ -1072,8 +1076,8 @@ ipcMain.handle("session:rotate-credential", async (event) => {
 // OpenClaw API server directly (openclaw.handler.js health checks) need to
 // present the SAME external credential that server's isRequestAuthenticated
 // validates and that main writes into OpenClaw/Hermes' own on-disk configs
-// (see refreshExternalIntegrationCredentials/mintStartupExternalCredentials
-// below) — never a credential the renderer mints or holds itself. P2
+// (see mintStartupExternalCredentials and the *-set-enabled handlers below)
+// — never a credential the renderer mints or holds itself. P2
 // sender-authorized like the other session IPC above. Returns
 // { ok: false } both for a denied sender and for "no external credential
 // minted yet" (integration never enabled this launch), so callers can treat
@@ -1107,7 +1111,14 @@ ipcMain.on("session:invalidate-credential", (event) => {
 // "path|exp") byte-for-byte, keyed by the per-launch secret childEnvSecrets
 // delivers to the Flask diffuser as BONZAI_MEDIA_SIGNING_SECRET.
 // ─────────────────────────────────────────────────────────────────────────────
-const MEDIA_SIGNED_URL_TTL_SECONDS = 60;
+// R4 (branch-review fix 4): 5 minutes rather than 60s, so typical media
+// playback (a paused/seeked <video>/<audio> element re-requesting byte
+// ranges) doesn't outlive the signature on its own. media.service.js's
+// background renewal loop (refreshExpiringEntries) is the primary defense
+// against a held URL expiring; this TTL bump gives it comfortable margin.
+// Signature validation itself (media_signature_valid in bonzai_security.py)
+// is unchanged — only the duration a client-requested `exp` may cover grows.
+const MEDIA_SIGNED_URL_TTL_SECONDS = 300;
 const mediaRoots = () => [MODEL_DIR, path.join(MODEL_DIR, "files")];
 
 function signMediaPath(canonicalPath) {
@@ -3871,42 +3882,23 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
 // OpenClaw/Hermes are external processes we don't spawn: the only way they
 // learn a credential is the on-disk config written by the *-set-enabled
 // handlers above, and that write only happens when the user flips the
-// toggle. Without this, an already-enabled integration keeps presenting the
-// external credential live at the time it was enabled — which goes stale
-// the moment the session rotates (registry.issueExternalCredential mints a
-// fresh value, invalidating the old one) — until the user disables and
-// re-enables it manually.
-//
-// Both refresh helpers (src/main/externalCredentials.js) are no-ops (not an
-// error) when the integration was never enabled: they only rewrite a
-// credential slot that already exists in the respective config file, never
-// create one.
+// toggle. There is deliberately no rekey-driven refresh here: OpenClaw/
+// Hermes' external credential is independent of the session credential and
+// is never invalidated by a session-only rotation (see
+// credentialRegistry.invalidate's "session"-scoped default and
+// rekeySessionDependents above), so a session rotation — including a wallet
+// logout — must not re-mint it. Re-minting would replace the token an
+// already-running OpenClaw/Hermes process still has loaded in memory with
+// one only the on-disk config knows about, breaking that integration until
+// the user manually restarts it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function refreshExternalIntegrationCredentials() {
-  // Nothing to rotate if neither integration has ever been enabled — that's
-  // exactly what a null getExternalCredential() means, since it's only ever
-  // minted by openclaw-set-enabled/hermes-set-enabled or the startup mint
-  // below.
-  if (!credentialRegistry.getExternalCredential()) return;
-  // Re-mint on every rotation, same as the session credential: a stale copy
-  // of the external credential already written to disk must stop working
-  // the moment we hand out a fresh one, not linger until the file is
-  // rewritten by a future toggle.
-  const token = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
-  refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
-  refreshHermesCredential(token, HERMES_ENV_PATH);
-}
-
-// R1 (branch-review fix 2): refreshExternalIntegrationCredentials() above is
-// a no-op unless an external credential ALREADY exists in this process's
-// registry — but a fresh launch's registry never has one until something
-// mints it. Without this, an integration left enabled from a PRIOR launch
-// is stuck holding that launch's now-dead token (refreshExternalIntegration-
-// Credentials never fires for it) until the user notices 401s and manually
-// re-toggles. Called once at startup (app.on("ready") below), before
-// startOpenClawAPIServer's consumers (content-pipeline.js scheduled posts,
-// openclaw.handler.js health checks) can make a request.
+// A fresh launch's registry never has an external credential minted until
+// something requests one — but an integration left enabled from a PRIOR
+// launch is stuck holding that launch's now-dead token. Called once at
+// startup (app.on("ready") below), before startOpenClawAPIServer's consumers
+// (content-pipeline.js scheduled posts, openclaw.handler.js health checks)
+// can make a request.
 function mintStartupCredentialsIfIntegrationsEnabled() {
   mintStartupExternalCredentials({
     registry: credentialRegistry,
@@ -7334,11 +7326,7 @@ app.on("ready", () => {
   // .issue() above) AND starts with no external credential minted at all —
   // so an already-enabled OpenClaw/Hermes integration is holding the
   // *previous* launch's (now-dead) token at this point. Mint a fresh one now
-  // (R1) rather than waiting for the user to notice 401s and re-toggle; the
-  // in-process rotation refresh alone cannot do this because it requires a
-  // credential to already be live in THIS process (see
-  // refreshExternalIntegrationCredentials, defined with the rest of the
-  // OpenClaw/Hermes integration config below).
+  // (R1) rather than waiting for the user to notice 401s and re-toggle.
   mintStartupCredentialsIfIntegrationsEnabled();
 });
 

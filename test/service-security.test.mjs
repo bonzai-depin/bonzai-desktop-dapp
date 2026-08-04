@@ -35,6 +35,12 @@ import {
   secretStoreKey,
   SECRET_RECORD_VERSION,
 } from "../src/main/secretStore.js";
+// Imported statically (not inside a test.before()) so this evaluates during
+// the file's initial module-load pass, before any test.before() hook has set
+// global.window. media.service.js's module-level startAutoRenewal() no-ops
+// when `window` is undefined, so the real background interval never starts;
+// tests below drive renewal deterministically via refreshExpiringEntries().
+import * as media from "../src/services/media.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_JS = path.resolve(__dirname, "..", "src", "main.js");
@@ -1183,6 +1189,134 @@ test("B5 (P10): cleanup runs before address validation, storage lookup, and reco
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// C2 (bonzai-sec-fix4 re-review): initializeVault() must purge a PREVIOUSLY
+// unlocked wallet's cached secrets before attaching a brand-new vault for a
+// DIFFERENT wallet. unlockVault()/initializeOrUnlockFromSignature() already
+// call clearVaultSwitchFailure() up front (see B5 above) - initializeVault()'s
+// "no existing vault, create one" branch was missing the same call, so
+// creating a vault for wallet B while wallet A was still unlocked left A's
+// moltbook/agentWallets/tokens attached underneath B's now-"unlocked" session.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("C2: creating a NEW vault for a different wallet purges the previously unlocked wallet's cached secrets", async () => {
+  const { store } = installVaultGlobals();
+  const restoreTime = freezeTime("2026-08-01T00:00:00.000Z");
+  try {
+    const walletA = VAULT_ADDRESS_A.toLowerCase();
+    const walletB = VAULT_ADDRESS_B.toLowerCase();
+
+    // Unlock wallet A and populate it with secrets.
+    await authVault.initializeVault(makeVaultSigner(walletA));
+    await authVault.setMoltbookCredentials("companion-c2", { apiKey: "secret-a-c2", username: "user-a" });
+    await authVault.setAgentWallet("companion-c2", {
+      address: "0x2222222222222222222222222222222222bbbb",
+      privateKey: "0x" + "22".repeat(32),
+    });
+    authVault.setAuthTokens("tok-a-c2", Date.now() + 3600_000, "refresh-a-c2");
+    await delay(1100); // flush the debounced save
+
+    assert.equal(authVault.state.isUnlocked, true, "wallet A is unlocked");
+    assert.equal(authVault.getMoltbookCredentials("companion-c2").apiKey, "secret-a-c2", "wallet A secrets readable before switch");
+
+    // Wallet B has never had a vault, so initializeVault takes the "create a
+    // new vault" branch rather than delegating to unlockVault().
+    const created = await authVault.initializeVault(makeVaultSigner(walletB));
+    assert.equal(created, true);
+
+    assert.equal(authVault.state.walletAddress, walletB, "session now belongs to wallet B");
+    assert.equal(
+      authVault.getMoltbookCredentials("companion-c2"),
+      null,
+      "wallet A's moltbook credentials must not leak into wallet B's new session",
+    );
+    assert.equal(
+      await authVault.getAgentWallet("companion-c2"),
+      null,
+      "wallet A's agent wallet must not leak into wallet B's new session",
+    );
+    assert.deepEqual(
+      authVault.getAuthTokens(),
+      { accessToken: null, tokenExpiry: null, refreshToken: null },
+      "wallet A's auth tokens must not leak into wallet B's new session",
+    );
+    assert.deepEqual(authVault.state.moltbook, {}, "state.moltbook cleared before wallet B's vault is created");
+    assert.deepEqual(authVault.state.agentWallets, {}, "state.agentWallets cleared before wallet B's vault is created");
+
+    // Wallet A's own on-disk record is untouched by the switch.
+    const walletAEnvelope = store._map.get(vaultStorageKey(walletA));
+    assert.ok(walletAEnvelope, "wallet A's envelope still exists in storage");
+  } finally {
+    restoreTime();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A2 (bonzai-sec-fix4): authenticateWithVault() previously called
+// setAccessToken() BEFORE initializeVault()/unlockVault(). If a DIFFERENT
+// wallet's vault was still unlocked (switching wallets without an
+// intervening logout), setAccessToken() persisted the just-issued token into
+// that stale vault; initializeVault()'s clearVaultSwitchFailure() then nulled
+// it out synchronously (see C2 above), and the newly created vault hardcoded
+// its auth fields to null with no later setAuthTokens() call - so the
+// freshly authenticated wallet's own token was never actually persisted.
+// This exercises the FULL auth.service.authenticateWithVault() flow (not just
+// authVault.initializeVault() in isolation, which is all C2 covers) to prove
+// the fix: unlock/create the vault for the wallet that's authenticating
+// FIRST, then persist its token - so it always lands in that wallet's own
+// vault, not a stale previous session.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("A2: authenticateWithVault persists the newly authenticated wallet's own token, even while a different wallet's vault is still unlocked", async () => {
+  const { store } = installVaultGlobals();
+  try {
+    const walletA = VAULT_ADDRESS_A.toLowerCase();
+    const walletB = VAULT_ADDRESS_B.toLowerCase();
+
+    // Wallet A signs in first and its vault is left unlocked - the
+    // "switching wallets without logging out" precondition from the report.
+    await authVault.initializeVault(makeVaultSigner(walletA));
+    assert.equal(authVault.state.isUnlocked, true);
+    assert.equal(authVault.state.walletAddress, walletA);
+
+    // Now drive the real auth.service.authenticateWithVault() flow for
+    // wallet B, mocking only the network round-trip (challenge/verify).
+    // auth.service and authVault.service both read `window`/`fetch` lazily,
+    // so they share the globals installVaultGlobals() just set.
+    global.fetch = async (url) => {
+      if (/\/auth\/challenge$/.test(url)) {
+        return { ok: true, json: async () => ({ challenge: "c2-challenge", mac: "c2-mac", message: "sign-me-B" }) };
+      }
+      if (/\/auth\/verify$/.test(url)) {
+        return { ok: true, json: async () => ({ access_token: "tok-B-fresh", expires_in: 3600, level: 1, level_value: 1 }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    };
+
+    const signerB = makeVaultSigner(walletB);
+    await auth.authenticateWithVault(signerB);
+
+    assert.equal(authVault.state.walletAddress, walletB, "vault session switched to wallet B");
+    assert.equal(authVault.state.isUnlocked, true);
+    assert.deepEqual(
+      authVault.getAuthTokens(),
+      { accessToken: "tok-B-fresh", tokenExpiry: authVault.getAuthTokens().tokenExpiry, refreshToken: null },
+      "wallet B's freshly issued token must be persisted in wallet B's OWN vault, not lost",
+    );
+    assert.ok(authVault.getAuthTokens().tokenExpiry > Date.now(), "expiry persisted alongside the token");
+
+    // And it must actually reach wallet B's on-disk envelope, not just
+    // in-memory state - saveVault() is debounced, so flush it.
+    await delay(1100);
+    const walletBEnvelope = store._map.get(vaultStorageKey(walletB));
+    assert.ok(walletBEnvelope, "wallet B's envelope exists in storage");
+  } finally {
+    // Restore installGlobals()'s fetch/window for any subsequent auth.service
+    // tests elsewhere in this file.
+    installGlobals();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P11 — storage.service.js: Pinata publishing moves to the main process
 // (src/main/pinataPublish.js / storage:publish IPC in main.js, see
 // test/main-security.test.mjs for the main-process-side coverage). Exercises:
@@ -1346,4 +1480,182 @@ test("P11 (R2): an oversized uploadContent call is rejected before the IPC bridg
     /too large/i,
   );
   assert.equal(publishCalls.length, 0, "the oversized upload must never reach the IPC bridge");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C3/C4 (bonzai-sec-fix4 re-review) — src/services/media.service.js:
+//   - isLocalMediaPath recognizes Windows drive-letter paths (C:\... or
+//     C:/...), not just POSIX absolute paths, so callers route them through
+//     the signed-URL helper instead of a broken base64 fallback (C3).
+//   - refreshExpiringEntries proactively re-signs cache entries nearing
+//     expiry, independent of any component re-render, so a URL a component
+//     captured once and just holds (ref/prop) still renews reliably (C4).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function installMediaSigner(signMediaUrl) {
+  global.window = { electronAPI: { session: { signMediaUrl } } };
+}
+
+test("C3: isLocalMediaPath recognizes POSIX and Windows drive-letter paths, and rejects everything else", () => {
+  assert.equal(media.isLocalMediaPath("/data/models/files/img.png"), true, "POSIX absolute path");
+  assert.equal(media.isLocalMediaPath("C:\\Users\\bonz\\out.mp4"), true, "Windows backslash drive path");
+  assert.equal(media.isLocalMediaPath("C:/Users/bonz/out.mp4"), true, "Windows forward-slash drive path");
+  assert.equal(media.isLocalMediaPath("d:\\media\\clip.wav"), true, "any drive letter, case-insensitive");
+  assert.equal(media.isLocalMediaPath("\\\\nas-01\\models\\clip.mp4"), true, "Windows UNC path (A4)");
+  assert.equal(media.isLocalMediaPath("//nas-01/models/clip.mp4"), true, "forward-slash UNC path");
+  assert.equal(media.isLocalMediaPath("http://example.com/x.png"), false, "remote URL is not a local path");
+  assert.equal(media.isLocalMediaPath("https://example.com/x.png"), false);
+  assert.equal(media.isLocalMediaPath("data:image/png;base64,abcd"), false, "data URL is not a local path");
+  assert.equal(media.isLocalMediaPath("bonzai-blob://abc.png"), false);
+  assert.equal(media.isLocalMediaPath("cafebabe"), false, "raw base64 payload is not a local path");
+  assert.equal(media.isLocalMediaPath(""), false);
+  assert.equal(media.isLocalMediaPath(null), false);
+  assert.equal(media.isLocalMediaPath(undefined), false);
+});
+
+test("C3: getSignedMediaStreamUrl routes a Windows drive-letter path through the signing IPC, not a base64 fallback", async () => {
+  const signCalls = [];
+  installMediaSigner(async (p) => {
+    signCalls.push(p);
+    return { ok: true, path: p, exp: Math.floor(Date.now() / 1000) + 300, sig: "windows-sig" };
+  });
+
+  const url = await media.getSignedMediaStreamUrl("C:\\Users\\bonz\\AppData\\clip.mp4");
+
+  assert.deepEqual(signCalls, ["C:\\Users\\bonz\\AppData\\clip.mp4"], "the Windows path itself was sent to the signing IPC");
+  assert.match(url, /\/media\/stream\?/, "resolves to a signed stream URL");
+  assert.match(url, /sig=windows-sig/);
+});
+
+test("C4: refreshExpiringEntries re-signs a held cache entry nearing expiry, with no caller re-reading it", async () => {
+  // The module-level cache is a shared singleton across every test in this
+  // file. refreshExpiringEntries scans ALL cached entries, so calls are
+  // filtered down to this test's own localPath rather than asserted on the
+  // raw total - otherwise an unrelated entry from another test happening to
+  // sit near "nowMs" here would make the count flaky.
+  const localPath = "/data/models/files/video-c4-renewal.mp4";
+  let expSeconds = Math.floor(Date.now() / 1000) + 300; // matches the 5-minute TTL (main.js)
+  const signCalls = [];
+  installMediaSigner(async (p) => {
+    signCalls.push(p);
+    expSeconds += 300; // each renewal mints a fresh 5-minute window
+    return { ok: true, path: p, exp: expSeconds, sig: `sig-${signCalls.filter((c) => c === localPath).length}` };
+  });
+  const callsForPath = () => signCalls.filter((p) => p === localPath).length;
+
+  const firstUrl = await media.getSignedMediaStreamUrl(localPath);
+  assert.equal(callsForPath(), 1, "initial signature requested once");
+  assert.match(firstUrl, /sig=sig-1/);
+
+  // No component ever calls signedMediaStreamSrc/getSignedMediaStreamUrl for
+  // this path again - exactly the "held ref, no re-render" scenario from C4.
+  // Simulate the clock advancing to just inside the renewal skew window.
+  const nearExpiryMs = expSeconds * 1000 - 5_000; // 5s of life left
+  media.refreshExpiringEntries(nearExpiryMs);
+  // Let the async refresh() (awaiting the mocked IPC call) settle.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(callsForPath(), 2, "refreshExpiringEntries proactively re-signed the entry ahead of expiry");
+
+  // Read via the synchronous, freshness-checking getter (what a template
+  // binding actually calls) rather than getSignedMediaStreamUrl, which
+  // unconditionally re-signs on every call and would mask what we're testing.
+  const renewedUrl = media.signedMediaStreamSrc(localPath);
+  assert.match(renewedUrl, /sig=sig-2/, "a fresh signature is now cached for the same path");
+  assert.equal(callsForPath(), 2, "reading the now-fresh entry triggers no further signing call");
+});
+
+test("C4: refreshExpiringEntries leaves entries that are not close to expiry alone", async () => {
+  const localPath = "/data/models/files/video-c4-fresh.mp4";
+  const signCalls = [];
+  installMediaSigner(async (p) => {
+    signCalls.push(p);
+    return { ok: true, path: p, exp: Math.floor(Date.now() / 1000) + 300, sig: "fresh-sig" };
+  });
+  const callsForPath = () => signCalls.filter((p) => p === localPath).length;
+
+  await media.getSignedMediaStreamUrl(localPath);
+  assert.equal(callsForPath(), 1);
+
+  // "Now" is immediately after signing - nowhere near REFRESH_SKEW_MS of the
+  // 5-minute expiry, so no renewal should be triggered for THIS path (other
+  // cached paths from earlier tests may or may not refresh; irrelevant here).
+  media.refreshExpiringEntries(Date.now());
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(callsForPath(), 1, "an entry with plenty of life left is not re-signed");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A3 (bonzai-sec-fix4): the C4 test above only proves the internal `cache`
+// Map gets a fresh entry - it re-reads the renewal via signedMediaStreamSrc(),
+// which is exactly the reactive re-render path that already worked. It never
+// exercised the documented "held ref" scenario: a caller that awaits
+// getSignedMediaStreamUrl() once and assigns the raw string to a <video>/
+// <audio> element's src has NO reactive dependency on `cache`, so a renewal
+// that only updates the Map would never reach that element at all. This
+// drives refreshExpiringEntries against a fake DOM element standing in for
+// that element and asserts its `.src` is actually updated in place.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeFakeMediaElement(initialSrc) {
+  const listeners = {};
+  return {
+    src: initialSrc,
+    get currentSrc() { return this.src; },
+    currentTime: 0,
+    paused: true,
+    ended: false,
+    played: false,
+    addEventListener(event, cb) { listeners[event] = cb; },
+    fireLoadedMetadata() { listeners.loadedmetadata?.(); },
+    play() { this.paused = false; this.played = true; return Promise.resolve(); },
+  };
+}
+
+test("A3: refreshExpiringEntries updates a bound <video> element's src directly, not just the internal cache - the held-ref scenario getSignedMediaStreamUrl() documents", async () => {
+  const localPath = "/data/models/files/video-a3-held-ref.mp4";
+  // The module-level cache is a shared singleton across every test in this
+  // file (same caveat as the C4 tests above): refreshExpiringEntries below
+  // sweeps every entry still cached from earlier tests, not just this one,
+  // so the signature counter/exp must be scoped to THIS path rather than a
+  // shared call index, or an unrelated entry's renewal shifts the count.
+  let expSeconds = Math.floor(Date.now() / 1000) + 300;
+  const signCalls = [];
+  installMediaSigner(async (p) => {
+    signCalls.push(p);
+    if (p === localPath) expSeconds += 300;
+    const exp = p === localPath ? expSeconds : Math.floor(Date.now() / 1000) + 300;
+    return { ok: true, path: p, exp, sig: `a3-sig-${signCalls.filter((c) => c === localPath).length}` };
+  });
+
+  // A caller that awaits getSignedMediaStreamUrl() once and assigns the raw
+  // string directly to a video element's src - exactly the pattern the
+  // function's own doc comment describes ("setting a ref exactly once").
+  const initialUrl = await media.getSignedMediaStreamUrl(localPath);
+  assert.match(initialUrl, /sig=a3-sig-1/);
+
+  const fakeVideo = makeFakeMediaElement(initialUrl);
+  fakeVideo.currentTime = 42.5; // mid-playback
+  fakeVideo.paused = false;
+  global.document = { querySelectorAll: () => [fakeVideo] };
+  try {
+    const nearExpiryMs = expSeconds * 1000 - 5_000;
+    media.refreshExpiringEntries(nearExpiryMs);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.match(
+      fakeVideo.src,
+      /sig=a3-sig-2/,
+      "the held <video> element's src must be updated to the renewed URL directly - a reactive re-read alone never reaches a plain ref",
+    );
+
+    // Playback position/state is restored once the (simulated) browser
+    // finishes loading the new resource.
+    fakeVideo.fireLoadedMetadata();
+    assert.equal(fakeVideo.currentTime, 42.5, "playback position restored after renewal");
+    assert.equal(fakeVideo.played, true, "playback resumed after renewal");
+  } finally {
+    delete global.document;
+  }
 });

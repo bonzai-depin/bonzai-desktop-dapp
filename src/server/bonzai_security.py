@@ -89,7 +89,7 @@ PUBLIC_PATHS = frozenset({"/auth/challenge", "/auth/verify", "/auth/refresh", "/
 # in diffuser.py still applies the full P4 containment check to every request,
 # signed or not.
 MEDIA_SIGNED_PATHS = frozenset({"/media/stream", "/media/info"})
-MEDIA_SIGNED_URL_TTL = 60  # seconds (R2: matches the Electron media:sign-url IPC).
+MEDIA_SIGNED_URL_TTL = 300  # seconds (R4: matches MEDIA_SIGNED_URL_TTL_SECONDS in src/main.js).
 
 # R1: trusted renderer origins. No wildcard; credentials are only ever attached
 # to an exact/prefix match against one of these. Override via BONZAI_TRUSTED_ORIGINS.

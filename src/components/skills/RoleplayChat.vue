@@ -3450,7 +3450,7 @@ import {
   web3Service,
 } from "../../services/web3.service.js";
 import { authFetch, socketAuthPayload } from "../../services/auth.service.js";
-import { signedMediaStreamSrc } from "../../services/media.service.js";
+import { signedMediaStreamSrc, isLocalMediaPath } from "../../services/media.service.js";
 
 // Pre-load bundled companion and scenario images using Vite's import.meta.glob
 // This ensures images are bundled with the app and available on first run
@@ -8120,8 +8120,9 @@ export default {
       if (image.startsWith("/assets/") || image.startsWith("/src/assets/") || image.startsWith("./assets/")) {
         return image;
       }
-      // Local file path - use Flask media stream endpoint (signed -- R1-R3)
-      if (image.startsWith("/")) {
+      // Local file path (POSIX or Windows drive-letter) - use Flask media
+      // stream endpoint (signed -- R1-R3)
+      if (isLocalMediaPath(image)) {
         return signedMediaStreamSrc(image);
       }
       return `data:image/png;base64,${image}`;
@@ -8133,8 +8134,9 @@ export default {
       if (audio.startsWith("bonzai-blob://")) return audio;
       if (audio.startsWith("http")) return audio;
       if (audio.startsWith("file:") || audio.startsWith("blob:")) return audio;
-      // Local file path - use Flask media stream endpoint (signed -- R1-R3)
-      if (audio.startsWith("/")) {
+      // Local file path (POSIX or Windows drive-letter) - use Flask media
+      // stream endpoint (signed -- R1-R3)
+      if (isLocalMediaPath(audio)) {
         return signedMediaStreamSrc(audio);
       }
       return `data:audio/wav;base64,${audio}`;
@@ -8200,8 +8202,9 @@ export default {
       if (video.startsWith("data:")) return video;
       if (video.startsWith("bonzai-blob://")) return video;
       if (video.startsWith("http")) return video;
-      // Local file path - use Flask media stream endpoint (signed -- R1-R3)
-      if (video.startsWith("/")) {
+      // Local file path (POSIX or Windows drive-letter) - use Flask media
+      // stream endpoint (signed -- R1-R3)
+      if (isLocalMediaPath(video)) {
         return signedMediaStreamSrc(video);
       }
       return video;

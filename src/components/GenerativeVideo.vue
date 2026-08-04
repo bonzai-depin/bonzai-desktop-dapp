@@ -420,7 +420,7 @@ import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addVideoInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
-import { signedMediaStreamSrc } from "../services/media.service.js";
+import { signedMediaStreamSrc, isLocalMediaPath } from "../services/media.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -1717,11 +1717,14 @@ export default {
       if (!data) return "";
       // Prefer HTTP streaming URL if already provided
       if (data.video_url) return data.video_url;
-      // Use streaming endpoint for local file paths
+      // Use streaming endpoint for local file paths (POSIX or Windows
+      // drive-letter -- R1-R3, R3 Windows path fix)
       if (data.video_path) {
-        if (/^https?:\/\//i.test(data.video_path)) return data.video_path;
-        // Signed URL (R1-R3): the video element can't send x-bonzai-session.
-        return signedMediaStreamSrc(data.video_path);
+        if (isLocalMediaPath(data.video_path)) {
+          // Signed URL (R1-R3): the video element can't send x-bonzai-session.
+          return signedMediaStreamSrc(data.video_path);
+        }
+        return data.video_path;
       }
       return "";
     };
@@ -1770,11 +1773,12 @@ export default {
       });
     };
 
-    // Convert local path to streaming URL (signed -- R1-R3)
+    // Convert local path to streaming URL (signed -- R1-R3). Local paths
+    // include Windows drive-letter paths (e.g. C:\...), not just POSIX ones.
     const fileUrl = (p) => {
       if (!p) return "";
-      if (/^https?:\/\//i.test(p)) return p;
-      return signedMediaStreamSrc(p);
+      if (isLocalMediaPath(p)) return signedMediaStreamSrc(p);
+      return p;
     };
 
     const downloadVideo = async (idx) => {

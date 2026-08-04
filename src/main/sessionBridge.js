@@ -218,16 +218,20 @@ export function createSessionBridge({ registry, authorize, rekeyDependents } = {
   }
 
   /**
-   * Synchronous invalidation for logout: kills the current registry
-   * generation immediately so every previously issued credential dies at
-   * once, without waiting for a rotate/rekey round-trip. The renderer calls
-   * this over sendSync; the old generation is rejected by the registry from
-   * this point on.
+   * Synchronous invalidation for logout: kills the current SESSION
+   * credential generation immediately so every previously issued session
+   * credential dies at once, without waiting for a rotate/rekey round-trip.
+   * The renderer calls this over sendSync; the old generation is rejected by
+   * the registry from this point on.
+   *
+   * Scoped to "session" only (registry default) — wallet logout must not
+   * take down the external OpenClaw/Hermes credential, which is unrelated to
+   * wallet auth and stays live so those integrations keep working.
    */
   function invalidate(sender) {
     const decision = authz(sender);
     if (!decision.ok) return { ok: false, reason: decision.reason };
-    registry.invalidate();
+    registry.invalidate({ scope: "session" });
     return { ok: true };
   }
 

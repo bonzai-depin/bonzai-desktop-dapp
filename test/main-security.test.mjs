@@ -883,6 +883,152 @@ test("B1: invalidate denies an untrusted sender without touching the registry", 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// C1 (bonzai-sec-fix4 re-review): invalidate() must be scoped to the SESSION
+// credential only. Wallet logout (bridge.invalidate, sendSync from the
+// renderer) must not take down the external OpenClaw/Hermes credential -
+// those integrations are independent of wallet auth and must keep validating
+// after a logout.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("C1: registry.invalidate() defaults to session scope only - external credential survives", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(209) });
+  registry.issue();
+  const externalToken = registry.issueExternalCredential("openclaw");
+
+  registry.invalidate();
+
+  assert.equal(registry.getSessionCredential(), null, "session credential dies immediately");
+  assert.equal(
+    registry.validate({ token: externalToken, type: "local-session", scope: "openclaw" }),
+    true,
+    "external credential still validates after a plain invalidate()",
+  );
+  assert.equal(registry.getExternalCredential(), externalToken, "external credential still live");
+});
+
+test("C1: registry.invalidate({ scope: \"external\" }) drops only the external credential", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(210) });
+  registry.issue();
+  const sessionToken = registry.getSessionCredential();
+  registry.issueExternalCredential("openclaw");
+
+  registry.invalidate({ scope: "external" });
+
+  assert.equal(registry.getExternalCredential(), null, "external credential dropped");
+  assert.equal(
+    registry.validate({ token: sessionToken, type: "local-session", scope: "local-session" }),
+    true,
+    "session credential untouched by an external-scoped invalidate",
+  );
+});
+
+test("C1: registry.invalidate({ scope: \"all\" }) drops both credentials", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(211) });
+  registry.issue();
+  registry.issueExternalCredential("openclaw");
+
+  registry.invalidate({ scope: "all" });
+
+  assert.equal(registry.getSessionCredential(), null);
+  assert.equal(registry.getExternalCredential(), null);
+});
+
+test("C1: registry.invalidate() rejects an unknown scope", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(212) });
+  registry.issue();
+  assert.throws(() => registry.invalidate({ scope: "bogus" }), /scope/);
+});
+
+test("C1: logout via the session bridge kills the session credential but leaves the external credential live", () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(213) });
+  registry.issue();
+  const externalToken = registry.issueExternalCredential("openclaw");
+  const bridge = createSessionBridge({ registry, authorize: () => ({ ok: true }) });
+
+  const obtained = bridge.obtain(trustedSender(DEV_URL));
+  assert.equal(obtained.ok, true);
+
+  const result = bridge.invalidate(trustedSender(DEV_URL));
+  assert.deepEqual(result, { ok: true });
+
+  assert.deepEqual(
+    bridge.obtain(trustedSender(DEV_URL)),
+    { ok: false, reason: "no-credential" },
+    "session credential rejected after logout",
+  );
+  assert.equal(
+    registry.validate({ token: externalToken, type: "local-session", scope: "openclaw" }),
+    true,
+    "external (OpenClaw/Hermes) credential still validates after wallet logout - integrations keep working",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A1 (bonzai-sec-fix4): auth.service.js's logout() does not stop at
+// bridge.invalidate() — it goes on to await bridge.rotate() (see
+// session:rotate-credential / rotateCredential()), which rekeys Flask/
+// rpc-server AND, before this fix, re-minted the OpenClaw/Hermes external
+// credential as a side effect (rekeySessionDependents ->
+// refreshExternalIntegrationCredentials -> issueExternalCredential). That
+// silently invalidated the token an already-running OpenClaw/Hermes process
+// still had loaded in memory, so integrations kept 401ing after logout even
+// though the C1 tests above (which exercise invalidate() alone) passed. The
+// fix decouples the external credential's lifecycle from session rotation
+// entirely: rekeySessionDependents must never call issueExternalCredential.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("A1: rekeySessionDependents in main.js never re-mints the external (OpenClaw/Hermes) credential", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const fnMatch = src.match(/const rekeySessionDependents = async \(\) => \{[\s\S]*?\n\};/);
+  assert.ok(fnMatch, "could not locate rekeySessionDependents in main.js");
+  const body = fnMatch[0];
+  assert.ok(
+    !/issueExternalCredential/.test(body),
+    "rekeySessionDependents must not mint a new external credential - that lifecycle is independent of session rotation",
+  );
+  assert.ok(
+    !/refreshExternalIntegrationCredentials/.test(body),
+    "rekeySessionDependents must not refresh OpenClaw/Hermes' on-disk credential as a side effect of session rotation",
+  );
+});
+
+test("A1: full logout sequence (invalidate THEN rotate, mirroring auth.service.logout()) leaves the external credential live", async () => {
+  const registry = createCredentialRegistry({ rng: makeDeterministicRng(214) });
+  registry.issue();
+  const externalToken = registry.issueExternalCredential("openclaw");
+  const rekeyCalls = [];
+  const bridge = createSessionBridge({
+    registry,
+    authorize: () => ({ ok: true }),
+    // Stands in for the real rekeySessionDependents: rekeys local session
+    // dependents only, exactly like the fixed main.js implementation - never
+    // touches the external credential.
+    rekeyDependents: async () => { rekeyCalls.push(true); },
+  });
+
+  // Step 1: auth.service.logout()'s synchronous invalidateCredential() call.
+  const invalidateResult = bridge.invalidate(trustedSender(DEV_URL));
+  assert.deepEqual(invalidateResult, { ok: true });
+
+  // Step 2: auth.service.logout()'s subsequent awaited rotateCredential()
+  // call - the step the C1 tests above never reach.
+  const rotateResult = await bridge.rotate(trustedSender(DEV_URL));
+  assert.equal(rotateResult.ok, true);
+  assert.equal(rekeyCalls.length, 1, "rotate must still rekey session dependents");
+
+  assert.equal(
+    registry.validate({ token: externalToken, type: "local-session", scope: "openclaw" }),
+    true,
+    "external (OpenClaw/Hermes) credential must survive the FULL logout sequence, not just invalidate() alone",
+  );
+  assert.equal(
+    registry.getExternalCredential(),
+    externalToken,
+    "external credential token must be unchanged - a running OpenClaw/Hermes process still has this exact value loaded",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P6 — Authenticate and validate the OpenClaw API (src/main/openclawServer.js)
 //
 // The server factory takes plain injected dependencies (no Electron), so
@@ -1886,7 +2032,7 @@ test("R2: authorizeMediaPath authorizes an owned-root file and denies everything
   assert.deepEqual(authorizeMediaPath({ requestedPath: null, roots }), { ok: false, reason: "invalid-path" });
 });
 
-test("R2: media:sign-url is registered, sender-validated via sessionAuthorize, contained via authorizeMediaPath, and TTL-bounded to 60s", () => {
+test("R2/R4: media:sign-url is registered, sender-validated via sessionAuthorize, contained via authorizeMediaPath, and TTL-bounded to a short, playback-compatible duration", () => {
   const src = fs.readFileSync(MAIN_JS, "utf8");
   const start = src.indexOf('ipcMain.handle("media:sign-url"');
   assert.notEqual(start, -1, "expected the media:sign-url ipcMain.handle registration");
@@ -1897,10 +2043,15 @@ test("R2: media:sign-url is registered, sender-validated via sessionAuthorize, c
   assert.ok(/authorizeMediaPath\(/.test(handlerSrc), "must contain the path via authorizeMediaPath (P4-style)");
   assert.ok(/authz\.ok/.test(handlerSrc) || /\.ok\s*\)/.test(handlerSrc), "must branch on the sender authorization result");
 
-  assert.ok(
-    /MEDIA_SIGNED_URL_TTL_SECONDS\s*=\s*60/.test(src),
-    "signed media URL TTL must be exactly 60 seconds",
-  );
+  // R4 (bonzai-sec-fix4 re-review): bumped from 60s to a playback-compatible
+  // duration (media.service.js's background renewal loop is the primary
+  // defense against a held URL expiring; this TTL just gives it margin).
+  // Still short-lived, not a de-facto unlimited grant.
+  const ttlMatch = src.match(/MEDIA_SIGNED_URL_TTL_SECONDS\s*=\s*(\d+)/);
+  assert.ok(ttlMatch, "MEDIA_SIGNED_URL_TTL_SECONDS must be a literal numeric constant");
+  const ttlSeconds = Number(ttlMatch[1]);
+  assert.ok(ttlSeconds >= 60, "TTL must be at least the original 60s");
+  assert.ok(ttlSeconds <= 900, "TTL must stay short-lived (<= 15 minutes), not a de-facto unlimited grant");
   assert.ok(
     /createHmac\(\s*["']sha256["']/.test(src) && /getMediaSigningSecret\(\)/.test(src),
     "signing must use HMAC-SHA256 keyed by the registry's dedicated media signing secret",

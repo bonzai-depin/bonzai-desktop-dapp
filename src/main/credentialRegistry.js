@@ -103,7 +103,12 @@ function safeEqual(a, b) {
  *   validate({ token, type, scope, generation })
  *                                    Constant-time validation; fails closed on
  *                                    wrong type / scope, expiry, or stale generation.
- *   invalidate()                     Drop the current credential; further use fails.
+ *   invalidate({ scope })            Drop the credential(s) in `scope` ("session"
+ *                                    [default], "external", or "all"); further
+ *                                    use of the dropped credential(s) fails.
+ *                                    Wallet logout must only kill the session
+ *                                    credential — external integrations
+ *                                    (OpenClaw/Hermes) keep validating.
  *   getSessionCredential()           Raw session token (for env delivery only),
  *                                    or null when no credential is live or the
  *                                    live one has expired (mirrors validate()).
@@ -212,9 +217,22 @@ export function createCredentialRegistry({
     return sessionOk || externalOk;
   }
 
-  function invalidate() {
-    current = null;
-    currentExternal = null;
+  // Scope-aware: defaults to the session credential ONLY. Wallet logout calls
+  // this with no arguments (see sessionBridge.js), and must NOT kill the
+  // external OpenClaw/Hermes credential — those integrations are independent
+  // of wallet auth and would otherwise go dead until the user re-toggles them.
+  // Pass { scope: "external" } or { scope: "all" } for the rare caller that
+  // actually needs to drop the external credential too.
+  function invalidate({ scope = "session" } = {}) {
+    if (scope !== "session" && scope !== "external" && scope !== "all") {
+      throw new Error('invalidate scope must be "session", "external", or "all"');
+    }
+    if (scope === "session" || scope === "all") {
+      current = null;
+    }
+    if (scope === "external" || scope === "all") {
+      currentExternal = null;
+    }
   }
 
   // Only ever return a credential the registry itself still considers valid.

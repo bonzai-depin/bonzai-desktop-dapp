@@ -635,7 +635,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 import { authFetch } from '../../services/auth.service.js';
-import { signedMediaStreamSrc } from '../../services/media.service.js';
+import { signedMediaStreamSrc, isLocalMediaPath } from '../../services/media.service.js';
 import BzCloseButton from '../BzCloseButton.vue';
 
 const SKILL_ID = 'live-streaming-v1.0.0';
@@ -723,8 +723,9 @@ export default {
       if (image.startsWith('data:')) return image;
       if (image.startsWith('http')) return image;
       if (image.startsWith('/assets/') || image.startsWith('/src/assets/') || image.startsWith('./assets/')) return image;
-      if (image.startsWith('/')) {
+      if (isLocalMediaPath(image)) {
         // Signed URL (R1-R3): the <img> element can't send x-bonzai-session.
+        // Local file path (POSIX or Windows drive-letter).
         return signedMediaStreamSrc(image);
       }
       return `data:image/png;base64,${image}`;

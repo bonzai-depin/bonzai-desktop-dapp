@@ -294,20 +294,22 @@ export const authenticateWithVault = async (signer) => {
 
     // 4. Store tokens and state
     const data = await verifyRes.json();
-    setAccessToken(data.access_token, data.expires_in);
 
-    state.walletAddress = address.toLowerCase();
-    ({ level: state.level, levelValue: state.levelValue } = normalizeLevel(data));
-    state.isAuthenticated = true;
-
-    // Sync auth state to electron store so main process can check it
-    syncAuthToStore();
-
-    // 5. Initialize/unlock the vault. This needs a reproducible key
-    // derivation, which the (randomized, per-login) challenge signature
-    // above cannot provide, so it goes through initializeVault/unlockVault -
-    // both sign a message this service controls and persist/reconstruct the
-    // derivation metadata needed to derive the identical key next time.
+    // 5. Initialize/unlock the vault for THIS wallet BEFORE setAccessToken()
+    // runs below. This needs a reproducible key derivation, which the
+    // (randomized, per-login) challenge signature above cannot provide, so
+    // it goes through initializeVault/unlockVault - both sign a message
+    // this service controls and persist/reconstruct the derivation metadata
+    // needed to derive the identical key next time.
+    //
+    // Order matters: if a DIFFERENT wallet's vault is still unlocked when
+    // this runs (e.g. switching wallets without an intervening logout),
+    // setAccessToken() persists the freshly issued token into whichever
+    // vault is unlocked at the moment it's called. Unlocking/creating this
+    // wallet's own vault first - which tears down the previous wallet's
+    // session (see clearVaultSwitchFailure in authVault.service.js) - makes
+    // sure setAccessToken() below always writes into the vault that actually
+    // belongs to the wallet that just authenticated.
     try {
       const vaultAlreadyExists = await authVault.hasVault(address.toLowerCase());
       const vaultResult = vaultAlreadyExists
@@ -331,6 +333,18 @@ export const authenticateWithVault = async (signer) => {
       // Vault is non-critical - log but don't fail auth
       console.warn("[Auth] Vault initialization failed:", vaultError.message);
     }
+
+    // Now that the correct wallet's vault (if any) is unlocked, persist the
+    // access token - authVault.setAuthTokens() below lands in this wallet's
+    // own vault, not a stale previous session.
+    setAccessToken(data.access_token, data.expires_in);
+
+    state.walletAddress = address.toLowerCase();
+    ({ level: state.level, levelValue: state.levelValue } = normalizeLevel(data));
+    state.isAuthenticated = true;
+
+    // Sync auth state to electron store so main process can check it
+    syncAuthToStore();
 
     console.log(`[Auth] Authenticated as ${address} with ${data.level}`);
 

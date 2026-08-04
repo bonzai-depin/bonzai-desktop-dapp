@@ -351,6 +351,16 @@ export async function initializeOrUnlockFromSignature(address, signature) {
  * Call this after first wallet connection
  */
 export async function initializeVault(signer) {
+  // Tear down any previously unlocked wallet's cached secrets before doing
+  // any lookups for the wallet we're switching to. Without this, creating a
+  // brand-new vault for wallet B while wallet A is still unlocked would set
+  // state.walletAddress/isUnlocked to B while leaving A's moltbook/
+  // agentWallets/openclaw/p2p/auth-token state in place, exposing A's
+  // secrets under B's now-"unlocked" session. Mirrors the same-named fix in
+  // unlockVault() / initializeOrUnlockFromSignature() - see
+  // clearVaultSwitchFailure() above.
+  clearVaultSwitchFailure();
+
   const address = (await signer.getAddress()).toLowerCase();
 
   if (!isValidAddress(address)) {
