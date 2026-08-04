@@ -41,6 +41,7 @@ import {
   authorizeRead,
   authorizeWrite,
   authorizeVideoRequest,
+  authorizeMediaPath,
   parseLocalVideoUrl,
   isWithinRoot,
   VIDEO_EXTENSIONS,
@@ -299,20 +300,25 @@ test("AC3: childEnvSecrets delivers session credential + non-default signing sec
 
   const session = reg.getSessionCredential();
   const signing = reg.getFlaskSigningSecret();
+  const mediaSigning = reg.getMediaSigningSecret();
 
-  // Two distinct, non-default secrets present under the expected env keys,
+  // Distinct, non-default secrets present under the expected env keys,
   // plus the credential's epoch-second expiry (bonzai_security.py's
   // validate_startup_secrets/session_credential_active require it).
   assert.deepEqual(
     Object.keys(env).sort(),
-    [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.SESSION_EXPIRES, CREDENTIAL_ENV.FLASK_SIGNING].sort(),
+    [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.SESSION_EXPIRES, CREDENTIAL_ENV.FLASK_SIGNING, CREDENTIAL_ENV.MEDIA_SIGNING].sort(),
   );
   assert.equal(env[CREDENTIAL_ENV.SESSION], session);
   assert.equal(env[CREDENTIAL_ENV.FLASK_SIGNING], signing);
+  assert.equal(env[CREDENTIAL_ENV.MEDIA_SIGNING], mediaSigning);
   assert.equal(env[CREDENTIAL_ENV.SESSION_EXPIRES], String(Math.floor(reg.describe().expiresAt / 1000)));
   assert.notEqual(session, signing, "session credential and signing secret are separate");
+  assert.notEqual(mediaSigning, signing, "media signing secret and Flask signing secret are separate");
+  assert.notEqual(mediaSigning, session, "media signing secret and session credential are separate");
   assert.ok(hexBitLength(session) >= ENTROPY_BITS_MIN);
   assert.ok(hexBitLength(signing) >= ENTROPY_BITS_MIN);
+  assert.ok(hexBitLength(mediaSigning) >= ENTROPY_BITS_MIN);
   assert.notEqual(signing, "bonzai-secret-key", "signing secret must not be the hardcoded default");
   assert.notEqual(signing, "");
 });
@@ -321,7 +327,7 @@ test("AC3: secrets do not appear in argv, URLs, logs, store data, or fixtures", 
   const reg = createCredentialRegistry({ rng: makeDeterministicRng(22) });
   reg.issue();
   const env = childEnvSecrets(reg);
-  const secrets = [env[CREDENTIAL_ENV.SESSION], env[CREDENTIAL_ENV.FLASK_SIGNING]];
+  const secrets = [env[CREDENTIAL_ENV.SESSION], env[CREDENTIAL_ENV.FLASK_SIGNING], env[CREDENTIAL_ENV.MEDIA_SIGNING]];
 
   // Representative surfaces a child launch touches. None may carry a secret.
   const argv = ["-p", "65000", "--mode", "release"];
@@ -359,6 +365,7 @@ test("AC3: env names are stable and documented as the sole delivery channel", ()
     SESSION: "BONZAI_SESSION_CREDENTIAL",
     SESSION_EXPIRES: "BONZAI_SESSION_EXPIRES",
     FLASK_SIGNING: "SECRET_KEY",
+    MEDIA_SIGNING: "BONZAI_MEDIA_SIGNING_SECRET",
   });
 });
 
@@ -445,6 +452,7 @@ test("A1: childEnvSecrets omits an expired session credential so a restarted chi
   );
   // The Flask signing secret is per-launch and never expires, so it is still delivered.
   assert.equal(expired[CREDENTIAL_ENV.FLASK_SIGNING], reg.getFlaskSigningSecret());
+  assert.equal(expired[CREDENTIAL_ENV.MEDIA_SIGNING], reg.getMediaSigningSecret());
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -470,6 +478,11 @@ test("A2: childEnvSecrets omits the Flask signing secret when flask:false", () =
     false,
     "signing secret must not be disclosed to a non-Flask child",
   );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(env, CREDENTIAL_ENV.MEDIA_SIGNING),
+    false,
+    "media signing secret must not be disclosed to a non-Flask child",
+  );
 });
 
 test("A2: default childEnvSecrets still delivers both secrets (diffuser path unchanged)", () => {
@@ -478,7 +491,7 @@ test("A2: default childEnvSecrets still delivers both secrets (diffuser path unc
   const env = childEnvSecrets(reg);
   assert.deepEqual(
     Object.keys(env).sort(),
-    [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.SESSION_EXPIRES, CREDENTIAL_ENV.FLASK_SIGNING].sort(),
+    [CREDENTIAL_ENV.SESSION, CREDENTIAL_ENV.SESSION_EXPIRES, CREDENTIAL_ENV.FLASK_SIGNING, CREDENTIAL_ENV.MEDIA_SIGNING].sort(),
   );
 });
 
@@ -1693,6 +1706,189 @@ test("P7: parseLocalVideoUrl strictly decodes exactly once and rejects malformed
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// R5 (bonzai-sec-fix1-media): Windows file:// / local-video:// URL
+// construction. `file://${path.join(...)}` and `local-video://${nativePath}`
+// embed a bare drive letter and backslashes directly after the scheme on
+// Windows, which `new URL()` cannot parse as the intended path -- breaking
+// both the packaged main-window load and the local-video:// protocol
+// handler. pathToFileURL(...).pathname is the well-formed, percent-encoded
+// form on every platform; parseLocalVideoUrl must decode it back correctly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("P7 R5: parseLocalVideoUrl strips the leading slash from a Windows drive-letter pathname", () => {
+  // "/C:/Users/..." is exactly what pathToFileURL("C:\\Users\\...").pathname
+  // produces on win32 -- verified independent of the host OS running this test.
+  assert.equal(parseLocalVideoUrl("local-video:///C:/Users/bonzai/video.mp4"), "C:/Users/bonzai/video.mp4");
+  assert.equal(parseLocalVideoUrl("local-video:///D:/clips/a%20b.mp4"), "D:/clips/a b.mp4");
+  // A single-letter path SEGMENT that merely looks like a drive letter mid-path
+  // (not at the very start) must not be mangled.
+  assert.equal(parseLocalVideoUrl("local-video:///Users/c:/video.mp4"), "/Users/c:/video.mp4");
+  // POSIX paths have no drive-letter prefix to strip -- untouched.
+  assert.equal(parseLocalVideoUrl("local-video:///Users/bonzai/video.mp4"), "/Users/bonzai/video.mp4");
+});
+
+test("P7 R5: select-video-file builds the local-video:// URL from pathToFileURL(...).pathname, not raw path concatenation", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const start = src.indexOf('ipcMain.handle("select-video-file"');
+  assert.notEqual(start, -1, "expected the select-video-file handler");
+  const end = src.indexOf("\n});", start);
+  const handlerSrc = src.slice(start, end);
+  assert.ok(
+    /pathToFileURL\(real\)\.pathname/.test(handlerSrc),
+    "select-video-file must build the local-video:// URL via pathToFileURL(real).pathname",
+  );
+  assert.equal(
+    /local-video:\/\/\$\{picked\}/.test(handlerSrc),
+    false,
+    "must not concatenate the raw picked path directly after the scheme (breaks on Windows drive letters)",
+  );
+});
+
+test("P7 R5: the pathToFileURL(...).pathname encoding and parseLocalVideoUrl decoding agree bit-for-bit for a Windows path", () => {
+  // Simulates pathToFileURL("C:\\Users\\bonzai\\My Videos\\clip.mp4").pathname
+  // on win32 without depending on the host OS running this test.
+  const windowsPathname = "/C:/Users/bonzai/My%20Videos/clip.mp4";
+  assert.equal(
+    parseLocalVideoUrl(`local-video://${windowsPathname}`),
+    "C:/Users/bonzai/My Videos/clip.mp4",
+  );
+});
+
+test("P2/R5: sessionWindowUrl is built via pathToFileURL, never raw file://${path.join(...)} string concatenation", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const match = src.match(/const sessionWindowUrl = \(\) =>[\s\S]*?;\n/);
+  assert.ok(match, "expected a sessionWindowUrl definition");
+  assert.ok(
+    /pathToFileURL\(/.test(match[0]),
+    "sessionWindowUrl's packaged fallback must use pathToFileURL (Windows-safe)",
+  );
+  assert.equal(
+    /`file:\$\{/.test(match[0]),
+    false,
+    "must not concatenate file:// with a raw path.join(...) result",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R2 (bonzai-sec-fix1-media): media:sign-url IPC — P2 sender-validated,
+// P4-style contained (authorizeMediaPath), short (60s) TTL.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("R2: authorizeMediaPath authorizes an owned-root file and denies everything outside the configured media roots", () => {
+  const roots = [OWNED_ROOT, OWNED_FILES];
+  const inside = authorizeMediaPath({ requestedPath: ownedFile, roots });
+  assert.equal(inside.ok, true);
+  assert.equal(inside.canonicalPath, fs.realpathSync(ownedFile));
+
+  const nested = authorizeMediaPath({ requestedPath: nestedOwnedFile, roots });
+  assert.equal(nested.ok, true);
+
+  const outside = authorizeMediaPath({ requestedPath: outsideFile, roots });
+  assert.equal(outside.ok, false);
+  assert.equal(outside.reason, "outside-roots");
+
+  const sibling = authorizeMediaPath({ requestedPath: siblingFile, roots });
+  assert.equal(sibling.ok, false, "a sibling sharing the root's string prefix must not pass");
+
+  const symlinkEscape = authorizeMediaPath({ requestedPath: symlinkEscapeRead, roots });
+  assert.equal(symlinkEscape.ok, false, "a symlink resolving outside every root must be denied");
+
+  const missing = authorizeMediaPath({ requestedPath: path.join(OWNED_ROOT, "nope.mp4"), roots });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, "not-found");
+
+  const dir = authorizeMediaPath({ requestedPath: OWNED_ROOT, roots });
+  assert.equal(dir.ok, false);
+  assert.equal(dir.reason, "not-a-file");
+
+  assert.deepEqual(authorizeMediaPath({ requestedPath: "", roots }), { ok: false, reason: "invalid-path" });
+  assert.deepEqual(authorizeMediaPath({ requestedPath: null, roots }), { ok: false, reason: "invalid-path" });
+});
+
+test("R2: media:sign-url is registered, sender-validated via sessionAuthorize, contained via authorizeMediaPath, and TTL-bounded to 60s", () => {
+  const src = fs.readFileSync(MAIN_JS, "utf8");
+  const start = src.indexOf('ipcMain.handle("media:sign-url"');
+  assert.notEqual(start, -1, "expected the media:sign-url ipcMain.handle registration");
+  const end = src.indexOf("\n});", start);
+  const handlerSrc = src.slice(start, end);
+
+  assert.ok(/sessionAuthorize\(/.test(handlerSrc), "must validate the sender via the P2 sessionAuthorize path");
+  assert.ok(/authorizeMediaPath\(/.test(handlerSrc), "must contain the path via authorizeMediaPath (P4-style)");
+  assert.ok(/authz\.ok/.test(handlerSrc) || /\.ok\s*\)/.test(handlerSrc), "must branch on the sender authorization result");
+
+  assert.ok(
+    /MEDIA_SIGNED_URL_TTL_SECONDS\s*=\s*60/.test(src),
+    "signed media URL TTL must be exactly 60 seconds",
+  );
+  assert.ok(
+    /createHmac\(\s*["']sha256["']/.test(src) && /getMediaSigningSecret\(\)/.test(src),
+    "signing must use HMAC-SHA256 keyed by the registry's dedicated media signing secret",
+  );
+});
+
+test("R2: preload exposes session.signMediaUrl invoking media:sign-url", () => {
+  const src = fs.readFileSync(PRELOAD_JS, "utf8");
+  assert.ok(
+    /signMediaUrl\s*:\s*\(\s*path\s*\)\s*=>\s*ipcRenderer\.invoke\(\s*["']media:sign-url["']/.test(src),
+    "preload must expose session.signMediaUrl wired to the media:sign-url IPC channel",
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R3 (bonzai-sec-fix1-media): every renderer site that used to build a raw,
+// unauthenticated `${API_BASE}/media/stream?path=...` (or the localhost:port
+// equivalent) URL for an HTML media source must go through the signed-URL
+// helper (src/services/media.service.js) instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("R3: no .vue component builds a raw, unsigned media/stream URL", () => {
+  const componentsDir = path.resolve(REPO_ROOT, "src", "components");
+  const vueFiles = [];
+  (function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".vue")) vueFiles.push(full);
+    }
+  })(componentsDir);
+  assert.ok(vueFiles.length > 20, "sanity: expected many .vue components under src/components");
+
+  for (const file of vueFiles) {
+    const src = fs.readFileSync(file, "utf8");
+    assert.equal(
+      /media\/stream\?path=/.test(src),
+      false,
+      `${path.relative(REPO_ROOT, file)} still builds a raw, unsigned media/stream URL`,
+    );
+  }
+});
+
+test("R3: media.service.js exposes the signed-media-URL helpers and calls the sign-url IPC, never a raw media/stream concatenation", () => {
+  const mediaServiceJs = path.resolve(__dirname, "..", "src", "services", "media.service.js");
+  const src = fs.readFileSync(mediaServiceJs, "utf8");
+  assert.ok(/export function signedMediaStreamSrc/.test(src));
+  assert.ok(/export (async )?function getSignedMediaStreamUrl/.test(src));
+  assert.ok(/electronAPI\??\.session\??\.signMediaUrl/.test(src), "must go through the sign-url IPC, not a raw URL");
+  assert.ok(/media\/stream\?/.test(src), "the ONE place a media/stream URL is assembled is from the signed result");
+});
+
+test("R3: at least one component per media kind (image/audio/video) imports the signed-media-URL helper", async () => {
+  const mediaServiceRel = "../services/media.service.js";
+  const files = [
+    path.resolve(REPO_ROOT, "src", "components", "GenerativeAudio.vue"),
+    path.resolve(REPO_ROOT, "src", "components", "GenerativeVideo.vue"),
+    path.resolve(REPO_ROOT, "src", "components", "skills", "RoleplayChat.vue"),
+  ];
+  for (const file of files) {
+    const src = fs.readFileSync(file, "utf8");
+    assert.ok(
+      /from ["'](\.\.\/)+services\/media\.service\.js["']/.test(src),
+      `${path.relative(REPO_ROOT, file)} must import the signed-media-URL helper`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P8 — Per-integration outbound egress policy (src/main/egressPolicy.js),
 // wired into social:api-call, social:media-upload, and proxy:fetch in
 // main.js. Replaces generic proxying (arbitrary URL/headers forwarded to
@@ -2546,6 +2742,14 @@ test("P12 AC1: packaged connect-src is scoped to self, loopback, and https/wss �
   assert.ok(d["connect-src"].includes("wss:"));
   assert.equal(d["connect-src"].includes("*"), false);
   assert.equal(d["connect-src"].some((v) => v.includes("0.0.0.0")), false, "must never widen to all-interfaces");
+});
+
+test("R4 (bonzai-sec-fix1-media): img-src/media-src allow http://127.0.0.1:* (the default API_BASE) alongside the existing localhost entries", () => {
+  const d = parseCsp(PACKAGED_CSP);
+  assert.ok(d["img-src"].includes("http://127.0.0.1:*"), "img-src must allow the default 127.0.0.1 API_BASE");
+  assert.ok(d["img-src"].includes("http://localhost:*"), "existing localhost allowance must be kept");
+  assert.ok(d["media-src"].includes("http://127.0.0.1:*"), "media-src must allow the default 127.0.0.1 API_BASE");
+  assert.ok(d["media-src"].includes("http://localhost:*"), "existing localhost allowance must be kept");
 });
 
 test("P12 AC1: parseCsp round-trips the packaged policy string", () => {

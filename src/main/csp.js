@@ -77,15 +77,19 @@ const PACKAGED_DIRECTIVES = Object.freeze({
   "style-src-attr": ["'unsafe-inline'"],
   // https: covers avatar/media URLs the renderer resolves to remote
   // gateways before use (e.g. App.vue rewriting ipfs:// UP avatars to
-  // https://api.universalprofile.cloud/...); the loopback addition covers
+  // https://api.universalprofile.cloud/...); the loopback additions cover
   // RoleplayChat/MeditationForgeSkill's generated-image previews served
-  // from the local Flask media-stream endpoint.
-  "img-src": ["'self'", "data:", "blob:", "https:", LOCAL_SERVICE_HTTP_LOCALHOST, ...CUSTOM_MEDIA_SCHEMES],
+  // from the local Flask media-stream endpoint -- both the "localhost" and
+  // "127.0.0.1" host forms, since CSP source matching is exact on host and
+  // 127.0.0.1 is the default API_BASE the renderer's signed-media-URL
+  // helper (src/services/media.service.js) resolves against.
+  "img-src": ["'self'", "data:", "blob:", "https:", LOCAL_SERVICE_HTTP, LOCAL_SERVICE_HTTP_LOCALHOST, ...CUSTOM_MEDIA_SCHEMES],
   "font-src": ["'self'", "data:"],
   // data: covers MintModal's base64 video preview src; the loopback
-  // addition covers RoleplayChat/MeditationForgeSkill's generated
-  // audio/video served from the local Flask media-stream endpoint.
-  "media-src": ["'self'", "data:", "blob:", LOCAL_SERVICE_HTTP_LOCALHOST, ...CUSTOM_MEDIA_SCHEMES],
+  // additions cover RoleplayChat/MeditationForgeSkill's generated
+  // audio/video served from the local Flask media-stream endpoint (both
+  // host forms -- see img-src above).
+  "media-src": ["'self'", "data:", "blob:", LOCAL_SERVICE_HTTP, LOCAL_SERVICE_HTTP_LOCALHOST, ...CUSTOM_MEDIA_SCHEMES],
   // 'self' plus the app's own loopback services; https:/wss: cover the
   // many third-party chain RPC / wallet / social APIs the renderer talks
   // to directly (see .env.example), scoped by scheme (blocks plaintext

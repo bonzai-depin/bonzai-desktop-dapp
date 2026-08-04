@@ -420,6 +420,7 @@ import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addVideoInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
+import { signedMediaStreamSrc } from "../services/media.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -1719,8 +1720,8 @@ export default {
       // Use streaming endpoint for local file paths
       if (data.video_path) {
         if (/^https?:\/\//i.test(data.video_path)) return data.video_path;
-        // Use the streaming endpoint for local files
-        return `${API_BASE}/media/stream?path=${encodeURIComponent(data.video_path)}`;
+        // Signed URL (R1-R3): the video element can't send x-bonzai-session.
+        return signedMediaStreamSrc(data.video_path);
       }
       return "";
     };
@@ -1769,11 +1770,11 @@ export default {
       });
     };
 
-    // Convert local path to streaming URL
+    // Convert local path to streaming URL (signed -- R1-R3)
     const fileUrl = (p) => {
       if (!p) return "";
       if (/^https?:\/\//i.test(p)) return p;
-      return `${API_BASE}/media/stream?path=${encodeURIComponent(p)}`;
+      return signedMediaStreamSrc(p);
     };
 
     const downloadVideo = async (idx) => {

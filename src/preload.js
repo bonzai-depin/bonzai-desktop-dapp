@@ -40,6 +40,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.on("session:credential-rotated", handler);
       return () => ipcRenderer.removeListener("session:credential-rotated", handler);
     },
+    /**
+     * Mint a short-lived (60s) signed /media/stream URL for a local media
+     * path, so an <img>/<video>/<audio> element can load it without the
+     * x-bonzai-session header. Sender-validated (P2) and confined to the
+     * configured media roots (P4) in main.js; returns { ok: false } for a
+     * denied sender or a path outside those roots.
+     */
+    signMediaUrl: (path) => ipcRenderer.invoke("media:sign-url", path),
   },
   copyText: (text) => ipcRenderer.invoke("clipboard-copy-text", text),
   startServer: () => ipcRenderer.invoke("start-server"),

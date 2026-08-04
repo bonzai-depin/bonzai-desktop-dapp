@@ -55,10 +55,14 @@ const DEFAULT_SCOPES = ["local-session"];
 //                       `os.environ.get("SECRET_KEY", ...)` read already in
 //                       src/server/diffuser.py, so a non-default value takes
 //                       effect with no Python change in this step.
+//   MEDIA_SIGNING     — HMAC secret for short-lived signed /media/stream and
+//                       /media/info URLs (media:sign-url IPC). Matches
+//                       bonzai_security.MEDIA_SIGNING_SECRET_ENV.
 export const CREDENTIAL_ENV = Object.freeze({
   SESSION: "BONZAI_SESSION_CREDENTIAL",
   SESSION_EXPIRES: "BONZAI_SESSION_EXPIRES",
   FLASK_SIGNING: "SECRET_KEY",
+  MEDIA_SIGNING: "BONZAI_MEDIA_SIGNING_SECRET",
 });
 
 function defaultRng(bytes) {
@@ -136,6 +140,10 @@ export function createCredentialRegistry({
   // The Flask signing secret is minted once per registry instance (per launch)
   // and never rotated in-process. It is distinct from the session credential.
   const flaskSigningSecret = toHex(rng(SECRET_BYTES));
+  // Media-URL signing secret: also minted once per launch, independent of
+  // both secrets above. Only media:sign-url (main.js) and Flask's
+  // media_signature_valid (bonzai_security.py) ever see it.
+  const mediaSigningSecret = toHex(rng(SECRET_BYTES));
 
   // Monotonic generation counter. Bumped on every (re)issue so callers can
   // reject credentials from a prior generation even if a token were reused.
@@ -223,6 +231,10 @@ export function createCredentialRegistry({
     return flaskSigningSecret;
   }
 
+  function getMediaSigningSecret() {
+    return mediaSigningSecret;
+  }
+
   // Mint (or re-mint, on rotation) the external credential — a fresh random
   // value scoped to exactly `scope`, unrelated to the session token. This is
   // the ONLY credential this registry considers safe for a caller to persist
@@ -275,6 +287,7 @@ export function createCredentialRegistry({
     invalidate,
     getSessionCredential,
     getFlaskSigningSecret,
+    getMediaSigningSecret,
     issueExternalCredential,
     getExternalCredential,
     describe,
@@ -315,6 +328,9 @@ export function childEnvSecrets(registry, { flask = true } = {}) {
       env[CREDENTIAL_ENV.SESSION_EXPIRES] = String(Math.floor(expiresAt / 1000));
     }
   }
-  if (flask) env[CREDENTIAL_ENV.FLASK_SIGNING] = registry.getFlaskSigningSecret();
+  if (flask) {
+    env[CREDENTIAL_ENV.FLASK_SIGNING] = registry.getFlaskSigningSecret();
+    env[CREDENTIAL_ENV.MEDIA_SIGNING] = registry.getMediaSigningSecret();
+  }
   return env;
 }

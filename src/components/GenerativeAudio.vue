@@ -1047,6 +1047,7 @@ import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addAudioInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
+import { signedMediaStreamSrc } from "../services/media.service.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -2848,11 +2849,11 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       }, 2000);
     };
 
-    // Convert local path to streaming URL
+    // Convert local path to streaming URL (signed -- R1-R3)
     const fileUrl = (p) => {
       if (!p) return "";
       if (/^https?:\/\//i.test(p)) return p;
-      return `${API_BASE}/media/stream?path=${encodeURIComponent(p)}`;
+      return signedMediaStreamSrc(p);
     };
 
     const downloadAudio = async (idx) => {

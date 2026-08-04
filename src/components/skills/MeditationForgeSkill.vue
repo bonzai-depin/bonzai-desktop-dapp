@@ -318,6 +318,7 @@ import BonzaiPulse from '../BonzaiPulse.vue';
 import { getAuthHeaders, getLocalSessionHeaders } from '../../services/auth.service.js';
 import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 import { resolveLLM } from '../../skills/flagship.js';
+import { signedMediaStreamSrc } from '../../services/media.service.js';
 
 const STORAGE_KEY = 'meditation-forge-sessions';
 const SKILL_ID = 'meditation-forge-v1.0.0';
@@ -454,7 +455,14 @@ export default {
     const generationStatus = ref('');
     const generationProgress = ref(0);
     const meditationData = ref(null);
-    const audioSrc = ref('');
+    // The raw local audio path (durable) rather than a signed URL (60s TTL),
+    // so it can be re-signed on demand -- including for sessions restored
+    // from history long after the original signature has expired.
+    const audioPath = ref('');
+    const audioDataUri = ref('');
+    const audioSrc = computed(() =>
+      audioPath.value ? signedMediaStreamSrc(audioPath.value) : audioDataUri.value,
+    );
     const imageSrc = ref('');
     const isExportingVideo = ref(false);
     const exportStatus = ref('');
@@ -982,7 +990,8 @@ You are lighter now. Namaste.`,
     const selectScenario = (scenario) => {
       selectedScenario.value = scenario;
       meditationData.value = null;
-      audioSrc.value = '';
+      audioPath.value = '';
+      audioDataUri.value = '';
       imageSrc.value = '';
       audioEnded.value = false;
     };
@@ -1137,9 +1146,15 @@ Output ONLY the meditation script text, nothing else.`;
           if (audioResponse.ok) {
             const audioData = await audioResponse.json();
             if (audioData.audio_path) {
-              audioSrc.value = `http://localhost:${port}/media/stream?path=${encodeURIComponent(audioData.audio_path)}`;
+              // Signed URL (R1-R3): the <audio> element can't send x-bonzai-session.
+              // Keep the raw local path, not the signed URL it resolves to --
+              // the signature expires after 60s and must be re-minted on
+              // every playback, not just the one right after generation.
+              audioPath.value = audioData.audio_path;
+              audioDataUri.value = '';
             } else if (audioData.audio_base64) {
-              audioSrc.value = `data:audio/wav;base64,${audioData.audio_base64}`;
+              audioDataUri.value = `data:audio/wav;base64,${audioData.audio_base64}`;
+              audioPath.value = '';
             }
             console.log('[MeditationForge] Audio generated successfully:', audioSrc.value);
           } else {
@@ -1149,7 +1164,8 @@ Output ONLY the meditation script text, nothing else.`;
         } catch (audioError) {
           console.warn('[MeditationForge] Audio generation error:', audioError);
         }
-        const sessionAudioSrc = audioSrc.value;
+        const sessionAudioPath = audioPath.value;
+        const sessionAudioDataUri = audioDataUri.value;
 
         generationProgress.value = 100;
         generationStatus.value = 'Meditation ready!';
@@ -1160,7 +1176,8 @@ Output ONLY the meditation script text, nothing else.`;
           scenarioId: scenario.id,
           scenarioName: scenario.name,
           duration: selectedDuration.value,
-          audioSrc: sessionAudioSrc,
+          audioPath: sessionAudioPath,
+          audioDataUri: sessionAudioDataUri,
           imageSrc: sessionImageSrc,
           createdAt: new Date().toISOString(),
         };
@@ -1176,10 +1193,11 @@ Output ONLY the meditation script text, nothing else.`;
           duration: meditationData.value.duration,
           voice: meditationData.value.voice,
           script: meditationData.value.script,
-          audioSrc: sessionAudioSrc,
+          audioPath: sessionAudioPath,
+          audioDataUri: sessionAudioDataUri,
           imageSrc: sessionImageSrc,
           createdAt: meditationData.value.createdAt,
-          hasAudio: !!sessionAudioSrc,
+          hasAudio: !!(sessionAudioPath || sessionAudioDataUri),
           hasImage: !!sessionImageSrc,
         });
 
@@ -1366,7 +1384,8 @@ Output ONLY the meditation script text, nothing else.`;
         meditationData.value = {
           ...session,
         };
-        audioSrc.value = session.audioSrc || '';
+        audioPath.value = session.audioPath || '';
+        audioDataUri.value = session.audioDataUri || '';
         imageSrc.value = session.imageSrc || '';
         audioEnded.value = false;
         elapsedTime.value = 0;
@@ -1383,7 +1402,8 @@ Output ONLY the meditation script text, nothing else.`;
       // If we deleted the currently loaded session, clear it
       if (meditationData.value?.id === sessionId) {
         meditationData.value = null;
-        audioSrc.value = '';
+        audioPath.value = '';
+        audioDataUri.value = '';
         imageSrc.value = '';
       }
     };
@@ -1401,7 +1421,8 @@ Output ONLY the meditation script text, nothing else.`;
             duration: session.duration,
             voice: session.voice,
             script: session.script,
-            audioSrc: session.audioSrc,
+            audioPath: session.audioPath,
+            audioDataUri: session.audioDataUri,
             imageSrc: session.imageSrc,
             createdAt: session.createdAt,
             hasAudio: session.hasAudio,

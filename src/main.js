@@ -58,6 +58,7 @@ import {
   authorizeRead,
   authorizeWrite,
   authorizeVideoRequest,
+  authorizeMediaPath,
 } from "./main/fileAccess.js";
 import {
   resolveSocialPolicy,
@@ -1002,8 +1003,13 @@ function flaskSessionHeaders(extra = {}) {
 // unusable. Results carry the session token + a redacted descriptor only;
 // the Flask signing secret is never disclosed across the bridge.
 // ─────────────────────────────────────────────────────────────────────────────
+// R5: pathToFileURL() (not string concatenation) so the result is a
+// well-formed file:// URL on Windows too -- `file://${path.join(...)}`
+// embeds backslashes and a bare drive letter directly after the scheme,
+// which `new URL()` cannot parse as the intended path, breaking both the
+// window load and the P2 sender-origin comparison in sessionBridge.js.
 const sessionWindowUrl = () =>
-  VITE_DEV_SERVER_URL || `file://${path.join(__dirname, "../renderer/main_window/index.html")}`;
+  VITE_DEV_SERVER_URL || pathToFileURL(path.join(__dirname, "../renderer/main_window/index.html")).toString();
 
 const sessionAuthorize = (sender) =>
   authorizeSessionSender(sender, {
@@ -1061,6 +1067,40 @@ ipcMain.handle("session:rotate-credential", async (event) => {
 ipcMain.on("session:invalidate-credential", (event) => {
   const sender = normalizeSessionEvent(event, mainWindow);
   event.returnValue = sessionBridge.invalidate(sender);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// media:sign-url (R2 Security) — short-lived signed /media/stream and
+// /media/info URLs for HTML <img>/<video>/<audio> elements, which cannot
+// attach the x-bonzai-session header. Same P2 sender authorization as the
+// session bridge above (sessionAuthorize), plus the same P4-style
+// containment check (authorizeMediaPath) against the MODEL_DIR/
+// MODEL_DIR/files roots Flask's resolve_media_path() confines to -- a path
+// outside those roots is never signed, so the signature can never reach
+// anything the header-authenticated path wouldn't already reach. Signing
+// itself mirrors bonzai_security.compute_media_signature (HMAC-SHA256 over
+// "path|exp") byte-for-byte, keyed by the per-launch secret childEnvSecrets
+// delivers to the Flask diffuser as BONZAI_MEDIA_SIGNING_SECRET.
+// ─────────────────────────────────────────────────────────────────────────────
+const MEDIA_SIGNED_URL_TTL_SECONDS = 60;
+const mediaRoots = () => [MODEL_DIR, path.join(MODEL_DIR, "files")];
+
+function signMediaPath(canonicalPath) {
+  const exp = Math.floor(Date.now() / 1000) + MEDIA_SIGNED_URL_TTL_SECONDS;
+  const sig = crypto
+    .createHmac("sha256", credentialRegistry.getMediaSigningSecret())
+    .update(`${canonicalPath}|${exp}`)
+    .digest("hex");
+  return { path: canonicalPath, exp, sig };
+}
+
+ipcMain.handle("media:sign-url", (event, requestedPath) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const authz = sessionAuthorize(sender);
+  if (!authz.ok) return { ok: false, reason: authz.reason };
+  const decision = authorizeMediaPath({ requestedPath, roots: mediaRoots() });
+  if (!decision.ok) return { ok: false, reason: decision.reason };
+  return { ok: true, ...signMediaPath(decision.canonicalPath) };
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3032,7 +3072,14 @@ ipcMain.handle("select-video-file", async (event) => {
   if (!real) return null;
   fileGrants.register(event.sender.id, real, "read");
   const grantToken = fileGrants.registerCapability(real, "read");
-  return { path: picked, videoUrl: `local-video://${picked}?grant=${grantToken}` };
+  // R5: pathToFileURL(...).pathname is the well-formed, percent-encoded
+  // form on every platform (POSIX: "/Users/..."; Windows: "/C:/Users/...").
+  // Concatenating `picked` directly here would put a bare Windows drive
+  // letter (and its backslashes) straight after the scheme, which parses
+  // as an invalid/garbage authority instead of a path -- parseLocalVideoUrl
+  // (src/main/fileAccess.js) strips the matching leading slash back off.
+  const videoUrl = `local-video://${pathToFileURL(real).pathname}?grant=${grantToken}`;
+  return { path: picked, videoUrl };
 });
 
 ipcMain.handle("select-model-dir", async () => {

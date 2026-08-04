@@ -67,6 +67,7 @@ SESSION_CREDENTIAL_ENV = "BONZAI_SESSION_CREDENTIAL"  # scoped local credential.
 SESSION_EXPIRES_ENV = "BONZAI_SESSION_EXPIRES"   # epoch-second credential expiry.
 JWT_SECRET_ENV = "BONZAI_JWT_SECRET"             # persisted wallet-JWT secret.
 HMAC_SECRET_ENV = "BONZAI_HMAC_SECRET"           # challenge MAC secret.
+MEDIA_SIGNING_SECRET_ENV = "BONZAI_MEDIA_SIGNING_SECRET"  # short-lived media-URL HMAC secret.
 
 # R3: the ONLY paths reachable without authentication. Everything else on the
 # Flask URL map is covered by the before_request guard installed by
@@ -80,6 +81,15 @@ HMAC_SECRET_ENV = "BONZAI_HMAC_SECRET"           # challenge MAC secret.
 # before issuing the cookie-clearing request. Guarding them returned 401 and
 # left the refresh cookie intact.
 PUBLIC_PATHS = frozenset({"/auth/challenge", "/auth/verify", "/auth/refresh", "/auth/logout"})
+
+# B2/B3/B6/B7: HTML media elements (<img>/<video>/<audio>) cannot attach the
+# x-bonzai-session header, so these two routes ALSO accept a short-lived HMAC
+# signature carried in the query string (see media_signature_valid below).
+# The signature only ever substitutes for authentication -- resolve_media_path
+# in diffuser.py still applies the full P4 containment check to every request,
+# signed or not.
+MEDIA_SIGNED_PATHS = frozenset({"/media/stream", "/media/info"})
+MEDIA_SIGNED_URL_TTL = 60  # seconds (R2: matches the Electron media:sign-url IPC).
 
 # R1: trusted renderer origins. No wildcard; credentials are only ever attached
 # to an exact/prefix match against one of these. Override via BONZAI_TRUSTED_ORIGINS.
@@ -392,6 +402,61 @@ def get_wallet_level(address: str) -> tuple:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Short-lived signed media URLs (R1) — /media/stream, /media/info
+#
+# HTML <img>/<video>/<audio> elements cannot send the x-bonzai-session header,
+# so these two routes accept an alternative: a query-string signature over the
+# EXACT `path` value the request also carries, HMAC-SHA256 keyed by a secret
+# shared with the Electron main process only (never disclosed to the
+# renderer). Production signing happens in Electron's media:sign-url IPC
+# (src/main.js); sign_media_url below exists for tests and standalone use and
+# must stay byte-for-byte compatible with that IPC's scheme.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_media_signature(path: str, exp: int, secret: str) -> str:
+    """HMAC-SHA256 (hex) over ``f"{path}|{exp}"``. The exact wire format the
+    Electron signer and this verifier must agree on bit-for-bit."""
+    return hmac.new(secret.encode(), f"{path}|{exp}".encode(), hashlib.sha256).hexdigest()
+
+
+def sign_media_url(path: str, secret: str, ttl: int = MEDIA_SIGNED_URL_TTL) -> dict:
+    """Mint a ``{exp, sig}`` pair authorizing ``path`` for ``ttl`` seconds."""
+    exp = int(time.time()) + int(ttl)
+    return {"exp": exp, "sig": compute_media_signature(path, exp, secret)}
+
+
+def media_signature_valid(path: Optional[str], exp, sig: Optional[str],
+                           secret: Optional[str]) -> bool:
+    """True iff ``sig`` is a valid, unexpired signature over ``path|exp``.
+
+    Fails closed on a missing secret/path/sig, a malformed ``exp``, or an
+    expiry in the past. Compared in constant time. Callers must pass the
+    SAME ``path`` string that will subsequently go through
+    ``resolve_media_path`` -- this function authenticates the request only;
+    P4 containment is enforced separately and unconditionally.
+    """
+    if not secret or not path or not sig:
+        return False
+    try:
+        exp_int = int(exp)
+    except (TypeError, ValueError):
+        return False
+    if exp_int < int(time.time()):
+        return False
+    expected = compute_media_signature(path, exp_int, secret)
+    return hmac.compare_digest(sig, expected)
+
+
+def media_request_signature_valid(env: Optional[dict] = None) -> bool:
+    """``media_signature_valid`` applied to the in-flight Flask request's
+    ``path``/``exp``/``sig`` query params, keyed by ``BONZAI_MEDIA_SIGNING_SECRET``."""
+    env = env if env is not None else os.environ
+    secret = env.get(MEDIA_SIGNING_SECRET_ENV)
+    args = request.args
+    return media_signature_valid(args.get("path"), args.get("exp"), args.get("sig"), secret)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Request authentication (R3, R4)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -464,7 +529,13 @@ def install_cors(app: Flask, env: Optional[dict] = None,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def install_auth(app: Flask, env: Optional[dict] = None, jwt_secret: Optional[str] = None) -> None:
-    """Require authentication on every route except PUBLIC_PATHS."""
+    """Require authentication on every route except PUBLIC_PATHS.
+
+    R1: MEDIA_SIGNED_PATHS additionally accept a valid, unexpired
+    ``path``/``exp``/``sig`` query-string signature in place of the header
+    credential -- the only routes this applies to, since only they are ever
+    loaded by an HTML media element that cannot attach a custom header.
+    """
     env = env if env is not None else os.environ
 
     @app.before_request
@@ -472,6 +543,8 @@ def install_auth(app: Flask, env: Optional[dict] = None, jwt_secret: Optional[st
         if request.path in PUBLIC_PATHS:
             return None
         if request_authenticated(env, jwt_secret):
+            return None
+        if request.path in MEDIA_SIGNED_PATHS and media_request_signature_valid(env):
             return None
         return jsonify({"error": "Unauthorized"}), 401
 

@@ -49,6 +49,7 @@ REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 
 JWT_SECRET = "test-jwt-secret"
 HMAC_SECRET = "test-hmac-secret"
+MEDIA_SIGNING_SECRET = "test-media-signing-secret"
 SESSION_CRED = "scoped-session-credential-from-electron"
 TRUSTED_ORIGIN = "http://localhost:5173"
 
@@ -89,6 +90,7 @@ def _base_env(**overrides) -> dict:
         # comfortably in the future for tests that don't exercise expiry.
         security.SESSION_EXPIRES_ENV: str(int(time.time()) + 3600),
         security.JWT_SECRET_ENV: JWT_SECRET,
+        security.MEDIA_SIGNING_SECRET_ENV: MEDIA_SIGNING_SECRET,
     }
     env.update(overrides)
     return env
@@ -632,6 +634,7 @@ class TestDebugOff:
         # The signing secret / session credential must not be printed.
         assert "bonzai-secret-key" not in text
         for forbidden in ("print(SECRET_KEY", "print(JWT_SECRET", "print(HMAC_SECRET",
+                          "print(MEDIA_SIGNING_SECRET",
                           "logger.info(f\"[Auth] {JWT_SECRET}", "logger.info(JWT_SECRET"):
             assert forbidden not in text
 
@@ -1124,6 +1127,157 @@ class TestMediaConfinementDenials:
             r = media.client.get(
                 endpoint, query_string={"path": str(media.in_root_symlink)}, headers=AUTH)
             self._assert_denied(r, endpoint, b"SYMLINK-ESCAPE-SECRET-BYTES", media.outside_secret)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# R1 — short-lived signed media URLs (bonzai-sec-fix1-media)
+#
+# HTML <img>/<video>/<audio> elements can't send x-bonzai-session, so
+# /media/stream and /media/info ALSO accept a query-string HMAC signature
+# over `path|exp` in place of the header. Pure-function coverage of
+# sign_media_url/media_signature_valid first, then the real Flask app
+# (via the `media` fixture above) confirming the signed path bypasses
+# authentication only -- P4 containment is still enforced unconditionally.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _signed_query(path, ttl=60, secret=MEDIA_SIGNING_SECRET):
+    signed = security.sign_media_url(str(path), secret, ttl)
+    return {"path": str(path), "exp": str(signed["exp"]), "sig": signed["sig"]}
+
+
+class TestMediaSignatureHelpers:
+    def test_sign_and_verify_roundtrip(self):
+        signed = security.sign_media_url("/models/files/clip.mp4", MEDIA_SIGNING_SECRET)
+        assert security.media_signature_valid(
+            "/models/files/clip.mp4", signed["exp"], signed["sig"], MEDIA_SIGNING_SECRET,
+        ) is True
+
+    def test_verify_rejects_wrong_secret(self):
+        signed = security.sign_media_url("/models/files/clip.mp4", MEDIA_SIGNING_SECRET)
+        assert security.media_signature_valid(
+            "/models/files/clip.mp4", signed["exp"], signed["sig"], "some-other-secret",
+        ) is False
+
+    def test_verify_rejects_expired(self):
+        signed = security.sign_media_url("/models/files/clip.mp4", MEDIA_SIGNING_SECRET, ttl=-10)
+        assert security.media_signature_valid(
+            "/models/files/clip.mp4", signed["exp"], signed["sig"], MEDIA_SIGNING_SECRET,
+        ) is False
+
+    def test_verify_rejects_tampered_signature(self):
+        signed = security.sign_media_url("/models/files/clip.mp4", MEDIA_SIGNING_SECRET)
+        bad_sig = ("0" if signed["sig"][0] != "0" else "1") + signed["sig"][1:]
+        assert security.media_signature_valid(
+            "/models/files/clip.mp4", signed["exp"], bad_sig, MEDIA_SIGNING_SECRET,
+        ) is False
+
+    def test_verify_rejects_path_substitution(self):
+        # A signature minted for one path must not authorize a different one.
+        signed = security.sign_media_url("/models/files/clip.mp4", MEDIA_SIGNING_SECRET)
+        assert security.media_signature_valid(
+            "/models/files/other.mp4", signed["exp"], signed["sig"], MEDIA_SIGNING_SECRET,
+        ) is False
+
+    def test_verify_rejects_missing_fields(self):
+        signed = security.sign_media_url("/models/files/clip.mp4", MEDIA_SIGNING_SECRET)
+        assert security.media_signature_valid(None, signed["exp"], signed["sig"], MEDIA_SIGNING_SECRET) is False
+        assert security.media_signature_valid("/models/files/clip.mp4", None, signed["sig"], MEDIA_SIGNING_SECRET) is False
+        assert security.media_signature_valid("/models/files/clip.mp4", signed["exp"], None, MEDIA_SIGNING_SECRET) is False
+        assert security.media_signature_valid("/models/files/clip.mp4", signed["exp"], signed["sig"], None) is False
+        assert security.media_signature_valid("/models/files/clip.mp4", signed["exp"], signed["sig"], "") is False
+
+    def test_verify_rejects_malformed_exp(self):
+        signed = security.sign_media_url("/models/files/clip.mp4", MEDIA_SIGNING_SECRET)
+        assert security.media_signature_valid(
+            "/models/files/clip.mp4", "not-a-number", signed["sig"], MEDIA_SIGNING_SECRET,
+        ) is False
+
+
+class TestMediaSignedUrlAcceptance:
+    """R1 — the real diffuser.py Flask app accepts a valid signed URL with NO
+    auth header, and rejects expired/tampered/wrong-path/wrong-secret
+    signatures, all while the P4 containment check keeps applying regardless
+    of which authentication path was used."""
+
+    def test_signed_stream_accepted_without_header(self, media):
+        r = media.client.get("/media/stream", query_string=_signed_query(media.files_video))
+        assert r.status_code == 200
+        assert r.data == media.files_video.read_bytes()
+
+    def test_signed_info_accepted_without_header(self, media):
+        r = media.client.get("/media/info", query_string=_signed_query(media.model_video))
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["exists"] is True
+        assert body["mime_type"] == "video/mp4"
+
+    def test_signed_range_request_intact(self, media):
+        content = media.files_video.read_bytes()
+        r = media.client.get(
+            "/media/stream", query_string=_signed_query(media.files_video),
+            headers={"Range": "bytes=0-4"},
+        )
+        assert r.status_code == 206
+        assert r.data == content[0:5]
+        assert r.headers["Content-Range"] == f"bytes 0-4/{len(content)}"
+
+    def test_header_auth_still_works_alongside_signing(self, media):
+        # No signature at all -- the pre-existing x-bonzai-session path is untouched.
+        r = media.client.get("/media/stream", query_string={"path": str(media.files_video)}, headers=AUTH)
+        assert r.status_code == 200
+        assert r.data == media.files_video.read_bytes()
+
+    def test_expired_signature_rejected(self, media):
+        qs = _signed_query(media.files_video, ttl=-10)
+        for endpoint in ("/media/stream", "/media/info"):
+            r = media.client.get(endpoint, query_string=qs)
+            assert r.status_code == 401
+
+    def test_tampered_signature_rejected(self, media):
+        qs = _signed_query(media.files_video)
+        qs["sig"] = ("0" if qs["sig"][0] != "0" else "1") + qs["sig"][1:]
+        for endpoint in ("/media/stream", "/media/info"):
+            r = media.client.get(endpoint, query_string=qs)
+            assert r.status_code == 401
+
+    def test_wrong_path_signature_rejected(self, media):
+        # Signature minted for model_video, presented alongside a DIFFERENT
+        # path query -- must not authorize access to either file.
+        signed = security.sign_media_url(str(media.model_video), MEDIA_SIGNING_SECRET)
+        qs = {"path": str(media.files_video), "exp": str(signed["exp"]), "sig": signed["sig"]}
+        for endpoint in ("/media/stream", "/media/info"):
+            r = media.client.get(endpoint, query_string=qs)
+            assert r.status_code == 401
+
+    def test_wrong_secret_signature_rejected(self, media):
+        qs = _signed_query(media.files_video, secret="totally-wrong-secret")
+        for endpoint in ("/media/stream", "/media/info"):
+            r = media.client.get(endpoint, query_string=qs)
+            assert r.status_code == 401
+
+    def test_missing_signature_and_no_header_rejected(self, media):
+        for endpoint in ("/media/stream", "/media/info"):
+            r = media.client.get(endpoint, query_string={"path": str(media.files_video)})
+            assert r.status_code == 401
+
+    def test_signed_url_outside_root_still_denied_by_containment(self, media):
+        # A technically-valid signature for an out-of-root path authenticates
+        # the request, but resolve_media_path's P4 containment check still
+        # denies it -- the signature substitutes for auth only.
+        qs = _signed_query(media.external_secret)
+        r_stream = media.client.get("/media/stream", query_string=qs)
+        assert r_stream.status_code == 403
+        assert b"EXTERNAL-SECRET-BYTES" not in r_stream.get_data()
+
+        r_info = media.client.get("/media/info", query_string=qs)
+        assert r_info.status_code == 200
+        assert r_info.get_json() == {"exists": False}
+
+    def test_signed_url_symlink_escape_still_denied_by_containment(self, media):
+        qs = _signed_query(media.in_root_symlink)
+        r = media.client.get("/media/stream", query_string=qs)
+        assert r.status_code == 403
+        assert b"SYMLINK-ESCAPE-SECRET-BYTES" not in r.get_data()
 
 
 if __name__ == "__main__":
