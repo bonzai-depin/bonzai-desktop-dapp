@@ -23,7 +23,6 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { download, CancelError } from "electron-dl";
 import { unlink } from "node:fs";
 import child_process from "child_process";
-import http from "http";
 import crypto from "crypto";
 import { pipeline } from "stream/promises";
 import {
@@ -39,6 +38,43 @@ import {
   exportDataset as studioExportDataset,
 } from "./scripts/dataset-studio.js";
 import { RobinhoodMcpManager } from "./main/robinhood-mcp.js";
+import { createSecretHandlers } from "./main/secretStore.js";
+import {
+  createCredentialRegistry,
+  childEnvSecrets,
+} from "./main/credentialRegistry.js";
+import {
+  createSessionBridge,
+  authorizeSessionSender,
+  normalizeSessionEvent,
+} from "./main/sessionBridge.js";
+import {
+  createOpenClawServer,
+  getOpenClawPort,
+  OPENCLAW_CREDENTIAL_SCOPE,
+} from "./main/openclawServer.js";
+import {
+  createFileGrantStore,
+  authorizeRead,
+  authorizeWrite,
+  authorizeVideoRequest,
+  authorizeMediaPath,
+} from "./main/fileAccess.js";
+import {
+  resolveSocialPolicy,
+  resolveProxyPolicy,
+  performEgressRequest,
+  EgressPolicyError,
+} from "./main/egressPolicy.js";
+import { publishToPinata } from "./main/pinataPublish.js";
+import { installCsp, DEV_VITE_HOST, DEV_VITE_PORT } from "./main/csp.js";
+import {
+  isOpenClawIntegrationEnabled,
+  isHermesIntegrationEnabled,
+  refreshOpenClawCredential,
+  refreshHermesCredential,
+  mintStartupExternalCredentials,
+} from "./main/externalCredentials.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -75,10 +111,30 @@ const __dirname = path.dirname(__filename);
 let MODEL_DIR = path.join(os.homedir(), "bonzai-models");
 // Ensure directory exists
 fs.mkdirSync(MODEL_DIR, { recursive: true });
+fs.mkdirSync(path.join(MODEL_DIR, "files"), { recursive: true });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P7 — file-IPC authorization (read-file-as-base64, save-base64-to-file,
+// local-video://). See src/main/fileAccess.js for the policy: owned roots
+// (below) authorize by containment alone; anything else needs a one-time
+// grant minted by a native dialog flow (fileGrants.register, called from
+// the dialog handlers further down — see select-video-file).
+// ─────────────────────────────────────────────────────────────────────────────
+const fileGrants = createFileGrantStore();
+const fileAccessRoots = () => [
+  MODEL_DIR,
+  path.join(MODEL_DIR, "files"),
+  path.join(app.getPath("temp"), "bonzai-videos"),
+];
 
 // Dev/prod detection - app.isPackaged is true when running from packaged app
 const isDev = !app.isPackaged;
-const VITE_DEV_SERVER_URL = isDev ? "http://localhost:5173" : null;
+// Pinned to the loopback IP (not "localhost", which can resolve
+// differently depending on host DNS/hosts-file config) and the fixed port
+// vite.renderer.config.ts binds the dev server + HMR socket to (P12/R3) —
+// this keeps the CSP's development allowance (src/main/csp.js) a single
+// deterministic origin instead of a wildcard.
+const VITE_DEV_SERVER_URL = isDev ? `http://${DEV_VITE_HOST}:${DEV_VITE_PORT}` : null;
 
 let subpy = null;
 const PY_SERVER_PORT = 65000;
@@ -362,6 +418,12 @@ const startPythonSubprocess = async () => {
     // the parent-pid heuristic would collide.
     BONZAI_SHARD_SOCKET: process.env.BONZAI_SHARD_SOCKET
       || path.join(os.tmpdir(), `bonzai-shard-${process.pid}.sock`),
+    // Per-launch registry secrets for the local Flask service: a scoped
+    // session credential and a non-default signing secret. Delivered via
+    // environment ONLY — never argv, URLs, logs, or storage. The signing
+    // secret overrides diffuser.py's hardcoded "bonzai-secret-key" default
+    // via its existing `SECRET_KEY` env read (no Python change here).
+    ...childEnvSecrets(credentialRegistry),
   };
 
   // Log detailed spawn info
@@ -551,7 +613,7 @@ const checkPythonServer = async (url, silent = false) => {
     try {
       const controller = new AbortController();
       const fetchTimeout = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, { signal: controller.signal, headers: flaskSessionHeaders() });
       clearTimeout(fetchTimeout);
       if (res.ok) {
         const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -610,7 +672,16 @@ const restartServerManually = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { bypassCSP: true } },
-  { scheme: "local-video", privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
+  // No CSP is configured for this app's renderer today, and local-video://
+  // is only ever consumed same-origin via <video src>, never fetch()'d
+  // cross-origin — bypassCSP, corsEnabled, and supportFetchAPI bought
+  // nothing but broader privilege than the confined handler below needs.
+  // supportFetchAPI is left off deliberately: on Electron builds before
+  // 40.9.3, setting it alone (even with corsEnabled left false) lets other
+  // origins read supportFetchAPI-only protocols via cross-origin fetch/XHR
+  // (https://releases.electronjs.org/pr/51271) — dropping it is what
+  // actually confines this protocol to same-origin <video> use (P7).
+  { scheme: "local-video", privileges: { stream: true } },
   // bonzai-blob:// resolves <id>.<ext> to the on-disk content-addressed
   // blob path. Lets <img :src> / <audio :src> / <video :src> reference
   // blob-stored media synchronously without IPC round-trips. Critical
@@ -653,18 +724,21 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(pathname).toString());
   });
 
-  // Serve local video files safely via local-video:// protocol
+  // Serve local video files safely via local-video:// protocol.
   // Usage: local-video:///path/to/video.mp4
+  // Confined to the same owned roots + ephemeral dialog grants as
+  // read-file-as-base64 / save-base64-to-file (P7, src/main/fileAccess.js).
+  // The request URL/path is never reflected back in a denial response.
   protocol.handle("local-video", (req) => {
-    const { pathname } = new URL(req.url);
-    const decoded = decodeURIComponent(pathname);
-    // Only allow video file extensions
-    const ext = path.extname(decoded).toLowerCase();
-    const allowed = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".ogv", ".m4v"];
-    if (!allowed.includes(ext)) {
-      return new Response("Forbidden", { status: 403 });
+    const decision = authorizeVideoRequest({
+      url: req.url,
+      roots: fileAccessRoots(),
+      grants: fileGrants,
+    });
+    if (!decision.ok) {
+      return new Response(decision.status === 404 ? "Not found" : "Forbidden", { status: decision.status });
     }
-    return net.fetch(pathToFileURL(decoded).toString());
+    return net.fetch(pathToFileURL(decision.canonicalPath).toString());
   });
 
   /**
@@ -886,6 +960,236 @@ function getOrCreateJwtSecret() {
 }
 
 const JWT_SECRET = getOrCreateJwtSecret();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-instance credential registry (P1 Security)
+//
+// Main-process-owned trust primitive. On every application launch we mint
+// a fresh scoped local-session credential (>= 128 bits CSPRNG entropy,
+// <= 24h lifetime) and a separate non-default Flask signing secret. Both
+// are memory-only — never persisted, logged, or sent over IPC — and are
+// delivered to local child processes through their environment alone via
+// `childEnvSecrets()`. See src/main/credentialRegistry.js for the API.
+// ─────────────────────────────────────────────────────────────────────────────
+// The "openclaw" scope (P6) lets the OpenClaw API server
+// (src/main/openclawServer.js) gate its routes via
+// registry.validate({ scope: "openclaw" }). Only the registry's SEPARATE
+// external credential (registry.issueExternalCredential — see A5 note on
+// hermes-set-enabled/openclaw-set-enabled below) is ever written to the
+// on-disk configs OpenClaw/Hermes read; the session credential minted here
+// still carries the "openclaw" scope for in-process use but is never
+// persisted, so a leak of those config files cannot yield a token Flask
+// or rpc-server would accept.
+const credentialRegistry = createCredentialRegistry({
+  scopes: ["local-session", OPENCLAW_CREDENTIAL_SCOPE],
+});
+credentialRegistry.issue();
+
+// Internal main→Flask calls authenticate with the same scoped session
+// credential the renderer uses (x-bonzai-session). The Flask server requires
+// it on every route except /auth/challenge and /auth/verify
+// (src/server/bonzai_security.py), so server-to-loopback calls must carry it.
+// Merges the credential into `extra` headers; if no live credential exists
+// the server rejects with 401 (fail-closed).
+function flaskSessionHeaders(extra = {}) {
+  const token = credentialRegistry.getSessionCredential();
+  const headers = { ...extra };
+  if (token) headers["x-bonzai-session"] = token;
+  return headers;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trusted local-session lifecycle (P2 Security)
+//
+// Narrowly scoped IPC around the registry above. Only the current BonzAI
+// top-level renderer may obtain or rotate the session credential; remote,
+// subframe, stale-window, and origin-mismatched senders are denied (see
+// src/main/sessionBridge.js). Rotation bumps the generation, rekeys the
+// Flask diffuser + rpc-server with the fresh credential, then returns the
+// replacement — so logout / explicit rotation leave the old generation
+// unusable. Results carry the session token + a redacted descriptor only;
+// the Flask signing secret is never disclosed across the bridge.
+// ─────────────────────────────────────────────────────────────────────────────
+// R5: pathToFileURL() (not string concatenation) so the result is a
+// well-formed file:// URL on Windows too -- `file://${path.join(...)}`
+// embeds backslashes and a bare drive letter directly after the scheme,
+// which `new URL()` cannot parse as the intended path, breaking both the
+// window load and the P2 sender-origin comparison in sessionBridge.js.
+const sessionWindowUrl = () =>
+  VITE_DEV_SERVER_URL || pathToFileURL(path.join(__dirname, "../renderer/main_window/index.html")).toString();
+
+const sessionAuthorize = (sender) =>
+  authorizeSessionSender(sender, {
+    isPackaged: app.isPackaged,
+    mainWindowUrl: sessionWindowUrl(),
+  });
+
+// Rekey every local child that received the old session credential via
+// childEnvSecrets: restart the Flask diffuser (it re-reads the env on
+// spawn) and tear down the on-demand rpc-server so its next start picks
+// up the fresh secret. Called by rotate AFTER the generation is bumped.
+const rekeySessionDependents = async () => {
+  // Fail closed: if the Flask server could not be restarted with the fresh
+  // credential, the rotation MUST fail — handing out a new credential while
+  // dependents still run the old one silently keeps two generations alive.
+  const result = await restartServerManually();
+  if (!result || result.success === false) {
+    throw new Error(result?.error || "Flask rekey failed during session rotation");
+  }
+  try {
+    if (rpcServerProcess && !rpcServerProcess.killed) {
+      rpcServerProcess.kill("SIGTERM");
+      rpcServerProcess = null;
+    }
+  } catch {}
+
+  // Deliberately does NOT touch the OpenClaw/Hermes external credential.
+  // That credential has its own independent lifecycle (minted by the
+  // *-set-enabled handlers, refreshed at startup by
+  // mintStartupCredentialsIfIntegrationsEnabled) and is never invalidated by
+  // a session-only rotate (see credentialRegistry.invalidate's "session"
+  // scope default). Re-minting it here — as an earlier fix did — replaced
+  // the still-valid token OpenClaw/Hermes already have loaded in memory with
+  // one only the on-disk config knows about, so every session rotation
+  // (including wallet logout's rotateCredential() call) broke those already-
+  // running integrations with 401s, since rewriting their config file cannot
+  // update a process we don't control.
+};
+
+const sessionBridge = createSessionBridge({
+  registry: credentialRegistry,
+  authorize: sessionAuthorize,
+  rekeyDependents: rekeySessionDependents,
+});
+
+ipcMain.handle("session:obtain-credential", async (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  return sessionBridge.obtain(sender);
+});
+
+ipcMain.handle("session:rotate-credential", async (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  return sessionBridge.rotate(sender);
+});
+
+// R3 (branch-review fix 2): renderer-side consumers that call the local
+// OpenClaw API server directly (openclaw.handler.js health checks) need to
+// present the SAME external credential that server's isRequestAuthenticated
+// validates and that main writes into OpenClaw/Hermes' own on-disk configs
+// (see mintStartupExternalCredentials and the *-set-enabled handlers below)
+// — never a credential the renderer mints or holds itself. P2
+// sender-authorized like the other session IPC above. Returns
+// { ok: false } both for a denied sender and for "no external credential
+// minted yet" (integration never enabled this launch), so callers can treat
+// "not authorized" and "not ready" the same way: don't fire the request.
+ipcMain.handle("session:obtain-external-credential", async (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const authz = sessionAuthorize(sender);
+  if (!authz.ok) return { ok: false, reason: authz.reason };
+  const token = credentialRegistry.getExternalCredential();
+  return token ? { ok: true, token } : { ok: false, reason: "not-enabled" };
+});
+
+// Synchronous invalidation for logout: kills the current registry generation
+// immediately so previously issued credentials die at once (sendSync — the
+// renderer does not wait for a rotate/rekey round-trip).
+ipcMain.on("session:invalidate-credential", (event) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  event.returnValue = sessionBridge.invalidate(sender);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// media:sign-url (R2 Security) — short-lived signed /media/stream and
+// /media/info URLs for HTML <img>/<video>/<audio> elements, which cannot
+// attach the x-bonzai-session header. Same P2 sender authorization as the
+// session bridge above (sessionAuthorize), plus the same P4-style
+// containment check (authorizeMediaPath) against the MODEL_DIR/
+// MODEL_DIR/files roots Flask's resolve_media_path() confines to -- a path
+// outside those roots is never signed, so the signature can never reach
+// anything the header-authenticated path wouldn't already reach. Signing
+// itself mirrors bonzai_security.compute_media_signature (HMAC-SHA256 over
+// "path|exp") byte-for-byte, keyed by the per-launch secret childEnvSecrets
+// delivers to the Flask diffuser as BONZAI_MEDIA_SIGNING_SECRET.
+// ─────────────────────────────────────────────────────────────────────────────
+// R4 (branch-review fix 4): 5 minutes rather than 60s, so typical media
+// playback (a paused/seeked <video>/<audio> element re-requesting byte
+// ranges) doesn't outlive the signature on its own. media.service.js's
+// background renewal loop (refreshExpiringEntries) is the primary defense
+// against a held URL expiring; this TTL bump gives it comfortable margin.
+// Signature validation itself (media_signature_valid in bonzai_security.py)
+// is unchanged — only the duration a client-requested `exp` may cover grows.
+const MEDIA_SIGNED_URL_TTL_SECONDS = 300;
+const mediaRoots = () => [MODEL_DIR, path.join(MODEL_DIR, "files")];
+
+function signMediaPath(canonicalPath) {
+  const exp = Math.floor(Date.now() / 1000) + MEDIA_SIGNED_URL_TTL_SECONDS;
+  const sig = crypto
+    .createHmac("sha256", credentialRegistry.getMediaSigningSecret())
+    .update(`${canonicalPath}|${exp}`)
+    .digest("hex");
+  return { path: canonicalPath, exp, sig };
+}
+
+ipcMain.handle("media:sign-url", (event, requestedPath) => {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const authz = sessionAuthorize(sender);
+  if (!authz.ok) return { ok: false, reason: authz.reason };
+  const decision = authorizeMediaPath({ requestedPath, roots: mediaRoots() });
+  if (!decision.ok) return { ok: false, reason: decision.reason };
+  return { ok: true, ...signMediaPath(decision.canonicalPath) };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Automatic credential rotation (A5 Security)
+//
+// The registry bounds every credential to <= 24h (MAX_LIFETIME_MS), and
+// Flask's session_credential_active() fails closed once that declared expiry
+// passes — a stolen credential cannot outlive it. But nothing previously
+// re-issued the credential before that happened, so a long-running session
+// would eventually run Flask on an expired credential with no live
+// replacement: every request would be rejected, and a subsequent Flask
+// restart would find getSessionCredential() returning null (past expiry)
+// and fail validate_startup_secrets() for want of SESSION/SESSION_EXPIRES.
+//
+// Rotating proactively, well before expiry, keeps a live credential handed
+// to dependents at all times so the app never runs (or restarts) into that
+// dead zone. This reuses the exact rekey path manual rotation uses, so
+// Flask/rpc-server are restarted with the fresh credential the same way.
+// ─────────────────────────────────────────────────────────────────────────────
+const CREDENTIAL_ROTATION_MARGIN_MS = 10 * 60 * 1000; // rotate 10 min before declared expiry
+let credentialRotationTimer = null;
+
+function scheduleCredentialRotation() {
+  if (credentialRotationTimer) clearTimeout(credentialRotationTimer);
+  const { expiresAt } = credentialRegistry.describe();
+  if (typeof expiresAt !== "number") return;
+  const delay = Math.max(expiresAt - Date.now() - CREDENTIAL_ROTATION_MARGIN_MS, 0);
+  credentialRotationTimer = setTimeout(async () => {
+    try {
+      console.log("[Session] Rotating session credential ahead of declared expiry...");
+      credentialRegistry.issue();
+      await rekeySessionDependents();
+      console.log("[Session] Automatic credential rotation complete.");
+      // The renderer's in-memory token is for the now-invalidated generation
+      // (Flask/rpc-server were just rekeyed to the new one) — tell it to
+      // re-obtain via session:obtain-credential rather than silently 401ing.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("session:credential-rotated");
+      }
+    } catch (err) {
+      console.error("[Session] Automatic credential rotation failed:", err?.message || err);
+      // The now-current credential is still live (issue() already replaced
+      // it even though rekey failed); retry sooner instead of leaving
+      // dependents on the old generation until the next scheduled rotation.
+      credentialRotationTimer = setTimeout(scheduleCredentialRotation, 60 * 1000);
+      return;
+    }
+    scheduleCredentialRotation();
+  }, delay);
+  if (typeof credentialRotationTimer.unref === "function") credentialRotationTimer.unref();
+}
+
+scheduleCredentialRotation();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transaction confirmation dialog (P0 Security)
@@ -1401,6 +1705,95 @@ ipcMain.handle("store-delete", (_event, key) => {
   return true;
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Wallet secrets (P9 Security) — narrow safeStorage-backed IPC for the agent
+// wallet master derivation secret and per-companion private keys. Only
+// ciphertext + non-secret metadata (address, timestamps) is ever persisted;
+// see src/main/secretStore.js for the encrypt/decrypt seam this wraps. Reads
+// and writes throw (fail closed) when OS encryption is unavailable rather
+// than falling back to plaintext or handing back unusable ciphertext.
+// ─────────────────────────────────────────────────────────────────────────────
+const walletSecrets = createSecretHandlers({ store, safeStorage });
+
+// Same sender-authorization the session bridge above uses (P2): only the
+// current BonzAI top-level renderer may reach the master derivation secret
+// or companion private keys. Remote, subframe, stale-window, and
+// origin-mismatched senders are denied before touching walletSecrets.
+function authorizeWalletSecretSender(event) {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const decision = sessionAuthorize(sender);
+  if (!decision.ok) {
+    throw new Error(`Unauthorized wallet-secret access (${decision.reason})`);
+  }
+}
+
+ipcMain.handle("wallet-secret:set", (event, { key, secret, address } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.setSecret(key, secret, { address });
+});
+ipcMain.handle("wallet-secret:get", (event, { key } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.getSecret(key);
+});
+ipcMain.handle("wallet-secret:has", (event, { key } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.hasSecret(key);
+});
+ipcMain.handle("wallet-secret:delete", (event, { key } = {}) => {
+  authorizeWalletSecretSender(event);
+  return walletSecrets.deleteSecret(key);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pinata publishing (P11 Security) — the only Pinata-related IPC exposed to
+// the renderer (see preload.js's `storage.publish`). The Pinata JWT / API
+// key+secret are read only in publishToPinata (src/main/pinataPublish.js),
+// via process.env, and are never returned across this bridge — a rejected
+// or failed publish reports a plain error string, never credential material.
+// Same sender-authorization the session bridge (P2) and wallet secrets (P9)
+// above use: only the current BonzAI top-level renderer may call.
+//
+// Vite only injects VITE_* names into the renderer bundle, not the Electron
+// main process, and there is no general dotenv load in this app (see
+// _loadEnvPrivy above) — so PINATA_JWT / PINATA_API_KEY+SECRET from .env
+// need the same narrow loader or `npm start`'s plain `.env` never reaches
+// `process.env` here and every publish reports "not configured".
+// ─────────────────────────────────────────────────────────────────────────────
+function _loadEnvPinata() {
+  if (process.env.PINATA_JWT || (process.env.PINATA_API_KEY && process.env.PINATA_API_SECRET)) return;
+  try {
+    const envPath = path.join(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const lines = fs.readFileSync(envPath, "utf8").split("\n");
+      for (const line of lines) {
+        const match = line.match(/^(PINATA_JWT|PINATA_API_KEY|PINATA_API_SECRET)\s*=\s*(.+)/);
+        if (match) process.env[match[1]] = match[2].trim().replace(/^["']|["']$/g, "");
+      }
+    }
+  } catch { /* */ }
+}
+_loadEnvPinata();
+
+function authorizeStoragePublishSender(event) {
+  const sender = normalizeSessionEvent(event, mainWindow);
+  const decision = sessionAuthorize(sender);
+  if (!decision.ok) {
+    throw new Error(`Unauthorized storage-publish access (${decision.reason})`);
+  }
+}
+
+ipcMain.handle("storage:publish", (event, payload) => {
+  authorizeStoragePublishSender(event);
+  // kind: "file" publishes need the same P7 owned-root/native-dialog-grant
+  // authorization read-file-as-base64 uses (src/main/fileAccess.js) — the
+  // renderer-supplied filePath is otherwise unauthorized attacker input.
+  return publishToPinata(payload, {
+    senderId: event.sender.id,
+    roots: fileAccessRoots(),
+    grants: fileGrants,
+  });
+});
+
 /**
  * Check if user has at least the required auth level.
  * Auth state is synced from the renderer's auth.service.js via electron store.
@@ -1560,7 +1953,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
           try {
             const res = await fetch(`http://127.0.0.1:${FLASK_PORT}/pipelines/plan`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: flaskSessionHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({ pipeline: p }),
               signal: AbortSignal.timeout(3000),
             });
@@ -1638,7 +2031,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       const mode = store.get("p2p.networkMode", "local");
       if (mode === "provider") {
         const flaskPort = parseInt(process.env.BONZAI_SERVER_PORT || "65000", 10);
-        await startProviderBridge({ flaskPort });
+        await startProviderBridge({ flaskPort, getFlaskHeaders: flaskSessionHeaders });
       }
     } catch (err) {
       // Bridge is non-fatal — Consumer + Privacy / Provider modes just
@@ -1922,6 +2315,10 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
   console.log(`[Pipeline Shard] Starting rpc-server on port ${rpcPort}...`);
   rpcServerProcess = child_process.spawn(binPath, ["-p", String(rpcPort)], {
     stdio: ["ignore", "pipe", "pipe"],
+    // rpc-server authenticates the bridge with the session credential
+    // only; it does not consume the Flask signing secret, so scope it out
+    // and keep SECRET_KEY limited to the diffuser service that reads it.
+    env: { ...process.env, ...childEnvSecrets(credentialRegistry, { flask: false }) },
   });
 
   rpcServerProcess.stdout.on("data", (d) => {
@@ -2205,7 +2602,7 @@ async function routeInferenceRequest(request) {
   // Make the request
   const response = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: flaskSessionHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(requestParams),
   });
 
@@ -2689,7 +3086,7 @@ ipcMain.handle("download-video-to-temp", async (_event, url) => {
   return tempPath;
 });
 
-ipcMain.handle("select-video-file", async () => {
+ipcMain.handle("select-video-file", async (event) => {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: "Select Video File",
@@ -2699,7 +3096,26 @@ ipcMain.handle("select-video-file", async () => {
     properties: ["openFile"],
   });
   if (canceled || !filePaths.length) return null;
-  return filePaths[0];
+  const picked = filePaths[0];
+  // The user picked this exact file through a trusted native dialog, so
+  // grant it one-time "read" access — the only way a path outside the
+  // owned model/files roots ever becomes readable (P7). Two separate
+  // grants: a sender-bound one for read-file-as-base64 (IPC has a real
+  // sender id to check), and an unguessable capability token for
+  // local-video://, whose protocol.handle gets no sender id and shares a
+  // session with every window in the app — see src/main/fileAccess.js.
+  const real = fs.existsSync(picked) ? fs.realpathSync(picked) : null;
+  if (!real) return null;
+  fileGrants.register(event.sender.id, real, "read");
+  const grantToken = fileGrants.registerCapability(real, "read");
+  // R5: pathToFileURL(...).pathname is the well-formed, percent-encoded
+  // form on every platform (POSIX: "/Users/..."; Windows: "/C:/Users/...").
+  // Concatenating `picked` directly here would put a bare Windows drive
+  // letter (and its backslashes) straight after the scheme, which parses
+  // as an invalid/garbage authority instead of a path -- parseLocalVideoUrl
+  // (src/main/fileAccess.js) strips the matching leading slash back off.
+  const videoUrl = `local-video://${pathToFileURL(real).pathname}?grant=${grantToken}`;
+  return { path: picked, videoUrl };
 });
 
 ipcMain.handle("select-model-dir", async () => {
@@ -2853,6 +3269,7 @@ ipcMain.handle("select-model-dir", async () => {
 
   // Update MODEL_DIR and restart server
   MODEL_DIR = newDir;
+  fs.mkdirSync(path.join(MODEL_DIR, "files"), { recursive: true });
   store.set("models", newDir);
 
   notifyMigrationProgress({ phase: "restarting", pct: 98, detail: "Restarting server..." });
@@ -3142,9 +3559,20 @@ ipcMain.handle("file-exists", (_event, filePath) => {
 ipcMain.handle("get-home-dir", () => os.homedir());
 
 // Read file as base64 (for NFT minting of audio/video files)
-ipcMain.handle("read-file-as-base64", async (_event, filePath) => {
+// Confined to owned model/files roots + ephemeral dialog grants (P7).
+ipcMain.handle("read-file-as-base64", async (event, filePath) => {
+  const decision = authorizeRead({
+    requestedPath: filePath,
+    senderId: event.sender.id,
+    roots: fileAccessRoots(),
+    grants: fileGrants,
+  });
+  if (!decision.ok) {
+    console.error("[Main] read-file-as-base64 denied:", decision.reason);
+    throw new Error("Access denied");
+  }
   try {
-    const data = await fs.promises.readFile(filePath);
+    const data = await fs.promises.readFile(decision.canonicalPath);
     return data.toString("base64");
   } catch (e) {
     console.error("[Main] Failed to read file as base64:", e.message);
@@ -3153,12 +3581,20 @@ ipcMain.handle("read-file-as-base64", async (_event, filePath) => {
 });
 
 // Save base64 data to file (for OpenClaw/WhatsApp media delivery)
-ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
+// Confined to owned model/files roots + ephemeral dialog grants (P7). The
+// parent directory must already exist (no auto-mkdir) and the exact target
+// must not be an existing symlink — both checked before any create/truncate.
+ipcMain.handle("save-base64-to-file", async (event, filePath, base64Data) => {
   try {
-    // Ensure directory exists
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    const decision = authorizeWrite({
+      requestedPath: filePath,
+      senderId: event.sender.id,
+      roots: fileAccessRoots(),
+      grants: fileGrants,
+    });
+    if (!decision.ok) {
+      console.error("[save-base64-to-file] Denied:", decision.reason);
+      return { success: false, error: "Access denied" };
     }
 
     // Remove data URL prefix if present
@@ -3169,7 +3605,7 @@ ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
 
     // Write base64 data as binary
     const buffer = Buffer.from(data, "base64");
-    fs.writeFileSync(filePath, buffer);
+    fs.writeFileSync(decision.canonicalPath, buffer);
 
     return { success: true, path: filePath };
   } catch (error) {
@@ -3203,22 +3639,32 @@ function resolveBundledSkillManifest(name) {
   return null;
 }
 
-ipcMain.handle("openclaw-get-enabled", async () => {
-  try {
-    if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
-      const content = fs.readFileSync(OPENCLAW_CONFIG_PATH, "utf8");
-      const config = JSON.parse(content);
-      // Check if bonzai provider exists
-      return !!config.models?.providers?.bonzai;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-});
+ipcMain.handle("openclaw-get-enabled", async () => isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH));
 
 ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
   try {
+    // OpenClaw is an external, independently-running process we do not
+    // spawn (unlike Flask/rpc-server), so the only way to hand it a
+    // credential is through its own on-disk config, read at OpenClaw's own
+    // startup. This replaces the previous hardcoded "bonzai-local"
+    // placeholder, which any local process could reuse.
+    //
+    // A5 follow-up: this must NOT be credentialRegistry.getSessionCredential()
+    // — that is the exact token Flask/rpc-server trust for local-session
+    // routes (delivered to them only via env, per credentialRegistry.js).
+    // Writing it into models.json would mean reading that file discloses a
+    // credential valid for the whole gateway, not just OpenClaw. Instead we
+    // mint/reuse the registry's separate external credential, scoped ONLY to
+    // "openclaw" — the one secret the registry itself considers safe to
+    // persist. Fail closed rather than write a config OpenClaw could never
+    // authenticate with.
+    const openclawCredential = enabled
+      ? credentialRegistry.getExternalCredential() || credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE)
+      : null;
+    if (enabled && !openclawCredential) {
+      return { success: false, error: "No active session credential" };
+    }
+
     // 1. Update models.json with provider definition (where OpenClaw reads providers)
     const modelsDir = path.dirname(OPENCLAW_MODELS_PATH);
     if (!fs.existsSync(modelsDir)) {
@@ -3240,7 +3686,7 @@ ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
       // Add bonzai provider with full model configuration
       modelsConfig.providers.bonzai = {
         baseUrl: `http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
-        apiKey: "bonzai-local",
+        apiKey: openclawCredential,
         api: "openai-completions",
         models: [
           {
@@ -3258,6 +3704,10 @@ ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
       delete modelsConfig.providers.bonzai;
     }
     fs.writeFileSync(OPENCLAW_MODELS_PATH, JSON.stringify(modelsConfig, null, 2));
+    // models.json holds the live session credential as a plaintext apiKey;
+    // restrict it to owner-only regardless of the umask writeFileSync used,
+    // and regardless of whether the file pre-existed with looser permissions.
+    try { fs.chmodSync(OPENCLAW_MODELS_PATH, 0o600); } catch {}
 
     // 2. Update openclaw.json with default model setting
     let mainConfig = {};
@@ -3309,6 +3759,7 @@ const HERMES_CONFIG_PATH = path.join(os.homedir(), ".hermes", "config.yaml");
 const HERMES_SKILLS_DIR = path.join(os.homedir(), ".hermes", "skills");
 const HERMES_ENV_PATH = path.join(os.homedir(), ".hermes", ".env");
 const HERMES_BONZAI_SKILL_DIR = path.join(HERMES_SKILLS_DIR, "ai", "bonzai");
+const HERMES_SKILL_MANIFEST_PATH = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
 
 ipcMain.handle("hermes-is-installed", async () => {
   const hermesDir = path.join(os.homedir(), ".hermes");
@@ -3318,8 +3769,7 @@ ipcMain.handle("hermes-is-installed", async () => {
 ipcMain.handle("hermes-get-enabled", async () => {
   try {
     // Check if bonzai skill is installed in Hermes skills directory
-    const skillPath = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
-    return fs.existsSync(skillPath);
+    return isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH);
   } catch {
     return false;
   }
@@ -3328,6 +3778,23 @@ ipcMain.handle("hermes-get-enabled", async () => {
 ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
   try {
     if (enabled) {
+      // Same reasoning as openclaw-set-enabled: Hermes is an external
+      // process we don't spawn, so it authenticates OpenClaw API requests
+      // with a credential we write into its .env (never the previous
+      // hardcoded "bonzai-local" placeholder). This is the registry's
+      // external credential, NOT getSessionCredential() — the .env file is
+      // plaintext on disk, and the session token is the same value Flask
+      // trusts for every local-session route, so persisting that one would
+      // let anyone who reads .env reach the whole gateway. The external
+      // credential is scoped to "openclaw" only and shared with the
+      // OpenClaw integration above so both configs stay in sync on
+      // rotation. Fail closed if no credential is currently live.
+      const hermesCredential =
+        credentialRegistry.getExternalCredential() || credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
+      if (!hermesCredential) {
+        return { success: false, error: "No active session credential" };
+      }
+
       // 1. Install BonzAI skill into Hermes skills directory
       if (!fs.existsSync(HERMES_BONZAI_SKILL_DIR)) {
         fs.mkdirSync(HERMES_BONZAI_SKILL_DIR, { recursive: true });
@@ -3344,23 +3811,39 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
         console.warn("[Hermes] SKILL.md not found in bundled resources — toggle proceeding but skill file not installed");
       }
 
-      // 2. Add BonzAI as custom OpenAI-compatible endpoint in .env
+      // 2. Add/update BonzAI as custom OpenAI-compatible endpoint in .env
       let envContent = "";
       if (fs.existsSync(HERMES_ENV_PATH)) {
         envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
       }
 
-      // Add/update BONZAI endpoint variables if not present
-      if (!envContent.includes("BONZAI_BASE_URL")) {
+      if (envContent.includes("BONZAI_BASE_URL")) {
+        // Block already present from an earlier enable — rewrite both
+        // values in place so re-enabling always presents the *current*
+        // credential (previously only appended when the block was
+        // entirely absent, so BONZAI_API_KEY silently went stale after a
+        // disable/enable cycle or a credential rotation).
+        envContent = envContent
+          .split("\n")
+          .map((line) => {
+            if (line.startsWith("BONZAI_BASE_URL=")) return `BONZAI_BASE_URL=http://127.0.0.1:${OPENCLAW_API_PORT}/v1`;
+            if (line.startsWith("BONZAI_API_KEY=")) return `BONZAI_API_KEY=${hermesCredential}`;
+            return line;
+          })
+          .join("\n");
+      } else {
         const bonzaiEnv = [
           "",
           "# BonzAI Decentralized AI - Local inference endpoint",
           `BONZAI_BASE_URL=http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
-          "BONZAI_API_KEY=bonzai-local",
+          `BONZAI_API_KEY=${hermesCredential}`,
         ].join("\n");
         envContent += bonzaiEnv + "\n";
-        fs.writeFileSync(HERMES_ENV_PATH, envContent);
       }
+      fs.writeFileSync(HERMES_ENV_PATH, envContent);
+      // .env carries the live session credential as plaintext — owner-only,
+      // regardless of the umask writeFileSync used or pre-existing perms.
+      try { fs.chmodSync(HERMES_ENV_PATH, 0o600); } catch {}
 
       console.log("[Hermes] Integration enabled — skill installed and env configured");
     } else {
@@ -3392,6 +3875,93 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
     return { success: false, error: error.message };
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keep external integrations' on-disk credential current (P6 follow-up, A5)
+//
+// OpenClaw/Hermes are external processes we don't spawn: the only way they
+// learn a credential is the on-disk config written by the *-set-enabled
+// handlers above, and that write only happens when the user flips the
+// toggle. There is deliberately no rekey-driven refresh here: OpenClaw/
+// Hermes' external credential is independent of the session credential and
+// is never invalidated by a session-only rotation (see
+// credentialRegistry.invalidate's "session"-scoped default and
+// rekeySessionDependents above), so a session rotation — including a wallet
+// logout — must not re-mint it. Re-minting would replace the token an
+// already-running OpenClaw/Hermes process still has loaded in memory with
+// one only the on-disk config knows about, breaking that integration until
+// the user manually restarts it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A fresh launch's registry never has an external credential minted until
+// something requests one — but an integration left enabled from a PRIOR
+// launch is stuck holding that launch's now-dead token. Called once at
+// startup (app.on("ready") below), before startOpenClawAPIServer's consumers
+// (content-pipeline.js scheduled posts, openclaw.handler.js health checks)
+// can make a request.
+function mintStartupCredentialsIfIntegrationsEnabled() {
+  const result = mintStartupExternalCredentials({
+    registry: credentialRegistry,
+    scope: OPENCLAW_CREDENTIAL_SCOPE,
+    isOpenClawEnabled: () => isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH),
+    isHermesEnabled: () => isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH),
+    refreshOpenClaw: (token) => refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH),
+    refreshHermes: (token) => refreshHermesCredential(token, HERMES_ENV_PATH),
+  });
+  // G1: record boot-time on-disk write failures so the hourly recovery
+  // timer retries them with the same live token instead of leaving invalid
+  // copies for enabled integrations.
+  if (result) {
+    externalRefreshIncomplete.openclaw =
+      isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH) && !result.openclawOk;
+    externalRefreshIncomplete.hermes =
+      isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH) && !result.hermesOk;
+  }
+}
+
+// F2: track on-disk refresh failures so later ticks retry the SAME token
+// instead of re-minting (which would invalidate consumers that did succeed).
+let externalRefreshIncomplete = { openclaw: false, hermes: false };
+
+// D1 (revised after E1-E3, F2): external credentials carry a 24h registry
+// lifetime. Proactively rotating every few hours would invalidate tokens
+// already loaded by long-lived OpenClaw/Hermes processes (E1), and an
+// early-return on a null credential could never recover one that expired
+// while the event loop was suspended, e.g. laptop sleep (E2). So this timer
+// only RECOVERS: when the credential is missing or expired but the
+// integration is still enabled on disk, mint a fresh one and refresh the
+// on-disk copies. When an on-disk refresh fails, later ticks retry that
+// integration with the SAME live token (F2) instead of re-minting.
+setInterval(() => {
+  const token = credentialRegistry.getExternalCredential();
+  if (token) {
+    if (externalRefreshIncomplete.openclaw) {
+      const ok = refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
+      externalRefreshIncomplete.openclaw = !ok;
+      if (ok) console.log("[Session] OpenClaw credential refresh recovered");
+    }
+    if (externalRefreshIncomplete.hermes) {
+      const ok = refreshHermesCredential(token, HERMES_ENV_PATH);
+      externalRefreshIncomplete.hermes = !ok;
+      if (ok) console.log("[Session] Hermes credential refresh recovered");
+    }
+    return;
+  }
+  const openclawEnabled = isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH);
+  const hermesEnabled = isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH);
+  if (!openclawEnabled && !hermesEnabled) return;
+  try {
+    const fresh = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
+    const openclawOk = refreshOpenClawCredential(fresh, OPENCLAW_MODELS_PATH);
+    const hermesOk = refreshHermesCredential(fresh, HERMES_ENV_PATH);
+    externalRefreshIncomplete.openclaw = openclawEnabled && !openclawOk;
+    externalRefreshIncomplete.hermes = hermesEnabled && !hermesOk;
+    if (externalRefreshIncomplete.openclaw) console.warn("[Session] external credential refresh failed for OpenClaw");
+    if (externalRefreshIncomplete.hermes) console.warn("[Session] external credential refresh failed for Hermes");
+  } catch (e) {
+    console.warn("[Session] external credential recovery failed:", e?.message);
+  }
+}, 60 * 60 * 1000).unref?.();
 
 // Open URL in default browser
 ipcMain.handle("open-external", async (_event, url) => {
@@ -4016,26 +4586,34 @@ ipcMain.handle("social:refresh-token", async (_event, { platform, companionId })
 });
 
 /**
- * Generic social API call through main process (CORS bypass).
+ * Generic social API call through main process (CORS bypass), routed
+ * through the per-platform egress policy: unknown platforms, non-HTTPS
+ * targets, off-allowlist origins/paths/methods, and private/loopback/
+ * metadata destinations are all rejected before any DNS lookup or fetch
+ * (see src/main/egressPolicy.js).
  */
 ipcMain.handle("social:api-call", async (_event, { platform, url, method, headers, body, formData }) => {
   try {
-    const fetchOpts = {
-      method: method || 'GET',
-      headers: {
-        'User-Agent': 'BonzAI/1.0',
-        ...headers,
-      },
-    };
+    const policy = resolveSocialPolicy(platform, "apiCall");
+    if (!policy) throw new EgressPolicyError(`Unknown social platform: ${platform}`, "UNKNOWN_PLATFORM");
 
+    const requestHeaders = { ...(headers || {}) };
+    let requestBody;
     if (body && typeof body === 'string') {
-      fetchOpts.body = body;
+      requestBody = body;
     } else if (body) {
-      fetchOpts.headers['Content-Type'] = fetchOpts.headers['Content-Type'] || 'application/json';
-      fetchOpts.body = JSON.stringify(body);
+      requestHeaders['Content-Type'] = requestHeaders['Content-Type'] || 'application/json';
+      requestBody = JSON.stringify(body);
     }
 
-    const response = await fetch(url, fetchOpts);
+    const response = await performEgressRequest({
+      policy,
+      url,
+      method: method || 'GET',
+      headers: requestHeaders,
+      body: requestBody,
+    });
+
     const contentType = response.headers.get('content-type');
     let data;
 
@@ -4047,35 +4625,33 @@ ipcMain.handle("social:api-call", async (_event, { platform, url, method, header
 
     return { ...data, status: response.status };
   } catch (e) {
-    console.error(`[Social API] Error calling ${url}:`, e.message);
+    console.error(`[Social API] Error calling ${platform}:`, e.message);
     return { error: e.message, status: 0 };
   }
 });
 
 /**
  * Upload media for social platforms (binary data via multipart/form-data).
- * Handles Buffer conversion from renderer's Uint8Array.
+ * Handles Buffer conversion from renderer's Uint8Array. Routed through the
+ * per-platform egress policy (see src/main/egressPolicy.js); the
+ * Authorization header, when required, is built by this module from the
+ * vetted `accessToken` field, never from caller-supplied headers.
  */
 ipcMain.handle("social:media-upload", async (_event, { platform, url, accessToken, file, fields }) => {
   try {
-    // Special case: temporary hosting for Instagram (requires publicly accessible URL)
+    // The temporary file:// hosting result has been removed — serving a
+    // local file back to the renderer as a "public" URL violated the
+    // outbound egress boundary this handler now enforces. Instagram's
+    // Graph API requires a publicly reachable image_url; this app has no
+    // CDN, so this path is a documented, deliberate feature removal, not a
+    // bug: the resolveSocialPolicy("instagram", "mediaUpload") policy has
+    // zero routes and would deny it below regardless.
     if (url === '__temp_host__') {
-      // For now, save to a temp file and serve via local HTTP
-      // In production, upload to a CDN or use the app's own hosting
-      const tempDir = path.join(os.tmpdir(), 'bonzai-social-media');
-      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
-      const ext = (file.contentType || 'image/jpeg').split('/')[1] || 'bin';
-      const filename = `${crypto.randomBytes(8).toString('hex')}.${ext}`;
-      const filePath = path.join(tempDir, filename);
-
-      fs.writeFileSync(filePath, Buffer.from(file.buffer));
-
-      // Return local file path — the adapter will need to handle this
-      // For Instagram, the image needs to be accessible via URL
-      // This is a placeholder; real implementation needs a hosting solution
-      return { success: true, url: `file://${filePath}`, localPath: filePath };
+      return { success: false, error: 'Temporary media hosting is no longer available; a real CDN is required for Instagram media uploads.' };
     }
+
+    const policy = resolveSocialPolicy(platform, "mediaUpload");
+    if (!policy) throw new EgressPolicyError(`Unknown social platform: ${platform}`, "UNKNOWN_PLATFORM");
 
     // Standard upload: construct multipart form
     const { FormData, Blob } = await import('node-fetch');
@@ -4095,13 +4671,13 @@ ipcMain.handle("social:media-upload", async (_event, { platform, url, accessToke
       formDataObj.append('file', blob, file.name || 'media.bin');
     }
 
-    const fetchHeaders = {};
-    if (accessToken) fetchHeaders['Authorization'] = `Bearer ${accessToken}`;
-
-    const response = await fetch(url, {
+    const response = await performEgressRequest({
+      policy,
+      url,
       method: 'POST',
-      headers: fetchHeaders,
+      headers: {},
       body: formDataObj,
+      accessToken,
     });
 
     const data = await response.json();
@@ -4142,19 +4718,34 @@ ipcMain.handle("social:get-connected", async (_event, { companionId }) => {
 });
 
 /**
- * Generic external API proxy for any URL
- * Use this for APIs not in the predefined endpoints
+ * Generic external API proxy — but only for the fixed set of external
+ * product integrations declared in src/main/egressPolicy.js
+ * (PROXY_INTEGRATIONS, keyed by hostname since this handler carries no
+ * `platform` field). Any other host is an unknown integration and is
+ * denied before any DNS lookup or fetch.
  */
 ipcMain.handle("proxy:fetch", async (_event, { url, options = {} }) => {
   try {
-    const response = await fetch(url, {
+    const policy = resolveProxyPolicy(url);
+    if (!policy) throw new EgressPolicyError(`Unknown or unsupported destination: ${url}`, "UNKNOWN_INTEGRATION");
+
+    const requestHeaders = { ...(options.headers || {}) };
+    let requestBody;
+    if (options.body !== undefined) {
+      if (typeof options.body === "string") {
+        requestBody = options.body;
+      } else {
+        requestHeaders["Content-Type"] = requestHeaders["Content-Type"] || "application/json";
+        requestBody = JSON.stringify(options.body);
+      }
+    }
+
+    const response = await performEgressRequest({
+      policy,
+      url,
       method: options.method || "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "BonzAI/1.0",
-        ...(options.headers || {}),
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      headers: requestHeaders,
+      body: requestBody,
     });
 
     const contentType = response.headers.get("content-type");
@@ -4728,6 +5319,18 @@ app.on("ready", async () => {
     }
   );
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Content-Security-Policy (P12 Security)
+  //
+  // Installed as a response header — never also as an index.html <meta>
+  // tag, see src/main/csp.js — and wired before createWindow() below ever
+  // navigates, so the renderer's very first document load already carries
+  // the policy. Packaged loads (file://) get the restrictive policy as-is;
+  // development loads get that same policy plus the one fixed loopback
+  // Vite/HMR origin (never a wildcard host/port).
+  // ─────────────────────────────────────────────────────────────────────────────
+  installCsp(session.defaultSession, { isPackaged: app.isPackaged });
+
   // Create window immediately to prevent crash when clicking dock icon
   // The Vue app will show loading state while server starts
   await createWindow();
@@ -4880,7 +5483,7 @@ ipcMain.handle("synth-describe", async (_event, { mode, tier, html, css, js, tex
 
       // 2. Tell Flask server to unload all GPU pipelines
       try {
-        await fetch(`http://127.0.0.1:${PY_SERVER_PORT}/memory/clear`, { method: "POST" });
+        await fetch(`http://127.0.0.1:${PY_SERVER_PORT}/memory/clear`, { method: "POST", headers: flaskSessionHeaders() });
         console.log("[synth-describe] Flask pipelines cleared");
       } catch (e) {
         console.warn("[synth-describe] Flask memory clear skipped:", e.message);
@@ -5182,6 +5785,7 @@ async function systemInformation() {
 const storedModelDir = store.get("models");
 if (storedModelDir && fs.existsSync(storedModelDir)) {
   MODEL_DIR = storedModelDir;
+  fs.mkdirSync(path.join(MODEL_DIR, "files"), { recursive: true });
 } else {
   store.set("models", MODEL_DIR);
 }
@@ -6706,546 +7310,53 @@ async function downloadMmproj(event, { url, filename }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OpenClaw API Server
+// OpenClaw API Server (P6 — see src/main/openclawServer.js)
 // Forwards webhook requests to the renderer which uses the existing flagship.js
 // generation logic. This ensures the same code path for both UI and external chat.
+// Loopback-bound, every non-preflight route requires the shared session
+// credential under the "openclaw" scope, and /webhook validates its payload
+// against a strict allowlisted schema before anything is forwarded.
 // ─────────────────────────────────────────────────────────────────────────────
-const OPENCLAW_API_PORT = parseInt(process.env.OPENCLAW_API_PORT || "3002");
-let openclawServer = null;
-
-// Pending webhook requests waiting for renderer response
-const pendingWebhookRequests = new Map();
-let webhookRequestId = 0;
-
-// IPC handler for renderer to respond to webhook requests
-ipcMain.handle("openclaw-webhook-response", (_event, { requestId, result }) => {
-  const pending = pendingWebhookRequests.get(requestId);
-  if (pending) {
-    pending.resolve(result);
-    pendingWebhookRequests.delete(requestId);
-  }
-});
-
-/**
- * Forward webhook to renderer and wait for response
- */
-function forwardToRenderer(data) {
-  return new Promise((resolve, reject) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      reject(new Error("Renderer not available"));
-      return;
-    }
-
-    if (pendingWebhookRequests.size > 50) {
-      reject(new Error("Webhook queue full (>50 pending requests)"));
-      return;
-    }
-
-    const requestId = ++webhookRequestId;
-    // 5 minute timeout for generation
-    const timeout = setTimeout(() => {
-      pendingWebhookRequests.delete(requestId);
-      reject(new Error("Webhook request timed out after 5 minutes"));
-    }, 5 * 60 * 1000);
-
-    pendingWebhookRequests.set(requestId, {
-      resolve: (result) => {
-        clearTimeout(timeout);
-        resolve(result);
-      },
-      reject: (error) => {
-        clearTimeout(timeout);
-        reject(error);
-      },
-    });
-
-    // Send to renderer
-    mainWindow.webContents.send("openclaw-webhook", { requestId, ...data });
-  });
-}
+const OPENCLAW_API_PORT = getOpenClawPort(process.env);
+let openclawApi = null;
 
 function startOpenClawAPIServer() {
-  openclawServer = http.createServer(async (req, res) => {
-    // CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    const url = new URL(req.url, `http://localhost:${OPENCLAW_API_PORT}`);
-
-    // Health check
-    if (url.pathname === "/health") {
+  openclawApi = createOpenClawServer({
+    registry: credentialRegistry,
+    isRendererAvailable: () => !!mainWindow && !mainWindow.isDestroyed(),
+    sendToRenderer: (payload) => mainWindow.webContents.send("openclaw-webhook", payload),
+    getHealthInfo: () => {
       const companions = store.get("companions", []);
       const scenarios = store.get("scenarios", []);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        status: "ok",
+      return {
         llmLoaded: llamaServer.isRunning(),
         modelName: currentLoadedModel?.filename || null,
         flaskPort: PY_SERVER_PORT,
         companions: companions.length,
         scenarios: scenarios.length,
-        rendererReady: mainWindow && !mainWindow.isDestroyed(),
-      }));
-      return;
-    }
-
-    // Manifest discovery — serves the SKILL.md files so any external agent
-    // harness can GET the BonzAI capability description without needing the
-    // repo on disk. Supports `?agent=openclaw` (default) and `?agent=hermes`.
-    if (req.method === "GET" && url.pathname === "/manifest") {
-      const agent = (url.searchParams.get("agent") || "openclaw").toLowerCase();
-      const manifestName = agent === "hermes" ? "hermes" : "openclaw";
-      const manifestPath = resolveBundledSkillManifest(manifestName);
-      if (!manifestPath || !fs.existsSync(manifestPath)) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `manifest not found for ${agent}` }));
-        return;
-      }
-      try {
-        const content = fs.readFileSync(manifestPath, "utf8");
-        res.writeHead(200, {
-          "Content-Type": "text/markdown; charset=utf-8",
-          "X-Manifest-Agent": manifestName,
-        });
-        res.end(content);
-      } catch (e) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      }
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // OpenClaw Gateway Webhook - Forwards to renderer for processing
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "POST" && url.pathname === "/webhook") {
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const data = JSON.parse(body);
-          console.log(`[OpenClaw Webhook] ${data.platform}/${data.channelId}: ${data.message}`);
-
-          // Forward to renderer and wait for response
-          const result = await forwardToRenderer(data);
-
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (error) {
-          console.error("[OpenClaw Webhook] Error:", error);
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Companion & Scenario REST API (forwards to renderer for dynamic data)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "GET" && url.pathname === "/companions") {
-      try {
-        const result = await forwardToRenderer({ type: "get-companions" });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available", companions: [] }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname === "/scenarios") {
-      try {
-        const result = await forwardToRenderer({ type: "get-scenarios" });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available", scenarios: [] }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname.startsWith("/companion/")) {
-      const id = url.pathname.split("/")[2];
-      try {
-        const result = await forwardToRenderer({ type: "get-companion", id });
-        if (result) {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } else {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Companion not found" }));
-        }
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available" }));
-      }
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Skills REST API (for OpenClaw skill discovery and execution)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    if (req.method === "GET" && url.pathname === "/api/skills") {
-      try {
-        const category = url.searchParams.get("category");
-        const result = await forwardToRenderer({ type: "get-skills", category });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result || []));
-      } catch (error) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Renderer not available", skills: [] }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname.startsWith("/api/skills/")) {
-      const id = url.pathname.split("/")[3];
-      if (id && id !== "execute") {
-        try {
-          const result = await forwardToRenderer({ type: "get-skill", id });
-          if (result) {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(result));
-          } else {
-            res.writeHead(404, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Skill not found" }));
-          }
-        } catch (error) {
-          res.writeHead(503, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Renderer not available" }));
-        }
-        return;
-      }
-    }
-
-    if (req.method === "POST" && url.pathname.match(/^\/api\/skills\/[^/]+\/execute$/)) {
-      const skillId = url.pathname.split("/")[3];
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const inputs = JSON.parse(body || "{}");
-          const result = await forwardToRenderer({
-            type: "execute-skill",
-            skillId,
-            inputs,
-          });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // OpenAI-Compatible API (for OpenClaw and other clients)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "POST" && url.pathname === "/api/vision/analyze") {
-      let body = "";
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 32 * 1024 * 1024) req.destroy();
-      });
-      req.on("end", async () => {
-        try {
-          const text = await runCrossPlatformVision(JSON.parse(body || "{}"));
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, response: text }));
-        } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-
-    // GET /v1/models - List available models
-    if (req.method === "GET" && url.pathname === "/v1/models") {
-      const modelName = currentLoadedModel?.filename || "bonzai-sovereign";
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        object: "list",
-        data: [
-          {
-            id: "bonzai-sovereign",
-            object: "model",
-            created: Date.now(),
-            owned_by: "bonzai",
-          },
-          {
-            id: modelName,
-            object: "model",
-            created: Date.now(),
-            owned_by: "bonzai",
-          }
-        ],
-      }));
-      return;
-    }
-
-    // POST /v1/chat/completions - OpenAI-compatible chat endpoint
-    if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-      // Auth removed — all LLM generation is free
-      if (false) {
-      }
-
-      console.log(`[OpenAI API] Incoming request headers:`, JSON.stringify(req.headers));
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        console.log(`[OpenAI API] req.on(end) triggered, body length: ${body.length}`);
-        try {
-          console.log(`[OpenAI API] Request body preview:`, body.substring(0, 500));
-
-          let parsed;
-          try {
-            parsed = JSON.parse(body);
-            console.log(`[OpenAI API] JSON parsed successfully, keys:`, Object.keys(parsed));
-          } catch (parseErr) {
-            console.error(`[OpenAI API] JSON parse error:`, parseErr.message);
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_request_error" } }));
-            return;
-          }
-
-          const { messages, model, temperature, max_tokens, stream } = parsed;
-          console.log(`[OpenAI API] Extracted: model=${model}, messages=${messages?.length}, stream=${stream}`);
-
-          if (!messages || !Array.isArray(messages)) {
-            console.log(`[OpenAI API] Invalid messages, returning 400`);
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              error: { message: "messages array is required", type: "invalid_request_error" }
-            }));
-            return;
-          }
-
-          if (!llamaServer.isRunning()) {
-            console.log(`[OpenAI API] No model loaded, returning 503`);
-            res.writeHead(503, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              error: { message: "No model loaded. Please load a model in BonzAI first.", type: "server_error" }
-            }));
-            return;
-          }
-
-          // Transparent proxy to the llama-server subprocess. This preserves
-          // every OpenAI feature (tool_calls, json_mode, logprobs, vision
-          // via image_url, etc.) without us re-implementing them. We rewrite
-          // the `model` field to match whichever GGUF is actually loaded.
-          const actualModel = currentLoadedModel?.filename || "unknown";
-          const upstreamBody = { ...parsed, model: actualModel };
-
-          const upstream = await llamaServer.proxyRequest("/v1/chat/completions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(upstreamBody),
-          });
-
-          res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
-
-          if (!upstream.body) {
-            res.end();
-            return;
-          }
-
-          const reader = upstream.body.getReader();
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (!res.write(Buffer.from(value))) {
-              await new Promise((resolve) => res.once("drain", resolve));
-            }
-          }
-          res.end();
-        } catch (error) {
-          console.error("[OpenAI API] Chat completions error:", error);
-          if (!res.headersSent) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-          }
-          res.end(JSON.stringify({
-            error: { message: error.message, type: "server_error" }
-          }));
-        }
-      });
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // LLM API (for direct access without roleplay context)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (req.method === "POST" && url.pathname === "/api/llm/chat") {
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const { prompt } = JSON.parse(body);
-
-          if (!prompt) {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "prompt is required" }));
-            return;
-          }
-
-          if (!llamaServer.isRunning()) {
-            res.writeHead(503, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "LLM not loaded. Load a model first." }));
-            return;
-          }
-
-          const completion = await llamaServer.chat({
-            messages: [{ role: "user", content: prompt }],
-          });
-          const response = completion.choices?.[0]?.message?.content ?? "";
-          recordLifetimeTokenUsage({
-            messages: [{ role: "user", content: prompt }],
-            output: response,
-            usage: completion.usage,
-          });
-
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, response }));
-        } catch (error) {
-          console.error("[OpenClaw API] LLM chat error:", error);
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/llm/load") {
-      let body = "";
-      let bodyTooLarge = false;
-      req.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-      });
-      req.on("end", async () => {
-        if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-        try {
-          const { modelname, filename, url: modelUrl } = JSON.parse(body);
-          await loadModel(null, { modelname, filename, url: modelUrl });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, modelName: modelname || filename }));
-        } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: error.message }));
-        }
-      });
-      return;
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/llm/unload") {
-      try {
-        await unloadModel();
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: true }));
-      } catch (error) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: error.message }));
-      }
-      return;
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/llm/info") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        loaded: llamaServer.isRunning(),
-        modelName: currentLoadedModel?.filename || null,
-        hasSession: llamaServer.isRunning(),
-      }));
-      return;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Flask Proxy (for direct media generation access)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (url.pathname.startsWith("/api/flask/")) {
-      const flaskPath = url.pathname.replace("/api/flask", "");
-      const flaskUrl = `http://localhost:${PY_SERVER_PORT}${flaskPath}`;
-
-      try {
-        if (req.method === "POST") {
-          let body = "";
-          let bodyTooLarge = false;
-          req.on("data", (chunk) => {
-            body += chunk;
-            if (body.length > 10 * 1024 * 1024) { bodyTooLarge = true; req.destroy(); }
-          });
-          req.on("end", async () => {
-            if (bodyTooLarge) { res.writeHead(413); res.end("Request body too large"); return; }
-            const response = await fetch(flaskUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: body,
-            });
-            const data = await response.json();
-            res.writeHead(response.status, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(data));
-          });
-        } else {
-          const response = await fetch(flaskUrl);
-          const data = await response.json();
-          res.writeHead(response.status, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(data));
-        }
-      } catch (error) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: `Flask proxy error: ${error.message}` }));
-      }
-      return;
-    }
-
-    // Not found
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found" }));
+        rendererReady: !!mainWindow && !mainWindow.isDestroyed(),
+      };
+    },
+    resolveManifestPath: (agent) => resolveBundledSkillManifest(agent),
+    llama: llamaServer,
+    getCurrentModelFilename: () => currentLoadedModel?.filename || null,
+    runVisionAnalyze: (body) => runCrossPlatformVision(body),
+    loadModelSpec: (spec) => loadModel(null, spec),
+    unloadModel: () => unloadModel(),
+    recordLifetimeTokenUsage,
+    flaskPort: PY_SERVER_PORT,
+    // R5: the Flask proxy always authenticates with the main process's own
+    // scoped credential — never anything read from the caller's headers.
+    flaskAuthHeaders: () => flaskSessionHeaders(),
   });
 
-  // Disable server timeouts for long-running generation requests
-  // Default Node.js timeout is 2 minutes which is not enough for video/music generation
-  openclawServer.timeout = 0; // No timeout
-  openclawServer.keepAliveTimeout = 0; // No keep-alive timeout
-  openclawServer.headersTimeout = 0; // No headers timeout
+  // IPC handler for renderer to respond to webhook requests
+  ipcMain.handle("openclaw-webhook-response", (_event, { requestId, result }) => {
+    openclawApi.respondWebhook(requestId, result);
+  });
 
-  openclawServer.listen(OPENCLAW_API_PORT, () => {
-    console.log(`[OpenClaw API] Server running on http://localhost:${OPENCLAW_API_PORT}`);
-    console.log(`[OpenClaw API] Timeouts disabled for long-running generation requests`);
+  openclawApi.server.listen(openclawApi.port, openclawApi.host, () => {
+    console.log(`[OpenClaw API] Server running on http://${openclawApi.host}:${openclawApi.port}`);
     console.log(`[OpenClaw API] Endpoints:`);
     console.log(`  GET  /v1/models            - List models (OpenAI-compatible)`);
     console.log(`  POST /v1/chat/completions  - Chat completions (OpenAI-compatible)`);
@@ -7264,4 +7375,11 @@ function startOpenClawAPIServer() {
 // Start OpenClaw API when app is ready
 app.on("ready", () => {
   startOpenClawAPIServer();
+  // Every launch issues a brand-new session credential (credentialRegistry
+  // .issue() above) AND starts with no external credential minted at all —
+  // so an already-enabled OpenClaw/Hermes integration is holding the
+  // *previous* launch's (now-dead) token at this point. Mint a fresh one now
+  // (R1) rather than waiting for the user to notice 401s and re-toggle.
+  mintStartupCredentialsIfIntegrationsEnabled();
 });
+

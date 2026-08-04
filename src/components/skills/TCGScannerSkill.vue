@@ -450,7 +450,7 @@
 <script>
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { v4 as uuid } from "uuid";
-import { getAuthHeaders } from "../../services/auth.service.js";
+import { getAuthHeaders, getLocalSessionHeaders } from "../../services/auth.service.js";
 import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 import BonzaiPulse from "../BonzaiPulse.vue";
 import MintModal from "../MintModal.vue";
@@ -788,7 +788,7 @@ export default {
     async function prefetchPipeline(pipeline) {
       const res = await fetch(`${API_BASE}/pipelines/prefetch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: { "Content-Type": "application/json", ...getLocalSessionHeaders(), ...getAuthHeaders() },
         body: JSON.stringify({ pipeline, deep_validate: true }),
       });
       const data = await res.json().catch(() => ({}));
@@ -801,7 +801,7 @@ export default {
         await new Promise(r => setTimeout(r, 1000));
         try {
           const res = await fetch(`${API_BASE}/downloads/status/${pipelineId}`, {
-            headers: getAuthHeaders(),
+            headers: { ...getLocalSessionHeaders(), ...getAuthHeaders() },
           });
           if (!res.ok) continue;
           const data = await res.json();
@@ -1289,7 +1289,7 @@ Only include keys where you can see the value. Skip keys with no visible data.`,
         showNotification(`Analyzing ${TCG_REFERENCE[col]?.game || col} card...`, "info", 0);
         const structuredRes = await fetch(`${API_BASE}/vision/analyze`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: { "Content-Type": "application/json", ...getLocalSessionHeaders(), ...getAuthHeaders() },
           body: JSON.stringify({
             image_base64: frontBase64.value,
             prompt: extractionPrompt,
@@ -1338,7 +1338,7 @@ Only include keys where you can see the value. Skip keys with no visible data.`,
           try {
             const res = await fetch(`${API_BASE}/vision/analyze`, {
               method: "POST",
-              headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+              headers: { "Content-Type": "application/json", ...getLocalSessionHeaders(), ...getAuthHeaders() },
               body: JSON.stringify({ image_base64: cropped, prompt, max_tokens: maxTok, auto_download: false }),
             });
             if (res.ok) return ((await res.json()).response || "").trim();
@@ -1448,7 +1448,7 @@ Replace the example numbers with your actual scores based on what you see. Check
         let frontGradeText = "";
         const frontGradeRes = await fetch(`${API_BASE}/vision/analyze`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: { "Content-Type": "application/json", ...getLocalSessionHeaders(), ...getAuthHeaders() },
           body: JSON.stringify({
             image_base64: frontBase64.value,
             prompt: sideGradePrompt,

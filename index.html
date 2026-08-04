@@ -4,7 +4,17 @@
     <meta charset="UTF-8" />
     <title>BonzAI</title>
     <link rel="preload" href="/src/assets/fonts/MaterialSymbolsOutlined.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <!--
+      Content-Security-Policy for this document is enforced as a response
+      header (src/main/csp.js, wired in src/main.js) rather than a <meta>
+      tag here: a meta CSP and a header CSP present together are combined
+      by intersection, which can silently produce a stricter-than-intended
+      (or broken) policy, and frame-ancestors is ignored in a meta tag
+      entirely (P12).
+    -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"
+      integrity="sha384-HmYpsz2Aa9Gh3JlkCoh8kUJ2mUKJKTnkyC2Lzt8aLzpPOpnDe8KpFE2xNiBpMDou"
+      crossorigin="anonymous">
   </head>
   <body>
     <div id="app"></div>
