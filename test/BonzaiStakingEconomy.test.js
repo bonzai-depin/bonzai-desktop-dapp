@@ -108,14 +108,19 @@ describe("BonzAI staking-centered utility economy", function () {
 
   it("records evidence-backed score attestations through the oracle", async function () {
     const { owner, alice, bob, stakingVault } = await deployFixture();
+    const signers = await ethers.getSigners();
+    const carol = signers[5];
     const Oracle = await ethers.getContractFactory("BonzaiContributionScoreOracle");
     const oracle = await Oracle.deploy(await stakingVault.getAddress());
     await stakingVault.connect(owner).setScoreAttestor(await oracle.getAddress(), true);
     await oracle.connect(owner).setEvaluator(bob.address, true);
+    await oracle.connect(owner).setEvaluator(carol.address, true);
     const evidence = ethers.id("evaluation-registry-record-42");
-    await expect(oracle.connect(bob).attestScore(alice.address, 7600, evidence))
-      .to.emit(oracle, "ScoreAttested")
-      .withArgs(alice.address, 7600, evidence, bob.address);
+    const roundId = ethers.id("registry-round-42");
+    await expect(oracle.connect(bob).attestScore(roundId, alice.address, 7600, evidence))
+      .to.emit(oracle, "ScoreAttested");
+    await expect(oracle.connect(carol).attestScore(roundId, alice.address, 7600, evidence))
+      .to.emit(oracle, "ScoreFinalized");
     expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(7600);
   });
 });
@@ -290,5 +295,268 @@ describe("Revenue accounting order and reentrancy (P14)", function () {
     expect(await totalReceived(revenueRouter, assetId)).to.equal(0);
     expect(await revenueRouter.claimable(assetId, alice.address)).to.equal(0);
     expect(await revenueRouter.claimable(assetId, bob.address)).to.equal(0);
+  });
+});
+
+describe("Contribution-score oracle quorum and authorization epochs (P15)", function () {
+  async function oracleFixture() {
+    const base = await deployFixture();
+    const signers = await ethers.getSigners();
+    const ev1 = signers[5];
+    const ev2 = signers[6];
+    const ev3 = signers[7];
+    const rogue = signers[8];
+
+    const Oracle = await ethers.getContractFactory("BonzaiContributionScoreOracle");
+    const oracle = await Oracle.deploy(await base.stakingVault.getAddress());
+    await base.stakingVault.connect(base.owner).setScoreAttestor(await oracle.getAddress(), true);
+    await oracle.connect(base.owner).setEvaluator(ev1.address, true);
+    await oracle.connect(base.owner).setEvaluator(ev2.address, true);
+
+    return { ...base, oracle, ev1, ev2, ev3, rogue };
+  }
+
+  const evidence = (tag) => ethers.id(`evidence-${tag}`);
+
+  it("rejects quorum configuration below two and keeps the round identifier explicit (AC1)", async function () {
+    const { oracle, owner, ev1 } = await oracleFixture();
+
+    await expect(oracle.connect(owner).setQuorum(1))
+      .to.be.revertedWithCustomError(oracle, "InvalidQuorum");
+    await expect(oracle.connect(owner).setQuorum(0))
+      .to.be.revertedWithCustomError(oracle, "InvalidQuorum");
+    expect(await oracle.quorum()).to.equal(2);
+
+    await expect(oracle.connect(owner).setQuorum(3)).to.emit(oracle, "QuorumUpdated").withArgs(2, 3);
+    expect(await oracle.quorum()).to.equal(3);
+
+    // A zero round identifier is never accepted.
+    await expect(oracle.connect(ev1).attestScore(ethers.ZeroHash, owner.address, 7600, evidence("zero")))
+      .to.be.revertedWithCustomError(oracle, "InvalidRound");
+  });
+
+  it("leaves the vault untouched by a single evaluator and finalizes once at distinct quorum (AC2)", async function () {
+    const { oracle, stakingVault, alice, ev1, ev2 } = await oracleFixture();
+    const roundId = ethers.id("round-finalize-once");
+    const ev = evidence("finalize");
+    const epoch = await oracle.evaluatorEpoch();
+
+    // One evaluator attests; the score round stays pending and the vault is untouched.
+    await expect(oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev))
+      .to.emit(oracle, "ScoreAttested")
+      .withArgs(roundId, alice.address, 7600, ev, ev1.address, epoch, 1);
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+
+    // A second, distinct evaluator finalizes the round exactly once.
+    await expect(oracle.connect(ev2).attestScore(roundId, alice.address, 7600, ev))
+      .to.emit(oracle, "ScoreFinalized")
+      .withArgs(roundId, alice.address, 7600, ev, [ev1.address, ev2.address], 2);
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(7600);
+
+    const [, , , , count, finalized] = await oracle.getRound(roundId);
+    expect(count).to.equal(2);
+    expect(finalized).to.equal(true);
+    expect(await oracle.roundParticipants(roundId)).to.deep.equal([ev1.address, ev2.address]);
+  });
+
+  it("rejects a duplicate evaluator without altering the vault score (AC3)", async function () {
+    const { oracle, stakingVault, alice, ev1 } = await oracleFixture();
+    const roundId = ethers.id("round-duplicate");
+    const ev = evidence("duplicate");
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    await expect(oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev))
+      .to.be.revertedWithCustomError(oracle, "DuplicateEvaluator");
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+  });
+
+  it("rejects conflicting wallet, score, and evidence without altering the vault score (AC3)", async function () {
+    const { oracle, stakingVault, alice, bob, ev1, ev2 } = await oracleFixture();
+    const roundId = ethers.id("round-conflict");
+    const ev = evidence("conflict");
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    await expect(oracle.connect(ev2).attestScore(roundId, alice.address, 7700, ev))
+      .to.be.revertedWithCustomError(oracle, "RoundConflict"); // score
+    await expect(oracle.connect(ev2).attestScore(roundId, bob.address, 7600, ev))
+      .to.be.revertedWithCustomError(oracle, "RoundConflict"); // wallet
+    await expect(oracle.connect(ev2).attestScore(roundId, alice.address, 7600, evidence("other")))
+      .to.be.revertedWithCustomError(oracle, "RoundConflict"); // evidence
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+  });
+
+  it("rejects an unauthorized evaluator without altering the vault score (AC3)", async function () {
+    const { oracle, stakingVault, alice, rogue } = await oracleFixture();
+    const roundId = ethers.id("round-unauthorized");
+
+    await expect(oracle.connect(rogue).attestScore(roundId, alice.address, 7600, evidence("rogue")))
+      .to.be.revertedWithCustomError(oracle, "UnauthorizedEvaluator");
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+  });
+
+  it("strands a pending round when an evaluator is revoked, leaving the vault untouched (AC3)", async function () {
+    const { oracle, owner, stakingVault, alice, ev1, ev2 } = await oracleFixture();
+    const roundId = ethers.id("round-revoke");
+    const ev = evidence("revoke");
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    // Revoking bumps the epoch; the pending round is now stale.
+    await oracle.connect(owner).setEvaluator(ev1.address, false);
+
+    // A second authorized evaluator cannot complete the stale round.
+    await expect(oracle.connect(ev2).attestScore(roundId, alice.address, 7600, ev))
+      .to.be.revertedWithCustomError(oracle, "StaleRound");
+    // The revoked evaluator can no longer contribute at all.
+    await expect(oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev))
+      .to.be.revertedWithCustomError(oracle, "UnauthorizedEvaluator");
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+  });
+
+  it("stales an in-progress round when the evaluator set changes, leaving the vault untouched (AC3)", async function () {
+    const { oracle, owner, stakingVault, alice, ev1, ev2, ev3 } = await oracleFixture();
+    const roundId = ethers.id("round-stale");
+    const ev = evidence("stale");
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    // Adding a new evaluator bumps the epoch; the bound round is now stale.
+    await oracle.connect(owner).setEvaluator(ev3.address, true);
+
+    await expect(oracle.connect(ev2).attestScore(roundId, alice.address, 7600, ev))
+      .to.be.revertedWithCustomError(oracle, "StaleRound");
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+  });
+
+  it("permanently rejects replay of a finalized round identifier (AC4)", async function () {
+    const { oracle, owner, stakingVault, alice, ev1, ev2, ev3 } = await oracleFixture();
+    const roundId = ethers.id("round-replay");
+    const ev = evidence("replay");
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    await oracle.connect(ev2).attestScore(roundId, alice.address, 7600, ev);
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(7600);
+
+    // Any later authorization change is irrelevant: a finalized round rejects every replay.
+    await oracle.connect(owner).setEvaluator(ev3.address, true);
+    await expect(oracle.connect(ev3).attestScore(roundId, alice.address, 7600, ev))
+      .to.be.revertedWithCustomError(oracle, "RoundFinalized");
+    await expect(oracle.connect(ev1).attestScore(roundId, alice.address, 9999, evidence("tamper")))
+      .to.be.revertedWithCustomError(oracle, "RoundFinalized");
+
+    // The finalized tuple and participants remain intact; the vault is unchanged.
+    const [wallet, score, evHash, , count, finalized] = await oracle.getRound(roundId);
+    expect(wallet).to.equal(alice.address);
+    expect(score).to.equal(7600);
+    expect(evHash).to.equal(ev);
+    expect(count).to.equal(2);
+    expect(finalized).to.equal(true);
+    expect(await oracle.roundParticipants(roundId)).to.deep.equal([ev1.address, ev2.address]);
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(7600);
+  });
+
+  it("recovers a hijacked round id via resetRound so an honest quorum can still finalize (A1)", async function () {
+    const { oracle, owner, stakingVault, alice, bob, ev1, ev2, ev3 } = await oracleFixture();
+    // ev3 is a compromised authorized evaluator; ev1/ev2 are the honest quorum.
+    await oracle.connect(owner).setEvaluator(ev3.address, true);
+    const roundId = ethers.id("round-hijack");
+    const honest = evidence("honest");
+
+    // The compromised evaluator front-runs the public round id with garbage.
+    await oracle.connect(ev3).attestScore(roundId, bob.address, 9999, evidence("garbage"));
+    // Honest evaluators are blocked: the round is bound to the garbage tuple.
+    await expect(oracle.connect(ev1).attestScore(roundId, alice.address, 7600, honest))
+      .to.be.revertedWithCustomError(oracle, "RoundConflict");
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+
+    // Owner clears the hijacked round; the public round id is reusable.
+    await expect(oracle.connect(owner).resetRound(roundId))
+      .to.emit(oracle, "RoundReset").withArgs(roundId);
+    const [, , , , count, finalized] = await oracle.getRound(roundId);
+    expect(count).to.equal(0);
+    expect(finalized).to.equal(false);
+
+    // The honest quorum now finalizes on the same round id.
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, honest);
+    await expect(oracle.connect(ev2).attestScore(roundId, alice.address, 7600, honest))
+      .to.emit(oracle, "ScoreFinalized");
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(7600);
+    expect(await oracle.roundParticipants(roundId)).to.deep.equal([ev1.address, ev2.address]);
+  });
+
+  it("refuses resetRound on a finalized round or a zero id (A1 guards)", async function () {
+    const { oracle, owner, alice, ev1, ev2 } = await oracleFixture();
+    const roundId = ethers.id("round-reset-guards");
+    const ev = evidence("guards");
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    await oracle.connect(ev2).attestScore(roundId, alice.address, 7600, ev);
+    await expect(oracle.connect(owner).resetRound(roundId))
+      .to.be.revertedWithCustomError(oracle, "RoundFinalized");
+    await expect(oracle.connect(owner).resetRound(ethers.ZeroHash))
+      .to.be.revertedWithCustomError(oracle, "InvalidRound");
+  });
+
+  it("treats re-asserting an evaluator's existing authorization as a no-op (A2)", async function () {
+    const { oracle, owner, stakingVault, alice, ev1, ev2 } = await oracleFixture();
+    const roundId = ethers.id("round-epoch-noop");
+    const ev = evidence("noop");
+    const epochBefore = await oracle.evaluatorEpoch();
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev); // pending
+
+    // Re-asserting existing authorizations does not bump the epoch or emit.
+    await oracle.connect(owner).setEvaluator(ev2.address, true);
+    expect(await oracle.evaluatorEpoch()).to.equal(epochBefore);
+    await expect(oracle.connect(owner).setEvaluator(ev1.address, true))
+      .to.not.emit(oracle, "EvaluatorUpdated");
+
+    // The pending round is NOT stranded: ev2 can still finalize it.
+    await oracle.connect(ev2).attestScore(roundId, alice.address, 7600, ev);
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(7600);
+  });
+
+  it("finalizes an already-quorate round after quorum is lowered (A3)", async function () {
+    const { oracle, owner, stakingVault, alice, ev1, ev2, ev3 } = await oracleFixture();
+    await oracle.connect(owner).setQuorum(3);
+    const roundId = ethers.id("round-quorum-drop");
+    const ev = evidence("drop");
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    await oracle.connect(ev2).attestScore(roundId, alice.address, 7600, ev);
+    // Two attestations under quorum three: still pending, vault untouched.
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+
+    // Existing participants cannot close it (duplicate) and a new attestation is unneeded.
+    await expect(oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev))
+      .to.be.revertedWithCustomError(oracle, "DuplicateEvaluator");
+
+    await oracle.connect(owner).setQuorum(2);
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(0);
+
+    // Any caller (here an unauthorized one) closes the now-quorate round.
+    await expect(oracle.connect(ev3).finalizeRound(roundId))
+      .to.emit(oracle, "ScoreFinalized")
+      .withArgs(roundId, alice.address, 7600, ev, [ev1.address, ev2.address], 2);
+    expect((await stakingVault.positionOf(alice.address)).contributionScore).to.equal(7600);
+
+    await expect(oracle.connect(ev3).finalizeRound(roundId))
+      .to.be.revertedWithCustomError(oracle, "RoundFinalized");
+  });
+
+  it("rejects finalizeRound for empty, non-quorate, and stale rounds (A3 guards)", async function () {
+    const { oracle, owner, alice, ev1, ev2 } = await oracleFixture();
+    const roundId = ethers.id("round-finalize-guards");
+    const ev = evidence("fg");
+
+    await expect(oracle.connect(owner).finalizeRound(roundId))
+      .to.be.revertedWithCustomError(oracle, "InvalidRound"); // no attestations
+
+    await oracle.connect(ev1).attestScore(roundId, alice.address, 7600, ev);
+    await expect(oracle.connect(owner).finalizeRound(roundId))
+      .to.be.revertedWithCustomError(oracle, "NotQuorate"); // 1 < quorum 2
+
+    // Epoch bump strands the round before it can be closed.
+    await oracle.connect(owner).setEvaluator(ev2.address, false);
+    await expect(oracle.connect(owner).finalizeRound(roundId))
+      .to.be.revertedWithCustomError(oracle, "StaleRound");
   });
 });
