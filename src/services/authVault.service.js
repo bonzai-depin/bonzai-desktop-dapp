@@ -105,6 +105,9 @@ let refreshTimer = null;
 // E6: bumped on every explicit resetVault so an in-flight save started before
 // the reset cannot resurrect the deleted vault afterwards.
 let resetEpoch = 0;
+// F3: addresses whose async reset is currently in flight — saveVault refuses
+// to write them so a debounced save cannot resurrect a vault mid-reset.
+const resettingAddresses = new Set();
 // The derivation metadata backing the CURRENT unlocked session (if the vault
 // was created/unlocked via the reproducible message-signing flow). Carried
 // forward into every saveVault() write so a later credential save never
@@ -571,13 +574,21 @@ export async function resetVault(address, { confirm = false } = {}) {
 
   const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
 
-  // E6: invalidate any in-flight save for this (or any) wallet before the
-  // storage delete, so a pending write can never recreate the vault.
+  // E6 + F3: mark the wallet as resetting and invalidate any in-flight save
+  // BEFORE the async delete, and refuse new saves while the reset is in
+  // flight, so a debounced save firing during the delete cannot resurrect
+  // the vault afterwards.
   resetEpoch += 1;
+  resettingAddresses.add(address);
+  if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; }
 
   // If this throws (e.g. the write fails), the old record is left untouched
   // below - we only clear in-memory state after the storage delete succeeds.
-  await window.electronAPI.store.delete(storageKey);
+  try {
+    await window.electronAPI.store.delete(storageKey);
+  } finally {
+    resettingAddresses.delete(address);
+  }
 
   if (state.walletAddress === address) {
     masterKey = null;
@@ -647,6 +658,8 @@ async function saveVault() {
   // derivation metadata at the SAME instant — a switch mid-write must not
   // attach the new wallet's derivation to the old wallet's ciphertext.
   const targetAddress = state.walletAddress;
+  // F3: never write a vault whose reset is in flight.
+  if (resettingAddresses.has(targetAddress)) return;
   const targetDerivation = vaultDerivation;
   // E6: an in-flight save must not resurrect a vault the user explicitly
   // reset while the write was pending.
@@ -886,6 +899,7 @@ export const authVault = {
   lockVault,
   initializeOrUnlockFromSignature,
   resetVault,
+  clearVaultSwitchFailure,
 
   // Moltbook
   setMoltbookCredentials,

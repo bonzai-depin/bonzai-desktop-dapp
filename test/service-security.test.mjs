@@ -1659,3 +1659,13 @@ test("A3: refreshExpiringEntries updates a bound <video> element's src directly,
     delete global.document;
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cleanup: the media tests (C3/C4/A3) install global.window via
+// installMediaSigner(); leaving it in place keeps node:test from exiting
+// naturally (the process hangs after the last test). Remove it so the suite
+// runs WITHOUT --test-force-exit and reports a stable test count.
+test.after(() => {
+  delete global.window;
+  delete global.document;
+});

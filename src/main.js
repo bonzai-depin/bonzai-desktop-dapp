@@ -3910,26 +3910,45 @@ function mintStartupCredentialsIfIntegrationsEnabled() {
   });
 }
 
-// D1 (revised after E1-E3): external credentials carry a 24h registry
+// F2: track on-disk refresh failures so later ticks retry the SAME token
+// instead of re-minting (which would invalidate consumers that did succeed).
+let externalRefreshIncomplete = { openclaw: false, hermes: false };
+
+// D1 (revised after E1-E3, F2): external credentials carry a 24h registry
 // lifetime. Proactively rotating every few hours would invalidate tokens
 // already loaded by long-lived OpenClaw/Hermes processes (E1), and an
 // early-return on a null credential could never recover one that expired
 // while the event loop was suspended, e.g. laptop sleep (E2). So this timer
 // only RECOVERS: when the credential is missing or expired but the
 // integration is still enabled on disk, mint a fresh one and refresh the
-// on-disk copies, logging failures (E3) so a later tick or the next launch
-// retries. Proactive rotation stays a boot/toggle concern.
+// on-disk copies. When an on-disk refresh fails, later ticks retry that
+// integration with the SAME live token (F2) instead of re-minting.
 setInterval(() => {
-  if (credentialRegistry.getExternalCredential()) return; // still valid
+  const token = credentialRegistry.getExternalCredential();
+  if (token) {
+    if (externalRefreshIncomplete.openclaw) {
+      const ok = refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
+      externalRefreshIncomplete.openclaw = !ok;
+      if (ok) console.log("[Session] OpenClaw credential refresh recovered");
+    }
+    if (externalRefreshIncomplete.hermes) {
+      const ok = refreshHermesCredential(token, HERMES_ENV_PATH);
+      externalRefreshIncomplete.hermes = !ok;
+      if (ok) console.log("[Session] Hermes credential refresh recovered");
+    }
+    return;
+  }
   const openclawEnabled = isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH);
   const hermesEnabled = isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH);
   if (!openclawEnabled && !hermesEnabled) return;
   try {
-    const token = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
-    const openclawOk = refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
-    const hermesOk = refreshHermesCredential(token, HERMES_ENV_PATH);
-    if (!openclawOk && openclawEnabled) console.warn("[Session] external credential refresh failed for OpenClaw");
-    if (!hermesOk && hermesEnabled) console.warn("[Session] external credential refresh failed for Hermes");
+    const fresh = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
+    const openclawOk = refreshOpenClawCredential(fresh, OPENCLAW_MODELS_PATH);
+    const hermesOk = refreshHermesCredential(fresh, HERMES_ENV_PATH);
+    externalRefreshIncomplete.openclaw = openclawEnabled && !openclawOk;
+    externalRefreshIncomplete.hermes = hermesEnabled && !hermesOk;
+    if (externalRefreshIncomplete.openclaw) console.warn("[Session] external credential refresh failed for OpenClaw");
+    if (externalRefreshIncomplete.hermes) console.warn("[Session] external credential refresh failed for Hermes");
   } catch (e) {
     console.warn("[Session] external credential recovery failed:", e?.message);
   }
