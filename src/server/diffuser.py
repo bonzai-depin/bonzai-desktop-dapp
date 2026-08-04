@@ -32,6 +32,7 @@ import json
 import tempfile
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 from datetime import datetime, date
 from decimal import Decimal
 from dataclasses import dataclass, field
@@ -117,8 +118,9 @@ from PIL import Image
 
 from appdirs import user_data_dir
 from flask import Flask, request, jsonify, send_file, Response
-from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
+
+import bonzai_security as security
 
 from huggingface_hub import HfApi, hf_hub_url
 
@@ -546,19 +548,23 @@ def _encode_audio_to_latents(audio_data: bytes, pipe, target_duration: float, de
 # FLASK / SOCKET.IO SETUP
 # =============================================================================
 
+# Per-launch secrets — read once from the environment and never logged. The
+# Electron main process supplies a non-default SECRET_KEY and a scoped
+# BONZAI_SESSION_CREDENTIAL (src/main/credentialRegistry.js). BONZAI_JWT_SECRET
+# persists wallet JWTs across restarts; BONZAI_HMAC_SECRET MACs the wallet
+# challenge and may be random per process (a challenge is redeemed in-process
+# within its 5-minute lifetime).
+JWT_SECRET = os.environ.get(security.JWT_SECRET_ENV) or secrets.token_hex(32)
+HMAC_SECRET = os.environ.get(security.HMAC_SECRET_ENV) or secrets.token_hex(32)
+
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
-CORS(app, supports_credentials=True, resources={
-    r"/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-    }
-})
+# R2: refuse to start with the legacy default signing secret.
+security.validate_startup_secrets(os.environ)
+app.config["SECRET_KEY"] = os.environ[security.FLASK_SECRET_ENV]
 
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*",
+    cors_allowed_origins=security.get_trusted_origins(os.environ),
     async_mode="threading",
     logger=False,
     engineio_logger=False,
@@ -584,165 +590,42 @@ except Exception as _shard_err:
     # rest of Flask. Log and continue with no-op behavior.
     logger.warning("[shard] blueprint failed to install: %s", _shard_err)
 
+# R1/R3: trusted-origin CORS (no wildcard) and central authentication over the
+# full URL map except /auth/challenge and /auth/verify. Installed after the
+# shard blueprint so every registered route is guarded.
+security.install_security(app, jwt_secret=JWT_SECRET)
+
 # =============================================================================
 # JWT AUTHENTICATION SYSTEM
 # =============================================================================
 
-# Configuration
-JWT_SECRET = os.environ.get("BONZAI_JWT_SECRET", secrets.token_hex(32))
-HMAC_SECRET = os.environ.get("BONZAI_HMAC_SECRET", secrets.token_hex(32))
-ACCESS_TOKEN_EXPIRY = 48 * 60 * 60  # 48 hours
-REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60  # 7 days
-CHALLENGE_EXPIRY = 300  # 5 minutes
+# Token lifetimes (kept here for the endpoint handlers below; the real logic
+# lives in bonzai_security so it can be tested without the torch stack).
+ACCESS_TOKEN_EXPIRY = security.ACCESS_TOKEN_EXPIRY
+REFRESH_TOKEN_EXPIRY = security.REFRESH_TOKEN_EXPIRY
+CHALLENGE_EXPIRY = security.CHALLENGE_EXPIRY
 
-# Level requirements for each feature
-LEVEL_REQUIREMENTS = {
-    "text": 1,
-    "audio": 2,
-    "image": 3,
-    "vision": 3,  # Vision analysis uses same level as image
-    "vision_caption": 3,
-    "ocr": 3,  # OCR (GLM-OCR-4bit) for text extraction
-    "video": 4,
-    "3d": 5,
-    "training": 6,
-}
 
 def _create_jwt_token(payload: dict, expiry_seconds: int) -> str:
-    """Create a simple JWT-like token (base64 encoded JSON + HMAC signature)."""
-    payload = {**payload, "exp": int(time.time()) + expiry_seconds, "iat": int(time.time())}
-    payload_json = json.dumps(payload, separators=(",", ":"))
-    payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip("=")
-    signature = hmac.new(JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
-    return f"{payload_b64}.{signature}"
+    return security.create_jwt(payload, expiry_seconds, JWT_SECRET)
 
 
 def _verify_jwt_token(token: str) -> Optional[dict]:
-    """Verify and decode a JWT-like token."""
-    try:
-        parts = token.split(".")
-        if len(parts) != 2:
-            return None
-
-        payload_b64, signature = parts
-
-        # Verify signature
-        expected_sig = hmac.new(JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected_sig):
-            return None
-
-        # Decode payload
-        padding = 4 - len(payload_b64) % 4
-        if padding != 4:
-            payload_b64 += "=" * padding
-        payload_json = base64.urlsafe_b64decode(payload_b64).decode()
-        payload = json.loads(payload_json)
-
-        # Check expiry
-        if payload.get("exp", 0) < time.time():
-            return None
-
-        return payload
-    except Exception as e:
-        logger.warning(f"[Auth] Token verification failed: {e}")
-        return None
+    return security.verify_jwt(token, JWT_SECRET)
 
 
 def _create_auth_challenge(address: str) -> dict:
-    """Create a tamper-proof challenge for wallet to sign."""
-    nonce = secrets.token_hex(16)
-    payload = {
-        "address": address.lower(),
-        "nonce": nonce,
-        "expires": int(time.time()) + CHALLENGE_EXPIRY,
-    }
-    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    mac = hmac.new(HMAC_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
-
-    message = f"Sign in to BonzAI\n\nAddress: {address}\nNonce: {nonce}\nExpires: {payload['expires']}"
-
-    return {
-        "challenge": payload_b64,
-        "mac": mac,
-        "message": message,
-    }
+    return security.create_auth_challenge(address, HMAC_SECRET)
 
 
 def _verify_auth_challenge(challenge: str, mac: str, address: str, signature: str) -> bool:
-    """Verify the challenge is valid and was issued by this server."""
-    # Verify HMAC
-    expected_mac = hmac.new(HMAC_SECRET.encode(), challenge.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(mac, expected_mac):
-        return False
-
-    # Decode and check
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(challenge))
-    except Exception:
-        return False
-
-    if payload.get("expires", 0) < time.time():
-        return False
-
-    if payload.get("address") != address.lower():
-        return False
-
-    # Signature presence check (65 bytes = 130 hex chars + 0x prefix)
-    if not signature or len(signature) < 130:
-        return False
-
-    return True
+    # R5: real EIP-191 recovery over the HMAC-protected, single-use challenge.
+    return security.verify_auth_challenge(challenge, mac, address, signature, HMAC_SECRET)
 
 
-def _get_wallet_level(address: str) -> Tuple[str, int]:
-    """
-    Get wallet's level based on BONZAI holdings or ETH unlocks.
-    For now, return a default level. In production, this would check on-chain.
-    """
-    # TODO: Implement actual on-chain level checking
-    # For now, grant full access (LVL6) to all authenticated users
-    return ("LVL6", 6)
-
-
-def require_auth(min_level: int = 0):
-    """
-    Decorator to require valid JWT with minimum level.
-
-    Args:
-        min_level: Minimum level required (1-6)
-    """
-    def decorator(f):
-        @functools.wraps(f)
-        def decorated(*args, **kwargs):
-            # Get authorization header
-            auth_header = request.headers.get("Authorization", "")
-
-            if not auth_header.startswith("Bearer "):
-                return jsonify({"error": "Missing or invalid authorization header"}), 401
-
-            token = auth_header[7:]
-            claims = _verify_jwt_token(token)
-
-            if not claims:
-                return jsonify({"error": "Invalid or expired token"}), 401
-
-            # Check token type
-            if claims.get("type") != "access":
-                return jsonify({"error": "Invalid token type"}), 401
-
-            # Check minimum level requirement
-            if claims.get("level_value", 0) < min_level:
-                return jsonify({
-                    "error": "Insufficient level",
-                    "required": min_level,
-                    "current": claims.get("level_value", 0),
-                }), 403
-
-            # Set auth context
-            request.auth_user = claims
-            return f(*args, **kwargs)
-        return decorated
-    return decorator
+def _get_wallet_level(address: str) -> Tuple[Optional[str], int]:
+    # R7: never fabricate a level. Economy-only lookups use the configured chain.
+    return security.get_wallet_level(address)
 
 
 # =============================================================================
@@ -1251,7 +1134,9 @@ genbus = GenerationTracker()
 # =============================================================================
 
 @socketio.on("connect", namespace="/downloads")
-def dl_connect():
+def dl_connect(data=None):
+    if not security.authenticate_socketio_connect(data):
+        return False
     emit("connected", _json_sanitize({"message": "Connected to download progress stream"}))
 
 
@@ -1273,7 +1158,9 @@ def dl_disconnect():
 
 
 @socketio.on("connect", namespace="/generation")
-def gen_connect():
+def gen_connect(data=None):
+    if not security.authenticate_socketio_connect(data):
+        return False
     emit("connected", _json_sanitize({"message": "Connected to generation progress"}))
 
 
@@ -1283,7 +1170,9 @@ def gen_disconnect():
 
 
 @socketio.on("connect", namespace="/training")
-def training_connect():
+def training_connect(data=None):
+    if not security.authenticate_socketio_connect(data):
+        return False
     emit("connected", _json_sanitize({"message": "Connected to training progress stream"}))
 
 
@@ -2764,44 +2653,72 @@ def convert_wav_to_mp3(wav_path: str, bitrate: str = "128k") -> Optional[str]:
         return None
 
 
+def _media_root_dirs() -> List[Path]:
+    """The ONLY roots media paths may resolve into: the configured BonzAI
+    model/files directories. Resolved through filesystem links so a symlinked
+    root and a symlinked candidate are compared on the same real tree."""
+    roots = []
+    for d in (MODEL_DIR, FILES_DIR):
+        try:
+            roots.append(d.resolve(strict=True))
+        except OSError:
+            continue
+    return roots
+
+
+def resolve_media_path(raw_path: str) -> Optional[Path]:
+    """Canonical media-path validator shared by /media/stream and /media/info.
+
+    Confines access to the configured BonzAI model/files roots ONLY -- no
+    home-directory, temp, sibling-prefix, or external-volume allowances. Both
+    the roots and the candidate are resolved through filesystem links, and
+    containment is checked component-by-component via ``Path.relative_to``
+    (never a string prefix test), so neither a sibling directory that merely
+    shares the root's string prefix nor a ``..``/symlink escape can pass. The
+    candidate must resolve to an existing regular file with an allowed media
+    extension. Returns None on any failure. Callers must not stat/open the
+    raw input themselves and must never reflect it back in a response.
+    """
+    if not raw_path:
+        return None
+    try:
+        candidate = Path(raw_path).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not candidate.is_file():
+        return None
+    if candidate.suffix.lower() not in MEDIA_MIME_TYPES:
+        return None
+    for root in _media_root_dirs():
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        return candidate
+    return None
+
+
 @app.route("/media/stream", methods=["GET"])
 def stream_media():
     """
-    Stream a media file from the local filesystem.
+    Stream a media file confined to the configured BonzAI model/files roots.
     Query params:
-      - path: Absolute path to the media file
+      - path: Path to a media file inside a configured root.
     Supports range requests for video seeking.
     """
-    file_path = request.args.get("path", "").strip()
-    if not file_path:
+    raw_path = request.args.get("path", "").strip()
+    if not raw_path:
         return jsonify({"error": "Missing 'path' parameter"}), 400
 
-    # Security: Only allow files in known safe directories
-    cwd = os.getcwd()
-    allowed_dirs = [
-        cwd,
-        str(MODEL_DIR),
-        str(FILES_DIR),
-        os.path.expanduser("~"),
-        "/tmp",
-        "/var/folders",  # macOS temp
-        "/Volumes",  # External drives on macOS
-    ]
-
-    # Normalize path to prevent directory traversal
-    file_path = os.path.abspath(file_path)
-    is_allowed = any(file_path.startswith(os.path.abspath(d)) for d in allowed_dirs if d)
-
-    if not is_allowed:
-        logger.warning(f"[Media] Blocked access to path outside allowed dirs: {file_path}")
-        logger.warning(f"[Media] Current MODEL_DIR: {MODEL_DIR}, FILES_DIR: {FILES_DIR}")
+    resolved = resolve_media_path(raw_path)
+    if resolved is None:
+        logger.warning("[Media] Denied /media/stream request outside configured roots")
         return jsonify({"error": "Access denied"}), 403
 
-    if not os.path.isfile(file_path):
-        return jsonify({"error": "File not found"}), 404
+    file_path = str(resolved)
 
     # Determine MIME type
-    ext = os.path.splitext(file_path)[1].lower()
+    ext = resolved.suffix.lower()
     mime_type = MEDIA_MIME_TYPES.get(ext, "application/octet-stream")
     file_size = os.path.getsize(file_path)
 
@@ -2865,22 +2782,27 @@ def stream_media():
 
 @app.route("/media/info", methods=["GET"])
 def media_info():
-    """Get info about a media file (exists, size, type)."""
-    file_path = request.args.get("path", "").strip()
-    if not file_path:
+    """Get info about a media file (exists, size, type), confined to the
+    configured BonzAI model/files roots via resolve_media_path. A path that
+    fails validation is reported the same as a missing file -- no distinction
+    is drawn between "doesn't exist" and "outside the allowed roots", so a
+    denied request cannot be used as an oracle for filesystem contents."""
+    raw_path = request.args.get("path", "").strip()
+    if not raw_path:
         return jsonify({"error": "Missing 'path' parameter"}), 400
 
-    file_path = os.path.abspath(file_path)
-    if not os.path.isfile(file_path):
+    resolved = resolve_media_path(raw_path)
+    if resolved is None:
         return jsonify({"exists": False}), 200
 
-    ext = os.path.splitext(file_path)[1].lower()
+    file_path = str(resolved)
+    ext = resolved.suffix.lower()
     return jsonify({
         "exists": True,
         "path": file_path,
-        "size": os.path.getsize(file_path),
+        "size": resolved.stat().st_size,
         "mime_type": MEDIA_MIME_TYPES.get(ext, "application/octet-stream"),
-        "stream_url": f"/media/stream?path={file_path}",
+        "stream_url": f"/media/stream?path={quote(file_path)}",
     }), 200
 
 
@@ -7926,10 +7848,16 @@ logger.info(f"HF token present? {bool(_hf_token())}")
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="BonzAI Media Generation Server")
-    parser.add_argument("--port", type=int, default=65000, help="Port to run the server on")
+    parser.add_argument(
+        "--port", type=int, default=security.get_server_port(os.environ),
+        help="Port to run the server on (default: BONZAI_SERVER_PORT or 65000)",
+    )
     args = parser.parse_args()
 
     logger.info("Starting BonzAI Media Generation Server")
     logger.info(f"Device: {DeviceManager.get_device()}")
     logger.info(f"Model directory: {MODEL_DIR}")
-    socketio.run(app, host="0.0.0.0", port=args.port, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
+    # R1/R8: loopback-only bind; debug and reload always off.
+    host = security.get_server_host(os.environ)
+    logger.info(f"Binding loopback-only on {host}:{args.port} (debug/reload off)")
+    socketio.run(app, host=host, port=args.port, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
