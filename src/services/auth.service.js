@@ -332,6 +332,11 @@ export const authenticateWithVault = async (signer) => {
     } catch (vaultError) {
       // Vault is non-critical - log but don't fail auth
       console.warn("[Auth] Vault initialization failed:", vaultError.message);
+      // D2: if the vault could not be initialized for the authenticating
+      // wallet, never leave a PREVIOUS wallet's vault unlocked and writable:
+      // setAccessToken() persists into the currently unlocked vault and would
+      // otherwise write this wallet's token into a foreign vault.
+      try { await authVault.clearVaultSwitchFailure(); } catch {}
     }
 
     // Now that the correct wallet's vault (if any) is unlocked, persist the

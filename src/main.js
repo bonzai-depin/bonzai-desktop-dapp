@@ -3910,6 +3910,18 @@ function mintStartupCredentialsIfIntegrationsEnabled() {
   });
 }
 
+// D1: external credentials carry the registry's 24h lifetime; keep them
+// fresh for the whole session by re-minting well before expiry, instead of
+// letting enabled integrations die mid-run until the next launch. No-op when
+// no integration has ever been enabled (getExternalCredential() is null).
+// unref() so the timer never blocks shutdown or test runners.
+setInterval(() => {
+  if (!credentialRegistry.getExternalCredential()) return;
+  const token = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
+  refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
+  refreshHermesCredential(token, HERMES_ENV_PATH);
+}, 6 * 60 * 60 * 1000).unref?.();
+
 // Open URL in default browser
 ipcMain.handle("open-external", async (_event, url) => {
   if (typeof url === "string" && url.startsWith("https://")) {

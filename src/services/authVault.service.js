@@ -634,13 +634,17 @@ async function saveVault() {
     pendingOperations: state.pendingOperations,
   };
 
+  // D3: capture the target wallet at call time — a save kicked off for the
+  // previous wallet must never land in the newly selected wallet's vault if
+  // the switch happens while this async write is in flight.
+  const targetAddress = state.walletAddress;
   const encrypted = await encrypt(vaultData);
-  const storageKey = `${VAULT_STORAGE_KEY}-${state.walletAddress}`;
+  const storageKey = `${VAULT_STORAGE_KEY}-${targetAddress}`;
 
   if (window.electronAPI?.store?.set) {
     const envelope = {
       version: VAULT_VERSION,
-      address: state.walletAddress,
+      address: targetAddress,
       encrypted,
     };
     // Carry forward the current session's derivation metadata so a

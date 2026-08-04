@@ -92,9 +92,25 @@ function pathFromStreamUrl(url) {
 
 function boundMediaElements(localPath) {
   if (typeof document === "undefined") return [];
-  return [...document.querySelectorAll("audio[src], video[src]")].filter(
-    (el) => pathFromStreamUrl(el.currentSrc || el.src) === localPath,
-  );
+  const normalized = normalizeMediaPath(localPath);
+  return [...document.querySelectorAll("audio[src], video[src]")].filter((el) => {
+    const elPath = pathFromStreamUrl(el.currentSrc || el.src);
+    return elPath === localPath || (normalized && elPath === normalized);
+  });
+}
+
+// D5: lightweight path normalization (no node:path in the renderer) so a
+// signed URL that canonicalized or dot-collapsed the path still matches the
+// element bound to the raw path.
+function normalizeMediaPath(p) {
+  if (!p || typeof p !== "string") return null;
+  const parts = [];
+  for (const seg of p.replace(/\\/g, "/").split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") { parts.pop(); continue; }
+    parts.push(seg);
+  }
+  return "/" + parts.join("/");
 }
 
 // A signature renewal swaps the query string (new exp/sig), so any <audio>/
@@ -206,6 +222,12 @@ export async function getSignedMediaStreamUrl(localPath) {
 export function refreshExpiringEntries(nowMs = Date.now()) {
   for (const [localPath, entry] of cache.entries()) {
     if (entry.expiresAtMs - nowMs <= REFRESH_SKEW_MS) {
+      // D4: drop entries whose signature lapsed AND that no media element is
+      // bound to anymore, instead of re-signing every path ever cached.
+      if (entry.expiresAtMs < nowMs && boundMediaElements(localPath).length === 0) {
+        cache.delete(localPath);
+        continue;
+      }
       refresh(localPath);
     }
   }
