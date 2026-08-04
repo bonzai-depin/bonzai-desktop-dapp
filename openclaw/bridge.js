@@ -17,13 +17,37 @@
  * No separate server process needed - just start the BonzAI desktop app!
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const ELECTRON_API_PORT = process.env.OPENCLAW_API_PORT || 3002;
 const FLASK_PORT = process.env.BONZAI_SERVER_PORT || 65000;
+
+// Every route on the Electron OpenClaw API (including /health) now requires
+// the same scoped credential BonzAI Desktop writes into OpenClaw's own
+// models.json when the integration is enabled — read it from there rather
+// than duplicating credential storage.
+const OPENCLAW_MODELS_PATH = path.join(os.homedir(), '.openclaw', 'agents', 'main', 'agent', 'models.json');
+
+function loadBonzaiToken() {
+  try {
+    const config = JSON.parse(fs.readFileSync(OPENCLAW_MODELS_PATH, 'utf8'));
+    return config.providers?.bonzai?.apiKey || null;
+  } catch {
+    return null;
+  }
+}
+
+function authHeaders() {
+  const token = loadBonzaiToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 async function checkHealth() {
   try {
     // Check Electron OpenClaw API
-    const electronRes = await fetch(`http://localhost:${ELECTRON_API_PORT}/health`);
+    const electronRes = await fetch(`http://localhost:${ELECTRON_API_PORT}/health`, { headers: authHeaders() });
     const electronHealth = await electronRes.json();
 
     // Check Flask server
@@ -43,7 +67,7 @@ async function checkHealth() {
 
 async function listCompanions() {
   try {
-    const res = await fetch(`http://localhost:${ELECTRON_API_PORT}/companions`);
+    const res = await fetch(`http://localhost:${ELECTRON_API_PORT}/companions`, { headers: authHeaders() });
     return await res.json();
   } catch (error) {
     return { error: error.message };
@@ -52,7 +76,7 @@ async function listCompanions() {
 
 async function listScenarios() {
   try {
-    const res = await fetch(`http://localhost:${ELECTRON_API_PORT}/scenarios`);
+    const res = await fetch(`http://localhost:${ELECTRON_API_PORT}/scenarios`, { headers: authHeaders() });
     return await res.json();
   } catch (error) {
     return { error: error.message };
@@ -63,9 +87,9 @@ async function testChat(message) {
   try {
     const res = await fetch(`http://localhost:${ELECTRON_API_PORT}/webhook`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({
-        platform: 'test',
+        platform: 'openclaw',
         channelId: 'test-channel',
         message: message,
         userId: 'test-user',
