@@ -102,6 +102,9 @@ const state = reactive({
 // In-memory only (never persisted)
 let masterKey = null; // Derived from wallet signature
 let refreshTimer = null;
+// E6: bumped on every explicit resetVault so an in-flight save started before
+// the reset cannot resurrect the deleted vault afterwards.
+let resetEpoch = 0;
 // The derivation metadata backing the CURRENT unlocked session (if the vault
 // was created/unlocked via the reproducible message-signing flow). Carried
 // forward into every saveVault() write so a later credential save never
@@ -120,7 +123,7 @@ let vaultDerivation = null;
  * PREVIOUS wallet's cached credentials or tokens reachable through either
  * path, so every sensitive field is reset here, not just the two flags.
  */
-function clearVaultSwitchFailure() {
+export function clearVaultSwitchFailure() {
   masterKey = null;
   vaultDerivation = null;
   state.isUnlocked = false;
@@ -568,6 +571,10 @@ export async function resetVault(address, { confirm = false } = {}) {
 
   const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
 
+  // E6: invalidate any in-flight save for this (or any) wallet before the
+  // storage delete, so a pending write can never recreate the vault.
+  resetEpoch += 1;
+
   // If this throws (e.g. the write fails), the old record is left untouched
   // below - we only clear in-memory state after the storage delete succeeds.
   await window.electronAPI.store.delete(storageKey);
@@ -636,9 +643,16 @@ async function saveVault() {
 
   // D3: capture the target wallet at call time — a save kicked off for the
   // previous wallet must never land in the newly selected wallet's vault if
-  // the switch happens while this async write is in flight.
+  // the switch happens while this async write is in flight. E5: capture the
+  // derivation metadata at the SAME instant — a switch mid-write must not
+  // attach the new wallet's derivation to the old wallet's ciphertext.
   const targetAddress = state.walletAddress;
+  const targetDerivation = vaultDerivation;
+  // E6: an in-flight save must not resurrect a vault the user explicitly
+  // reset while the write was pending.
+  const targetResetEpoch = resetEpoch;
   const encrypted = await encrypt(vaultData);
+  if (resetEpoch !== targetResetEpoch) return; // vault was reset mid-save
   const storageKey = `${VAULT_STORAGE_KEY}-${targetAddress}`;
 
   if (window.electronAPI?.store?.set) {
@@ -649,7 +663,7 @@ async function saveVault() {
     };
     // Carry forward the current session's derivation metadata so a
     // credential save never strips what a future unlock depends on.
-    if (vaultDerivation) envelope.derivation = vaultDerivation;
+    if (targetDerivation) envelope.derivation = targetDerivation;
     await window.electronAPI.store.set(storageKey, envelope);
   }
 }

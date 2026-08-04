@@ -3910,17 +3910,30 @@ function mintStartupCredentialsIfIntegrationsEnabled() {
   });
 }
 
-// D1: external credentials carry the registry's 24h lifetime; keep them
-// fresh for the whole session by re-minting well before expiry, instead of
-// letting enabled integrations die mid-run until the next launch. No-op when
-// no integration has ever been enabled (getExternalCredential() is null).
-// unref() so the timer never blocks shutdown or test runners.
+// D1 (revised after E1-E3): external credentials carry a 24h registry
+// lifetime. Proactively rotating every few hours would invalidate tokens
+// already loaded by long-lived OpenClaw/Hermes processes (E1), and an
+// early-return on a null credential could never recover one that expired
+// while the event loop was suspended, e.g. laptop sleep (E2). So this timer
+// only RECOVERS: when the credential is missing or expired but the
+// integration is still enabled on disk, mint a fresh one and refresh the
+// on-disk copies, logging failures (E3) so a later tick or the next launch
+// retries. Proactive rotation stays a boot/toggle concern.
 setInterval(() => {
-  if (!credentialRegistry.getExternalCredential()) return;
-  const token = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
-  refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
-  refreshHermesCredential(token, HERMES_ENV_PATH);
-}, 6 * 60 * 60 * 1000).unref?.();
+  if (credentialRegistry.getExternalCredential()) return; // still valid
+  const openclawEnabled = isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH);
+  const hermesEnabled = isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH);
+  if (!openclawEnabled && !hermesEnabled) return;
+  try {
+    const token = credentialRegistry.issueExternalCredential(OPENCLAW_CREDENTIAL_SCOPE);
+    const openclawOk = refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH);
+    const hermesOk = refreshHermesCredential(token, HERMES_ENV_PATH);
+    if (!openclawOk && openclawEnabled) console.warn("[Session] external credential refresh failed for OpenClaw");
+    if (!hermesOk && hermesEnabled) console.warn("[Session] external credential refresh failed for Hermes");
+  } catch (e) {
+    console.warn("[Session] external credential recovery failed:", e?.message);
+  }
+}, 60 * 60 * 1000).unref?.();
 
 // Open URL in default browser
 ipcMain.handle("open-external", async (_event, url) => {

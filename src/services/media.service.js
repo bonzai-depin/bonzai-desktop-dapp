@@ -95,7 +95,13 @@ function boundMediaElements(localPath) {
   const normalized = normalizeMediaPath(localPath);
   return [...document.querySelectorAll("audio[src], video[src]")].filter((el) => {
     const elPath = pathFromStreamUrl(el.currentSrc || el.src);
-    return elPath === localPath || (normalized && elPath === normalized);
+    if (elPath === localPath) return true;
+    // E7: normalize BOTH sides so canonical/Windows/UNC forms still match.
+    if (normalized) {
+      const elNormalized = normalizeMediaPath(elPath);
+      if (elNormalized === normalized) return true;
+    }
+    return false;
   });
 }
 
