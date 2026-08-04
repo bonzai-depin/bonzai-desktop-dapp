@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
+import { stop } from "esbuild";
 import { build as viteBuild } from "vite";
 
 import {
@@ -1664,8 +1665,14 @@ test("A3: refreshExpiringEntries updates a bound <video> element's src directly,
 // Cleanup: the media tests (C3/C4/A3) install global.window via
 // installMediaSigner(); leaving it in place keeps node:test from exiting
 // naturally (the process hangs after the last test). Remove it so the suite
-// runs WITHOUT --test-force-exit and reports a stable test count.
-test.after(() => {
+// runs WITHOUT --test-force-exit and reports a stable test count. The
+// P11 storage-bundle test runs viteBuild(), which starts the esbuild service
+// (a child process) that would otherwise keep the runner alive (G3).
+test.after(async () => {
   delete global.window;
   delete global.document;
+  // Cancel the auth auto-refresh timer (scheduled with a ~1h delay by the
+  // token tests) so the runner can exit naturally.
+  try { auth?.__testCancelTimers?.(); } catch {}
+  try { await stop(); } catch {}
 });

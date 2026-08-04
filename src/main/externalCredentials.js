@@ -127,7 +127,9 @@ export function mintStartupExternalCredentials({
 }) {
   if (!isOpenClawEnabled() && !isHermesEnabled()) return null;
   const token = registry.issueExternalCredential(scope);
-  refreshOpenClaw(token);
-  refreshHermes(token);
-  return token;
+  const openclawOk = refreshOpenClaw(token);
+  const hermesOk = refreshHermes(token);
+  // G1: surface per-integration write results so the caller can record
+  // failures for later retry with the same live token.
+  return { token, openclawOk, hermesOk };
 }

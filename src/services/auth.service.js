@@ -408,6 +408,12 @@ const scheduleRefresh = (ms) => {
   }, ms);
 };
 
+// Test hook: cancel the auto-refresh timer so node:test runners (which keep
+// the process alive while any timer is pending) can exit naturally.
+export function __testCancelTimers() {
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+};
+
 /**
  * Refresh access token using refresh token cookie
  */

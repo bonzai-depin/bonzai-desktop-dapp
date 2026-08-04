@@ -3900,7 +3900,7 @@ ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
 // (content-pipeline.js scheduled posts, openclaw.handler.js health checks)
 // can make a request.
 function mintStartupCredentialsIfIntegrationsEnabled() {
-  mintStartupExternalCredentials({
+  const result = mintStartupExternalCredentials({
     registry: credentialRegistry,
     scope: OPENCLAW_CREDENTIAL_SCOPE,
     isOpenClawEnabled: () => isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH),
@@ -3908,6 +3908,15 @@ function mintStartupCredentialsIfIntegrationsEnabled() {
     refreshOpenClaw: (token) => refreshOpenClawCredential(token, OPENCLAW_MODELS_PATH),
     refreshHermes: (token) => refreshHermesCredential(token, HERMES_ENV_PATH),
   });
+  // G1: record boot-time on-disk write failures so the hourly recovery
+  // timer retries them with the same live token instead of leaving invalid
+  // copies for enabled integrations.
+  if (result) {
+    externalRefreshIncomplete.openclaw =
+      isOpenClawIntegrationEnabled(OPENCLAW_MODELS_PATH) && !result.openclawOk;
+    externalRefreshIncomplete.hermes =
+      isHermesIntegrationEnabled(HERMES_SKILL_MANIFEST_PATH) && !result.hermesOk;
+  }
 }
 
 // F2: track on-disk refresh failures so later ticks retry the SAME token

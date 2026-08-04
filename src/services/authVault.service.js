@@ -257,6 +257,9 @@ export async function hasVault(address) {
  * @param {string} signature - Existing signature to try against a stored vault
  */
 export async function initializeOrUnlockFromSignature(address, signature) {
+  // G2: capture the reset epoch up front — an explicit resetVault that lands
+  // while we sign/decrypt must win over this initialization.
+  const targetResetEpoch = resetEpoch;
   // Tear down any previously unlocked wallet's cached secrets before doing
   // any lookups for the wallet we're switching to, so an early throw below
   // (invalid address/signature, address mismatch, no vault to recover from)
@@ -290,6 +293,10 @@ export async function initializeOrUnlockFromSignature(address, signature) {
 
     // Derive master key from the signature and try to decrypt existing vault
     const candidateKey = await deriveKeyFromSignature(signature);
+    // G2: an explicit reset that landed while signing/deriving wins.
+    if (resetEpoch !== targetResetEpoch) {
+      throw new Error("Vault was reset during recovery");
+    }
     try {
       masterKey = candidateKey;
       const vaultData = await decrypt(existingVault.encrypted);
@@ -357,6 +364,9 @@ export async function initializeOrUnlockFromSignature(address, signature) {
  * Call this after first wallet connection
  */
 export async function initializeVault(signer) {
+  // G2: capture the reset epoch up front — an explicit resetVault that lands
+  // while we sign must win over this initialization.
+  const targetResetEpoch = resetEpoch;
   // Tear down any previously unlocked wallet's cached secrets before doing
   // any lookups for the wallet we're switching to. Without this, creating a
   // brand-new vault for wallet B while wallet A is still unlocked would set
@@ -399,6 +409,11 @@ export async function initializeVault(signer) {
 
   // Get signature (this is the ONLY time we need a wallet signature)
   const signature = await signer.signMessage(message);
+
+  // G2: an explicit reset that landed while the user was signing wins.
+  if (resetEpoch !== targetResetEpoch) {
+    throw new Error("Vault was reset during initialization");
+  }
 
   // Derive master key
   masterKey = await deriveKeyFromSignature(signature);
@@ -454,6 +469,9 @@ export async function initializeVault(signer) {
  * identical to the original. Never recomputes the timestamp itself.
  */
 export async function unlockVault(signer) {
+  // G2: capture the reset epoch up front — an explicit resetVault that lands
+  // while we sign/decrypt must win over this unlock.
+  const targetResetEpoch = resetEpoch;
   // Tear down any previously unlocked wallet's cached secrets BEFORE doing
   // any lookups for the wallet we're switching to. If we waited until a
   // failure branch below to call this, an early throw (invalid address,
@@ -518,6 +536,12 @@ export async function unlockVault(signer) {
 
     masterKey = await deriveKeyFromSignature(signature);
     const vaultData = await decrypt(stored.encrypted);
+
+    // G2: if the vault was explicitly reset while we were signing/decrypting,
+    // refuse to restore state or write anything — the reset wins.
+    if (resetEpoch !== targetResetEpoch) {
+      throw new Error("Vault was reset during unlock");
+    }
 
     // Restore state from vault
     state.walletAddress = address;
