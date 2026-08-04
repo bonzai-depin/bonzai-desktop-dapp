@@ -421,14 +421,18 @@ async function openConsumerSession(msg) {
 const _pendingProviderSessions = new Map(); // sessionId → { shardId, socketPath, peerId, modelId, blockRange }
 const _activeProviderSessions = new Map();  // sessionId → { tunnelStream, udsSocket, ... }
 let _providerRegistered = false;
+// Headers for main→Flask /shard calls; injected by main.js so the guarded
+// routes (src/server/bonzai_security.py) accept provider-bridge requests.
+let _getFlaskHeaders = (extra) => extra;
 
 /**
  * Register provider-side handlers. Idempotent — calling twice is a no-op.
  * Called from main.js at p2p start when `networkMode === "provider"`.
  */
-export async function startProviderBridge({ flaskPort = 65000 } = {}) {
+export async function startProviderBridge({ flaskPort = 65000, getFlaskHeaders } = {}) {
   if (_providerRegistered) return;
   _providerRegistered = true;
+  if (typeof getFlaskHeaders === "function") _getFlaskHeaders = getFlaskHeaders;
 
   const node = getP2PNode();
 
@@ -440,7 +444,7 @@ export async function startProviderBridge({ flaskPort = 65000 } = {}) {
       try {
         const res = await fetch(`http://127.0.0.1:${flaskPort}/shard/load`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: _getFlaskHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             sessionId:  req.sessionId,
             modelId:    req.modelId,
@@ -477,7 +481,7 @@ export async function startProviderBridge({ flaskPort = 65000 } = {}) {
             _pendingProviderSessions.delete(req.sessionId);
             fetch(`http://127.0.0.1:${flaskPort}/shard/unload`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: _getFlaskHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({ shardId: ack.shardId }),
             }).catch(() => {});
           }
@@ -502,7 +506,7 @@ export async function startProviderBridge({ flaskPort = 65000 } = {}) {
       try {
         await fetch(`http://127.0.0.1:${flaskPort}/shard/unload`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: _getFlaskHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ shardId }),
         });
       } catch {}
@@ -537,7 +541,7 @@ export async function stopProviderBridge() {
   for (const [sessionId, ctx] of _pendingProviderSessions) {
     fetch(`http://127.0.0.1:65000/shard/unload`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: _getFlaskHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ shardId: ctx.shardId }),
     }).catch(() => {});
   }

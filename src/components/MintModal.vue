@@ -372,6 +372,7 @@ import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
 import { CONTENT_TYPE_MAP } from "../constants/index.js";
 import { issueGameToken } from "../services/gameToken.service.js";
+import { authFetch } from "../services/auth.service.js";
 import audioBgSrc from "../assets/bonzai_music.webp";
 import videoPosterSrc from "../assets/bonzai_video.webp";
 import logoSrc from "../assets/bonzai_logo-full.png";
@@ -582,7 +583,7 @@ async function generateBackground() {
   try {
     const bgPrompt = `artistic abstract background for ${generationType.value}, ${props.prompt || 'digital art'}, vibrant colors, cinematic lighting, no text, no people`;
     const port = window.BONZAI_SERVER_PORT || 65000;
-    const res = await fetch(`http://localhost:${port}/image/turbo`, {
+    const res = await authFetch(`http://localhost:${port}/image/turbo`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

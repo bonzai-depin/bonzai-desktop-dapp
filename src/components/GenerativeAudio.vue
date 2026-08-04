@@ -1026,6 +1026,7 @@ import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { socketAuthPayload, authFetch } from "../services/auth.service.js";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import {
   generationStore,
@@ -1046,6 +1047,7 @@ import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addAudioInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
+import { signedMediaStreamSrc } from "../services/media.service.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -2067,6 +2069,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       reconnectionAttempts: 60,
       reconnectionDelay: 1000,
       path: "/socket.io",
+      auth: socketAuthPayload(),
     };
 
     const downloadMatchesMode = computed(() => {
@@ -2654,7 +2657,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       // Free GPU memory: unload local LLM + clear cached Flask models
       try {
         await window.electronAPI?.unloadModel?.();
-        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
+        await authFetch(`${API_BASE}/memory/clear`, { method: "POST" });
       } catch (e) {
         console.warn("[GenerativeAudio] Memory clear:", e.message);
       }
@@ -2846,11 +2849,11 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       }, 2000);
     };
 
-    // Convert local path to streaming URL
+    // Convert local path to streaming URL (signed -- R1-R3)
     const fileUrl = (p) => {
       if (!p) return "";
       if (/^https?:\/\//i.test(p)) return p;
-      return `${API_BASE}/media/stream?path=${encodeURIComponent(p)}`;
+      return signedMediaStreamSrc(p);
     };
 
     const downloadAudio = async (idx) => {

@@ -115,6 +115,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 import { getSkillModelRequirements, MODEL_REQUIREMENTS } from '../../skills/flagship.js';
+import { socketAuthPayload, getAuthHeaders, getLocalSessionHeaders } from '../../services/auth.service.js';
 import BonzaiPulse from '../BonzaiPulse.vue';
 
 const API_BASE =
@@ -244,7 +245,7 @@ export default {
           try {
             const response = await fetch(`http://localhost:${port}/pipelines/plan`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...getLocalSessionHeaders(), ...getAuthHeaders() },
               body: JSON.stringify({ pipeline }),
             });
             const data = await response.json();
@@ -352,6 +353,7 @@ export default {
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: 5,
+        auth: socketAuthPayload(),
       });
 
       sock.on('connect', () => {
