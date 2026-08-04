@@ -72,30 +72,151 @@ const SUPPORTED_CHAINS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SECRET STORAGE (P9 Security) — safeStorage-backed IPC + legacy migration
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Transactionally migrate a legacy plaintext record (found under the
+ * generic electron-store key) to protected storage via the safeStorage-backed
+ * wallet-secret IPC (see main.js / src/main/secretStore.js).
+ *
+ * Verify-before-delete: encrypt + persist, read the protected record back
+ * and compare it against the original plaintext, and only then remove the
+ * legacy plaintext record. Any failure along the way (encryption, write, or
+ * verification — including the OS-encryption-unavailable case, which
+ * surfaces as the wallet-secret IPC throwing) leaves the legacy record
+ * completely unchanged and never writes a second plaintext copy anywhere.
+ *
+ * @returns {Promise<{ok: boolean, reason?: string}>}
+ */
+async function _migrateLegacySecret({ storeKey, secretKey, plaintext, address }) {
+  try {
+    await window.electronAPI?.walletSecret?.set(secretKey, plaintext, { address });
+  } catch (error) {
+    console.error(`[AgentWallet] Migration failed while encrypting legacy secret for ${secretKey}:`, error?.message || error);
+    return { ok: false, reason: 'encrypt-failed' };
+  }
+
+  let verified;
+  try {
+    verified = await window.electronAPI?.walletSecret?.get(secretKey);
+  } catch (error) {
+    console.error(`[AgentWallet] Migration failed while reading back protected secret for ${secretKey}:`, error?.message || error);
+    // The set() above did persist a protected record even though we can't
+    // confirm its contents — remove it so the untouched legacy record (not
+    // this unverified one) stays canonical on the next access.
+    await _rollbackRejectedProtectedRecord(secretKey);
+    return { ok: false, reason: 'verify-read-failed' };
+  }
+
+  if (!verified || verified.secret !== plaintext) {
+    console.error(`[AgentWallet] Migration verification failed for ${secretKey}: decrypted value did not match the original`);
+    // Same reasoning: a protected record exists but failed verification, so
+    // it must not be left in place to shadow the still-good legacy record.
+    await _rollbackRejectedProtectedRecord(secretKey);
+    return { ok: false, reason: 'verify-mismatch' };
+  }
+
+  try {
+    await window.electronAPI?.store?.delete(storeKey);
+  } catch (error) {
+    console.error(`[AgentWallet] Migration verified ${secretKey} but failed to remove the legacy plaintext copy:`, error?.message || error);
+    return { ok: false, reason: 'legacy-delete-failed' };
+  }
+
+  console.log(`[AgentWallet] Migrated legacy plaintext secret for ${secretKey} to protected storage`);
+  return { ok: true };
+}
+
+/**
+ * Delete a protected record that migration wrote but then rejected (failed
+ * read-back or mismatched verification), so it cannot outrank the preserved
+ * legacy record on a later read. Best-effort: if this also fails, the
+ * rejected record is left in place and logged loudly, since silently
+ * proceeding would let unverified ciphertext become canonical.
+ */
+async function _rollbackRejectedProtectedRecord(secretKey) {
+  try {
+    await window.electronAPI?.walletSecret?.delete(secretKey);
+  } catch (error) {
+    console.error(`[AgentWallet] Failed to roll back rejected protected record for ${secretKey}; it may incorrectly take precedence over the legacy record:`, error?.message || error);
+  }
+}
+
+/**
+ * Best-effort removal of a legacy plaintext record now that a protected
+ * record is canonical for `key`. Logs loudly on failure instead of
+ * swallowing it silently (A3) — callers that read the protected record
+ * retry this on every access, so a transient failure here is not permanent.
+ */
+async function _clearLegacyPlaintext(key) {
+  try {
+    await window.electronAPI?.store?.delete(key);
+  } catch (error) {
+    console.error(`[AgentWallet] Failed to remove legacy plaintext copy for ${key}; will retry on next access:`, error?.message || error);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MASTER SECRET MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Get or generate the master secret for wallet derivation
+ * Get or generate the master secret for wallet derivation.
+ *
+ * New secrets are always persisted through the safeStorage-backed
+ * wallet-secret IPC — never as plaintext. A pre-existing legacy plaintext
+ * record (from before P9) is opportunistically migrated to protected
+ * storage on access; if migration cannot complete (e.g. safeStorage is
+ * unavailable on this OS session), the legacy record is left untouched and
+ * used as-is so wallet derivation keeps working. Because the legacy record
+ * is only deleted after a migration verifies successfully, its presence
+ * always takes precedence over a protected record (A4) — this guarantees a
+ * protected record rejected by verification can never become canonical,
+ * even if its own best-effort rollback failed.
+ *
  * @deprecated Use OWS vault wallets via walletProvider.service.js instead.
  * @returns {Promise<Uint8Array>} 32-byte master secret
  */
 async function getMasterSecret() {
   console.warn('[AgentWallet] getMasterSecret() is deprecated. Use OWS wallets via walletProviderService.');
   try {
-    // Try to get existing master secret from Electron store
-    const stored = await window.electronAPI?.store?.get(MASTER_SECRET_KEY);
+    const protectedRecord = await window.electronAPI?.walletSecret?.get(MASTER_SECRET_KEY);
+    // Legacy plaintext record from before P9 (stored as a raw hex string).
+    const legacyValue = await window.electronAPI?.store?.get(MASTER_SECRET_KEY);
 
-    if (stored) {
-      return ethers.getBytes(stored);
+    if (typeof legacyValue === 'string' && legacyValue.length > 0) {
+      // The legacy record is only ever deleted after a migration is verified
+      // end-to-end (see _migrateLegacySecret), so its continued presence here
+      // means any protected record is either not yet migrated or was rejected
+      // by verification and its best-effort rollback failed (A4) — in either
+      // case the legacy value, never the protected one, is the trustworthy
+      // secret. Proactively re-clear a leftover rejected record so we don't
+      // keep retrying a migration against stale ciphertext.
+      if (protectedRecord) {
+        await _rollbackRejectedProtectedRecord(MASTER_SECRET_KEY);
+      }
+      const migration = await _migrateLegacySecret({
+        storeKey: MASTER_SECRET_KEY,
+        secretKey: MASTER_SECRET_KEY,
+        plaintext: legacyValue,
+      });
+      if (!migration.ok) {
+        console.warn(`[AgentWallet] Continuing with legacy master secret; migration failed (${migration.reason})`);
+      }
+      return ethers.getBytes(legacyValue);
     }
 
-    // Generate new master secret
+    // Protected record already exists and no legacy copy remains — canonical
+    // source, decrypt or fail closed.
+    if (protectedRecord) {
+      return ethers.getBytes(protectedRecord.secret);
+    }
+
+    // Nothing stored yet — generate and persist a new, protected secret.
     const masterSecret = ethers.randomBytes(32);
     const hexSecret = ethers.hexlify(masterSecret);
-
-    // Store it (should be encrypted by Electron store)
-    await window.electronAPI?.store?.set(MASTER_SECRET_KEY, hexSecret);
+    await window.electronAPI?.walletSecret?.set(MASTER_SECRET_KEY, hexSecret);
 
     console.log('[AgentWallet] Generated new master secret');
     return masterSecret;
@@ -106,13 +227,14 @@ async function getMasterSecret() {
 }
 
 /**
- * Check if master secret exists
+ * Check if master secret exists (protected or legacy plaintext).
  * @returns {Promise<boolean>}
  */
 async function hasMasterSecret() {
   try {
-    const stored = await window.electronAPI?.store?.get(MASTER_SECRET_KEY);
-    return !!stored;
+    if (await window.electronAPI?.walletSecret?.has(MASTER_SECRET_KEY)) return true;
+    const legacyValue = await window.electronAPI?.store?.get(MASTER_SECRET_KEY);
+    return !!legacyValue;
   } catch {
     return false;
   }
@@ -179,7 +301,9 @@ export async function generateAgentWalletHD(index) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Store agent wallet credentials (encrypted)
+ * Store agent wallet credentials via the safeStorage-backed wallet-secret
+ * IPC (P9). Only ciphertext + non-secret metadata is ever persisted; the
+ * private key never touches the generic electron-store.
  *
  * @param {string|number} companionId - The companion's unique identifier
  * @param {{address: string, privateKey: string}} wallet - The wallet to store
@@ -187,27 +311,71 @@ export async function generateAgentWalletHD(index) {
 export async function storeAgentWalletCredentials(companionId, wallet) {
   const key = `${AGENT_WALLET_PREFIX}${companionId}`;
 
-  // Store wallet info - private key is stored but should be encrypted by Electron store
-  // In production, consider additional encryption with user password
-  await window.electronAPI?.store?.set(key, {
-    address: wallet.address,
-    privateKey: wallet.privateKey,
-    createdAt: Date.now(),
-  });
+  await window.electronAPI?.walletSecret?.set(key, wallet.privateKey, { address: wallet.address });
+
+  // Clear any stale legacy plaintext copy now that a protected record is
+  // canonical. If this fails, getAgentWalletCredentials retries it on every
+  // subsequent read (A3) — it is never left as a silent permanent failure.
+  await _clearLegacyPlaintext(key);
 
   console.log('[AgentWallet] Stored credentials for companion', companionId);
 }
 
 /**
- * Get stored agent wallet credentials
+ * Get stored agent wallet credentials.
+ *
+ * A legacy plaintext record is only ever deleted after its migration is
+ * verified end-to-end, so its continued presence always takes precedence
+ * over any protected record (A4) — it means the protected record is either
+ * not yet migrated or was rejected by verification. When no legacy record
+ * remains, the protected record is canonical (fails closed — throws — if it
+ * exists but OS encryption is unavailable to decrypt it).
  *
  * @param {string|number} companionId - The companion's unique identifier
  * @returns {Promise<{address: string, privateKey: string, createdAt: number}|null>}
  */
 export async function getAgentWalletCredentials(companionId) {
   const key = `${AGENT_WALLET_PREFIX}${companionId}`;
-  const stored = await window.electronAPI?.store?.get(key);
-  return stored || null;
+
+  const protectedRecord = await window.electronAPI?.walletSecret?.get(key);
+  const legacy = await window.electronAPI?.store?.get(key);
+
+  if (legacy && legacy.privateKey) {
+    // As in getMasterSecret, the legacy record only ever gets deleted after a
+    // migration is verified end-to-end, so its continued presence means any
+    // protected record here is either not yet migrated or was rejected by
+    // verification and its best-effort rollback failed (A4) — the legacy
+    // value is the only one we can trust. Proactively re-clear a leftover
+    // rejected record so we don't keep retrying against stale ciphertext.
+    if (protectedRecord) {
+      await _rollbackRejectedProtectedRecord(key);
+    }
+    const migration = await _migrateLegacySecret({
+      storeKey: key,
+      secretKey: key,
+      plaintext: legacy.privateKey,
+      address: legacy.address,
+    });
+    if (!migration.ok) {
+      console.warn(`[AgentWallet] Continuing with legacy wallet credentials for companion ${companionId}; migration failed (${migration.reason})`);
+    }
+
+    return {
+      address: legacy.address,
+      privateKey: legacy.privateKey,
+      createdAt: legacy.createdAt,
+    };
+  }
+
+  if (protectedRecord) {
+    return {
+      address: protectedRecord.address,
+      privateKey: protectedRecord.secret,
+      createdAt: protectedRecord.createdAt,
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -222,12 +390,13 @@ export async function hasAgentWallet(companionId) {
 }
 
 /**
- * Delete agent wallet credentials
+ * Delete agent wallet credentials (protected record and any legacy remnant).
  *
  * @param {string|number} companionId - The companion's unique identifier
  */
 export async function deleteAgentWalletCredentials(companionId) {
   const key = `${AGENT_WALLET_PREFIX}${companionId}`;
+  await window.electronAPI?.walletSecret?.delete(key);
   await window.electronAPI?.store?.delete(key);
   console.log('[AgentWallet] Deleted credentials for companion', companionId);
 }

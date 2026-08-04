@@ -90,6 +90,36 @@ async function getFilesDir() {
 }
 
 /**
+ * Check whether the local OpenClaw API server (src/main/openclawServer.js,
+ * port 3002) is up and ready to drive AI generation for the mint commands
+ * below ("BonzAI Desktop is running").
+ *
+ * R3 (branch-review fix 2): every route on that server, including /health,
+ * requires the P1 registry's external credential (P6) — a bare fetch() with
+ * no header always 401s, which used to be misread as "not ready" via a
+ * `data.ok` field the server never actually sends (it replies
+ * `{ status: "ok", ... }`, not `{ ok: true }`). Obtain the SAME external
+ * credential the server validates from main via IPC (never mint/forge one
+ * in the renderer), and treat "no credential yet" — the integration was
+ * never enabled this launch — as not-ready instead of firing a request that
+ * is guaranteed to 401.
+ */
+async function isBonzaiDesktopReady() {
+  try {
+    const cred = await window.electronAPI?.session?.obtainExternalCredential?.();
+    if (!cred?.ok || !cred.token) return false;
+    const resp = await fetch('http://localhost:3002/health', {
+      headers: { 'x-bonzai-session': cred.token },
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    return data.status === 'ok';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Save base64 image to file and return the path
  * OpenClaw/WhatsApp expects file paths, not base64
  */
@@ -1761,12 +1791,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
 
       try {
         // Check if BonzAI Desktop is running (required for inference)
-        let healthOk = false;
-        try {
-          const resp = await fetch('http://localhost:3002/health');
-          const data = await resp.json();
-          healthOk = data.ok === true;
-        } catch { /* not running */ }
+        const healthOk = await isBonzaiDesktopReady();
 
         if (!healthOk) {
           return {
@@ -1966,12 +1991,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
 
       try {
         // Check if BonzAI Desktop is running
-        let healthOk = false;
-        try {
-          const resp = await fetch('http://localhost:3002/health');
-          const data = await resp.json();
-          healthOk = data.ok === true;
-        } catch { /* not running */ }
+        const healthOk = await isBonzaiDesktopReady();
 
         if (!healthOk) {
           return { text: 'Finalization requires BonzAI Desktop for AI generation. Start the app and try again.' };
@@ -2675,4 +2695,5 @@ export {
   executeInference,
   discoverProviders,
   getNetworkStatus,
+  isBonzaiDesktopReady,
 };

@@ -3,6 +3,12 @@
  *
  * Handles content & metadata uploads to IPFS via Pinata's API.
  * No wallet signatures or funding required — uses API key auth.
+ *
+ * The actual Pinata request happens entirely in the Electron main process
+ * (see src/main/pinataPublish.js) — the Pinata JWT / API key+secret never
+ * enter the renderer. This module only normalizes upload input and calls
+ * window.electronAPI.storage.publish; retrieval (fetchContent etc.) still
+ * happens here directly since Pinata's public gateway is unauthenticated.
  */
 
 import { ethers } from "ethers";
@@ -41,26 +47,34 @@ import { ethers } from "ethers";
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const PINATA_API = "https://api.pinata.cloud";
 const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs";
 
-// Auth: JWT (preferred), falls back to API Key + Secret
-function getAuthHeaders() {
-  const jwt = import.meta.env.VITE_PINATA_JWT;
-  if (jwt) {
-    return { Authorization: `Bearer ${jwt}` };
+// Hard client-side ceiling matching src/main/pinataPublish.js's
+// MAX_UPLOAD_BYTES — fails fast (before the IPC round-trip) on an oversized
+// upload; the main process enforces the real bound regardless.
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MiB
+
+/**
+ * The publishing bridge exposed by preload.js. Credentials are read and
+ * injected entirely in the main process — this module never builds an
+ * Authorization / pinata_api_key header itself.
+ */
+function getPublishBridge() {
+  const api = typeof window !== "undefined" ? window.electronAPI?.storage : undefined;
+  if (!api?.publish) {
+    throw new Error("Pinata publishing is only available inside the BonzAI desktop app.");
   }
-  const apiKey = import.meta.env.VITE_PINATA_API_KEY;
-  const apiSecret = import.meta.env.VITE_PINATA_API_SECRET;
-  if (apiKey && apiSecret) {
-    return {
-      pinata_api_key: apiKey,
-      pinata_secret_api_key: apiSecret,
-    };
+  return api;
+}
+
+async function publish(payload) {
+  const bridge = getPublishBridge();
+  const result = await bridge.publish(payload);
+  if (!result || result.ok === false) {
+    throw new Error(result?.error || "Pinata publish failed");
   }
-  throw new Error(
-    "Pinata credentials not configured. Set VITE_PINATA_JWT (or VITE_PINATA_API_KEY + VITE_PINATA_API_SECRET) in your .env file.",
-  );
+  const { ok: _ok, ...receipt } = result;
+  return receipt;
 }
 
 const STORAGE_CONFIG = {
@@ -81,13 +95,14 @@ let _initialized = false;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Initialize the storage service (verifies Pinata credentials).
+ * Initialize the storage service. Credential availability is no longer
+ * checked here — the Pinata JWT/API key live in the main process and are
+ * validated at publish time, so local (non-publishing) use of this service
+ * works whether or not Pinata is configured.
  * @param {unknown} [_provider] - Unused (kept for API compat with previous Irys-based service)
  * @returns {Promise<boolean>} True if initialization succeeded
  */
 export async function initStorage(_provider) {
-  // Verify credentials are available
-  getAuthHeaders();
   _initialized = true;
   return true;
 }
@@ -144,53 +159,14 @@ function base64ToUint8Array(base64) {
   return bytes;
 }
 
-/**
- * Map content type to a file extension for Pinata filename hint.
- */
-function extFromMime(contentType) {
-  const map = {
-    "image/png": "png",
-    "image/jpeg": "jpg",
-    "image/webp": "webp",
-    "video/mp4": "mp4",
-    "video/webm": "webm",
-    "audio/wav": "wav",
-    "audio/mpeg": "mp3",
-    "text/html": "html",
-    "text/plain": "txt",
-    "application/json": "json",
-    "model/gltf-binary": "glb",
-    "model/gltf+json": "gltf",
-    "application/octet-stream": "bin",
-  };
-  return map[contentType] || "bin";
-}
-
-/**
- * Build Pinata keyvalues from generation + attribution tags.
- * @param {GenerationMeta} [generation] - Generation metadata
- * @param {AttributionMeta} [attribution] - Attribution metadata
- * @returns {Record<string, string>} Key-value pairs for Pinata metadata
- */
-function buildKeyValues(generation = {}, attribution = {}) {
-  const kv = { "App-Name": "BonzAI", "App-Version": "2.0.0" };
-  if (generation.type) kv["Generation-Type"] = generation.type;
-  if (generation.model) kv["Model-ID"] = generation.model;
-  if (generation.modelVersion) kv["Model-Version"] = generation.modelVersion;
-  if (generation.promptHash) kv["Prompt-Hash"] = generation.promptHash;
-  if (generation.timestamp)
-    kv["Generation-Timestamp"] = String(generation.timestamp);
-  if (attribution.creator) kv["Creator-Address"] = attribution.creator;
-  if (attribution.platform) kv["Platform-Address"] = attribution.platform;
-  return kv;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // UPLOAD — pinFileToIPFS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Upload content to IPFS via Pinata.
+ * Upload content to IPFS via Pinata. The actual request (and the credential
+ * it needs) happens in the main process; this just normalizes `data` and
+ * hands it to the storage:publish bridge.
  *
  * @param {Object} params
  * @param {Uint8Array|ArrayBuffer|Blob|string} params.data - Content to upload
@@ -213,49 +189,13 @@ export async function uploadContent({
     uploadData = toUint8Array(data);
   }
 
-  const ext = extFromMime(contentType);
-  const fileName = `bonzai-${generation.type || "content"}-${Date.now()}.${ext}`;
-
-  const formData = new FormData();
-  formData.append("file", new Blob([uploadData], { type: contentType }), fileName);
-  formData.append(
-    "pinataMetadata",
-    JSON.stringify({
-      name: fileName,
-      keyvalues: buildKeyValues(generation, attribution),
-    }),
-  );
-  formData.append(
-    "pinataOptions",
-    JSON.stringify({ cidVersion: 1 }),
-  );
-
-  const res = await fetch(`${PINATA_API}/pinning/pinFileToIPFS`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Pinata upload failed (${res.status}): ${errBody}`);
+  if (uploadData.byteLength > MAX_UPLOAD_BYTES) {
+    throw new Error(
+      `Upload too large: ${uploadData.byteLength} bytes exceeds the ${MAX_UPLOAD_BYTES}-byte limit`,
+    );
   }
 
-  const result = await res.json();
-  const cid = result.IpfsHash;
-
-
-  return {
-    transactionId: cid,
-    timestamp: result.Timestamp,
-    signature: null,
-    url: `ipfs://${cid}`,
-    gatewayUrl: `${PINATA_GATEWAY}/${cid}`,
-    size: result.PinSize || uploadData.byteLength || uploadData.length,
-    tags: Object.entries(buildKeyValues(generation, attribution)).map(
-      ([name, value]) => ({ name, value }),
-    ),
-  };
+  return publish({ kind: "content", data: uploadData, contentType, generation, attribution });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -275,40 +215,7 @@ export async function uploadMetadata(
   generation = {},
   attribution = {},
 ) {
-  const res = await fetch(`${PINATA_API}/pinning/pinJSONToIPFS`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify({
-      pinataContent: metadata,
-      pinataMetadata: {
-        name: `bonzai-metadata-${Date.now()}.json`,
-        keyvalues: buildKeyValues(generation, attribution),
-      },
-      pinataOptions: { cidVersion: 1 },
-    }),
-  });
-
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Pinata metadata upload failed (${res.status}): ${errBody}`);
-  }
-
-  const result = await res.json();
-  const cid = result.IpfsHash;
-
-
-  return {
-    transactionId: cid,
-    timestamp: result.Timestamp,
-    signature: null,
-    url: `ipfs://${cid}`,
-    gatewayUrl: `${PINATA_GATEWAY}/${cid}`,
-    size: result.PinSize,
-    tags: [],
-  };
+  return publish({ kind: "metadata", metadata, generation, attribution });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -346,8 +253,23 @@ export async function uploadBase64({
 // UPLOAD — file from path (Electron only)
 // ═══════════════════════════════════════════════════════════════════════════
 
+const FILE_EXT_CONTENT_TYPES = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  glb: "model/gltf-binary",
+  gltf: "model/gltf+json",
+};
+
 /**
- * Upload a file from disk to IPFS via Pinata (Electron only).
+ * Upload a file from disk to IPFS via Pinata (Electron only). The file is
+ * read in the main process (src/main/pinataPublish.js), not here — the
+ * renderer never touches the filesystem for this path.
  *
  * @param {string} filePath - Absolute path to the file
  * @param {GenerationMeta} [generation] - Generation metadata
@@ -355,31 +277,10 @@ export async function uploadBase64({
  * @returns {Promise<UploadReceipt>} Upload receipt
  */
 export async function uploadFile(filePath, generation, attribution) {
-  const fs = typeof window !== "undefined" && window.require?.("fs");
-  if (!fs) throw new Error("File upload only available in Electron");
-
-  const data = fs.readFileSync(filePath);
   const ext = filePath.split(".").pop().toLowerCase();
+  const contentType = FILE_EXT_CONTENT_TYPES[ext] || "application/octet-stream";
 
-  const contentTypes = {
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    webp: "image/webp",
-    mp4: "video/mp4",
-    webm: "video/webm",
-    wav: "audio/wav",
-    mp3: "audio/mpeg",
-    glb: "model/gltf-binary",
-    gltf: "model/gltf+json",
-  };
-
-  return uploadContent({
-    data,
-    contentType: contentTypes[ext] || "application/octet-stream",
-    generation,
-    attribution,
-  });
+  return publish({ kind: "file", filePath, contentType, generation, attribution });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

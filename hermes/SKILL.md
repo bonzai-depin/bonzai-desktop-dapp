@@ -18,11 +18,13 @@ Use BonzAI Desktop when a user wants local language or multimodal generation, co
 
 ## Procedure
 
-1. Check `GET http://localhost:3002/health`.
+1. Check `GET http://localhost:3002/health` with `Authorization: Bearer <BONZAI_API_KEY>`.
 2. If unavailable, ask the user to start BonzAI Desktop.
-3. Send commands or chat to `POST http://localhost:3002/webhook`.
+3. Send commands or chat to `POST http://localhost:3002/webhook`, with the same `Authorization: Bearer <BONZAI_API_KEY>` header.
 4. Use a stable `channelId` and set `platform` to `hermes`.
 5. Wait for the synchronous response. Initial model downloads and media generation may take several minutes.
+
+Every request to the gateway — including `/health` — requires this bearer credential; unauthenticated requests are rejected. `BONZAI_API_KEY` is written into `~/.hermes/.env` by BonzAI Desktop when the Hermes integration is enabled, and refreshed there automatically whenever the underlying session credential rotates or the app restarts.
 
 ```json
 {
