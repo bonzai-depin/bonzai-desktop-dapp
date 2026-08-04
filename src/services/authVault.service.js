@@ -301,9 +301,11 @@ export async function initializeOrUnlockFromSignature(address, signature) {
       masterKey = candidateKey;
       const vaultData = await decrypt(existingVault.encrypted);
 
-      // H2: an explicit reset that landed during decryption wins — the state
-      // must not be restored after the reset.
+      // H2 + I2: an explicit reset that landed during decryption wins — the
+      // state must not be restored after the reset, and the candidate key
+      // must not stay resident.
       if (resetEpoch !== targetResetEpoch) {
+        masterKey = null;
         throw new Error("Vault was reset during recovery");
       }
 
@@ -423,9 +425,11 @@ export async function initializeVault(signer) {
 
   // Derive master key
   masterKey = await deriveKeyFromSignature(signature);
-  // H1: an explicit reset that landed during derivation wins too — the vault
-  // must not be recreated/unlocked in memory after the reset.
+  // H1 + I2: an explicit reset that landed during derivation wins too — the
+  // vault must not be recreated/unlocked in memory after the reset, and the
+  // freshly derived key must not stay resident after the abort.
   if (resetEpoch !== targetResetEpoch) {
+    masterKey = null;
     throw new Error("Vault was reset during initialization");
   }
   vaultDerivation = derivation;
@@ -451,6 +455,12 @@ export async function initializeVault(signer) {
 
   // Encrypt and store
   const encrypted = await encrypt(vaultData);
+  // I1: an explicit reset that landed during encryption wins — never write.
+  if (resetEpoch !== targetResetEpoch) {
+    masterKey = null;
+    vaultDerivation = null;
+    throw new Error("Vault was reset during initialization");
+  }
   const storageKey = `${VAULT_STORAGE_KEY}-${address}`;
 
   if (window.electronAPI?.store?.set) {
@@ -460,6 +470,14 @@ export async function initializeVault(signer) {
       encrypted,
       derivation,
     });
+  }
+
+  // I1: a reset that landed during the store write must not mark the vault
+  // initialized — the reset wins, state stays locked.
+  if (resetEpoch !== targetResetEpoch) {
+    masterKey = null;
+    vaultDerivation = null;
+    throw new Error("Vault was reset during initialization");
   }
 
   // Update state
@@ -548,9 +566,11 @@ export async function unlockVault(signer) {
     masterKey = await deriveKeyFromSignature(signature);
     const vaultData = await decrypt(stored.encrypted);
 
-    // G2: if the vault was explicitly reset while we were signing/decrypting,
-    // refuse to restore state or write anything — the reset wins.
+    // G2 + I2: if the vault was explicitly reset while we were
+    // signing/decrypting, refuse to restore state or write anything — the
+    // reset wins, and the derived key must not stay resident.
     if (resetEpoch !== targetResetEpoch) {
+      masterKey = null;
       throw new Error("Vault was reset during unlock");
     }
 
