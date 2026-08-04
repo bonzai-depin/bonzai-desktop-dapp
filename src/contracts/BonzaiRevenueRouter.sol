@@ -118,16 +118,18 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
         uint256 treasuryAmount = msg.value * treasuryBps / BPS;
         uint256 stakingRewardAmount = msg.value * stakingRewardBps / BPS;
         uint256 contributorAmount = msg.value - treasuryAmount - stakingRewardAmount;
+
+        // Effects: apply every accounting update before the first external value
+        // transfer (checks-effects-interactions). Weight reads below are view-only
+        // calls to the trusted vault and do not move value.
         route.totalReceived += msg.value;
         routedRevenue[assetId] += contributorAmount;
 
-        (bool sentTreasury, ) = treasury.call{value: treasuryAmount}("");
-        require(sentTreasury, "Treasury transfer failed");
-
+        uint256 lastRecipient = route.recipients.length - 1;
         uint256 allocated = 0;
         for (uint256 i = 0; i < route.recipients.length; ) {
             RouteRecipient storage recipient = route.recipients[i];
-            uint256 share = i == route.recipients.length - 1
+            uint256 share = i == lastRecipient
                 ? contributorAmount - allocated
                 : contributorAmount * recipient.baseBps / BPS;
             allocated += share;
@@ -146,13 +148,15 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
             unchecked { i++; }
         }
 
+        // All treasury-bound value (its share plus any unallocatable staking bonus
+        // when total weight is zero) is settled in a single post-effects transfer.
+        uint256 treasuryTransfer = treasuryAmount;
         if (totalWeight == 0) {
-            (bool sentUnusedBonus, ) = treasury.call{value: stakingRewardAmount}("");
-            require(sentUnusedBonus, "Bonus transfer failed");
+            treasuryTransfer += stakingRewardAmount;
         } else {
             uint256 bonusAllocated = 0;
             for (uint256 i = 0; i < route.recipients.length; ) {
-                uint256 bonus = i == route.recipients.length - 1
+                uint256 bonus = i == lastRecipient
                     ? stakingRewardAmount - bonusAllocated
                     : stakingRewardAmount * weights[i] / totalWeight;
                 bonusAllocated += bonus;
@@ -160,6 +164,11 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
                 unchecked { i++; }
             }
         }
+
+        // Interactions: the only external value transfer, after every effect.
+        // A failed transfer reverts the transaction, restoring all balances.
+        (bool sentTreasury, ) = treasury.call{value: treasuryTransfer}("");
+        require(sentTreasury, "Treasury transfer failed");
 
         emit RevenueReceived(assetId, msg.sender, msg.value, treasuryAmount, contributorAmount, stakingRewardAmount);
     }
