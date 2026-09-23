@@ -526,6 +526,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Model directory management
   getModelDir: () => ipcRenderer.invoke("get-model-dir"),
   selectModelDir: () => ipcRenderer.invoke("select-model-dir"),
+  getModelStorage: () => ipcRenderer.invoke("get-model-storage"),
+  pickModelDir: () => ipcRenderer.invoke("pick-model-dir"),
+  applyModelDir: (dir, mode) => ipcRenderer.invoke("apply-model-dir", dir, mode),
+  reconnectModelDir: () => ipcRenderer.invoke("reconnect-model-dir"),
   selectVideoFile: () => ipcRenderer.invoke("select-video-file"),
   downloadVideoToTemp: (url) => ipcRenderer.invoke("download-video-to-temp", url),
   // Migration progress events (for MODEL_DIR file migration)
