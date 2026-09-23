@@ -37,8 +37,15 @@ import {
   saveExample as studioSaveExample,
   deleteExample as studioDeleteExample,
   exportDataset as studioExportDataset,
+  setDatasetModelDir,
 } from "./scripts/dataset-studio.js";
 import { RobinhoodMcpManager } from "./main/robinhood-mcp.js";
+import {
+  inspectModelDir,
+  migrateModelDir,
+  resolveStartupModelDir,
+  freeBytes as volumeFreeBytes,
+} from "./main/model-storage.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals / paths
@@ -72,7 +79,10 @@ const __dirname = path.dirname(__filename);
 
 // Unified model directory (same as diffuser.py uses for diffusion models)
 // Can be overridden by user via settings
-let MODEL_DIR = path.join(os.homedir(), "bonzai-models");
+const DEFAULT_MODEL_DIR = path.join(os.homedir(), "bonzai-models");
+let MODEL_DIR = DEFAULT_MODEL_DIR;
+// Stored models folder that was missing at startup (e.g. external drive unplugged)
+let modelDirUnavailable = null;
 // Ensure directory exists
 fs.mkdirSync(MODEL_DIR, { recursive: true });
 
@@ -2543,109 +2553,6 @@ ipcMain.handle("get-app-version", () => app.getVersion());
 // ─────────────────────────────────────────────────────────────────────────────
 ipcMain.handle("get-model-dir", () => MODEL_DIR);
 
-// Helper: calculate directory size recursively (async for non-blocking)
-async function calculateDirSize(dirPath) {
-  let total = 0;
-  try {
-    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    // Process entries in parallel for speed
-    const sizes = await Promise.all(
-      entries.map(async (entry) => {
-        const fullPath = path.join(dirPath, entry.name);
-        if (entry.isDirectory()) {
-          return calculateDirSize(fullPath);
-        } else if (entry.isFile()) {
-          try {
-            const stat = await fs.promises.stat(fullPath);
-            return stat.size;
-          } catch {
-            return 0;
-          }
-        }
-        return 0;
-      })
-    );
-    total = sizes.reduce((sum, size) => sum + size, 0);
-  } catch (e) {
-    console.warn(`[calculateDirSize] Error reading ${dirPath}: ${e.message}`);
-  }
-  return total;
-}
-
-// Helper: collect all files recursively with relative paths (async)
-async function collectFiles(dirPath, basePath = dirPath) {
-  const results = [];
-  try {
-    await fs.promises.access(dirPath);
-  } catch {
-    return results;
-  }
-  try {
-    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        const subResults = await collectFiles(fullPath, basePath);
-        results.push(...subResults);
-      } else if (entry.isFile()) {
-        try {
-          const stat = await fs.promises.stat(fullPath);
-          results.push({
-            absolutePath: fullPath,
-            relativePath: path.relative(basePath, fullPath),
-            size: stat.size,
-          });
-        } catch {
-          // Skip files that can't be stat'd
-        }
-      }
-    }
-  } catch (e) {
-    console.warn(`[collectFiles] Error reading ${dirPath}: ${e.message}`);
-  }
-  return results;
-}
-
-// Helper: copy directory with stream-based progress (fully async)
-async function copyDirWithProgress(srcDir, destDir, totalSize, progressFn) {
-  const files = await collectFiles(srcDir);
-  let copiedBytes = 0;
-
-  for (const file of files) {
-    const destPath = path.join(destDir, file.relativePath);
-    const destDirPath = path.dirname(destPath);
-    await fs.promises.mkdir(destDirPath, { recursive: true });
-
-    // Skip files that already exist at dest with matching size (idempotent)
-    try {
-      const destStat = await fs.promises.stat(destPath);
-      if (destStat.size === file.size) {
-        copiedBytes += file.size;
-        progressFn(copiedBytes, totalSize, file.relativePath);
-        continue;
-      }
-    } catch {
-      // File doesn't exist, will copy
-    }
-
-    // Stream-based copy with progress
-    await new Promise((resolve, reject) => {
-      const readStream = fs.createReadStream(file.absolutePath);
-      const writeStream = fs.createWriteStream(destPath);
-
-      readStream.on("data", (chunk) => {
-        copiedBytes += chunk.length;
-        progressFn(copiedBytes, totalSize, file.relativePath);
-      });
-
-      writeStream.on("finish", resolve);
-      writeStream.on("error", reject);
-      readStream.on("error", reject);
-      readStream.pipe(writeStream);
-    });
-  }
-}
-
 // Send migration progress to all renderer windows
 const notifyMigrationProgress = (data) => {
   const windows = BrowserWindow.getAllWindows();
@@ -2702,6 +2609,203 @@ ipcMain.handle("select-video-file", async () => {
   return filePaths[0];
 });
 
+// Point stored inference history and companion media at the new folder.
+function rewriteStoredMediaPaths(oldDir, newDir) {
+  const historyKeys = ["audioInferences", "imageInferences", "videoInferences", "objectInferences"];
+  const oldDirNormalized = path.resolve(oldDir);
+  const newDirNormalized = path.resolve(newDir);
+
+  for (const key of historyKeys) {
+    try {
+      const history = store.get(key, []);
+      if (Array.isArray(history) && history.length > 0) {
+        let updated = false;
+        const updatedHistory = history.map((inference) => {
+          // Deep clone to avoid mutation
+          const item = JSON.parse(JSON.stringify(inference));
+
+          // Update paths in answer.data
+          if (item?.answer?.data) {
+            const data = item.answer.data;
+            const pathFields = ["audio_path", "video_path", "image_path", "path", "output_path", "object_path"];
+
+            for (const field of pathFields) {
+              if (data[field] && typeof data[field] === "string" && data[field].startsWith(oldDirNormalized)) {
+                data[field] = data[field].replace(oldDirNormalized, newDirNormalized);
+                updated = true;
+              }
+            }
+          }
+
+          return item;
+        });
+
+        if (updated) {
+          store.set(key, updatedHistory);
+          console.log(`[Model Dir] Updated paths in ${key}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Model Dir] Failed to update ${key}:`, e.message);
+    }
+  }
+
+  // Also update roleplaySessions (companion chat history)
+  try {
+    const roleplaySessions = store.get("roleplaySessions", {});
+    if (roleplaySessions && typeof roleplaySessions === "object") {
+      let updated = false;
+      const pathFields = ["image", "audio", "video", "backgroundImage"];
+
+      const updatePath = (obj, field) => {
+        if (obj[field] && typeof obj[field] === "string" && obj[field].startsWith(oldDirNormalized)) {
+          obj[field] = obj[field].replace(oldDirNormalized, newDirNormalized);
+          return true;
+        }
+        return false;
+      };
+
+      for (const sessionKey in roleplaySessions) {
+        const session = roleplaySessions[sessionKey];
+        if (!session) continue;
+
+        // Update companion.image
+        if (session.companion) {
+          if (updatePath(session.companion, "image")) updated = true;
+        }
+
+        // Update scenario.image
+        if (session.scenario) {
+          if (updatePath(session.scenario, "image")) updated = true;
+        }
+
+        // Update session backgroundImage
+        if (updatePath(session, "backgroundImage")) updated = true;
+
+        // Update history messages
+        if (Array.isArray(session.history)) {
+          for (const msg of session.history) {
+            for (const field of pathFields) {
+              if (updatePath(msg, field)) updated = true;
+            }
+          }
+        }
+
+        // Update backgroundHistory
+        if (Array.isArray(session.backgroundHistory)) {
+          for (const entry of session.backgroundHistory) {
+            if (updatePath(entry, "image")) updated = true;
+          }
+        }
+      }
+
+      if (updated) {
+        store.set("roleplaySessions", roleplaySessions);
+        console.log(`[Model Dir] Updated paths in roleplaySessions`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[Model Dir] Failed to update roleplaySessions:`, e.message);
+  }
+}
+
+let modelDirMigrationActive = false;
+
+function modelStorageStatus() {
+  return {
+    dir: MODEL_DIR,
+    isDefault: path.resolve(MODEL_DIR) === path.resolve(DEFAULT_MODEL_DIR),
+    unavailableDir: modelDirUnavailable,
+    migrating: modelDirMigrationActive,
+    home: os.homedir(),
+  };
+}
+
+ipcMain.handle("get-model-storage", async () => ({
+  ...modelStorageStatus(),
+  freeBytes: await volumeFreeBytes(MODEL_DIR),
+}));
+
+// Folder dialog only; nothing moves until apply-model-dir.
+ipcMain.handle("pick-model-dir", async () => {
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: "Choose where BonzAI stores models",
+    defaultPath: MODEL_DIR,
+    buttonLabel: "Use this folder",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (canceled || !filePaths.length) return null;
+  return inspectModelDir(filePaths[0], MODEL_DIR);
+});
+
+/**
+ * Switch the models folder.
+ *   mode "move": move existing files, freeing the current disk
+ *   mode "copy": copy existing files, keep the originals
+ *   mode "use":  point at the folder as it is (e.g. models already there)
+ */
+async function applyModelDir(newDir, mode = "move") {
+  if (!newDir || typeof newDir !== "string") return { error: "No folder selected." };
+  if (!["move", "copy", "use"].includes(mode)) return { error: `Unknown mode: ${mode}` };
+  if (modelDirMigrationActive) return { error: "A folder change is already in progress." };
+  if (activeDownloads.size > 0) {
+    return { error: "Finish or cancel the downloads in progress before changing the folder." };
+  }
+
+  const target = path.resolve(newDir);
+  const oldDir = path.resolve(MODEL_DIR);
+  if (target === oldDir) return { ...modelStorageStatus(), freeBytes: await volumeFreeBytes(target) };
+
+  modelDirMigrationActive = true;
+  try {
+    const info = await inspectModelDir(target, oldDir);
+    if (!info.writable) return { error: "BonzAI cannot write to that folder." };
+    if (info.nested && mode !== "use") {
+      return { error: "Choose a folder that is not inside the current one, and does not contain it." };
+    }
+
+    fs.mkdirSync(target, { recursive: true });
+    if (mode !== "use") {
+      await migrateModelDir(oldDir, target, { mode, onProgress: notifyMigrationProgress });
+      notifyMigrationProgress({ phase: "updating", pct: 96, detail: "Updating history paths..." });
+      rewriteStoredMediaPaths(oldDir, target);
+    }
+
+    MODEL_DIR = target;
+    modelDirUnavailable = null;
+    setDatasetModelDir(target);
+    store.set("models", target);
+  } catch (e) {
+    console.error("[Model Dir] Migration failed:", e);
+    notifyMigrationProgress({ phase: "error", pct: 0, detail: e.message });
+    return { error: e.message };
+  } finally {
+    modelDirMigrationActive = false;
+  }
+
+  // The files and the setting are already in place. The server picks up the
+  // new BONZAI_MODEL_DIR on restart; its own status banner reports progress.
+  restartServerManually().catch((e) => {
+    console.warn("[Model Dir] Server restart after dir change failed:", e.message);
+  });
+  notifyMigrationProgress({ phase: "complete", pct: 100, detail: "Models folder updated." });
+
+  return { ...modelStorageStatus(), freeBytes: await volumeFreeBytes(MODEL_DIR) };
+}
+
+ipcMain.handle("apply-model-dir", (_event, newDir, mode) => applyModelDir(newDir, mode));
+
+// The stored folder was missing at startup; switch to it once it is back.
+ipcMain.handle("reconnect-model-dir", async () => {
+  if (!modelDirUnavailable) return { ...modelStorageStatus(), freeBytes: await volumeFreeBytes(MODEL_DIR) };
+  if (!fs.existsSync(modelDirUnavailable)) {
+    return { error: `${modelDirUnavailable} is still not connected.` };
+  }
+  return applyModelDir(modelDirUnavailable, "use");
+});
+
+// Legacy one-step flow: pick a folder and copy the current contents there.
 ipcMain.handle("select-model-dir", async () => {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
@@ -2710,162 +2814,8 @@ ipcMain.handle("select-model-dir", async () => {
     properties: ["openDirectory", "createDirectory"],
   });
   if (canceled || !filePaths.length) return null;
-
-  const newDir = filePaths[0];
-  const oldDir = MODEL_DIR;
-
-  // Skip migration if same directory
-  if (path.resolve(oldDir) === path.resolve(newDir)) {
-    return newDir;
-  }
-
-  fs.mkdirSync(newDir, { recursive: true });
-
-  // Migrate files from old to new directory
-  try {
-    notifyMigrationProgress({ phase: "scanning", pct: 0, detail: "Scanning files..." });
-
-    const totalSize = await calculateDirSize(oldDir);
-    if (totalSize === 0) {
-      notifyMigrationProgress({ phase: "complete", pct: 100, detail: "No files to migrate." });
-    } else {
-      const totalMB = (totalSize / 1024 / 1024).toFixed(1);
-      notifyMigrationProgress({ phase: "copying", pct: 1, detail: `Copying ${totalMB} MB...` });
-
-      await copyDirWithProgress(oldDir, newDir, totalSize, (copiedBytes, total, currentFile) => {
-        // Copying phase: 0-90%
-        const pct = Math.min(90, Math.round((copiedBytes / total) * 90));
-        const copiedMB = (copiedBytes / 1024 / 1024).toFixed(1);
-        notifyMigrationProgress({
-          phase: "copying",
-          pct,
-          detail: `${copiedMB} / ${totalMB} MB — ${currentFile}`,
-        });
-      });
-
-      notifyMigrationProgress({ phase: "verifying", pct: 95, detail: "Verifying..." });
-    }
-
-    // Update inference history paths to point to new location
-    notifyMigrationProgress({ phase: "updating", pct: 96, detail: "Updating history paths..." });
-
-    const historyKeys = ["audioInferences", "imageInferences", "videoInferences", "objectInferences"];
-    const oldDirNormalized = path.resolve(oldDir);
-    const newDirNormalized = path.resolve(newDir);
-
-    for (const key of historyKeys) {
-      try {
-        const history = store.get(key, []);
-        if (Array.isArray(history) && history.length > 0) {
-          let updated = false;
-          const updatedHistory = history.map((inference) => {
-            // Deep clone to avoid mutation
-            const item = JSON.parse(JSON.stringify(inference));
-
-            // Update paths in answer.data
-            if (item?.answer?.data) {
-              const data = item.answer.data;
-              const pathFields = ["audio_path", "video_path", "image_path", "path", "output_path", "object_path"];
-
-              for (const field of pathFields) {
-                if (data[field] && typeof data[field] === "string" && data[field].startsWith(oldDirNormalized)) {
-                  data[field] = data[field].replace(oldDirNormalized, newDirNormalized);
-                  updated = true;
-                }
-              }
-            }
-
-            return item;
-          });
-
-          if (updated) {
-            store.set(key, updatedHistory);
-            console.log(`[Model Dir] Updated paths in ${key}`);
-          }
-        }
-      } catch (e) {
-        console.warn(`[Model Dir] Failed to update ${key}:`, e.message);
-      }
-    }
-
-    // Also update roleplaySessions (companion chat history)
-    try {
-      const roleplaySessions = store.get("roleplaySessions", {});
-      if (roleplaySessions && typeof roleplaySessions === "object") {
-        let updated = false;
-        const pathFields = ["image", "audio", "video", "backgroundImage"];
-
-        const updatePath = (obj, field) => {
-          if (obj[field] && typeof obj[field] === "string" && obj[field].startsWith(oldDirNormalized)) {
-            obj[field] = obj[field].replace(oldDirNormalized, newDirNormalized);
-            return true;
-          }
-          return false;
-        };
-
-        for (const sessionKey in roleplaySessions) {
-          const session = roleplaySessions[sessionKey];
-          if (!session) continue;
-
-          // Update companion.image
-          if (session.companion) {
-            if (updatePath(session.companion, "image")) updated = true;
-          }
-
-          // Update scenario.image
-          if (session.scenario) {
-            if (updatePath(session.scenario, "image")) updated = true;
-          }
-
-          // Update session backgroundImage
-          if (updatePath(session, "backgroundImage")) updated = true;
-
-          // Update history messages
-          if (Array.isArray(session.history)) {
-            for (const msg of session.history) {
-              for (const field of pathFields) {
-                if (updatePath(msg, field)) updated = true;
-              }
-            }
-          }
-
-          // Update backgroundHistory
-          if (Array.isArray(session.backgroundHistory)) {
-            for (const entry of session.backgroundHistory) {
-              if (updatePath(entry, "image")) updated = true;
-            }
-          }
-        }
-
-        if (updated) {
-          store.set("roleplaySessions", roleplaySessions);
-          console.log(`[Model Dir] Updated paths in roleplaySessions`);
-        }
-      }
-    } catch (e) {
-      console.warn(`[Model Dir] Failed to update roleplaySessions:`, e.message);
-    }
-  } catch (e) {
-    console.error("[Model Dir] Migration failed:", e);
-    notifyMigrationProgress({ phase: "error", pct: 0, detail: e.message });
-    return { error: `Migration failed: ${e.message}` };
-  }
-
-  // Update MODEL_DIR and restart server
-  MODEL_DIR = newDir;
-  store.set("models", newDir);
-
-  notifyMigrationProgress({ phase: "restarting", pct: 98, detail: "Restarting server..." });
-
-  try {
-    await restartServerManually();
-  } catch (e) {
-    console.warn("[Model Dir] Server restart after dir change failed:", e.message);
-  }
-
-  notifyMigrationProgress({ phase: "complete", pct: 100, detail: "Migration complete." });
-
-  return newDir;
+  const result = await applyModelDir(filePaths[0], "copy");
+  return result.error ? result : result.dir;
 });
 
 // Fix history paths - useful for users who already migrated without path updates
@@ -4572,7 +4522,7 @@ app.on("ready", async () => {
     const result = dbMigrate.runMigrations();
     if (result.applied.length) console.log(`[Startup] applied ${result.applied.length} migrations`);
     if (result.skipped.length) console.log(`[Startup] ${result.skipped.length} migrations already applied`);
-    dbIpc.registerDbIpc();
+    dbIpc.registerDbIpc({ modelDir: MODEL_DIR });
     // First-boot one-shot: copy each domain's data from electron-store
     // into SQLite. Idempotent — flagged per-table in store.
     try { await dbStoreImport.runFirstBootImport(store); }
@@ -5178,12 +5128,18 @@ async function systemInformation() {
   return result;
 }
 
-// Restore user's model directory from store, or use default
-const storedModelDir = store.get("models");
-if (storedModelDir && fs.existsSync(storedModelDir)) {
-  MODEL_DIR = storedModelDir;
-} else {
-  store.set("models", MODEL_DIR);
+// Restore user's model directory from store, or use default.
+// A folder on a disconnected drive keeps its setting; this session falls
+// back to the default folder and the picker offers to reconnect.
+{
+  const startup = resolveStartupModelDir(store.get("models"), MODEL_DIR);
+  MODEL_DIR = startup.dir;
+  modelDirUnavailable = startup.unavailableDir;
+  if (startup.persist) store.set("models", MODEL_DIR);
+  setDatasetModelDir(MODEL_DIR);
+  if (modelDirUnavailable) {
+    console.warn(`[Model Dir] ${modelDirUnavailable} is not reachable; using ${MODEL_DIR} for this session`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

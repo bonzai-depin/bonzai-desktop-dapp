@@ -77,7 +77,7 @@ export default {
       {
         id: 9,
         question: "Where are models stored?",
-        answer: "Models are cached to ~/bonzai-models/ on your local machine. You can manage downloaded models through the model picker (accessible from the sidebar model indicator).",
+        answer: "Models are stored in ~/bonzai-models/ by default. To use another folder, such as an external drive, open the model picker from the sidebar model indicator and choose Change… next to Models folder. BonzAI can move the models you already downloaded.",
       },
       {
         id: 10,

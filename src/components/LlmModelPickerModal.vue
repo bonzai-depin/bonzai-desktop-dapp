@@ -219,9 +219,76 @@
             </div>
           </div>
 
-          <!-- Footer — keep one line of breathing room + hint -->
+          <!-- Footer — where models live + keyboard hint -->
           <footer class="bz-picker__footer">
-            <span class="bz-meta">
+            <div class="bz-storage" role="group" aria-label="Models folder">
+              <!-- Choosing: confirm what happens to the files already downloaded -->
+              <template v-if="storagePending">
+                <span class="material-symbols-outlined bz-storage__icon" aria-hidden="true">drive_file_move</span>
+                <span class="bz-storage__text">
+                  <template v-if="storagePending.source.bytes > 0">
+                    Move {{ fmtBytes(storagePending.source.bytes) }} to
+                  </template>
+                  <template v-else>Store new models in</template>
+                  <span class="bz-mono bz-storage__path" :title="storagePending.path">{{ shortPath(storagePending.path) }}</span>
+                  <span v-if="storagePending.freeBytes != null" class="bz-meta">· {{ fmtBytes(storagePending.freeBytes) }} free</span>
+                  <span v-if="storagePendingProblem" class="bz-storage__error">{{ storagePendingProblem }}</span>
+                </span>
+                <span class="bz-storage__actions">
+                  <button
+                    v-if="storagePending.source.bytes > 0"
+                    type="button"
+                    class="bz-btn bz-btn--primary"
+                    :disabled="storageBusy || !!storagePendingProblem"
+                    @click="applyStorage('move')"
+                  >Move models</button>
+                  <button
+                    type="button"
+                    class="bz-btn"
+                    :class="storagePending.source.bytes > 0 ? 'bz-btn--ghost' : 'bz-btn--primary'"
+                    :disabled="storageBusy || !storagePending.writable"
+                    :title="storagePending.source.bytes > 0 ? 'Leave current files where they are' : undefined"
+                    @click="applyStorage('use')"
+                  >{{ storagePending.source.bytes > 0 ? "Use folder as is" : "Use folder" }}</button>
+                  <button type="button" class="bz-textbtn" :disabled="storageBusy" @click="storagePending = null">Cancel</button>
+                </span>
+              </template>
+
+              <!-- The saved folder is on a drive that is not connected -->
+              <template v-else-if="storage.unavailableDir">
+                <span class="material-symbols-outlined bz-storage__icon bz-storage__icon--warn" aria-hidden="true">warning</span>
+                <span class="bz-storage__text">
+                  <span class="bz-mono bz-storage__path" :title="storage.unavailableDir">{{ shortPath(storage.unavailableDir) }}</span>
+                  is not connected. Using
+                  <span class="bz-mono bz-storage__path" :title="storage.dir">{{ shortPath(storage.dir) }}</span>
+                  for now.
+                </span>
+                <span class="bz-storage__actions">
+                  <button type="button" class="bz-btn bz-btn--ghost" :disabled="storageBusy" @click="reconnectStorage">Reconnect</button>
+                  <button type="button" class="bz-textbtn" :disabled="storageBusy" @click="pickStorage">Change…</button>
+                </span>
+              </template>
+
+              <template v-else>
+                <span class="material-symbols-outlined bz-storage__icon" aria-hidden="true">hard_drive</span>
+                <span class="bz-storage__text">
+                  <span class="bz-eyebrow">Models folder</span>
+                  <span class="bz-mono bz-storage__path" :title="storage.dir">{{ shortPath(storage.dir) || "—" }}</span>
+                  <span v-if="storage.freeBytes != null" class="bz-meta">· {{ fmtBytes(storage.freeBytes) }} free</span>
+                </span>
+                <span class="bz-storage__actions">
+                  <button type="button" class="bz-btn bz-btn--ghost" :disabled="storageBusy" @click="pickStorage">Change…</button>
+                </span>
+              </template>
+
+              <div v-if="storageProgress.active" class="bz-storage__progress" role="status">
+                <span class="bz-storage__bar" :style="{ width: storageProgress.pct + '%' }"></span>
+                <span class="bz-meta bz-mono bz-storage__detail">{{ storageProgress.detail }}</span>
+              </div>
+              <p v-else-if="storageError" class="bz-storage__error" role="alert">{{ storageError }}</p>
+            </div>
+
+            <span class="bz-meta bz-picker__hint">
               <span class="bz-mono">Esc</span> to close ·
               <span class="bz-mono">↩</span> to load the highlighted row
             </span>
@@ -552,6 +619,84 @@ function close() {
   modelPicker.hide();
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// STORAGE — where downloaded weights live (e.g. an external drive)
+// ─────────────────────────────────────────────────────────────────────
+const storage = reactive({ dir: "", freeBytes: null, unavailableDir: null, home: "" });
+const storagePending = ref(null);
+const storageBusy = ref(false);
+const storageError = ref("");
+const storageProgress = reactive({ active: false, pct: 0, detail: "" });
+let _unsubMigration = null;
+
+// Keep the drive name and the last folders; the full path is in the tooltip.
+const shortPath = (p) => {
+  if (!p) return "";
+  if (storage.home && (p === storage.home || p.startsWith(storage.home + "/") || p.startsWith(storage.home + "\\"))) {
+    p = "~" + p.slice(storage.home.length);
+  }
+  if (p.length <= 48) return p;
+  return p.slice(0, 18) + "…" + p.slice(-28);
+};
+
+const storagePendingProblem = computed(() => {
+  const target = storagePending.value;
+  if (!target) return "";
+  if (!target.writable) return "BonzAI cannot write to this folder.";
+  if (target.nested && target.source.bytes > 0) return "Choose a folder outside the current one.";
+  if (target.freeBytes != null && target.freeBytes < target.source.bytes) {
+    return "Not enough free space to move the current models.";
+  }
+  return "";
+});
+
+async function refreshStorage() {
+  try {
+    const status = await window.electronAPI?.getModelStorage?.();
+    if (status) Object.assign(storage, status);
+  } catch {}
+}
+
+async function pickStorage() {
+  if (!window.electronAPI?.pickModelDir) return;
+  storageError.value = "";
+  const target = await window.electronAPI.pickModelDir();
+  if (!target) return;
+  if (target.same) return;
+  storagePending.value = target;
+}
+
+async function runStorageChange(call) {
+  storageBusy.value = true;
+  storageError.value = "";
+  try {
+    const result = await call();
+    if (result?.error) {
+      storageError.value = result.error;
+      return;
+    }
+    if (result) Object.assign(storage, result);
+    storagePending.value = null;
+    await refreshAvailability();
+  } catch (error) {
+    storageError.value = error?.message || "Could not change the models folder.";
+  } finally {
+    storageBusy.value = false;
+    storageProgress.active = false;
+  }
+}
+
+function applyStorage(mode) {
+  const target = storagePending.value;
+  if (!target || !window.electronAPI?.applyModelDir) return;
+  return runStorageChange(() => window.electronAPI.applyModelDir(target.path, mode));
+}
+
+function reconnectStorage() {
+  if (!window.electronAPI?.reconnectModelDir) return;
+  return runStorageChange(() => window.electronAPI.reconnectModelDir());
+}
+
 function onKey(e) {
   if (!modelPicker.state.open) return;
   if (e.key === "Escape") {
@@ -587,6 +732,7 @@ watch(
     fetchSysInfo();
     setTimeout(fetchSysInfo, 1500);
     refreshAvailability();
+    refreshStorage();
     activeIndex.value = 0;
     nextTick(() => searchInputRef.value?.focus?.());
   },
@@ -596,6 +742,16 @@ watch(visibleModels, clampActiveIndex);
 
 onMounted(() => {
   window.addEventListener("keydown", onKey);
+  _unsubMigration = window.electronAPI?.onMigrationProgress?.((data) => {
+    if (!storageBusy.value) return;
+    if (data?.phase === "error" || data?.phase === "complete") {
+      storageProgress.active = false;
+      return;
+    }
+    storageProgress.active = true;
+    storageProgress.pct = data?.pct || 0;
+    storageProgress.detail = data?.detail || "";
+  });
   _unsubProgress = window.electronAPI?.onDownloadProgress?.((_event, data) => {
     if (data?.filename && downloading[data.filename] !== undefined) {
       downloading[data.filename] = Math.round((data.percent || 0) * 100);
@@ -606,6 +762,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("keydown", onKey);
   if (_unsubProgress) { try { _unsubProgress(); } catch {} _unsubProgress = null; }
+  if (_unsubMigration) { try { _unsubMigration(); } catch {} _unsubMigration = null; }
 });
 </script>
 
@@ -994,9 +1151,90 @@ onUnmounted(() => {
 .bz-picker__footer {
   padding: var(--bz-space-3) var(--bz-space-7);
   border-top: 1px solid var(--bz-border);
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-5);
   color: var(--bz-fg-low);
 }
+.bz-picker__hint { flex-shrink: 0; }
+
+/* ─── Storage (models folder) ─────────────────────────────────── */
+.bz-storage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--bz-space-2) var(--bz-space-3);
+  color: var(--bz-fg-mid);
+}
+.bz-storage__icon {
+  font-size: 18px !important;
+  color: var(--bz-fg-mid);
+}
+.bz-storage__icon--warn { color: var(--bz-warning); }
+.bz-storage__text {
+  min-width: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--bz-space-2);
+  font-size: var(--bz-size-body);
+}
+.bz-storage__path { color: var(--bz-fg); }
+.bz-storage__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bz-space-2);
+  flex-shrink: 0;
+}
+.bz-storage__actions .bz-btn { height: 32px; }
+.bz-textbtn {
+  background: transparent;
+  border: 0;
+  padding: 0 var(--bz-space-2);
+  height: 32px;
+  color: var(--bz-fg-mid);
+  font-family: var(--bz-font-body);
+  font-size: var(--bz-size-body);
+  cursor: pointer;
+  border-radius: var(--bz-r);
+  transition: color var(--bz-dur-fast) var(--bz-ease-out);
+}
+.bz-textbtn:hover:not(:disabled) { color: var(--bz-fg); }
+.bz-textbtn:disabled { cursor: not-allowed; opacity: 0.55; }
+.bz-textbtn:focus-visible,
+.bz-storage .bz-btn:focus-visible {
+  outline: 2px solid var(--bz-purple-300);
+  outline-offset: 2px;
+}
+.bz-storage__progress {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bz-space-1);
+}
+.bz-storage__bar {
+  display: block;
+  height: 2px;
+  max-width: 100%;
+  background: var(--bz-purple-500);
+  border-radius: 1px;
+  transition: width var(--bz-dur-base) var(--bz-ease-out);
+}
+.bz-storage__detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bz-storage__error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--bz-danger);
+  font-size: var(--bz-size-body);
+}
+.bz-storage__text .bz-storage__error { flex-basis: auto; }
 
 /* ─── Modal transition (one motion language) ────────────────── */
 .bz-modal-enter-active,
@@ -1020,5 +1258,7 @@ onUnmounted(() => {
     grid-template-columns: 8px 1fr auto;
   }
   .bz-row__stats { display: none; }
+  .bz-picker__footer { padding: var(--bz-space-3) var(--bz-space-5); }
+  .bz-picker__hint { display: none; }
 }
 </style>

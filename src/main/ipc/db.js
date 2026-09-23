@@ -50,7 +50,7 @@ function broadcast(channel, payload) {
 }
 
 /** Register every IPC handler. Called once from main.js after DB open. */
-export function registerDbIpc() {
+export function registerDbIpc({ modelDir } = {}) {
   // ─── audit ────────────────────────────────────────────────────────
   ipcMain.handle("db:audit:append", (_e, companyId, entry) => {
     const row = auditRepo.append(companyId, entry);
@@ -423,7 +423,7 @@ export function registerDbIpc() {
   // Non-blocking — if the model file isn't on disk we just log a hint
   // and the worker stays idle (queue accumulates harmlessly). On
   // success, ticks start producing real vectors.
-  embedAdapter.tryCreate().then((adapter) => {
+  embedAdapter.tryCreate({ modelDir }).then((adapter) => {
     if (adapter) {
       embedWorker.setAdapter(adapter);
       // Kick a tick immediately so any backlog drains promptly.

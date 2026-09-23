@@ -23,9 +23,16 @@ export const GAME_TIERS = [
   { id: 10, name: "Full Games",           desc: "Complete mini-games combining 3+ tiers above" },
 ];
 
-const DATASET_DIR = path.join(os.homedir(), "bonzai-models", "datasets");
-const STUDIO_DIR = path.join(DATASET_DIR, "dataset-studio");
-const EXAMPLES_FILE = path.join(STUDIO_DIR, "examples.json");
+// Follows the user's models folder (see setDatasetModelDir).
+let DATASET_DIR = path.join(os.homedir(), "bonzai-models", "datasets");
+let STUDIO_DIR = path.join(DATASET_DIR, "dataset-studio");
+let EXAMPLES_FILE = path.join(STUDIO_DIR, "examples.json");
+
+export function setDatasetModelDir(modelDir) {
+  DATASET_DIR = path.join(modelDir, "datasets");
+  STUDIO_DIR = path.join(DATASET_DIR, "dataset-studio");
+  EXAMPLES_FILE = path.join(STUDIO_DIR, "examples.json");
+}
 
 function ensureDirs() {
   fs.mkdirSync(STUDIO_DIR, { recursive: true });
