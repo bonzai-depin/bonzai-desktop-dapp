@@ -9,8 +9,9 @@ Native GPU generation still requires hardware validation.
 
 ## Validate without publishing
 
-Dispatch each release workflow with `tag` set to an existing branch, SHA or tag
-and `publish` left false. The checkout uses that exact ref; installer version is
+Dispatch each release workflow with `tag` set to an existing branch, full 40-character commit SHA or tag
+and `publish` left false. Use `git rev-parse HEAD` for a commit: checkout treats
+abbreviated hashes as branch/tag names and cannot fetch them. The checkout uses that exact ref; installer version is
 read from `package.json`. Results are retained as Actions artifacts for seven days.
 macOS validation builds are unsigned and are not notarized. Windows installers
 are currently unsigned. Linux packages require an appropriate GPU driver for
