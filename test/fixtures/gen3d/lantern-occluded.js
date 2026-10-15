@@ -164,7 +164,7 @@ export default async function generate(params) {
       const angle = (i / 6) * Math.PI * 2;
       const x = Math.cos(angle) * 0.155;
       const z = Math.sin(angle) * 0.155;
-  
+
       const bar = new THREE.Mesh(cageBarGeo, metalMat);
       bar.name = `cage_bar_${i}`;
       bar.position.set(x, 0.36, z);
@@ -177,14 +177,14 @@ export default async function generate(params) {
       const angle = (i / 6) * Math.PI * 2;
       const x = Math.cos(angle) * 0.155;
       const z = Math.sin(angle) * 0.155;
-  
+
       // Top weld
       const weldTopGeo = new THREE.SphereGeometry(0.012, 8, 8);
       const weldTop = new THREE.Mesh(weldTopGeo, rustMat);
       weldTop.position.set(x, 0.585, z);
       weldTop.scale.set(1, 0.5, 1);
       lantern.add(weldTop);
-  
+
       // Bottom weld
       const weldBotGeo = new THREE.SphereGeometry(0.012, 8, 8);
       const weldBot = new THREE.Mesh(weldBotGeo, rustMat);

@@ -238,4 +238,3 @@ export const WORKFLOW_PRESETS = [
     ],
   },
 ];
-

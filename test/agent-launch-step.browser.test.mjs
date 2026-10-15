@@ -11,7 +11,7 @@ test('step 3 separates slot attachment, identity, atomic issuance and wallet-fre
  await page.evaluate(async()=>{
  const {createApp,h,reactive}=await import('/node_modules/.vite/deps/vue.js');
  const {default:Step}=await import('/src/components/AgentLaunchStep.vue');
- 
+
  const state=reactive({agent:{id:'local',name:'Rose'},connected:false,attached:false,owned:false,ready:false,token:null});window.events=[];
  const app=createApp({render:()=>h(Step,{...state,loadSlots:async()=>[{tokenId:'7',name:''}],network:'Robinhood',configured:true,symbol:'ROSE',connect:()=>state.connected=true,attach:async id=>{state.agent.tokenId=id;state.attached=true;state.owned=true;window.events.push('attach');},publish:()=>{state.ready=true;window.events.push('identity');},launch:()=>{state.token='0x123';window.events.push('launch');},startRoleplay:()=>window.events.push('roleplay')})});app.config.globalProperties.$ui=s=>s;app.mount('#app');
  });

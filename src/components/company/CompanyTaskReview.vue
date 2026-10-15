@@ -6,7 +6,7 @@ import "./company-design.css";
 import { actionDisplayName } from "../../services/company/actionLabels.js";
 import { computed, ref, watch } from 'vue'
 import { approvalRecordTarget, approvalRecordLabel } from '../../services/company/approvalRecord.js'
-import { i18n } from '../../i18n/index.js' 
+import { i18n } from '../../i18n/index.js'
 import { useModalAccessibility } from '../../composables/useModalAccessibility.js'
 const props = defineProps({ companyId: String, issue: Object })
 const emit = defineEmits(['close', 'saved', 'open-operational-record'])
