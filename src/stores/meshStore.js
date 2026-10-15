@@ -12,6 +12,13 @@ const state = shallowReactive({
   error: null,
 });
 
+let modeRevision = 0;
+function setMode(mode) {
+  if (!["local", "consumer", "provider"].includes(mode)) return;
+  modeRevision += 1;
+  state.mode = mode;
+}
+
 let unsubscribe = null;
 let pollTimer = null;
 let discoveryTimer = null;
@@ -43,11 +50,12 @@ function push(event) {
 async function refresh() {
   const api = window.electronAPI;
   if (!api?.p2pStatus) return;
+  const revision = modeRevision;
   const [status, mode] = await Promise.all([
     api.p2pStatus(),
     api.store.get("p2p.networkMode", "local"),
   ]);
-  state.mode = mode;
+  if (revision === modeRevision) state.mode = mode;
   if (status?.ok) {
     state.started = Boolean(status.started);
     state.connectedPeers = status.connectedPeers || 0;
@@ -121,6 +129,7 @@ export const meshStore = {
   presenceLabel,
   init,
   refresh,
+  setMode,
   markRead,
   teardown,
 };

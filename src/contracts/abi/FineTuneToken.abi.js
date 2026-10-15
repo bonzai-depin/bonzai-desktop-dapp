@@ -22,6 +22,11 @@ export const FineTuneTokenABI = [
         "type": "address"
       },
       {
+        "internalType": "address",
+        "name": "_contentCollection",
+        "type": "address"
+      },
+      {
         "internalType": "uint256",
         "name": "_contentTokenId",
         "type": "uint256"
@@ -292,6 +297,19 @@ export const FineTuneTokenABI = [
     "name": "burnFrom",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "contentCollection",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

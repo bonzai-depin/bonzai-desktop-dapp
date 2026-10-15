@@ -25,48 +25,19 @@
 
       <template #panel>
         <div class="bz-image-panel">
-          <div
-            v-if="showUpdateCTA && readiness.currentMode == mode"
-            class="bz-img-notice bz-img-notice--danger"
-            role="status"
-          >
-            <div class="bz-img-notice__icon">
-              <span class="material-symbols-outlined">deployed_code</span>
-            </div>
-            <div class="bz-img-notice__body">
-              <p class="bz-img-notice__title fira-sans-condensed-black-italic">
-                {{ $t('create.downloadRequired') }}
-              </p>
-              <p class="bz-img-notice__text">
-                This image mode needs local model files before it can run.
-              </p>
-              <ul v-if="readiness.repoDetails.length || readiness.missingGguf" class="bz-img-notice__list">
-                <li v-for="d in readiness.repoDetails" :key="d.repo">
-                  <span class="material-symbols-outlined" aria-hidden="true">folder</span>
-                  <span>{{ d.repo }}</span>
-                </li>
-                <li v-for="gguf in readiness.ggufNames" :key="gguf">
-                  <span class="material-symbols-outlined" aria-hidden="true">draft</span>
-                  <span>{{ gguf }}</span>
-                </li>
-              </ul>
-              <ul v-if="readiness.notes.length" class="bz-img-notice__notes">
-                <li v-for="(n, i) in readiness.notes" :key="i">{{ n }}</li>
-              </ul>
-            </div>
-            <div class="bz-img-notice__actions">
-              <button
-                type="button"
-                class="bz-btn bz-btn--primary"
-                :disabled="downloads.active || readiness.authRequired"
-                title="Download required files for this mode"
-                @click="prefetchForMode"
-              >
-                <span class="material-symbols-outlined" aria-hidden="true">download</span>
-                Download
-              </button>
-            </div>
-          </div>
+          <DownloadRequirement category="image"
+            v-if="(showUpdateCTA && readiness.currentMode === mode) || downloads.active"
+            :items="[...readiness.repoDetails, ...readiness.ggufNames]"
+            :active="downloads.active"
+                  cancellable
+                  :cancelling="isCancellingDownloads"
+                  @cancel="cancelCurrentPipeline"
+            :progress="downloads.total_progress || downloads.progress || 0"
+            :tasks="downloadTaskList"
+            :disabled="readiness.authRequired"
+            :error="readiness.authRequired ? $t('rcDownloads.authRequired') : downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''"
+            @download="prefetchForMode"
+          />
 
           <div v-else-if="generation.error" class="bz-img-notice bz-img-notice--danger" role="alert">
             <div class="bz-img-notice__icon">
@@ -78,28 +49,6 @@
               </p>
               <p class="bz-img-notice__text">{{ generation.error }}</p>
             </div>
-          </div>
-
-          <div v-if="downloads && downloads.active" class="bz-img-download" role="status">
-            <div class="bz-img-download__head">
-              <span class="bz-img-download__title fira-sans-condensed-black-italic">
-                {{ $t('create.downloading') }}
-              </span>
-              <span class="bz-img-download__percent fira-sans-condensed-black-italic">
-                {{ Math.round(downloads.total_progress || 0) }}%
-              </span>
-            </div>
-            <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
-            <ul v-if="downloadTaskList.length" class="bz-img-download__tasks">
-              <li v-for="t in downloadTaskList" :key="t.task_id || t.filename">
-                <span class="material-symbols-outlined" aria-hidden="true">deployed_code</span>
-                <span class="bz-img-download__file">{{ t.filename }}</span>
-                <span class="bz-img-download__status fira-sans-condensed-black-italic">
-                  {{ t.status }}
-                </span>
-                <span class="bz-mono">{{ Math.round(t.progress || 0) }}%</span>
-              </li>
-            </ul>
           </div>
 
           <AccessRequirements
@@ -236,6 +185,8 @@
       </template>
     </GenerativeWorkspace>
 
+    <Teleport to="body">
+    <div v-if="pendingDelete" class="bz-confirmation-backdrop" aria-hidden="true"></div>
     <Transition name="bz-image-toast">
       <div
         v-if="pendingDelete"
@@ -255,6 +206,7 @@
         </button>
       </div>
     </Transition>
+  </Teleport>
   </div>
 
   <!-- Mint Modal -->
@@ -270,6 +222,7 @@
     <Transition name="bz-image-lightbox">
       <div
         v-if="fullscreenImage"
+        ref="fullscreenDialog"
         class="bz-image-lightbox"
         role="dialog"
         aria-modal="true"
@@ -337,8 +290,11 @@ import {
   clearError,
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
+import { recordedMintGeneration } from "../services/mintValidation.js";
 import MintModal from "./MintModal.vue";
 import BonzaiPulse from "./BonzaiPulse.vue";
+import DownloadRequirement from "./DownloadRequirement.vue";
+import { cancelLocalDownloads } from "../services/downloadCancellation.js";
 import BonzaiEmptyState from "./BonzaiEmptyState.vue";
 import BzCloseButton from "./BzCloseButton.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
@@ -348,6 +304,9 @@ import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addImageInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
+import { generationElapsedMs } from "../shared/generationTiming.js";
+import { useModalAccessibility } from "../composables/useModalAccessibility.js";
+import { i18n } from "../i18n/index.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -359,7 +318,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeImage",
-  components: {
+  components: { DownloadRequirement,
     AccessRequirements,
     MintModal,
     BonzaiPulse,
@@ -376,6 +335,8 @@ export default {
     // ------------ injected from App -------
     const goAnimateToVideo = inject("goAnimateToVideo", () => {});
     const fullscreenImage = ref(null);
+    const fullscreenDialog = ref(null);
+    useModalAccessibility(fullscreenDialog, { onClose: () => { fullscreenImage.value = null; } });
 
     // Animate an inference image by switching to video tab
     const animate = (inference) => {
@@ -397,15 +358,15 @@ export default {
       mintTarget.value = {
         inferenceType: "image",
         inferenceId: inference.id,
-        content: inference.answer?.data?.image,
-        contentType: "image/webp",
+        content: inference.answer?.data?.image || inference.imageData || inference.image,
+        contentType: inference.mimeType || inference.answer?.data?.mime_type || sniffImageMime(inference.answer?.data?.image || inference.imageData || inference.image),
         prompt: inference.question,
-        generation: {
+        generation: recordedMintGeneration(inference, {
           type: "text-to-image",
-          model: inference.model || inference.pipeline || mode.value,
+          model: inference.model || inference.pipeline || "",
           timestamp: inference.timestamp,
           elapsedMs: inference.elapsedMs || null,
-        },
+        }),
       };
     };
 
@@ -702,12 +663,12 @@ export default {
 
     // ------------ readiness ---------------
     const readiness = reactive({
-      ok: true,
+      ok: false,
       checking: true, // Indicates initial check is in progress
       missingRepos: [],
       repoDetails: [],
       missingGguf: false,
-      ggufName: null,
+      ggufNames: [],
       notes: [],
       authRequired: false,
       authRepos: [],
@@ -725,7 +686,7 @@ export default {
     );
 
     const canGenerate = computed(
-      () => readiness.ok && !readiness.authRequired && !generation.active,
+      () => !readiness.checking && readiness.ok && !readiness.authRequired && !generation.value.active,
     );
 
     // Combined check: technical readiness AND access rights
@@ -768,6 +729,7 @@ export default {
       return "image_turbo"; // default
     };
     const currentPipeline = computed(() => pipelineForMode(mode.value));
+    const imageModeDescription = computed(() => i18n.t(`rc.creation.imageModes.${mode.value}`));
 
     // Check if current mode requires image input (edit modes)
     const isEditMode = computed(() => mode.value === "turbo_edit");
@@ -849,8 +811,12 @@ export default {
       return sumPct / tasks.length;
     };
 
+    const trackedDownloadPipelines = new Set();
+    const cancelledDownloadPipelines = new Set();
+    const isCancellingDownloads = ref(false);
+
     const applyPipelineUpdate = (p) => {
-      if (!p) return;
+      if (!p || isCancellingDownloads.value || cancelledDownloadPipelines.has(p.pipeline_id)) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
 
@@ -967,6 +933,8 @@ export default {
 
     const connectAndSubscribe = (pipelineId, websocketUrl) => {
       if (!pipelineId) return;
+      trackedDownloadPipelines.add(pipelineId);
+      cancelledDownloadPipelines.delete(pipelineId);
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
@@ -1021,18 +989,19 @@ export default {
     };
 
     const cancelCurrentPipeline = async () => {
-      if (!downloads.pipelineId) return;
+      if (isCancellingDownloads.value) return;
+      const pipelineIds = [...trackedDownloadPipelines];
+      if (!pipelineIds.length && downloads.pipelineId) pipelineIds.push(downloads.pipelineId);
+      if (!pipelineIds.length) return;
+      isCancellingDownloads.value = true;
       try {
-        const { status } = await axios.post(
-          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`,
-          {},
-          { validateStatus: () => true },
-        );
-        if (status === 200) {
-          downloads.status = "cancelled";
-          downloads.active = false;
-        }
-      } catch {}
+        await cancelLocalDownloads({ pipelineIds, apiBase: API_BASE });
+        pipelineIds.forEach(id => cancelledDownloadPipelines.add(id));
+        trackedDownloadPipelines.clear();
+        downloads.status = "cancelled";
+        downloads.active = false;
+      } catch { downloads.status = "failed"; }
+      finally { isCancellingDownloads.value = false; }
     };
 
     const retryCurrentPipeline = async () => {
@@ -1071,7 +1040,7 @@ export default {
       const requiredFiles = Array.isArray(data?.required_files)
         ? data.required_files
         : [];
-      const allMissing = requiredFiles.filter((f) => f && !f.ok && !f.exists);
+      const allMissing = requiredFiles.filter((f) => f && f.ok !== true);
       readiness.missingGguf = allMissing.length > 0;
       readiness.ggufNames = allMissing.map((g) =>
         (g.path || g.name || "").split("/").pop(),
@@ -1178,7 +1147,7 @@ export default {
       readiness.missingRepos = [];
       readiness.repoDetails = [];
       readiness.missingGguf = false;
-      readiness.ggufName = null;
+      readiness.ggufNames = [];
       readiness.notes = [];
       readiness.authRequired = false;
       readiness.authRepos = [];
@@ -1222,12 +1191,14 @@ export default {
           e?.code === "ERR_CANCELED" ||
           e?.name === "CanceledError" ||
           e?.message === "canceled";
-        if (!aborted) {
+        if (!aborted && mySeq === planReq.seq) {
           // Try to use cached plan for offline mode
           const cachedPlan = await loadCachedPlan(pipeline);
           if (cachedPlan && cachedPlan.ok) {
             applyPlanToReadiness(cachedPlan);
-            readiness.notes.push("Using cached status (offline mode)");
+            // Cached filenames remain useful, but cannot prove current readiness.
+            readiness.ok = false;
+            readiness.notes.push("Image service unavailable; readiness could not be verified.");
           } else {
             readiness.ok = false;
             readiness.checking = false;
@@ -1250,6 +1221,9 @@ export default {
         );
 
         if (res.status === 202) {
+          if (Array.isArray(res.data?.pipelines_started)) {
+            res.data.pipelines_started.forEach(id => trackedDownloadPipelines.add(id));
+          }
           const started = Array.isArray(res.data?.pipelines_started)
             ? res.data.pipelines_started
             : [];
@@ -1338,11 +1312,11 @@ export default {
 
       ensureGenerationSocket();
       startGeneration("image"); // Initialize generation state
-      const _genStart = Date.now();
+      const _genStart = performance.now();
 
       const onSuccess = async (response) => {
         if (response?.data?.image) {
-          const elapsedMs = Date.now() - _genStart;
+          const elapsedMs = Math.round(performance.now() - _genStart);
           // Only store serializable data - axios response object contains non-serializable
           // properties (config.transformRequest, request object) that break persistence
           const pipelineName = currentPipeline.value;
@@ -1447,6 +1421,9 @@ export default {
         });
 
         if (res.status === 202) {
+          if (Array.isArray(res.data?.pipelines_started)) {
+            res.data.pipelines_started.forEach(id => trackedDownloadPipelines.add(id));
+          }
           const pid =
             res.data?.pipeline_id ||
             (Array.isArray(res.data?.pipelines_started) &&
@@ -1754,6 +1731,7 @@ export default {
       inspector.show({
         id: inference.id,
         kind: "image",
+        elapsedMs: generationElapsedMs(inference),
         mediaUrl,
         imageData: data.image || inference.imageData || inference.image || "",
         mimeType: data.mime_type || data.mimeType || inference.mime_type || inference.mimeType || null,
@@ -1777,7 +1755,6 @@ export default {
           resolutionPreset: qualityLabel,
           pipeline: inference.pipeline || currentPipeline.value,
           endpoint: endpointForMode(),
-          elapsedMs: inference.elapsedMs != null ? `${Math.round(inference.elapsedMs)} ms` : "",
           promptChars: String(promptText.length),
           promptWords: String(wordCount(promptText)),
           imageBytes: data.image ? String(Math.round((data.image.length * 3) / 4)) : "",
@@ -1848,6 +1825,7 @@ export default {
       // state
       mode,
       imageModeItems,
+      imageModeDescription,
       isEditMode,
       quality,
       qualityModeItems,
@@ -1859,6 +1837,7 @@ export default {
       // inspector
       openInspector,
       fullscreenImage,
+      fullscreenDialog,
       openImageFullscreen,
       closeImageFullscreen,
       // unified action cluster
@@ -1916,6 +1895,7 @@ export default {
       importHistory,
       prefetchForMode,
       cancelCurrentPipeline,
+      isCancellingDownloads,
       retryCurrentPipeline,
       probeCurrentMode,
       animate,
@@ -2279,33 +2259,10 @@ div.question > .bz-gen-actions {
   z-index: 2;
   max-width: calc(100% - var(--bz-space-6));
   padding: 6px;
-  background: rgba(0, 0, 0, 0.34);
+  background: var(--bz-panel);
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: var(--bz-r-sm);
   backdrop-filter: blur(10px);
-}
-
-div.question > .bz-gen-actions :deep(.bz-gen-action) {
-  color: var(--bz-on-accent);
-  border-color: rgba(255, 255, 255, 0.24);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-div.question > .bz-gen-actions :deep(.bz-gen-action--primary) {
-  color: var(--bz-on-accent);
-  border-color: transparent;
-  background: var(--bz-gradient-brand);
-}
-
-div.question > .bz-gen-actions :deep(.bz-gen-action:hover:not(:disabled)) {
-  color: var(--bz-on-accent);
-  border-color: rgba(255, 255, 255, 0.42);
-  background: rgba(255, 255, 255, 0.16);
-}
-
-div.question > .bz-gen-actions :deep(.bz-gen-action--primary:hover:not(:disabled)) {
-  background: var(--bz-gradient-brand);
-  border-color: transparent;
 }
 
 .bz-image-card__caption + .bz-gen-actions {

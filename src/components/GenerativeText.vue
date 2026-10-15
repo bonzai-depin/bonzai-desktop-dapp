@@ -46,6 +46,7 @@
                 :title="isHistoryCollapsed ? 'Show chat history' : 'Hide chat history'"
                 :aria-label="isHistoryCollapsed ? 'Show chat history' : 'Hide chat history'"
                 :aria-expanded="(!isHistoryCollapsed).toString()"
+                :disabled="!railEntries.length"
                 @click="toggleHistoryRail"
               >
                 <span class="material-symbols-outlined">
@@ -91,49 +92,24 @@
             </div>
           </div>
 
-          <!-- Model not available — prompt to download/load before chatting -->
+          <!-- A selection never downloads or loads a model without an explicit action. -->
           <div v-if="!isChatReady" class="bz-text-chat__setup">
-            <EmptyChat
-              model-name=""
-              headline="Model required"
-              :subhead="modelRequiredSubhead"
-              :prompts="[]"
-              :show-browse-models="false"
-              @pick="pickPrompt"
-              @browse-models="openModelPicker"
+            <DownloadRequirement category="language"
+              :items="[currentModel]"
+              :active="!!modelDownloading[currentModel.filename]"
+              cancellable
+              @cancel="handleRecommendedModel(currentModel)"
+              :progress="modelDownloadProgress[currentModel.filename] || 0"
+              :disabled="!desktopModelsAvailable || isLoading"
+              :error="modelDownloadErrors[currentModel.filename] || ''"
+              :title="modelAvailabilityMap[currentModel.filename] ? $t('rcDownloads.modelRequired') : ''"
+              :action-label="modelAvailabilityMap[currentModel.filename] ? $t('rcDownloads.loadModel') : ''"
+              @download="handleRecommendedModel(currentModel)"
             />
-            <div class="bz-text-chat__setup-cta">
-              <button
-                type="button"
-                class="bz-btn bz-btn--primary bz-btn--lg"
-                @click="openModelPicker"
-              >
-                <span class="material-symbols-outlined">play_arrow</span>
-                <span>Load model</span>
-              </button>
-            </div>
-            <div v-if="recommendedModels.length" class="bz-text-chat__recommendations">
-              <button
-                v-for="model in recommendedModels"
-                :key="model.filename"
-                type="button"
-                class="bz-model-rec"
-                :class="{ 'bz-model-rec--downloading': modelDownloading[model.filename] }"
-                :disabled="isLoading && !modelDownloading[model.filename]"
-                @click="handleRecommendedModel(model)"
-              >
-                <span class="bz-model-rec__main">
-                  <span class="bz-model-rec__name">{{ model.modelname }}</span>
-                  <span class="bz-model-rec__fit bz-mono">{{ model.fitLabel }}</span>
-                </span>
-                <span class="bz-model-rec__meta">
-                  {{ model.filesize }} · {{ model.vramGB }} GB VRAM
-                </span>
-                <span class="bz-model-rec__action">
-                  {{ recommendedModelAction(model) }}
-                </span>
-              </button>
-            </div>
+            <button type="button" class="bz-btn bz-btn--ghost" @click="openModelPicker">
+              {{ $t('rcDownloads.chooseModel') }}
+            </button>
+            <p v-if="!desktopModelsAvailable" class="bz-meta" role="status">{{ $t('rcWorkflows.desktopModelRequired') }}</p>
           </div>
 
           <!-- Default empty state when model is ready but no conversation is active -->
@@ -369,7 +345,9 @@
         </template>
       </ChatLayout>
 
-      <Transition name="bz-chat-toast">
+      <Teleport to="body">
+    <div v-if="pendingDelete" class="bz-confirmation-backdrop" aria-hidden="true"></div>
+    <Transition name="bz-chat-toast">
         <div
           v-if="pendingDelete"
           class="bz-chat-delete-toast"
@@ -388,6 +366,7 @@
           </button>
         </div>
       </Transition>
+  </Teleport>
     </div>
   </div>
 
@@ -402,6 +381,8 @@
 </template>
 
 <script>
+import { reportOperation } from "../stores/activityStore.js";
+import { bonzaiCodeBlockPlugin } from "../shared/markdownCode.js";
 import {
   ref,
   reactive,
@@ -416,7 +397,10 @@ import {
 import { v4 as uuid } from "uuid";
 import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
+import { recordedMintGeneration } from "../services/mintValidation.js";
 import MintModal from "./MintModal.vue";
+import DownloadRequirement from "./DownloadRequirement.vue";
+import { DEFAULT_LLM_ID, DEFAULT_LLM_TIER, selectPreferredModel } from "../config/modelDefaults.js";
 import { modelStore } from "../stores/modelStore.js";
 import { memoryService } from "../services/memory.service.js";
 import {
@@ -509,131 +493,6 @@ function inferDurationMs(inference, tokenCount = 0) {
   return null;
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function normalizeCodeLang(lang) {
-  return String(lang || "")
-    .trim()
-    .split(/\s+/)[0]
-    .replace(/^language-/, "")
-    .toLowerCase();
-}
-
-const KEYWORDS = {
-  js: new Set("await async break case catch class const continue default delete do else export extends finally for function if import in instanceof let new return switch throw try typeof var void while with yield true false null undefined this super".split(" ")),
-  ts: new Set("await async break case catch class const continue default delete do else enum export extends finally for function if implements import in interface instanceof let namespace new private protected public readonly return switch throw try type typeof var void while with yield true false null undefined this super".split(" ")),
-  py: new Set("and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self".split(" ")),
-  css: new Set("align-items background border color display flex grid height justify-content margin padding position width".split(" ")),
-  sh: new Set("case do done elif else esac export fi for function if in local readonly return set shift then while".split(" ")),
-  json: new Set("true false null".split(" ")),
-};
-
-function keywordSetForLang(lang) {
-  if (["javascript", "jsx", "mjs", "cjs"].includes(lang)) return KEYWORDS.js;
-  if (["typescript", "tsx"].includes(lang)) return KEYWORDS.ts;
-  if (["python", "py"].includes(lang)) return KEYWORDS.py;
-  if (["bash", "shell", "zsh", "sh"].includes(lang)) return KEYWORDS.sh;
-  if (["css", "scss"].includes(lang)) return KEYWORDS.css;
-  if (["json", "jsonc"].includes(lang)) return KEYWORDS.json;
-  return new Set();
-}
-
-function highlightCode(source, lang = "") {
-  const normalized = normalizeCodeLang(lang);
-  if (["html", "xml", "vue"].includes(normalized)) {
-    return escapeHtml(source).replace(
-      /(&lt;\/?)([A-Za-z][\w:-]*)([^&]*?)(\/?&gt;)/g,
-      (_, open, tag, attrs, close) =>
-        `<span class="bz-code-token bz-code-token--punct">${open}</span><span class="bz-code-token bz-code-token--tag">${tag}</span>${attrs}<span class="bz-code-token bz-code-token--punct">${close}</span>`,
-    );
-  }
-
-  const keywords = keywordSetForLang(normalized);
-  let out = "";
-  let i = 0;
-  while (i < source.length) {
-    const rest = source.slice(i);
-    const ch = source[i];
-
-    if (rest.startsWith("/*")) {
-      const end = source.indexOf("*/", i + 2);
-      const next = end === -1 ? source.length : end + 2;
-      out += `<span class="bz-code-token bz-code-token--comment">${escapeHtml(source.slice(i, next))}</span>`;
-      i = next;
-      continue;
-    }
-
-    if (rest.startsWith("//") || ((normalized === "py" || normalized === "sh") && ch === "#")) {
-      const end = source.indexOf("\n", i + 1);
-      const next = end === -1 ? source.length : end;
-      out += `<span class="bz-code-token bz-code-token--comment">${escapeHtml(source.slice(i, next))}</span>`;
-      i = next;
-      continue;
-    }
-
-    if (ch === '"' || ch === "'" || ch === "`") {
-      let next = i + 1;
-      while (next < source.length) {
-        if (source[next] === "\\") {
-          next += 2;
-          continue;
-        }
-        if (source[next] === ch) {
-          next += 1;
-          break;
-        }
-        next += 1;
-      }
-      out += `<span class="bz-code-token bz-code-token--string">${escapeHtml(source.slice(i, next))}</span>`;
-      i = next;
-      continue;
-    }
-
-    const number = rest.match(/^\b\d+(?:\.\d+)?\b/);
-    if (number) {
-      out += `<span class="bz-code-token bz-code-token--number">${escapeHtml(number[0])}</span>`;
-      i += number[0].length;
-      continue;
-    }
-
-    const ident = rest.match(/^[A-Za-z_$][\w$-]*/);
-    if (ident) {
-      const token = ident[0];
-      out += keywords.has(token)
-        ? `<span class="bz-code-token bz-code-token--keyword">${escapeHtml(token)}</span>`
-        : escapeHtml(token);
-      i += token.length;
-      continue;
-    }
-
-    out += escapeHtml(ch);
-    i += 1;
-  }
-  return out;
-}
-
-function renderCodeBlock(code, lang) {
-  const normalizedLang = normalizeCodeLang(lang);
-  const displayLang = normalizedLang || "code";
-  const highlighted = highlightCode(code, normalizedLang);
-  return `<figure class="bz-code" data-lang="${escapeHtml(displayLang)}"><header class="bz-code__head"><span class="bz-code__lang bz-mono">${escapeHtml(displayLang)}</span><button type="button" class="bz-code__copy" title="Copy code" aria-label="Copy code"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></header><pre class="bz-code__body"><code class="language-${escapeHtml(displayLang)}">${highlighted}</code></pre></figure>`;
-}
-
-function bonzaiCodeBlockPlugin(md) {
-  md.renderer.rules.fence = (tokens, idx) => {
-    const token = tokens[idx];
-    return `${renderCodeBlock(token.content, token.info)}\n`;
-  };
-  md.renderer.rules.code_block = (tokens, idx) =>
-    `${renderCodeBlock(tokens[idx].content, "")}\n`;
-}
-
 /**
  * Compute RAM and VRAM memory requirements for a model.
  *
@@ -676,7 +535,7 @@ import { inspector as generationInspector } from "../services/generationInspecto
 
 export default {
   name: "GenerativeText",
-  components: {
+  components: { DownloadRequirement,
     BzCloseButton,
     VueMarkdown,
     GenerativeImage,
@@ -702,14 +561,14 @@ export default {
         content: visibleAnswer,
         contentType: "text/plain",
         prompt: inference.question,
-        generation: {
+        generation: recordedMintGeneration(inference, {
           type: "text-generation",
           model: inference.model || "llm",
           timestamp: inference.timestamp,
           tokensPerSecond: inference.tokensPerSecond || null,
-          modelProvenance: inference.modelProvenance || activeModelProvenance.value || null,
-          contributionParents: inference.modelProvenance?.dataset?.contributionIds || activeModelProvenance.value?.dataset?.contributionIds || [],
-        },
+          modelProvenance: inference.modelProvenance || null,
+          contributionParents: inference.modelProvenance?.dataset?.contributionIds || [],
+        }),
       };
     };
 
@@ -826,12 +685,13 @@ export default {
     //   3. -parameters        (quality tiebreaker when footprint is similar)
     //   4. modelname          (stable alphabetical tiebreaker)
     const sysInfo = ref(null);
+    const desktopModelsAvailable = Boolean(window.electronAPI?.checkModel);
     const sortedModels = computed(() => {
       const info = sysInfo.value;
       const enriched = Object.values(availableModels.value).map((m) => {
         const mem = computeMemoryRequirements(m);
         const fit = computeFitTier(mem, info);
-        return { ...m, vramGB: mem.vramGB, fitTier: fit.tier, fitLabel: fit.label, fitReason: fit.reason };
+        return { ...m, vramGB: mem.vramGB, diskSpaceGB: mem.diskSpaceGB, fitTier: fit.tier, fitLabel: fit.label, fitReason: fit.reason };
       });
       enriched.sort((a, b) => {
         if (a.fitTier !== b.fitTier) return a.fitTier - b.fitTier;
@@ -847,22 +707,13 @@ export default {
       });
       return enriched;
     });
-    const recommendedModels = computed(() => {
-      if (!sysInfo.value) {
-        return [...sortedModels.value]
-          .sort((a, b) => (a.vramGB || 0) - (b.vramGB || 0))
-          .slice(0, 3);
-      }
-      const fitting = sortedModels.value.filter((model) => model.fitTier <= 2);
-      return (fitting.length ? fitting : sortedModels.value).slice(0, 3);
-    });
-
-    // Internal fallback only. The UI does not present this as selected or
-    // loaded until the user explicitly picks/loads a model or IPC reports one.
-    const currentModel = ref(_entryFromResolved(resolveLLM("qwen3_5_0_8b")));
+    // The first launch selects Qwen3.5 9B; a remembered choice takes precedence.
+    // Selected and loaded are separate states, so this cannot trigger inference or a download.
+    const currentModel = ref(selectPreferredModel(availableModels.value, modelStore.state.preferredFilename)
+      || _entryFromResolved(resolveLLM(DEFAULT_LLM_ID, DEFAULT_LLM_TIER)));
     const loadedModel = ref(null);
     const hasUserSelectedModel = ref(false);
-    const chatHeaderTitle = computed(() => loadedModel.value?.modelname || (hasUserSelectedModel.value ? currentModel.value?.modelname : "Choose a model"));
+    const chatHeaderTitle = computed(() => loadedModel.value?.modelname || currentModel.value?.modelname);
     const activeModelProvenance = computed(() =>
       currentModel.value?.model_provenance ||
       currentModel.value?.provenance ||
@@ -879,19 +730,6 @@ export default {
     );
 
     const isChatReady = computed(() => isCurrentModelLoaded.value);
-
-    const modelRequiredSubhead = computed(() => {
-      if (!hasUserSelectedModel.value && !loadedModel.value) {
-        return "Choose any local model that fits your hardware to start chatting.";
-      }
-      if (!isModel.value) {
-        return `Download ${currentModel.value.modelname} (${currentModel.value.filesize}) or choose another model to start chatting.`;
-      }
-      if (currentModel.value.isMultimodal && !isMmprojAvailable.value) {
-        return `Download vision support for ${currentModel.value.modelname}, or choose a text model instead.`;
-      }
-      return `Load ${currentModel.value.modelname}, or choose another model that fits your task.`;
-    });
 
     const syncCurrentModelFromLoaded = (loaded) => {
       if (!loaded?.filename) return;
@@ -921,6 +759,7 @@ export default {
 
     const pickModel = async (model) => {
       hasUserSelectedModel.value = true;
+      modelStore.setPreferred(model);
       currentModel.value = { ...model };
       const available = await isModelAvailable(model.filename);
       await checkMmprojAvailability(model);
@@ -935,7 +774,7 @@ export default {
     };
 
     const isModelAvailable = async (filename) => {
-      const available = await window.electronAPI.checkModel(filename);
+      const available = await window.electronAPI?.checkModel?.(filename);
       isModel.value = available;
       return available;
     };
@@ -985,7 +824,7 @@ export default {
       await Promise.all(
         models.map(async (model) => {
           try {
-            const available = await window.electronAPI.checkModel(
+            const available = await window.electronAPI?.checkModel?.(
               model.filename,
             );
             modelAvailabilityMap[model.filename] = available;
@@ -1039,16 +878,6 @@ export default {
         modelDownloadProgress[model.filename] = 0;
       }
       return success;
-    };
-
-    const recommendedModelAction = (model) => {
-      if (modelDownloading[model.filename]) {
-        const pct = modelDownloadProgress[model.filename] || 0;
-        return pct ? `Cancel ${pct}%` : "Cancel download";
-      }
-      if (modelAvailabilityMap[model.filename]) return "Load";
-      if (modelDownloadErrors[model.filename]) return "Retry download";
-      return "Download";
     };
 
     // Delete a model from the model list
@@ -1148,6 +977,7 @@ export default {
         id: inference.id,
         answerId: inference.answer?.id,
         kind: "text",
+        elapsedMs: inference.durationMs,
         prompt: promptText,
         outputText: visibleAnswer,
         rawOutputText: rawAnswer,
@@ -1213,6 +1043,7 @@ export default {
       try {
         await window.electronAPI.loadModel(payload);
         loadedModel.value = payload;
+        modelStore.setCurrent(model);
 
         // Update mmproj availability for multimodal models
         if (model.isMultimodal && model.mmproj) {
@@ -1222,6 +1053,8 @@ export default {
         } else {
           isMmprojAvailable.value = false;
         }
+      } catch (error) {
+        modelDownloadErrors[model.filename] = error?.message || "Unable to load model";
       } finally {
         isLoading.value = false;
       }
@@ -1229,6 +1062,7 @@ export default {
 
     const handleRecommendedModel = async (model) => {
       if (!model?.filename) return;
+      modelStore.setPreferred(model);
       hasUserSelectedModel.value = true;
       if (modelDownloading[model.filename]) {
         await window.electronAPI?.cancelModelDownload?.(model.filename);
@@ -1961,6 +1795,8 @@ export default {
 
       // Create the inference entry immediately so streaming text appears
       const inferenceId = uuid();
+      const activityId = `chat:${inferenceId}`;
+      reportOperation({id:activityId,title:"Generating text",mode:"chat",status:"running",stage:"Generating",location:"Chat"});
       const answerId = uuid();
       const activeBranch = branchDraft.value ? { ...branchDraft.value } : null;
       streamingInferenceId.value = answerId;
@@ -2137,6 +1973,7 @@ export default {
           tokPerSec: finalTokPerSec,
         });
 
+        reportOperation({id:activityId,status:isStopping.value?"cancelled":"completed",stage:isStopping.value?"Cancelled":"Ready"});
         // Mark as stopped if user clicked Stop during this turn
         if (isStopping.value) {
           const arr = inferences.value;
@@ -2155,6 +1992,7 @@ export default {
         resetForm();
         isLoading.value = false;
       } catch (e) {
+        reportOperation({id:activityId,status:"failed",stage:"Failed",error:e.message});
         console.error("Chat error:", e);
         const arr = inferences.value;
         const last = arr[arr.length - 1];
@@ -2212,11 +2050,10 @@ export default {
       modelStore.setAlwaysLoaded(!alwaysLoaded.value);
     };
 
-    // Sync modelStore when user picks a model locally
-    watch(currentModel, (model) => {
-      if (hasUserSelectedModel.value && model?.filename) {
-        modelStore.setCurrent(model);
-      }
+    watch(() => modelStore.state.preferredFilename, filename => {
+      if (loadedModel.value) return;
+      const preferred = selectPreferredModel(availableModels.value, filename);
+      if (preferred) currentModel.value = { ...preferred };
     });
 
     // Sync local state when model changes externally (hot-swap)
@@ -2284,7 +2121,22 @@ export default {
       refreshLoadedModel().catch((e) => {
         console.warn("[GenerativeText] getLoadedModel failed:", e?.message);
       });
-      checkAllModelAvailability().catch((e) => {
+      const restoreModelSelection = async () => {
+        const custom = await window.electronAPI?.listCustomModels?.() || [];
+        for (const model of custom) {
+          if (!model.filename) continue;
+          availableModels.value[`custom:${model.filename}`] = {
+            ...model, modelname: model.modelname || model.name || model.filename,
+            filesize: model.filesize || model.size, custom: true,
+          };
+        }
+        if (!loadedModel.value && !hasUserSelectedModel.value) {
+          const preferred = selectPreferredModel(availableModels.value, modelStore.state.preferredFilename);
+          if (preferred) currentModel.value = { ...preferred };
+        }
+        await checkAllModelAvailability();
+      };
+      restoreModelSelection().catch((e) => {
         console.warn("[GenerativeText] model availability scan failed:", e?.message);
       });
       // Fetch hardware profile so the picker can rank models by fit. The
@@ -2335,10 +2187,11 @@ export default {
       }),
     );
     const activeRailId = ref(null);
-    const isHistoryCollapsed = ref(false);
+    const historyRailHidden = ref(false);
+    const isHistoryCollapsed = computed(() => !railEntries.value.length || historyRailHidden.value);
     const isNewChatDraft = ref(false);
     const toggleHistoryRail = () => {
-      isHistoryCollapsed.value = !isHistoryCollapsed.value;
+      if (railEntries.value.length) historyRailHidden.value = !historyRailHidden.value;
     };
     const startNewChat = () => {
       activeRailId.value = null;
@@ -2475,10 +2328,8 @@ export default {
       loadedModel,
       isCurrentModelLoaded,
       isChatReady,
-      modelRequiredSubhead,
       chatHeaderTitle,
-      recommendedModels,
-      recommendedModelAction,
+      sysInfo, desktopModelsAvailable,
       handleRecommendedModel,
       availableModels,
       sortedModels,
@@ -2502,6 +2353,7 @@ export default {
       modelAvailabilityMap,
       modelDownloading,
       modelDownloadProgress,
+      modelDownloadErrors,
       downloadModelInList,
       deleteModelInList,
       changeModelDir,
@@ -2820,9 +2672,20 @@ export default {
   max-width: 760px;
   margin: var(--bz-space-5) auto 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--bz-space-3);
 }
+.bz-model-rec__reason p,
+.bz-text-chat__recommendations > p {
+  margin: var(--bz-space-2) 0;
+  font-family: var(--bz-font-ui);
+  font-size: var(--bz-size-body);
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--bz-fg-muted);
+}
+.bz-model-rec__reason summary { cursor: pointer; }
 
 .bz-chat-params {
   width: 100%;
@@ -2931,7 +2794,7 @@ export default {
 }
 .bz-model-rec__fit {
   flex-shrink: 0;
-  color: var(--bz-purple-300);
+  color: var(--bz-fg-muted);
   font-size: var(--bz-size-micro);
 }
 .bz-model-rec__meta {

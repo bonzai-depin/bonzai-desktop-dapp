@@ -75,6 +75,7 @@
   --bz-emerald-300:   #6ee7b7;
   --bz-emerald-500:   #34d399;
   --bz-emerald-700:   #047857;
+  --bz-on-accent:     #04130b;
 
   --bz-fg:            #e5e7eb;
   --bz-fg-mid:        #9ca3af;
@@ -107,7 +108,7 @@
   --bz-raised:        #f3f4f6;
   --bz-overlay:       rgba(15, 23, 42, 0.4);
 
-  --bz-purple-100:    #ddd6fe;
+  --bz-purple-100:    #6d28d9;
   --bz-purple-300:    #7c3aed;
   --bz-purple-500:    #6d28d9;
   --bz-purple-700:    #4c1d95;
@@ -126,8 +127,8 @@
 
   --bz-fg:            #0f172a;
   --bz-fg-mid:        #475569;
-  --bz-fg-low:        #94a3b8;
-  --bz-fg-faint:      #cbd5e1;
+  --bz-fg-low:        #64748b;
+  --bz-fg-faint:      #64748b;
 
   --bz-danger:        #dc2626;
   --bz-danger-soft:   rgba(220, 38, 38, 0.08);
@@ -176,7 +177,7 @@
   --bz-raised:        #efe9dc;
   --bz-overlay:       rgba(40, 30, 60, 0.32);
 
-  --bz-purple-100:    #b794f4;
+  --bz-purple-100:    #553c9a;
   --bz-purple-300:    #805ad5;
   --bz-purple-500:    #553c9a;
   --bz-purple-700:    #322659;
@@ -188,8 +189,8 @@
 
   --bz-fg:            #1a1530;
   --bz-fg-mid:        #4c4866;
-  --bz-fg-low:        #837e9e;
-  --bz-fg-faint:      #c2bdd6;
+  --bz-fg-low:        #66617f;
+  --bz-fg-faint:      #66617f;
 
   --bz-border:        rgba(26, 21, 48, 0.10);
   --bz-border-strong: rgba(26, 21, 48, 0.18);
@@ -216,7 +217,7 @@
   --bz-overlay:       rgba(60, 30, 18, 0.28);
 
   /* Brand in this theme is terracotta — the Claude warm accent. */
-  --bz-purple-100:    #e8b89e;
+  --bz-purple-100:    #9a4f32;
   --bz-purple-300:    #d97757;
   --bz-purple-500:    #b3603e;
   --bz-purple-700:    #6f3a23;
@@ -228,8 +229,8 @@
 
   --bz-fg:            #2a1a0e;
   --bz-fg-mid:        #5d4534;
-  --bz-fg-low:        #97836f;
-  --bz-fg-faint:      #d2c5b1;
+  --bz-fg-low:        #76614f;
+  --bz-fg-faint:      #76614f;
 
   --bz-danger:        #c73232;
   --bz-warning:       #8f5f05;
@@ -261,6 +262,7 @@
   --bz-purple-900:    #1f1f2c;
   --bz-purple-glow:   rgba(176, 176, 192, 0.18);
   --bz-purple-soft:   rgba(138, 138, 160, 0.08);
+  --bz-on-accent:     #0c0c10;
   --bz-gradient-brand:
     linear-gradient(135deg, #8a8aa0 0%, #d8d8e2 100%);
 
@@ -279,7 +281,7 @@
   --bz-purple-100:#bae6fd; --bz-purple-300:#22d3ee; --bz-purple-500:#2563eb; --bz-purple-700:#1e3a8a; --bz-purple-900:#0b1f4d;
   --bz-purple-glow:rgba(34,211,238,.26); --bz-purple-soft:rgba(37,99,235,.12);
   --bz-gradient-brand:linear-gradient(135deg,#2563eb 0%,#22d3ee 100%);
-  --bz-fg:#f8fafc; --bz-fg-mid:#cbd5e1; --bz-fg-low:#64748b; --bz-fg-faint:#334155;
+  --bz-fg:#f8fafc; --bz-fg-mid:#cbd5e1; --bz-fg-low:#94a3b8; --bz-fg-faint:#64748b;
   --bz-border:rgba(226,232,240,.07); --bz-border-strong:rgba(226,232,240,.14); --bz-border-brand:rgba(34,211,238,.42);
 }
 
@@ -287,6 +289,7 @@
   --bz-canvas:#07111f; --bz-panel:#0b1628; --bz-card:#101d33; --bz-raised:#162641;
   --bz-purple-100:#fef3c7; --bz-purple-300:#facc15; --bz-purple-500:#38bdf8; --bz-purple-700:#0369a1; --bz-purple-900:#082f49;
   --bz-purple-glow:rgba(56,189,248,.22); --bz-purple-soft:rgba(250,204,21,.10);
+  --bz-on-accent:#051923;
   --bz-gradient-brand:linear-gradient(135deg,#38bdf8 0%,#facc15 100%);
   --bz-fg:#f8fafc; --bz-fg-mid:#cbd5e1; --bz-fg-low:#7b8798; --bz-fg-faint:#38465a;
   --bz-border:rgba(148,163,184,.10); --bz-border-strong:rgba(148,163,184,.18); --bz-border-brand:rgba(56,189,248,.40);
@@ -294,19 +297,19 @@
 
 [data-theme="papergrid"] {
   --bz-canvas:#fbfaf7; --bz-panel:#ffffff; --bz-card:#ffffff; --bz-raised:#f1eee7;
-  --bz-purple-100:#bbf7d0; --bz-purple-300:#16a34a; --bz-purple-500:#111827; --bz-purple-700:#030712; --bz-purple-900:#000000;
+  --bz-purple-100:#15803d; --bz-purple-300:#16a34a; --bz-purple-500:#111827; --bz-purple-700:#030712; --bz-purple-900:#000000;
   --bz-purple-glow:rgba(17,24,39,.10); --bz-purple-soft:rgba(22,163,74,.09);
   --bz-gradient-brand:linear-gradient(135deg,#111827 0%,#16a34a 100%);
-  --bz-fg:#111827; --bz-fg-mid:#4b5563; --bz-fg-low:#9ca3af; --bz-fg-faint:#d1d5db;
+  --bz-fg:#111827; --bz-fg-mid:#4b5563; --bz-fg-low:#6b7280; --bz-fg-faint:#6b7280;
   --bz-border:rgba(17,24,39,.10); --bz-border-strong:rgba(17,24,39,.18); --bz-border-brand:rgba(22,163,74,.42);
 }
 
 [data-theme="popcanvas"] {
   --bz-canvas:#ffffff; --bz-panel:#f8fafc; --bz-card:#ffffff; --bz-raised:#eef2ff;
-  --bz-purple-100:#dbeafe; --bz-purple-300:#0ea5e9; --bz-purple-500:#2563eb; --bz-purple-700:#ef4444; --bz-purple-900:#7f1d1d;
+  --bz-purple-100:#2563eb; --bz-purple-300:#0369a1; --bz-purple-500:#2563eb; --bz-purple-700:#ef4444; --bz-purple-900:#7f1d1d;
   --bz-purple-glow:rgba(14,165,233,.20); --bz-purple-soft:rgba(239,68,68,.08);
   --bz-gradient-brand:linear-gradient(135deg,#2563eb 0%,#ef4444 100%);
-  --bz-fg:#0f172a; --bz-fg-mid:#475569; --bz-fg-low:#94a3b8; --bz-fg-faint:#cbd5e1;
+  --bz-fg:#0f172a; --bz-fg-mid:#475569; --bz-fg-low:#64748b; --bz-fg-faint:#64748b;
   --bz-border:rgba(15,23,42,.08); --bz-border-strong:rgba(15,23,42,.15); --bz-border-brand:rgba(14,165,233,.42);
 }
 
@@ -314,8 +317,9 @@
   --bz-canvas:#09090b; --bz-panel:#111113; --bz-card:#18181b; --bz-raised:#222226;
   --bz-purple-100:#bfdbfe; --bz-purple-300:#60a5fa; --bz-purple-500:#3b82f6; --bz-purple-700:#1d4ed8; --bz-purple-900:#172554;
   --bz-purple-glow:rgba(59,130,246,.22); --bz-purple-soft:rgba(34,197,94,.10);
+  --bz-on-accent:#061225;
   --bz-gradient-brand:linear-gradient(135deg,#3b82f6 0%,#22c55e 100%);
-  --bz-fg:#fafafa; --bz-fg-mid:#d4d4d8; --bz-fg-low:#71717a; --bz-fg-faint:#3f3f46;
+  --bz-fg:#fafafa; --bz-fg-mid:#d4d4d8; --bz-fg-low:#a1a1aa; --bz-fg-faint:#71717a;
   --bz-border:rgba(250,250,250,.07); --bz-border-strong:rgba(250,250,250,.14); --bz-border-brand:rgba(59,130,246,.42);
 }
 
@@ -323,8 +327,9 @@
   --bz-canvas:#050505; --bz-panel:#0b0b0b; --bz-card:#141414; --bz-raised:#1f1f1f;
   --bz-purple-100:#fee2e2; --bz-purple-300:#f59e0b; --bz-purple-500:#ef4444; --bz-purple-700:#991b1b; --bz-purple-900:#450a0a;
   --bz-purple-glow:rgba(239,68,68,.24); --bz-purple-soft:rgba(245,158,11,.10);
+  --bz-on-accent:#180606;
   --bz-gradient-brand:linear-gradient(135deg,#ef4444 0%,#f59e0b 100%);
-  --bz-fg:#fafafa; --bz-fg-mid:#d4d4d8; --bz-fg-low:#71717a; --bz-fg-faint:#3f3f46;
+  --bz-fg:#fafafa; --bz-fg-mid:#d4d4d8; --bz-fg-low:#a1a1aa; --bz-fg-faint:#71717a;
   --bz-border:rgba(250,250,250,.07); --bz-border-strong:rgba(250,250,250,.14); --bz-border-brand:rgba(239,68,68,.42);
 }
 
@@ -342,3 +347,8 @@
     animation: none !important;
   }
 }
+
+/* The wordmark keeps its brand identity independently of theme accents. */
+:root { --bz-wordmark-color: #fff; }
+[data-theme="light"], [data-theme="mistral"], [data-theme="warm"],
+[data-theme="papergrid"], [data-theme="popcanvas"] { --bz-wordmark-color: #6d28d9; }

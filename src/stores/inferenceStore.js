@@ -6,6 +6,7 @@
 
 import { shallowReactive, readonly, computed } from 'vue';
 import { v4 as uuid } from 'uuid';
+import { generationElapsedMs } from '../shared/generationTiming.js';
 import { memoryService } from '../services/memory.service.js';
 import {
   buildBonzaiUtilitySnapshot,
@@ -32,7 +33,7 @@ import {
  * @property {string} [model] - Model identifier used for generation
  * @property {number} [tokensUsed] - Number of tokens consumed
  * @property {number|null} [tokensPerSecond] - Generation speed
- * @property {number|null} [elapsed] - Elapsed time in milliseconds
+ * @property {number|null} [elapsed] - Legacy elapsed time in seconds; prefer elapsedMs
  * @property {string} [source] - Inference source ("bonzai" | provider ID)
  * @property {'local'|'remote'|'private'} [networkMode] - Network mode used
  * @property {string} [pipeline] - Pipeline name (for image/audio/video)
@@ -124,7 +125,7 @@ const persist = async (storeKey) => {
   try {
     // Deep clone via JSON to strip Vue reactivity proxies and ensure serializability
     // This is required because Electron IPC uses structured clone which can't handle proxies
-    const safeData = structuredClone(state[stateKey]);
+    const safeData = JSON.parse(JSON.stringify(state[stateKey]));
     await store.set(storeKey, safeData);
     state.lastSyncTime = Date.now();
     return true;
@@ -256,7 +257,8 @@ export const addTextInference = async (question, answerText, metadata = {}) => {
     model: metadata.model || 'unknown',
     tokensUsed: metadata.tokensUsed || 0,
     tokensPerSecond: metadata.tokensPerSecond || null,
-    elapsed: metadata.elapsed || null,
+    elapsed: metadata.elapsed ?? null,
+    elapsedMs: generationElapsedMs(metadata),
     source: metadata.source || 'bonzai',
     networkMode: metadata.networkMode || 'local', // 'local' | 'remote' | 'private'
     hardware: hardware || null,
@@ -305,7 +307,8 @@ export const addImageInference = async (prompt, imageData, metadata = {}) => {
     width: metadata.width,
     height: metadata.height,
     steps: metadata.steps,
-    elapsed: metadata.elapsed || null,
+    elapsed: metadata.elapsed ?? null,
+    elapsedMs: generationElapsedMs(metadata),
     source: metadata.source || 'bonzai',
     networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
@@ -340,6 +343,7 @@ export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
   let record = {
     id: uuid(),
     question: prompt,
+    generationSettings: metadata.generationSettings || null,
     answer: {
       status: 200,
       data: {
@@ -354,7 +358,8 @@ export const addVideoInference = async (prompt, videoPath, metadata = {}) => {
     fps: metadata.fps,
     width: metadata.width,
     height: metadata.height,
-    elapsed: metadata.elapsed || null,
+    elapsed: metadata.elapsed ?? null,
+    elapsedMs: generationElapsedMs(metadata),
     source: metadata.source || 'bonzai',
     networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
@@ -401,7 +406,8 @@ export const addAudioInference = async (prompt, audioPath, metadata = {}) => {
     pipeline: metadata.pipeline || 'vibevoice',
     duration: metadata.duration,
     sampleRate: metadata.sampleRate,
-    elapsed: metadata.elapsed || null,
+    elapsed: metadata.elapsed ?? null,
+    elapsedMs: generationElapsedMs(metadata),
     source: metadata.source || 'bonzai',
     networkMode: metadata.networkMode || 'local',
     hardware: hardware || null,
@@ -433,11 +439,13 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
   const hardware = await getHardwareSpecs();
   let record = createInferenceRecord('object', {
     prompt: String(prompt || ''),
+    elapsedMs: generationElapsedMs(metadata),
     hardware: hardware || null,
     code: String(code || ''),
     mode: String(metadata.mode || 'normal'),
     assetKind: String(metadata.assetKind || metadata.mode || 'object'),
     projectManifest: metadata.projectManifest || undefined,
+    levelProject: metadata.levelProject || undefined,
     model: metadata.model ? String(metadata.model) : undefined,
     screenshots: Array.isArray(metadata.screenshots) ? metadata.screenshots : [],
     thumbnail: metadata.thumbnail ? String(metadata.thumbnail) : undefined,
@@ -445,23 +453,30 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     success: Boolean(metadata.success ?? true),
     title: metadata.title ? String(metadata.title) : undefined,
     notes: metadata.notes ? String(metadata.notes) : undefined,
+    assemblyContract: metadata.assemblyContract || undefined,
+    assemblyReport: metadata.assemblyReport || undefined,
+    assemblyPlanningDiagnostics: metadata.assemblyPlanningDiagnostics || undefined,
     blueprint: metadata.blueprint ? String(metadata.blueprint) : undefined,
+    creativeDirection: metadata.creativeDirection || undefined,
+    designSignature: metadata.designSignature || undefined,
     referenceAnalysis: metadata.referenceAnalysis ? String(metadata.referenceAnalysis) : undefined,
     referenceImage: metadata.referenceImage || undefined,
     fidelityReview: metadata.fidelityReview || undefined,
+    qualityStatus: metadata.qualityStatus || undefined,
     tokensPerSecond: metadata.tokensPerSecond ? String(metadata.tokensPerSecond) : undefined,
   });
   record = await attachBonzaiUtility(record);
 
   // Deep clone to ensure serializability before storing
   try {
-    const safeRecord = structuredClone(record);
+    // Metadata can contain Vue reactive plans. Persist the JSON data, not proxies.
+    const safeRecord = JSON.parse(JSON.stringify(record));
     state.objectInferences = [...state.objectInferences, safeRecord];
     state.totalInferences++;
     _mergedVersion++;
-    await persist(STORE_KEYS.objectInferences);
+    const persisted = await persist(STORE_KEYS.objectInferences);
     await enrichUserMemory(safeRecord);
-    return safeRecord;
+    return { ...safeRecord, persisted };
   } catch (e) {
     console.error('[InferenceStore] Failed to serialize record:', e);
     const minimalRecord = {
@@ -470,9 +485,11 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
       timestamp: record.timestamp,
       createdAt: record.createdAt,
       prompt: String(prompt || ''),
+      elapsedMs: record.elapsedMs,
       code: String(code || ''),
       mode: String(metadata.mode || 'normal'),
       assetKind: String(metadata.assetKind || metadata.mode || 'object'),
+      levelProject: metadata.levelProject ? JSON.parse(JSON.stringify(metadata.levelProject)) : undefined,
       success: Boolean(metadata.success ?? true),
       screenshots: [],
       thumbnail: metadata.thumbnail ? String(metadata.thumbnail) : undefined,
@@ -480,9 +497,9 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     state.objectInferences = [...state.objectInferences, minimalRecord];
     state.totalInferences++;
     _mergedVersion++;
-    await persist(STORE_KEYS.objectInferences);
+    const persisted = await persist(STORE_KEYS.objectInferences);
     await enrichUserMemory(minimalRecord);
-    return minimalRecord;
+    return { ...minimalRecord, persisted };
   }
 };
 

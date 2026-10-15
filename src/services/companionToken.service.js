@@ -1,21 +1,13 @@
-/**
- * BonzAI Companion Token Service
- *
- * Manages companion token launches on Base with Uniswap V4 liquidity.
- *
- * Features:
- * - Launch burnable ERC-20 tokens for minted companions
- * - Automatic Uniswap V4 pool creation with hook-based fees
- * - LP position NFT locked at DEAD address (unruggable - permanent liquidity)
- * - Tokens are burnable (deflationary)
- * - 1% swap fee split: 33% treasury, 33% companion owner (NFT holder), 34% companion wallet
- * - Query token, pool, and fee info
- */
-
+import {mintLicenseStatus} from './mintValidation.js';
+// Social-token reads and minted-agent-only reserve issuance.
 import { ethers } from 'ethers';
 import { reactive, readonly, computed } from 'vue';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
+import { verifyAgentIssuance, verifyMintedAgent, hasMintReference } from './agentMintEligibility.js';
+import { assertLaunchWallet } from './smartAgentLaunch.js';
+import { BonzaiSmartAgentsABI } from '../contracts/abi/BonzaiSmartAgents.abi.js';
+import { BonzaiAgentTokenFactoryABI } from '../contracts/abi/BonzaiAgentTokenFactory.abi.js';
 import {
   getPoolInfo as _getPoolInfo,
   getUnclaimedFees as _getUnclaimedFees,
@@ -27,9 +19,6 @@ import {
 
 // Factory ABI - V4 interface
 const FACTORY_ABI = [
-  // Write functions
-  'function launchToken(uint256 nftTokenId, string name, string symbol, string imageURI, address agentWallet, address companionOwner) payable returns (address token, bytes32 poolId)',
-
   // Read functions
   'function companionTokens(uint256 nftTokenId) view returns (address)',
   'function hasToken(uint256 nftTokenId) view returns (bool)',
@@ -62,7 +51,7 @@ const state = reactive({
   error: null,
   launchingCompanionId: null,
 });
-const economyNetwork = () => ({ 1: 'ethereum', 42161: 'arbitrum', 8453: 'base' }[Number(CONFIG.contributionEconomy?.chainId || CONFIG.companionTokenFactory?.chainId || 1)] || 'ethereum');
+const economyNetwork = () => ECONOMY_NETWORK_KEY;
 
 /**
  * Get factory contract instance
@@ -70,7 +59,7 @@ const economyNetwork = () => ({ 1: 'ethereum', 42161: 'arbitrum', 8453: 'base' }
  * @returns {Promise<ethers.Contract>}
  */
 async function getFactoryContract(withSigner = false) {
-  const factoryAddress = CONFIG.companionTokenFactory?.contractAddress;
+  const factoryAddress = CONFIG.companionTokenFactory?.contractAddress || CONFIG.smartAgentIssuance?.factoryAddress;
   if (!factoryAddress) {
     throw new Error('Companion token factory not deployed. Set CONFIG.companionTokenFactory.contractAddress');
   }
@@ -78,16 +67,17 @@ async function getFactoryContract(withSigner = false) {
   const provider = await web3Service.getProvider(economyNetwork());
 
   if (withSigner) {
+    await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
     const browserProvider = await web3Service.getBrowserProvider();
     const signer = await browserProvider.getSigner();
-    return new ethers.Contract(factoryAddress, FACTORY_ABI, signer);
+    return new ethers.Contract(factoryAddress, factoryAddress === CONFIG.smartAgentIssuance?.factoryAddress ? BonzaiAgentTokenFactoryABI : FACTORY_ABI, signer);
   }
 
-  return new ethers.Contract(factoryAddress, FACTORY_ABI, provider);
+  return new ethers.Contract(factoryAddress, factoryAddress === CONFIG.smartAgentIssuance?.factoryAddress ? BonzaiAgentTokenFactoryABI : FACTORY_ABI, provider);
 }
 
 /**
- * Launch a companion token with Uniswap V4 liquidity
+ * Verify a persisted NFT reference against the configured onchain collection
  *
  * @param {Object} companion - Companion data object
  * @param {string} companion.id - Unique companion ID
@@ -96,127 +86,165 @@ async function getFactoryContract(withSigner = false) {
  * @param {string} companion.agentWallet - Agent wallet address
  * @param {string} companion.imageIPFS - IPFS image URI (optional)
  * @param {number} companion.tokenId - NFT token ID (must be > 0)
- * @param {string} ethAmount - Amount of ETH for liquidity (as string, e.g., "0.1")
  *
  * @returns {Promise<Object>} Launch result with token address and poolId
  */
-async function launchToken(companion, ethAmount) {
-  if (!companion?.id) {
-    throw new Error('Companion ID required');
-  }
-  if (!companion.agentWallet) {
-    throw new Error('Companion must have an agentWallet. Mint the companion first.');
-  }
-  if (!ethAmount || parseFloat(ethAmount) <= 0) {
-    throw new Error('ETH amount required for liquidity');
-  }
+async function verifyMint(companion) {
+  if (!hasMintReference(companion)) throw new Error('Mint an agent slot onchain first.');
+  const allowed = [CONFIG.smartAgentIssuance, CONFIG.companionNFT_BASE].find(entry =>
+    entry?.contractAddress?.toLowerCase() === companion.contractAddress.toLowerCase() && Number(entry.chainId) === Number(companion.chainId));
+  if (!allowed) throw new Error('This agent is not from a configured collection on this network.');
+  const provider = await web3Service.getProvider(economyNetwork());
+  const minted = await verifyMintedAgent(companion, { collection: allowed.contractAddress, chainId: allowed.chainId, provider,
+    contract: new ethers.Contract(allowed.contractAddress, ['function ownerOf(uint256) view returns(address)'], provider) });
+  const factoryAddress = allowed === CONFIG.smartAgentIssuance ? allowed.factoryAddress : CONFIG.companionTokenFactory?.contractAddress;
+  if (!factoryAddress) return { ...minted, tokenAddress: null };
+  const factory = new ethers.Contract(factoryAddress, ['function companionContract() view returns(address)', 'function getToken(uint256) view returns(address)'], provider);
+  if ((await factory.companionContract()).toLowerCase() !== allowed.contractAddress.toLowerCase()) throw new Error('Wrong agent registry.');
+  const token = await factory.getToken(minted.id);
+  const identity = allowed === CONFIG.smartAgentIssuance
+    ? await new ethers.Contract(allowed.contractAddress, BonzaiSmartAgentsABI, provider).getIdentity(minted.id) : null;
+  return { ...minted, ready: identity?.ready ?? true, tokenAddress: token === ethers.ZeroAddress ? null : token };
+}
 
-  state.isLoading = true;
-  state.launchingCompanionId = companion.id;
-  state.error = null;
+// Read owned slots from the configured collection; imports never establish ownership.
+async function getOwnedAgentSlots() {
+  const config = CONFIG.smartAgentIssuance;
+  const wallet = web3Service.state.walletAddress;
+  if (!wallet) throw new Error('Connect the wallet that owns your agent slot.');
+  if (!config?.contractAddress) throw new Error('The agent slot collection is not configured.');
+  const provider = await web3Service.getProvider(economyNetwork());
+  if (Number((await provider.getNetwork()).chainId) !== Number(config.chainId)) throw new Error('Wrong network for agent slots.');
+  const contract = new ethers.Contract(config.contractAddress, BonzaiSmartAgentsABI, provider);
+  const ids = await contract.getOwnerCompanions(wallet);
+  const slots = [];
+  for (const id of ids) {
+    const ref = { tokenId: String(id), contractAddress: config.contractAddress, chainId: Number(config.chainId) };
+    await verifyMintedAgent(ref, { collection: config.contractAddress, chainId: config.chainId, provider, contract, wallet });
+    const [identity, token] = await Promise.all([contract.getIdentity(id), contract.socialToken(id)]);
+    if (token === ethers.ZeroAddress) slots.push({ ...ref, ready: identity.ready, name: identity.name, owner: wallet });
+  }
+  if (wallet.toLowerCase() !== web3Service.state.walletAddress?.toLowerCase()) throw new Error('Wallet changed. Refresh your slots.');
+  return slots;
+}
 
+async function personalizeAgent(companion) {
+  const {MODEL_REQUIREMENTS}=await import('../skills/flagship.js');
+  const rights=mintLicenseStatus(companion.imageGeneration || {},MODEL_REQUIREMENTS);
+  if(!rights.allowed)throw new Error(`${rights.reason} Regenerate the portrait with a commercially permitted model before publishing.`);
+  const config = CONFIG.smartAgentIssuance;
+  if (!config?.contractAddress) throw new Error('The agent slot collection is not configured.');
+  const expectedWallet = web3Service.state.walletAddress;
+  await web3Service.switchNetwork(economyNetwork());
+  await assertLaunchWallet(web3Service, config.chainId, expectedWallet);
+  const provider = await web3Service.getBrowserProvider();
+  const contract = new ethers.Contract(config.contractAddress, BonzaiSmartAgentsABI, await provider.getSigner());
+  const { id } = await verifyMintedAgent(companion, { collection: config.contractAddress, chainId: config.chainId, provider, contract, wallet: expectedWallet });
+  if (await contract.socialToken(id) !== ethers.ZeroAddress) throw new Error('Agent identity is locked after token issuance.');
+  const { storageService } = await import('./storage.service.js');
+  const { walletProviderService } = await import('./walletProvider.service.js');
+  const { companionService } = await import('./companion.service.js');
+  const name = String(companion.name || '').trim();
+  const symbol = String(companion.tokenSymbol || companion.firstName || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!name || name.length > 96 || !symbol || symbol.length > 12) throw new Error('Set the agent name and a symbol of 1–12 characters first.');
+  let image = companion.image;
+  if (!/^(data:image\/|https:\/\/|ipfs:\/\/|ar:\/\/)/.test(image || '')) throw new Error('Generate or provide a portrait before publishing the agent.');
+  await storageService.getStorage(web3Service.getEip1193Provider());
+  if (image.startsWith('data:image/')) {
+    const result = await storageService.uploadBase64({ base64Data: image, contentType: image.slice(5, image.indexOf(';')) });
+    image = result.gatewayUrl || result.url;
+  }
+  const wallet = await walletProviderService.createAgentWallet(companion.id, { firstName: companion.firstName, lastName: companion.familyName });
+  const metadata = companionService.buildERC8004RegistrationWithSpending({ ...companion, imageUri: image }, companion.spendingHabits || {});
+  const uploaded = await storageService.uploadMetadata(metadata, { type: 'smart-agent-personalization' });
+  const uri = uploaded.gatewayUrl || uploaded.url;
+  if (!uri || !image) throw new Error('Public metadata upload did not return a URI.');
+  await assertLaunchWallet(web3Service, config.chainId, expectedWallet);
+  const tx = await contract.personalize(id, uri, name, symbol, image, wallet.address);
+  const receipt = await tx.wait();
+  if (Number(receipt.status) !== 1) throw new Error('Agent personalization reverted.');
+  return { agentWallet: wallet.address, tokenSymbol: symbol, metadataURI: uri, isBare: false, needsSetup: false };
+}
+
+async function getIssuanceTerms(companion) {
+  if (companion.needsSetup) throw new Error('Publish this agent’s identity to its attached slot before launching.');
+  const config = CONFIG.smartAgentIssuance;
+  if (!config?.contractAddress || !config.factoryAddress) throw new Error('Reserved token issuance is not configured.');
+  const provider = await web3Service.getProvider(economyNetwork());
+  const contract = new ethers.Contract(config.contractAddress, BonzaiSmartAgentsABI, provider);
+  const factory = new ethers.Contract(config.factoryAddress, BonzaiAgentTokenFactoryABI, provider);
+  const { identity } = await verifyAgentIssuance(companion, { collection: config.contractAddress,
+    chainId: config.chainId, provider, contract, factory, factoryAddress: config.factoryAddress, wallet: web3Service.state.walletAddress });
+  const nvda = new ethers.Contract(await factory.nvda(), ['function decimals() view returns(uint8)'], provider);
+  const decimals = Number(await nvda.decimals());
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error('Unsupported NVDA precision.');
+  return { name: identity.name, symbol: identity.symbol, wallet: identity.wallet, decimals };
+}
+
+async function launchToken(companion, options = {}) {
+  if (!hasMintReference(companion)) throw new Error('Mint an agent slot onchain first.');
+  const config = CONFIG.smartAgentIssuance;
+  if (!config?.contractAddress || !config.factoryAddress) throw new Error('Reserved smart-agent token issuance is not configured on this network.');
+  if (companion.tokenLaunchStatus === 'pending') throw new Error('An issuance transaction is pending. Check its status before trying again.');
+  if (state.isLoading) throw new Error('Another token issuance is in progress.');
+  let submitted;
+  state.isLoading = true; state.launchingCompanionId = companion.id; state.error = null;
   try {
-    // Ensure we're on Ethereum network
-    const currentChainId = web3Service.state.currentChainId;
-    const targetChainId = CONFIG.companionTokenFactory?.chainId || 1;
-
-    if (currentChainId !== targetChainId) {
-      console.log('[CompanionToken] Switching to Ethereum network...');
-      await web3Service.switchNetwork(economyNetwork());
+    const expectedWallet = web3Service.state.walletAddress;
+    await web3Service.switchNetwork(economyNetwork());
+    await assertLaunchWallet(web3Service, config.chainId, expectedWallet);
+    const provider = await web3Service.getBrowserProvider();
+    const signer = await provider.getSigner();
+    const contract = new ethers.Contract(config.contractAddress, BonzaiSmartAgentsABI, signer);
+    const factory = new ethers.Contract(config.factoryAddress, BonzaiAgentTokenFactoryABI, provider);
+    const context = { collection: config.contractAddress, chainId: config.chainId, provider, contract, factory, factoryAddress: config.factoryAddress, wallet: expectedWallet };
+    const { id, identity } = await verifyAgentIssuance(companion, context);
+    const reviewed = options.reviewedIdentity;
+    if (!reviewed || reviewed.name !== identity.name || reviewed.symbol !== identity.symbol || reviewed.wallet?.toLowerCase() !== identity.wallet.toLowerCase()) {
+      throw new Error('The onchain agent identity changed or was not reviewed. Review issuance again.');
     }
-
-    const factory = await getFactoryContract(true);
-
-    // Check if token already exists
-    const nftTokenId = companion.tokenId || 0;
-    if (nftTokenId > 0) {
-      const existingToken = await factory.getToken(nftTokenId);
-      if (existingToken !== ethers.ZeroAddress) {
-        throw new Error(`Token already launched for ${companion.name}. Address: ${existingToken}`);
-      }
+    const minOut = BigInt(options.minNvdaOut || 0);
+    const deadline = Number(options.deadline);
+    if (minOut <= 0n || minOut >= (1n << 128n) || !Number.isSafeInteger(deadline) || deadline <= Date.now()/1000 || deadline > Date.now()/1000 + 1800) {
+      throw new Error('Review a positive minimum NVDA output and a fresh issuance deadline.');
     }
-
-    // Check minimum ETH
-    const minEth = await factory.minEthLiquidity();
-    const ethWei = ethers.parseEther(ethAmount);
-    if (ethWei < minEth) {
-      throw new Error(`Minimum ETH required: ${ethers.formatEther(minEth)} ETH`);
-    }
-
-    // Prepare launch parameters
-    const name = companion.name || `${companion.firstName} ${companion.familyName || ''}`.trim();
-    const symbol = (companion.firstName || companion.name.split(' ')[0]).toUpperCase();
-    const imageURI = companion.imageIPFS || companion.image || '';
-
-    console.log(`[CompanionToken] Launching $${symbol} token for ${name}...`);
-    console.log(`[CompanionToken] agentWallet: ${companion.agentWallet}`);
-    console.log(`[CompanionToken] ETH liquidity: ${ethAmount}`);
-
-    // Get companion owner (connected wallet = NFT holder) for fee split
-    const browserProvider = await web3Service.getBrowserProvider();
-    const signer = await browserProvider.getSigner();
-    const companionOwner = await signer.getAddress();
-
-    // Launch token (V4: returns token + poolId)
-    const tx = await factory.launchToken(
-      nftTokenId,
-      name,
-      symbol,
-      imageURI,
-      companion.agentWallet,
-      companionOwner,
-      { value: ethWei }
-    );
-
-    console.log(`[CompanionToken] Transaction sent: ${tx.hash}`);
+    await assertLaunchWallet(web3Service, config.chainId, expectedWallet);
+    // No new ETH payment: only the minted slot's own reserve can fund issuance.
+    const tx = await contract.issueToken(id, minOut, deadline);
+    submitted = { txHash: tx.hash, tokenLaunchTx: tx.hash, tokenLaunchStatus: 'pending' };
+    Object.assign(companion, { tokenLaunchTx: tx.hash, tokenLaunchStatus: 'pending' });
+    if (options.onSubmitted) await options.onSubmitted(submitted);
     const receipt = await tx.wait();
-    console.log(`[CompanionToken] Transaction confirmed in block ${receipt.blockNumber}`);
-
-    // Parse event to get token and poolId
-    let tokenAddress = null;
-    let poolId = null;
-    let launchSymbol = symbol;
-
-    for (const log of receipt.logs) {
-      try {
-        const parsed = factory.interface.parseLog(log);
-        if (parsed?.name === 'CompanionTokenLaunched') {
-          tokenAddress = parsed.args.token;
-          poolId = parsed.args.poolId;
-          launchSymbol = parsed.args.symbol;
-          console.log(`[CompanionToken] Token deployed: ${tokenAddress}`);
-          console.log(`[CompanionToken] Pool ID: ${poolId}`);
-          break;
-        }
-      } catch {
-        // Skip non-matching logs
-      }
-    }
-
-    if (!tokenAddress && nftTokenId > 0) {
-      tokenAddress = await factory.getToken(nftTokenId);
-    }
-
-    return {
-      success: true,
-      tokenAddress,
-      poolId,
-      symbol: launchSymbol,
-      txHash: receipt.hash,
-      ethLiquidity: ethAmount,
-      lpLocked: true,  // LP position NFT sent to dead address - unruggable
-    };
-  } catch (e) {
-    console.error('[CompanionToken] Launch failed:', e);
-    state.error = e.message;
-    return {
-      success: false,
-      error: e.message,
-    };
+    return await issuanceResult(companion, receipt);
+  } catch (error) {
+    state.error = error.message;
+    return { ...submitted, success: false, pending: Boolean(submitted), error: error.message };
   } finally {
-    state.isLoading = false;
-    state.launchingCompanionId = null;
+    state.isLoading = false; state.launchingCompanionId = null;
   }
+}
+
+async function issuanceResult(companion, receipt) {
+  if (!receipt) return { success: false, pending: true, tokenLaunchStatus: 'pending' };
+  if (Number(receipt.status) !== 1) return { success: false, reverted: true, tokenLaunchStatus: 'reverted', error: 'Token issuance reverted. The reserve remains available.' };
+  const config = CONFIG.smartAgentIssuance;
+  const iface = new ethers.Interface(BonzaiSmartAgentsABI);
+  for (const log of receipt.logs || []) {
+    if (log.address.toLowerCase() !== config.contractAddress.toLowerCase()) continue;
+    let event; try { event = iface.parseLog(log); } catch { continue; }
+    if (event?.name !== 'TokenIssued' || String(event.args.id) !== String(companion.tokenId)) continue;
+    return { success: true, tokenAddress: event.args.token, poolId: event.args.poolId, txHash: receipt.hash,
+      tokenLaunchTx: receipt.hash, tokenLaunchStatus: 'confirmed', lpLocked: true };
+  }
+  return { success: false, pending: true, tokenLaunchStatus: 'pending', error: 'The issuance receipt could not be verified. Do not submit another transaction.' };
+}
+
+async function refreshIssuance(companion) {
+  const config = CONFIG.smartAgentIssuance;
+  if (!config?.contractAddress || companion.contractAddress?.toLowerCase() !== config.contractAddress.toLowerCase() || Number(companion.chainId) !== Number(config.chainId)) throw new Error('Restore the original issuance network and collection to check this transaction.');
+  const provider = await web3Service.getProvider(economyNetwork());
+  if (Number((await provider.getNetwork()).chainId) !== Number(config.chainId)) throw new Error('Wrong issuance network.');
+  return issuanceResult(companion, await provider.getTransactionReceipt(companion.tokenLaunchTx));
 }
 
 /**
@@ -288,43 +316,29 @@ const claimFees = () => _claimFees(LOG_PREFIX);
  * @returns {Promise<string>} Minimum ETH formatted
  */
 async function getMinEthLiquidity() {
-  try {
-    const factory = await getFactoryContract(false);
-    const minEth = await factory.minEthLiquidity();
-    return ethers.formatEther(minEth);
-  } catch (e) {
-    console.error('[CompanionToken] getMinEthLiquidity failed:', e);
-    return '0.01'; // Default fallback
-  }
+  throw new Error('Agent token issuance uses the minted slot’s reserved 1 ETH, not an additional liquidity payment.');
 }
 
 /**
  * Get all token addresses from factory
  * @returns {Promise<string[]>} Array of token addresses
  */
-async function getAllTokenAddresses() {
-  try {
-    const factory = await getFactoryContract(false);
-    return await factory.getAllTokens();
-  } catch (e) {
-    console.error('[CompanionToken] getAllTokenAddresses failed:', e);
+async function getAllTokenAddresses({ strict = false } = {}) {
+  const addresses = [...new Set([CONFIG.companionTokenFactory?.contractAddress, CONFIG.smartAgentIssuance?.factoryAddress].filter(Boolean))];
+  if (!addresses.length) {
+    if (strict) throw new Error('No agent token factory is configured.');
     return [];
   }
+  const provider = await web3Service.getProvider(economyNetwork());
+  const results = await Promise.allSettled(addresses.map(address =>
+    new ethers.Contract(address, ['function getAllTokens() view returns(address[])'], provider).getAllTokens()));
+  if (strict && results.some(result => result.status === 'rejected')) throw new Error('Unable to verify all configured agent-token markets.');
+  const tokens = results.filter(result => result.status === 'fulfilled').flatMap(result => [...result.value]);
+  return [...new Map(tokens.map(token => [token.toLowerCase(), token])).values()];
 }
 
-/**
- * Get total number of tokens launched
- * @returns {Promise<number>}
- */
 async function getTotalTokensLaunched() {
-  try {
-    const factory = await getFactoryContract(false);
-    const total = await factory.totalTokensLaunched();
-    return Number(total);
-  } catch (e) {
-    console.error('[CompanionToken] getTotalTokensLaunched failed:', e);
-    return 0;
-  }
+  return (await getAllTokenAddresses({ strict: true })).length;
 }
 
 // URL builders delegated to shared uniswapV4 utils (imported above)
@@ -337,7 +351,7 @@ const errorMessage = computed(() => state.error);
 
 // Check if factory is configured
 const isConfigured = computed(() => {
-  return !!CONFIG.companionTokenFactory?.contractAddress;
+  return !!(CONFIG.smartAgentIssuance?.contractAddress && CONFIG.smartAgentIssuance?.factoryAddress);
 });
 
 // Export service
@@ -354,6 +368,11 @@ export const companionTokenService = {
 
   // Token launch
   launchToken,
+  verifyMint,
+  getIssuanceTerms,
+  personalizeAgent,
+  getOwnedAgentSlots,
+  refreshIssuance,
 
   // Queries
   hasToken,

@@ -57,183 +57,89 @@ describe("BonzaiServiceTime (recordServiceTime API)", function () {
     return { serviceTime, mintPool, stakingVault, bonzai, owner, treasury, provider, consumer };
   }
 
-  describe("Deployment", function () {
-    it("sets bonzai + mintPool", async function () {
-      const { serviceTime, bonzai, mintPool } = await loadFixture(deployServiceTimeFixture);
-      expect(await serviceTime.bonzaiToken()).to.equal(await bonzai.getAddress());
-      expect(await serviceTime.mintPool()).to.equal(await mintPool.getAddress());
-    });
+  async function verified(f, pipelineId = 0, secondsServed = 600, receipt = ethers.id("receipt-1")) {
+    await f.serviceTime.setServiceTimeAttestor(f.owner.address);
+    return f.serviceTime.recordVerifiedServiceTime(f.provider.address, pipelineId, secondsServed, await f.mintPool.currentEpoch(), receipt);
+  }
 
-    it("LVL1_THRESHOLD is 1000 BONZAI", async function () {
-      const { serviceTime } = await loadFixture(deployServiceTimeFixture);
-      expect(await serviceTime.LVL1_THRESHOLD()).to.equal(PROVIDER_LVL1);
-    });
-
-    it("MAX_RECORD_DURATION is 24h", async function () {
-      const { serviceTime } = await loadFixture(deployServiceTimeFixture);
-      expect(await serviceTime.MAX_RECORD_DURATION()).to.equal(MAX_SESSION_DURATION);
-    });
-
-    it("pipelineToPool maps correctly", async function () {
-      const { serviceTime } = await loadFixture(deployServiceTimeFixture);
-      expect(await serviceTime.pipelineToPool(PIPELINE_LLM)).to.equal(POOL_TEXT);
-      expect(await serviceTime.pipelineToPool(PIPELINE_IMAGE)).to.equal(POOL_IMAGE);
-      expect(await serviceTime.pipelineToPool(PIPELINE_VIDEO)).to.equal(POOL_VIDEO);
-      expect(await serviceTime.pipelineToPool(11)).to.equal(POOL_TEXT);
-    });
+  it("starts fail-closed and rejects unsigned single and batch reports even from stakers", async function () {
+    const f = await loadFixture(deployServiceTimeFixture);
+    expect(await f.serviceTime.claimsPaused()).to.equal(true);
+    await expect(f.serviceTime.connect(f.provider).recordServiceTime(0, 86400)).to.be.revertedWithCustomError(f.serviceTime, "UnverifiedServiceTime");
+    await expect(f.serviceTime.connect(f.provider).recordServiceTimeBatch([{pipelineId:0,secondsServed:86400}])).to.be.revertedWithCustomError(f.serviceTime, "UnverifiedServiceTime");
+    await expect(f.serviceTime.setClaimsPaused(false)).to.be.revertedWith("Attestor required");
+    expect(await f.serviceTime.totalServiceTime(0,0)).to.equal(0);
   });
 
-  describe("recordServiceTime", function () {
-    it("records elapsed time and credits provider", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await expect(serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 600))
-        .to.emit(serviceTime, "ServiceTimeRecorded")
-        .withArgs(provider.address, POOL_TEXT, 0, 600, PIPELINE_LLM);
-      expect(await serviceTime.providerServiceTime(0, POOL_TEXT, provider.address)).to.equal(600);
-      expect(await serviceTime.totalServiceTime(0, POOL_TEXT)).to.equal(600);
-    });
-
-    it("rejects when provider stake drops below LVL1", async function () {
-      const { serviceTime, stakingVault, provider } = await loadFixture(deployServiceTimeFixture);
-      await stakingVault.connect(provider).unstake(PROVIDER_LVL1);
-      await expect(serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 60))
-        .to.be.revertedWithCustomError(serviceTime, "ProviderBelowLvl1");
-    });
-
-    it("rejects 0 duration", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await expect(serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 0))
-        .to.be.revertedWithCustomError(serviceTime, "InvalidDuration");
-    });
-
-    it("rejects duration > MAX_RECORD_DURATION", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await expect(serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, MAX_SESSION_DURATION + 1))
-        .to.be.revertedWithCustomError(serviceTime, "InvalidDuration");
-    });
-
-    it("rejects invalid pipelineId", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await expect(serviceTime.connect(provider).recordServiceTime(99, 60))
-        .to.be.revertedWithCustomError(serviceTime, "InvalidPipeline");
-    });
-
-    it("multiple records accumulate", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 100);
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 200);
-      expect(await serviceTime.providerServiceTime(0, POOL_TEXT, provider.address)).to.equal(300);
-    });
+  it("only accepts unique receipts from the explicitly trusted attestor", async function () {
+    const f = await loadFixture(deployServiceTimeFixture);
+    await f.serviceTime.setServiceTimeAttestor(f.owner.address);
+    const receipt = ethers.id("independently-validated-work");
+    await expect(f.serviceTime.connect(f.provider).recordVerifiedServiceTime(f.provider.address,0,600,0,receipt))
+      .to.be.revertedWithCustomError(f.serviceTime,"UnauthorizedAttestor");
+    await expect(f.serviceTime.recordVerifiedServiceTime(f.provider.address,0,600,0,receipt))
+      .to.emit(f.serviceTime,"ServiceTimeRecorded").withArgs(f.provider.address,0,0,600,0);
+    await expect(f.serviceTime.recordVerifiedServiceTime(f.provider.address,1,600,0,receipt))
+      .to.be.revertedWithCustomError(f.serviceTime,"InvalidReceipt");
+    expect(await f.serviceTime.totalServiceTime(0,0)).to.equal(600);
   });
 
-  describe("recordServiceTimeBatch", function () {
-    it("records multiple entries in one tx", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      const records = [
-        { pipelineId: 0, secondsServed: 100 },
-        { pipelineId: 1, secondsServed: 200 },
-        { pipelineId: 9, secondsServed: 300 },
-      ];
-      await serviceTime.connect(provider).recordServiceTimeBatch(records);
-      expect(await serviceTime.providerServiceTime(0, POOL_TEXT, provider.address)).to.equal(100);
-      expect(await serviceTime.providerServiceTime(0, POOL_IMAGE, provider.address)).to.equal(200);
-      expect(await serviceTime.providerServiceTime(0, POOL_VIDEO, provider.address)).to.equal(300);
-    });
-
-    it("rejects empty batch", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await expect(serviceTime.connect(provider).recordServiceTimeBatch([]))
-        .to.be.revertedWith("Empty batch");
-    });
-
-    it("checks LVL1 once for the whole batch", async function () {
-      const { serviceTime, stakingVault, provider } = await loadFixture(deployServiceTimeFixture);
-      await stakingVault.connect(provider).unstake(PROVIDER_LVL1);
-      await expect(serviceTime.connect(provider).recordServiceTimeBatch([{ pipelineId: 0, secondsServed: 60 }]))
-        .to.be.revertedWithCustomError(serviceTime, "ProviderBelowLvl1");
-    });
+  it("rejects missing evidence, invalid durations, pipelines, and finalized receipt epochs", async function () {
+    const f = await loadFixture(deployServiceTimeFixture);
+    await f.serviceTime.setServiceTimeAttestor(f.owner.address);
+    await expect(f.serviceTime.recordVerifiedServiceTime(f.provider.address,0,600,0,ethers.ZeroHash)).to.be.revertedWithCustomError(f.serviceTime,"InvalidReceipt");
+    for (const duration of [0, 86401]) {
+      await expect(f.serviceTime.recordVerifiedServiceTime(f.provider.address,0,duration,0,ethers.id("bad"))).to.be.revertedWithCustomError(f.serviceTime,"InvalidDuration");
+    }
+    await expect(f.serviceTime.recordVerifiedServiceTime(f.provider.address,99,60,0,ethers.id("bad"))).to.be.revertedWithCustomError(f.serviceTime,"InvalidPipeline");
+    await time.increase(EPOCH_DURATION);
+    await expect(f.serviceTime.recordVerifiedServiceTime(f.provider.address,0,60,0,ethers.id("late"))).to.be.revertedWith("Invalid receipt epoch");
   });
 
-  describe("claimProviderRewards", function () {
-    it("transfers weighted share of pool", async function () {
-      const { serviceTime, mintPool, provider } = await loadFixture(deployServiceTimeFixture);
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 600);
-      await time.increase(EPOCH_DURATION);
-
-      const providerArr = await mintPool.getEpochProviderDeposits(0);
-      const expected = providerArr[POOL_TEXT];
-      await expect(serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT))
-        .to.changeEtherBalance(provider, expected);
-    });
-
-    it("emits ProviderRewardsClaimed with paidAmount", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 600);
-      await time.increase(EPOCH_DURATION);
-      await expect(serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT))
-        .to.emit(serviceTime, "ProviderRewardsClaimed");
-    });
-
-    it("rejects double claim", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 600);
-      await time.increase(EPOCH_DURATION);
-      await serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT);
-      await expect(serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT))
-        .to.be.revertedWithCustomError(serviceTime, "AlreadyClaimed");
-    });
-
-    it("rejects when epoch not finalized", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 60);
-      await expect(serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT))
-        .to.be.revertedWithCustomError(serviceTime, "EpochNotFinalized");
-    });
-
-    it("rejects when no service time recorded", async function () {
-      const { serviceTime, provider } = await loadFixture(deployServiceTimeFixture);
-      await time.increase(EPOCH_DURATION);
-      await expect(serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT))
-        .to.be.revertedWithCustomError(serviceTime, "NoServiceTime");
-    });
-
-    it("rejects when claims paused", async function () {
-      const { serviceTime, owner, provider } = await loadFixture(deployServiceTimeFixture);
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 60);
-      await time.increase(EPOCH_DURATION);
-      await serviceTime.connect(owner).setClaimsPaused(true);
-      await expect(serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT))
-        .to.be.revertedWithCustomError(serviceTime, "ClaimsPaused");
-      await serviceTime.connect(owner).setClaimsPaused(false);
-      await expect(serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT))
-        .to.not.be.reverted;
-    });
-
-    it("provider can still record while claims are paused", async function () {
-      const { serviceTime, owner, provider } = await loadFixture(deployServiceTimeFixture);
-      await serviceTime.connect(owner).setClaimsPaused(true);
-      await expect(serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 60))
-        .to.not.be.reverted;
-    });
+  it("requires active stake for both verified accounting and payment", async function () {
+    const f = await loadFixture(deployServiceTimeFixture);
+    await verified(f);
+    await f.serviceTime.setClaimsPaused(false);
+    await f.stakingVault.connect(f.provider).unstake(PROVIDER_LVL1);
+    await expect(verified(f, 0, 60, ethers.id("other"))).to.be.revertedWithCustomError(f.serviceTime,"ProviderBelowLvl1");
+    await time.increase(EPOCH_DURATION);
+    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.be.revertedWithCustomError(f.serviceTime,"ProviderBelowLvl1");
   });
 
-  describe("ProviderRegistry wiring", function () {
-    it("recordEarnings is called when claim succeeds", async function () {
-      const { serviceTime, owner, provider } = await loadFixture(deployServiceTimeFixture);
-      const BonzaiProviderRegistry = await ethers.getContractFactory("BonzaiProviderRegistry");
-      const registry = await BonzaiProviderRegistry.deploy(owner.address);
-      await registry.setPaymentContract(await serviceTime.getAddress());
-      await serviceTime.connect(owner).setProviderRegistry(await registry.getAddress());
+  it("pays validated work exactly once after epoch finalization", async function () {
+    const f = await loadFixture(deployServiceTimeFixture);
+    await verified(f);
+    await f.serviceTime.setClaimsPaused(false);
+    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.be.revertedWithCustomError(f.serviceTime,"EpochNotFinalized");
+    await time.increase(EPOCH_DURATION);
+    const expected = (await f.mintPool.getEpochProviderDeposits(0))[0];
+    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.changeEtherBalance(f.provider,expected);
+    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.be.revertedWithCustomError(f.serviceTime,"AlreadyClaimed");
+  });
 
-      await registry.connect(provider).register("12D3KooWTestPeer", ["/ip4/127.0.0.1/tcp/4002"], [0], false);
+  it("halts claims when the attestor is removed and protects configuration", async function () {
+    const f = await loadFixture(deployServiceTimeFixture);
+    await verified(f);
+    await f.serviceTime.setClaimsPaused(false);
+    await expect(f.serviceTime.connect(f.provider).setServiceTimeAttestor(f.provider.address)).to.be.revertedWithCustomError(f.serviceTime,"OwnableUnauthorizedAccount");
+    await f.serviceTime.setServiceTimeAttestor(ethers.ZeroAddress);
+    expect(await f.serviceTime.claimsPaused()).to.equal(true);
+    await time.increase(EPOCH_DURATION);
+    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.be.revertedWithCustomError(f.serviceTime,"ClaimsPaused");
+  });
 
-      await serviceTime.connect(provider).recordServiceTime(PIPELINE_LLM, 60);
-      await time.increase(EPOCH_DURATION);
-      await serviceTime.connect(provider).claimProviderRewards(0, POOL_TEXT);
-
-      const p = await registry.getProvider(provider.address);
-      expect(p.completedJobs).to.equal(1);
-      expect(p.totalEarnings).to.be.gt(0);
-    });
+  it("maps supported pipelines and updates the provider registry after payment", async function () {
+    const f = await loadFixture(deployServiceTimeFixture);
+    for (const [pipeline,pool] of [[0,0],[1,2],[5,1],[9,3],[10,2],[11,0]]) expect(await f.serviceTime.pipelineToPool(pipeline)).to.equal(pool);
+    const Registry = await ethers.getContractFactory("BonzaiProviderRegistry");
+    const registry = await Registry.deploy(f.treasury.address);
+    await registry.setPaymentContract(await f.serviceTime.getAddress());
+    await f.serviceTime.setProviderRegistry(await registry.getAddress());
+    await registry.connect(f.provider).register("test-peer",["/ip4/127.0.0.1/tcp/4002"],[0],false);
+    await verified(f);
+    await f.serviceTime.setClaimsPaused(false);
+    await time.increase(EPOCH_DURATION);
+    await f.serviceTime.connect(f.provider).claimProviderRewards(0,0);
+    expect((await registry.getProvider(f.provider.address)).completedJobs).to.equal(1);
   });
 });

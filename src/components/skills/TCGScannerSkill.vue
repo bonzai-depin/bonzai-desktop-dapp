@@ -15,7 +15,7 @@
     </div>
 
     <!-- Model Not Ready Warning -->
-    <div v-if="!modelLoading && !modelReady" class="bz-notice bz-notice--warning p-4 mb-4">
+    <div v-if="!downloadsManaged && !modelLoading && !modelReady" class="bz-notice bz-notice--warning p-4 mb-4">
       <span class="material-symbols-outlined" style="font-size: 20px">warning</span>
       Models not downloaded.
       <button class="bz-btn bz-btn--sm bz-btn--agent-cta ml-3" @click="ensureModelLoaded">
@@ -342,9 +342,9 @@
             </div>
           </div>
           <div v-if="scannedCard.pricing.url" class="price-source mt-2">
-            <span style="opacity: 0.5; font-size: 0.75rem">
+            <a :href="scannedCard.pricing.url" target="_blank" rel="noopener noreferrer">
               Source: pokemontcg.io / TCGPlayer
-            </span>
+            </a>
           </div>
         </div>
       </div>
@@ -448,14 +448,12 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { v4 as uuid } from "uuid";
 import { getAuthHeaders } from "../../services/auth.service.js";
-import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 import BonzaiPulse from "../BonzaiPulse.vue";
 import MintModal from "../MintModal.vue";
 
-const SKILL_ID = "tcg-analysis-v1.0.0";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -701,6 +699,7 @@ export default {
 
   props: {
     skill: { type: Object, default: null },
+    downloadsManaged: { type: Boolean, default: false },
     modelAvailable: { type: [Function, Boolean], default: true },
   },
 
@@ -718,6 +717,9 @@ export default {
     const scanStatus = ref("");
     const modelLoading = ref(false);
     const modelReady = ref(false);
+    watch(() => props.modelAvailable, available => {
+      if (typeof available === 'boolean') modelReady.value = available;
+    }, { immediate: true });
     const cameraActive = ref(false);
     const scannedCard = ref(null);
     const scanHistory = ref([]);
@@ -827,6 +829,7 @@ export default {
         // One model serves OCR and visual analysis.
         downloadStatus.value = "Downloading Vision model...";
         const visionResult = await prefetchPipeline("vision");
+        if (visionResult.status >= 400 || visionResult.data?.error) throw new Error(visionResult.data?.error || 'Vision models could not be prepared.');
         if (visionResult.status === 202 && visionResult.data?.pipeline_id) {
           const ok = await pollPipelineComplete(visionResult.data.pipeline_id);
           if (!ok) { downloadStatus.value = "Vision download failed"; return; }
@@ -938,22 +941,16 @@ export default {
         }
         const q = encodeURIComponent(qParts.join(" "));
         let url = `${POKEMON_TCG_API}/cards?q=${q}&select=id,name,rarity,tcgplayer,cardmarket,set&pageSize=5`;
-        let res = await fetch(url);
+        const res = await fetch(url);
         if (!res.ok) return null;
-        let data = await res.json();
-        let card = data.data?.[0];
-
-        // Fallback: if no match with rarity/number, try name only
-        if (!card?.tcgplayer?.prices && qParts.length > 1) {
-          const qFallback = encodeURIComponent(`name:"${cardName}"`);
-          url = `${POKEMON_TCG_API}/cards?q=${qFallback}&select=id,name,rarity,tcgplayer,cardmarket,set&pageSize=5`;
-          res = await fetch(url);
-          if (res.ok) {
-            data = await res.json();
-            card = data.data?.[0];
-          }
+        const data = await res.json();
+        const candidates = Array.isArray(data.data) ? data.data : [];
+        if (candidates.length > 1 || Number(data.totalCount) > 1) {
+          return { error: 'Several card editions match. Confirm the set and collector number before using a price.',
+            candidates: candidates.map(card => ({ id: card.id, name: card.name, set: card.set?.name, url: card.tcgplayer?.url })) };
         }
-
+        // Never substitute a similarly named edition when the exact card is missing.
+        const card = candidates[0];
         if (!card?.tcgplayer?.prices) return null;
 
         const variants = Object.entries(card.tcgplayer.prices).map(
@@ -969,6 +966,8 @@ export default {
         );
 
         return {
+          cardId: card.id,
+          checkedAt: new Date().toISOString(),
           variants,
           url: card.tcgplayer?.url || "",
           set: card.set?.name || "",
@@ -1271,10 +1270,6 @@ Only include keys where you can see the value. Skip keys with no visible data.`,
     // ─── Main Analysis Pipeline ───────────────────────────────────────
     async function analyzeCard() {
       if (!frontBase64.value || isScanning.value || !modelReady.value) return;
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        console.warn("[TCGScanner] Skill not purchased — execution blocked.");
-        return;
-      }
 
       isScanning.value = true;
       showNotification("Analyzing card...", "info", 0);
@@ -1519,7 +1514,7 @@ Replace the example numbers with your actual scores based on what you see. Check
         saveHistory();
 
         showNotification("Analysis complete!", "success");
-        emit("card-scanned", scannedCard.value);
+        emit("card-scanned", { ...scannedCard.value, image: frontPreview.value, assessedAt: new Date().toISOString() });
       } catch (e) {
         console.error("[TCGAnalysis] Analysis failed:", e);
         showNotification("Analysis failed: " + e.message, "danger");
@@ -1681,14 +1676,13 @@ Replace the example numbers with your actual scores based on what you see. Check
     }
     async function saveHistory() {
       try {
-        await window.electronAPI?.storeSet(STORE_KEY, scanHistory.value);
+        await window.electronAPI?.storeSet(STORE_KEY, JSON.parse(JSON.stringify(scanHistory.value)));
       } catch (e) {
         /* */
       }
     }
 
     onMounted(() => {
-      ensureModelLoaded();
       loadHistory();
     });
     onUnmounted(() => {

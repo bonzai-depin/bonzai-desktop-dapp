@@ -10,6 +10,16 @@
  * proportions (60/30/10, the spacing rhythm, motion vocabulary).
  */
 
+/* Bulma gives strong a fixed dark foreground. Emphasis must inherit its
+   context so it stays readable in themed panels and on filled buttons. */
+strong, b {
+  color: inherit;
+}
+
+body {
+  color: var(--bz-fg);
+}
+
 :root {
   /* ─── 1. CANVAS · the 60% ─────────────────────────────────────── */
   /* Five levels of dark surface, never glassmorphic. Pick by depth:
@@ -52,6 +62,28 @@
   --bz-control-selected-bg:     var(--bz-purple-500);
   --bz-control-selected-border: var(--bz-purple-500);
   --bz-control-selected-fg:     var(--bz-on-accent);
+
+  /* Compatibility aliases used by older and vertical modules. Keeping
+     them token-backed prevents theme fallbacks from silently producing
+     dark-on-dark or light-on-light text. */
+  --bz-bg:              var(--bz-canvas);
+  --bz-surface:         var(--bz-card);
+  --bz-surface-alt:     var(--bz-raised);
+  --bz-surface-raised:  var(--bz-raised);
+  --bz-panel-2:         var(--bz-card);
+  --bz-panel-soft:      var(--bz-raised);
+  --bz-text:            var(--bz-fg);
+  --bz-text-muted:      var(--bz-fg-mid);
+  --bz-fg-muted:        var(--bz-fg-mid);
+  --bz-muted:           var(--bz-fg-low);
+  --bz-accent:          var(--bz-purple-300);
+  --bz-accent-soft:     var(--bz-purple-soft);
+  --bz-success:         var(--bz-emerald-500);
+  --bz-success-soft:    var(--bz-emerald-soft);
+  --bz-error:           var(--bz-danger);
+  --bz-amber-300:       var(--bz-warning);
+  --bz-purple-200:      var(--bz-purple-100);
+  --bz-purple-400:      var(--bz-purple-300);
 
   /* The brand gradient — used only for hero CTAs, generation in
      progress, identity moments. Never decorative chrome. */
@@ -107,6 +139,12 @@
   --bz-r:       10px;
   --bz-r-lg:    14px;
   --bz-r-pill:  999px;
+  --bz-r-xs:    4px;
+  --bz-r-md:    var(--bz-r);
+  --bz-radius-sm:   var(--bz-r-sm);
+  --bz-radius-md:   var(--bz-r);
+  --bz-radius-lg:   var(--bz-r-lg);
+  --bz-radius-pill: var(--bz-r-pill);
 
   /* ─── 8. ELEVATION (shadow scale) ──────────────────────────────
      Three steps + a brand glow. Cards never use shadow at rest;
@@ -117,6 +155,10 @@
   --bz-elev-brand:
     0 0 0 1px var(--bz-border-brand),
     0 0 32px var(--bz-purple-glow);
+  --bz-shadow-sm:   var(--bz-elev-1);
+  --bz-shadow-soft: var(--bz-elev-1);
+  --bz-shadow-lg:   var(--bz-elev-2);
+  --bz-shadow-xl:   var(--bz-elev-3);
 
   /* Scrim — translucent black layers used over images, video, and
      modal backdrops. Replaces ad-hoc rgba(0,0,0,0.X) literals. */
@@ -161,6 +203,9 @@
   --bz-size-body:     14px;
   --bz-size-meta:     12px;
   --bz-size-micro:    11px;
+  --bz-size-caption:  var(--bz-size-meta);
+  --bz-size-small:    var(--bz-size-meta);
+  --bz-size-sm:       var(--bz-size-meta);
 
   --bz-line-display:  1.15;
   --bz-line-tight:    1.3;
@@ -188,6 +233,9 @@
   --bz-ease-out:    cubic-bezier(0.22, 1, 0.36, 1);   /* enters / settles */
   --bz-ease-in:     cubic-bezier(0.4, 0, 1, 1);        /* exits */
   --bz-ease-stand:  cubic-bezier(0.4, 0, 0.2, 1);      /* default */
+  --bz-ease:        var(--bz-ease-stand);
+  --bz-ease-in-out: var(--bz-ease-stand);
+  --bz-ease-spring: var(--bz-ease-out);
 
   /* ─── 12. Z-INDEX SCALE ───────────────────────────────────────── */
   --bz-z-base:     0;
@@ -621,3 +669,35 @@
 }
 .skill-fullwidth { width: 100%; }
 .skill-float-right { margin-left: auto; }
+
+/* Numeric product metrics share the BonzAI wordmark face. Code, addresses,
+   editable fields and explanatory labels retain their own typography. */
+:root { --bz-font-metric: 'Fira Sans Condensed', sans-serif; }
+:is(.bz-data, .bz-metric, .bz-sidebar__balance-amt, .bz-specs-item__value,
+    .bz-train__metric-value, .command-metric__value, .companion-metric__value,
+    .conn-kpi__value, .kpi-tile__value, .memory-stat__value,
+    .stat-value, .stat-number, .metric-value, .stat__value,
+    .basket-amount, .markets__quote, .price-row span:last-child, .pipeline-seconds,
+    .mesh-presence__stats strong, .mesh-presence__badge,
+    .local-token-count__copy strong, .bz-download-requirement__percent,
+    .agent-runner-metric strong, .dsla-board-metric strong,
+    .gmao-kpi strong, .perf-metric, .markets__metrics strong,
+    .bz-chr__metric, .bz-chat__rail-count, .bz-hw__value, .bz-search__count, .bz-group__count,
+    .bz-mono.bz-download-requirement__meta,
+    .status-value:not(.peer-id)) {
+  font-family: var(--bz-font-metric) !important;
+  font-weight: 900 !important;
+  font-style: italic !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Modeless destructive confirmations keep their controls sharp above the blur. */
+.bz-confirmation-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 79;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bz-canvas) 24%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}

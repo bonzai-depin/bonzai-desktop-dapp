@@ -1,0 +1,218 @@
+{
+  "brick": [
+    "red_brick",
+    "white_bricks",
+    "dark_brick_wall",
+    "factory_brick",
+    "castle_brick_01",
+    "painted_brick",
+    "broken_brick_wall",
+    "herringbone_brick"
+  ],
+  "concrete": [
+    "anti_slip_concrete",
+    "brushed_concrete",
+    "chipped_concrete",
+    "concrete_slab_wall",
+    "cracked_concrete",
+    "smooth_concrete_floor",
+    "rebar_reinforced_concrete",
+    "wood_textured_concrete"
+  ],
+  "plaster": [
+    "beige_wall_001",
+    "grey_plaster",
+    "blue_plaster_weathered",
+    "red_plaster_weathered",
+    "plastered_wall",
+    "white_stucco",
+    "worn_cracked_plaster",
+    "patterned_plaster_wall"
+  ],
+  "metal": [
+    "blue_metal_plate",
+    "box_profile_metal_sheet",
+    "container_side",
+    "corrugated_iron",
+    "factory_wall",
+    "green_metal_rust",
+    "metal_grate_rusty",
+    "metal_plate"
+  ],
+  "fabric": [
+    "cotton_jersey",
+    "denim_fabric",
+    "rough_linen",
+    "velour_velvet",
+    "poly_wool_herringbone",
+    "crepe_satin",
+    "knitted_fleece",
+    "ribbed_corduroy"
+  ],
+  "leather": [
+    "brown_leather",
+    "fabric_leather_01",
+    "leather_white",
+    "fabric_leather_02",
+    "leather_red_02",
+    "leather_red_03"
+  ],
+  "wood": [
+    "american_walnut_veneer",
+    "ash_veneer",
+    "bamboo_veneer",
+    "black_oak_veneer",
+    "bamboo_wall",
+    "beam_wall_01",
+    "black_walnut_veneer_01",
+    "angli_veneer"
+  ],
+  "bark": [
+    "bark_bluegum",
+    "bark_brown_01",
+    "bark_platanus",
+    "bark_willow",
+    "chinese_cedar_bark",
+    "chinese_hackberry_bark",
+    "eucalyptus_bark",
+    "fever_tree_bark"
+  ],
+  "stone": [
+    "dark_rock",
+    "lichen_rock",
+    "mossy_rock",
+    "rock_boulder_cracked",
+    "rock_face",
+    "seaside_rock",
+    "castle_wall_slates",
+    "stacked_stone_wall"
+  ],
+  "tiles": [
+    "brown_floor_tiles",
+    "checkered_pavement_tiles",
+    "dirty_tiles",
+    "interior_tiles",
+    "rectangular_facade_tiles",
+    "terracotta_floor_tiles",
+    "terrazzo_tiles",
+    "worn_tile_floor"
+  ],
+  "roofing": [
+    "bitumen",
+    "ceramic_roof_01",
+    "grey_roof_01",
+    "red_slate_roof_tiles_01",
+    "riet_01",
+    "roof_3",
+    "roof_tiles",
+    "roof_tiles_14"
+  ],
+  "asphalt": [
+    "aerial_asphalt_01",
+    "asphalt_01",
+    "asphalt_pit_lane",
+    "asphalt_snow",
+    "asphalt_track",
+    "clean_asphalt",
+    "cobblestone_embedded_asphalt",
+    "flower_scattered_asphalt"
+  ],
+  "cobblestone": [
+    "cobblestone_01",
+    "cobblestone_color",
+    "cobblestone_floor_001",
+    "cobblestone_floor_01",
+    "cobblestone_floor_13",
+    "cobblestone_large_01",
+    "cobblestone_pavement",
+    "cobblestone_square"
+  ],
+  "gravel": [
+    "bicolour_gravel",
+    "coral_gravel",
+    "flower_scattered_gravel",
+    "gravel",
+    "gravel_concrete",
+    "gravel_embedded_concrete",
+    "gravel_floor",
+    "gravel_ground_01"
+  ],
+  "sand": [
+    "aerial_beach_01",
+    "aerial_sand",
+    "coast_sand_01",
+    "damp_beach_sand",
+    "sand_01",
+    "gravelly_sand",
+    "dense_sand",
+    "sandy_gravel_02"
+  ],
+  "snow": [
+    "snow_01",
+    "snow_field_aerial",
+    "snow_floor",
+    "snow_02",
+    "snow_03",
+    "snow_04",
+    "snow_05"
+  ],
+  "grass": [
+    "grass_path_2",
+    "grass_path_3",
+    "leafy_grass",
+    "aerial_grass_rock",
+    "grassy_cobblestone",
+    "rock_pitted_mossy",
+    "moss_wood"
+  ],
+  "earth": [
+    "brown_mud",
+    "brown_mud_dry",
+    "brown_mud_leaves_01",
+    "burned_ground_01",
+    "dry_ground_01",
+    "dry_mud_field_001",
+    "red_dirt_mud_01",
+    "mud_cracked_dry_03"
+  ],
+  "wood-floor": [
+    "black_painted_planks",
+    "dark_planks",
+    "dark_wooden_planks",
+    "diagonal_parquet",
+    "distressed_painted_planks",
+    "green_rough_planks",
+    "herringbone_parquet",
+    "hinoki_planks"
+  ],
+  "marble": [
+    "granite_tile",
+    "granite_wall",
+    "marble_01",
+    "marble_cliff_01",
+    "marble_mosaic_tiles",
+    "marble_rock_01",
+    "marble_tiles",
+    "granite_tile_02"
+  ],
+  "forest": [
+    "forest_floor",
+    "forest_ground_04",
+    "forest_ground_05",
+    "forest_leaves_02",
+    "leaves_forest_ground",
+    "dry_decay_leaves",
+    "wood_chip_path",
+    "forrest_ground_01"
+  ],
+  "alien": [
+    "moon_01",
+    "moon_dusted_01",
+    "moon_macro_01",
+    "moon_meteor_01",
+    "moon_track_01",
+    "moon_flat_macro_01",
+    "terrain_red_01",
+    "sandstone_cracks"
+  ]
+}

@@ -19,7 +19,8 @@ Use semantic tokens instead of introducing view-specific color systems. A new to
 - Product branding uses the established BonzAI display face and proportions; never stretch the logo or wordmark.
 - View titles are concise and sized for product software, not marketing pages.
 - Labels, buttons, table headers, and metadata remain compact and scannable.
-- Model names use their canonical display casing. Model filenames remain lowercase in configuration.
+- Numeric metrics use the BonzAI brand face (`--bz-font-metric`, condensed black italic). Mark new metric values with `bz-metric`; code, addresses and editable inputs keep their own typography.
+- Model names use their canonical display casing outside downloads. Downloads display lowercase category labels instead of model names or filenames; case-sensitive remote URLs remain unchanged.
 - Use normal letter spacing. Avoid all-caps paragraphs and oversized bold text in chat output.
 
 ## Color and contrast
@@ -46,7 +47,7 @@ Use semantic tokens instead of introducing view-specific color systems. A new to
 - Use segmented controls or tabs for modes, switches for binary settings, and inputs or steppers for numeric values.
 - Buttons use semantic variants consistently. Avoid arbitrary colors and oversized calls to action.
 - Empty states explain what is missing and provide the next valid action.
-- Download requirements must be prominent where a missing model blocks a workflow.
+- Download requirements use the shared `DownloadRequirement.vue` component wherever a missing model blocks a workflow. Keep them visually prominent with the shared accent edge, tinted surface, and download icon. Use the BonzAI brand font for headings and percentages. Show lowercase download categories with crate icons, sizes, progress, actions, and errors; never model names or filenames; omit model descriptions and performance prose. Active downloads offer cancellation and omit the redundant per-row “downloading” status. In agent creation, the panel spans the workspace above the form and preview card.
 - Modals focus on a single decision and retain the visual language of the surrounding view.
 
 ## Conversation

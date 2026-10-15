@@ -378,8 +378,8 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Withdraw accumulated ETH proceeds to foundation and liquidity wallets
      * @dev Nonreentrant, only owner can call. Splits 50/50.
-     *      Handles individual wallet failures gracefully — if one wallet reverts,
-     *      the other still receives its share.
+     *      Both transfers must succeed. Retrying a partial split would otherwise
+     *      redistribute the unpaid recipient's balance to the other wallet.
      */
     function withdrawProceeds() external nonReentrant onlyOwner {
         uint256 balance = address(this).balance;
@@ -391,7 +391,7 @@ contract BonzaiUnlock is Ownable, ReentrancyGuard, Pausable {
         (bool fSuccess, ) = foundationWallet.call{value: foundationAmount}("");
         (bool lSuccess, ) = liquidityWallet.call{value: liquidityAmount}("");
 
-        require(fSuccess || lSuccess, "Both transfers failed");
+        require(fSuccess && lSuccess, "Proceeds transfer failed");
 
         emit ProceedsWithdrawn(
             foundationWallet, fSuccess ? foundationAmount : 0,

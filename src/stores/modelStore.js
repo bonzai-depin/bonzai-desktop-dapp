@@ -4,11 +4,18 @@
  * Stays in sync with main process via IPC events.
  */
 
-import { reactive, readonly, ref } from 'vue';
+import { reactive, readonly } from 'vue';
+import { MODEL_PREFERENCE_KEY, preferredModelFilename } from '../config/modelDefaults.js';
+
+const preferenceStorage = () => {
+  try { return globalThis.localStorage; } catch { return undefined; }
+};
 
 const state = reactive({
   /** Currently loaded model info, or null if none */
   current: null,
+  /** Selected model may still need a download; never report it as loaded. */
+  preferredFilename: preferredModelFilename(preferenceStorage()),
   /** Whether "always loaded" is enabled */
   alwaysLoaded: false,
 });
@@ -62,6 +69,12 @@ const setCurrent = (model) => {
   } : null;
 };
 
+const setPreferred = model => {
+  if (!model?.filename) return;
+  state.preferredFilename = model.filename;
+  try { preferenceStorage()?.setItem(MODEL_PREFERENCE_KEY, model.filename); } catch { /* Session preference still works. */ }
+};
+
 export const modelStore = {
   state: readonly(state),
   initialize,
@@ -69,6 +82,7 @@ export const modelStore = {
   stopListening,
   setAlwaysLoaded,
   setCurrent,
+  setPreferred,
 };
 
 export default modelStore;

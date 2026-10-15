@@ -36,6 +36,7 @@ interface IBonzaiMintPool {
 
 interface IBonzaiRevenueRouterHook {
     function depositRevenue(bytes32 assetId) external payable;
+    function routeIdFor(address publisher, bytes32 sourceAssetId) external pure returns (bytes32);
 }
 
 /**
@@ -57,14 +58,14 @@ interface IBonzaiCompanionsAgent {
 /**
  * @title BonzaiUniswapHook
  * @notice Uniswap V4 afterSwap hook that captures 1% of swap output and splits
- *         it based on pool type: COMPANION (33/33/34 treasury/owner/wallet) or
+ *         it based on pool type: COMPANION (40/40/10/10 wallet/owner/treasury/pool) or
  *         FINETUNE (80/10/10 beneficiary/treasury/MintPool).
  *
  * @dev Deployed via CREATE2 so the contract address has the correct permission
  *      bits (afterSwap + afterSwapReturnDelta) in its final 14 address bits.
  *
- * Hook permissions: afterSwap (bit 7) + afterSwapReturnDelta (bit 4)
- *   → flags = 0x0090 in the last 14 bits of the address.
+ * Hook permissions: afterSwap (bit 6) + afterSwapReturnDelta (bit 2)
+ *   → flags = 0x0044 in the last 14 bits of the address.
  *
  * Fee model: Fees accumulate in the contract and are claimed later via
  *   permissionless claim functions. This avoids external calls inside the
@@ -224,17 +225,17 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
 
     /**
      * @notice Returns the hook's permission flags.
-     * @dev afterSwap (bit 7 = 0x80) + afterSwapReturnDelta (bit 4 = 0x10) = 0x0090
+     * @dev afterSwap (bit 6 = 0x40) + afterSwapReturnDelta (bit 2 = 0x04) = 0x0044
      *      The contract address must have these bits set in its last 14 bits.
      */
     function getHookPermissions() public pure returns (uint16) {
-        return 0x0090; // afterSwap + afterSwapReturnDelta
+        return 0x0044; // afterSwap + afterSwapReturnDelta
     }
 
     /**
      * @notice Called by PoolManager after every swap on a registered pool.
      * @dev Captures 1% of the positive swap output and splits 80/10/10.
-     *      Returns a negative delta to reduce the swapper's output by the fee amount.
+     *      Returns a positive delta to reduce the swapper's output by the fee amount.
      *      Unregistered pools pass through with no fee.
      *
      * @param sender The address that initiated the swap (not used)
@@ -243,7 +244,7 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
      * @param delta The balance delta from the swap (amount0, amount1)
      * @param hookData Arbitrary data passed through (not used)
      * @return selector The function selector (for V4 hook validation)
-     * @return hookDelta The fee amount to deduct from swapper output (negative)
+     * @return hookDelta The fee amount to deduct from swapper output (positive)
      */
     function afterSwap(
         address sender,
@@ -264,34 +265,19 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
             return (this.afterSwap.selector, 0);
         }
 
-        // Determine output amount (positive side of the delta)
-        // For exact-input swaps: delta is positive for the output token
-        // zeroForOne=true: user sends token0, receives token1 → delta is output amount for token1
-        // zeroForOne=false: user sends token1, receives token0 → delta is output amount for token0
-        //
-        // The `delta` parameter represents the amount of output tokens.
-        // If negative, it means the pool owes the user tokens (standard output).
-        int256 outputAmount;
-        if (delta < 0) {
-            outputAmount = -delta; // Convert to positive
-        } else {
-            // No positive output to take fees from
-            return (this.afterSwap.selector, 0);
-        }
-
-        // Determine output currency
+        // V4 BalanceDelta packs signed amount0 in the high 128 bits and
+        // signed amount1 in the low 128 bits. Positive means the swapper receives.
         address outputCurrency = params.zeroForOne ? key.currency1 : key.currency0;
-
-        // Only capture fees on native ETH output — ERC-20 fee distribution not supported.
-        // Claim functions use .call{value:}("") which only works for ETH. Capturing
-        // ERC-20 fees would lock tokens permanently. This means fees are only taken on
-        // sells (companion/finetune token → ETH), not on buys (ETH → token).
-        if (outputCurrency != address(0)) {
-            return (this.afterSwap.selector, 0);
-        }
+        if (outputCurrency != address(0)) return (this.afterSwap.selector, 0);
+        // afterSwap can charge only the unspecified currency. Exact-output ETH
+        // sells would require a beforeSwap fee path; reject them instead of
+        // permitting an untaxed bypass or leaving an unsettled pool delta.
+        require(params.amountSpecified < 0, "Use exact-input token sale");
+        int128 outputAmount = params.zeroForOne ? int128(delta) : int128(delta >> 128);
+        if (outputAmount <= 0) return (this.afterSwap.selector, 0);
 
         // Calculate 1% fee
-        uint256 feeAmount = (uint256(outputAmount) * FEE_BPS) / BPS_DENOMINATOR;
+        uint256 feeAmount = (uint256(uint128(outputAmount)) * FEE_BPS) / BPS_DENOMINATOR;
         if (feeAmount == 0) {
             return (this.afterSwap.selector, 0);
         }
@@ -352,8 +338,8 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
             emit FeeCaptured(poolId, POOL_TYPE_FINETUNE, feeAmount, beneficiaryShare, 0, treasuryShare, poolShare);
         }
 
-        // Return negative delta to reduce swapper's output
-        return (this.afterSwap.selector, -int128(int256(feeAmount)));
+        // Positive hook delta is subtracted from the swapper's output by V4.
+        return (this.afterSwap.selector, int128(int256(feeAmount)));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -387,6 +373,7 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
     ) external {
         require(authorizedFactories[msg.sender], "Not authorized factory");
         require(beneficiary != address(0), "Invalid beneficiary");
+        require(poolType <= POOL_TYPE_FINETUNE, "Invalid pool type");
         require(!poolConfigs[poolId].active, "Pool already registered");
         if (poolType == POOL_TYPE_COMPANION) {
             require(companionNFT_ != address(0), "Companion pool requires NFT contract");
@@ -541,7 +528,8 @@ contract BonzaiUniswapHook is Ownable, ReentrancyGuard {
         require(amount > 0, "No routed revenue");
         unclaimedRoutedRevenue[poolId] = 0;
         totalUnclaimedRoutedRevenue -= amount;
-        try revenueRouter.depositRevenue{value: amount}(poolId) {
+        bytes32 routeId = revenueRouter.routeIdFor(poolConfigs[poolId].beneficiary, poolId);
+        try revenueRouter.depositRevenue{value: amount}(routeId) {
             emit ModelRevenueRouted(poolId, amount);
         } catch {
             unclaimedRoutedRevenue[poolId] = amount;

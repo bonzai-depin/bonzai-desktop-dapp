@@ -9,6 +9,9 @@
  */
 
 import { createGameRuntime } from "./gameRuntime.js";
+import { createSurfaceLibrary } from './surfaceMaterials.js';
+import { findMaterials } from './materialCatalogue.js';
+import { createScannedLibrary } from './scannedMaterials.js';
 import { Water } from 'three/examples/jsm/objects/Water.js';
 // Faraz Shaikh's toolkit — TCSM patches built-in PBR materials with
 // custom shader snippets (csm_DiffuseColor, csm_Roughness, csm_Bump, etc.),
@@ -43,6 +46,8 @@ function getSoftSprite(THREE) {
 
 export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer }) {
   const SOFT = getSoftSprite(THREE);
+  const surfaces = createSurfaceLibrary(THREE, renderer);
+  const scanned = createScannedLibrary(THREE, renderer);
   // ═══════════════════════════════════════════════════════════════════════
   // MAT — physical materials. Generous surface so the LLM rarely needs to
   // hand-roll MeshPhysicalMaterial. All materials clone-safe (shared instances
@@ -50,6 +55,9 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
   // ═══════════════════════════════════════════════════════════════════════
   const pbr = (o) => new THREE.MeshPhysicalMaterial(o);
   const MAT = {
+    catalogue: (query) => findMaterials(query).map(({ id, name, family }) => ({ id, name, family })),
+    scanned: (kind, options) => scanned.material(kind, options),
+    surface: (kind, options) => surfaces.material(kind, options),
     // Metals
     gold:       pbr({ color: 0xffd700, metalness: 1.0, roughness: 0.22, clearcoat: 0.55 }),
     silver:     pbr({ color: 0xe8e8ea, metalness: 1.0, roughness: 0.14 }),
@@ -129,8 +137,13 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
     }
     g.putImageData(d, 0, 0);
   };
+  // Canvas ignores numeric THREE colors; accept the same color forms as materials.
+  const textureColor = value => typeof value === 'number' || value?.isColor
+    ? new THREE.Color(value).getStyle() : value;
   const TEX = {
     wood(base, grain) {
+      base = textureColor(base);
+      grain = textureColor(grain);
       const { el, g } = canvas(512);
       g.fillStyle = base || '#7a5230'; g.fillRect(0, 0, 512, 512);
       g.strokeStyle = grain || '#5a3520'; g.globalAlpha = 0.35;
@@ -145,6 +158,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     stone(base) {
+      base = textureColor(base);
       const { el, g } = canvas(512);
       g.fillStyle = base || '#6d6d72'; g.fillRect(0, 0, 512, 512);
       noise2D(g, 512, 512, 1, 28);
@@ -164,6 +178,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     metal(base) {
+      base = textureColor(base);
       const { el, g } = canvas(256);
       g.fillStyle = base || '#9c9c9f'; g.fillRect(0, 0, 256, 256);
       g.globalAlpha = 0.1;
@@ -177,6 +192,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     marble(base, vein) {
+      base = textureColor(base);
+      vein = textureColor(vein);
       const { el, g } = canvas(512);
       g.fillStyle = base || '#efe9dc'; g.fillRect(0, 0, 512, 512);
       g.strokeStyle = vein || '#8a7a65'; g.globalAlpha = 0.3;
@@ -194,6 +211,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     concrete(base) {
+      base = textureColor(base);
       const { el, g } = canvas(512);
       g.fillStyle = base || '#b9b6b0'; g.fillRect(0, 0, 512, 512);
       noise2D(g, 512, 512, 1, 38);
@@ -205,6 +223,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     rust(base) {
+      base = textureColor(base);
       const { el, g } = canvas(512);
       g.fillStyle = base || '#7b3a20'; g.fillRect(0, 0, 512, 512);
       for (let i = 0; i < 260; i++) {
@@ -228,6 +247,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     scales(base, ridge) {
+      base = textureColor(base);
+      ridge = textureColor(ridge);
       const { el, g } = canvas(256);
       g.fillStyle = base || '#2b6b40'; g.fillRect(0, 0, 256, 256);
       g.strokeStyle = ridge || '#0f3a20';
@@ -241,6 +262,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     carbon(base) {
+      base = textureColor(base);
       const { el, g } = canvas(256);
       g.fillStyle = base || '#1e1e22'; g.fillRect(0, 0, 256, 256);
       g.strokeStyle = '#3a3a40';
@@ -253,6 +275,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     brick(base, mortar) {
+      base = textureColor(base);
+      mortar = textureColor(mortar);
       const { el, g } = canvas(256);
       g.fillStyle = mortar || '#3a3630'; g.fillRect(0, 0, 256, 256);
       const bW = 56, bH = 22;
@@ -268,6 +292,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     hexgrid(base, line) {
+      base = textureColor(base);
+      line = textureColor(line);
       const { el, g } = canvas(256);
       g.fillStyle = base || '#0a0c18'; g.fillRect(0, 0, 256, 256);
       g.strokeStyle = line || '#00bcd4'; g.lineWidth = 1.2;
@@ -286,6 +312,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     circuit(base, trace) {
+      base = textureColor(base);
+      trace = textureColor(trace);
       const { el, g } = canvas(512);
       g.fillStyle = base || '#0c1218'; g.fillRect(0, 0, 512, 512);
       g.strokeStyle = trace || '#22e0a0'; g.lineWidth = 1.4;
@@ -309,6 +337,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     fabric(base) {
+      base = textureColor(base);
       const { el, g } = canvas(128);
       g.fillStyle = base || '#8b4444'; g.fillRect(0, 0, 128, 128);
       g.globalAlpha = 0.12; g.strokeStyle = '#000';
@@ -318,6 +347,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     leather(base) {
+      base = textureColor(base);
       const { el, g } = canvas(256);
       g.fillStyle = base || '#6b3a2a'; g.fillRect(0, 0, 256, 256);
       g.globalAlpha = 0.18;
@@ -328,6 +358,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       return asTex(el);
     },
     runes(base, rune) {
+      base = textureColor(base);
+      rune = textureColor(rune);
       const { el, g } = canvas(512);
       g.fillStyle = base || '#1a120a'; g.fillRect(0, 0, 512, 512);
       g.fillStyle = rune || '#c8a050';
@@ -1389,8 +1421,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       uDeep: { value: new THREE.Color(opts.deep || 0x0a3e5a) },
       uFoam: { value: new THREE.Color(opts.foam || 0xffffff) },
       uFoamThreshold: { value: opts.foamThreshold ?? 0.78 },
-      uCausticStrength: { value: opts.caustics ?? 0.55 },
-      uChroma: { value: opts.chroma ?? 0.018 },
+      uCausticStrength: { value: opts.caustics ?? 0.08 },
+      uChroma: { value: opts.chroma ?? 0 },
     };
     mat.userData.uniforms = u;
     mat.onBeforeCompile = (shader) => {
@@ -1545,8 +1577,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
     waveAmp:  opts.waveAmp  ?? 0.015,
     waveFreq: opts.waveFreq ?? 3.0,
     flow: opts.flow || [0.0, -0.2, 0.0],
-    caustics: opts.caustics ?? 0.7,
-    chroma:   opts.chroma   ?? 0.022,
+    caustics: opts.caustics ?? 0.08,
+    chroma:   opts.chroma   ?? 0,
     transmission: opts.transmission ?? 0.72,
     roughness:    opts.roughness    ?? 0.1,
     foamThreshold: opts.foamThreshold ?? 0.7,
@@ -1765,11 +1797,30 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
     //   root.add(FLUID.stream({ from: upperRim, to: lowerCenter, radius: 0.015 }));
     //
     // opts: { radius, y?, depth?, rim?, waterColor?, floorColor? }
+    basinWater(opts = {}) {
+      const normals = TEX.waterNormal(128);
+      normals.wrapS = normals.wrapT = THREE.RepeatWrapping;
+      normals.repeat.set(3, 3);
+      const water = new THREE.Mesh(new THREE.CircleGeometry(opts.radius ?? 0.5, 64), new THREE.MeshPhysicalMaterial({
+        color: opts.color ?? 0xe2f0eb, metalness: 0, roughness: 0.09,
+        transmission: 0.92, thickness: (opts.depth ?? 0.12) * 0.6, ior: 1.333,
+        attenuationColor: new THREE.Color(0x8cb6ad), attenuationDistance: 1.5,
+        normalMap: normals, normalScale: new THREE.Vector2(0.12, 0.12),
+        side: THREE.DoubleSide,
+      }));
+      addUpdateCallback?.(({ time }) => { normals.offset.set(time * 0.018, time * 0.011); });
+      water.userData.isWaterPlane = true;
+      water.rotation.x = -Math.PI / 2;
+      water.position.y = opts.y ?? 0;
+      water.name = 'BasinWater';
+      water.userData.engineBuilt = true;
+      return water;
+    },
     fountainBasin(opts = {}) {
       const R = opts.radius ?? 0.5;
       const y = opts.y ?? 0.0;
       const depth  = opts.depth ?? 0.12;
-      const rimMat = opts.rim   || MAT.obsidian;
+      const rimMat = opts.rim || new THREE.MeshStandardMaterial({ color: opts.stoneColor ?? 0xc4b69c, roughness: 0.78 });
       const group = new THREE.Group();
 
       // Closed-contour bowl: outer shell goes up, rim wraps over, inner
@@ -1790,25 +1841,30 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       const inR    = R * 0.86;              // inner rim radius
       const outR   = R * 1.00;              // outer rim radius
       const bowlProfile = [
-        new THREE.Vector2(0.001,       0),        // center bottom (near axis)
-        new THREE.Vector2(R * 0.90,    0),        // outer bottom
-        new THREE.Vector2(outR,        depth * 0.15),
-        new THREE.Vector2(outR,        rimY),     // outer rim top
-        new THREE.Vector2(inR,         rimY),     // inner rim (top)
-        new THREE.Vector2(inR * 0.94,  rimY * 0.7),
-        new THREE.Vector2(R * 0.82,    floor),    // inner floor edge
-        new THREE.Vector2(0.001,       floor),    // inner floor centre
+        new THREE.Vector2(0.001, 0),
+        new THREE.Vector2(R * 0.64, 0),
+        new THREE.Vector2(R * 0.76, depth * 0.12),
+        new THREE.Vector2(R * 0.88, depth * 0.30),
+        new THREE.Vector2(R * 0.96, depth * 0.55),
+        new THREE.Vector2(outR, depth * 0.85),
+        new THREE.Vector2(outR, rimY),
+        new THREE.Vector2(inR, rimY),
+        new THREE.Vector2(inR * 0.94, rimY * 0.70),
+        new THREE.Vector2(R * 0.68, floor),
+        new THREE.Vector2(0.001, floor),
       ];
       const bowlGeo = new THREE.LatheGeometry(bowlProfile, 128);
       bowlGeo.computeVertexNormals();
-      const bowlTex = TEX.stone('#1a1428');
+      const bowlTex = TEX.stone('#d8d4cb');
       bowlTex.repeat.set(3, 3);
       const bowlMat = new THREE.MeshPhysicalMaterial({
-        color: opts.floorColor ?? 0x3e2a68,
+        color: opts.stoneColor ?? opts.floorColor ?? 0xc4b69c,
         map: bowlTex,
         roughness: 0.7,
-        metalness: 0.1,
-        clearcoat: 0.35,
+        metalness: 0,
+        bumpMap: bowlTex,
+        bumpScale: R * 0.004,
+        clearcoat: 0,
         side: THREE.DoubleSide,            // CRITICAL — bowl interior was
                                             // back-face-culled before.
       });
@@ -1829,14 +1885,12 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       // solid + textured to refract through. Without this, clear water
       // shows the sky through the basin.
       const poolFloor = new THREE.Mesh(
-        new THREE.CircleGeometry(R * 0.82, 96),
+        new THREE.CircleGeometry(R * 0.68, 96),
         new THREE.MeshPhysicalMaterial({
-          color: 0x4a3278,
+          color: opts.stoneColor ?? opts.floorColor ?? 0xc4b69c,
           map: bowlTex,
           roughness: 0.85,
-          metalness: 0.05,
-          emissive: 0x1a0a2a,
-          emissiveIntensity: 0.35,
+          metalness: 0,
         })
       );
       poolFloor.rotation.x = -Math.PI / 2;
@@ -1845,17 +1899,17 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       poolFloor.userData.engineBuilt = true;
       group.add(poolFloor);
 
-      // Gold inlay band at rim.
+      // Rolled stone rim, or the explicit trim material supplied by the author.
       const rimTorus = new THREE.Mesh(
-        new THREE.TorusGeometry(outR, R * 0.014, 16, 128),
-        MAT.gold
+        new THREE.TorusGeometry(outR, R * 0.014, 12, 96),
+        rimMat
       );
       rimTorus.rotation.x = Math.PI / 2;
       rimTorus.position.y = y + rimY;
       rimTorus.castShadow = true;
       group.add(rimTorus);
 
-      // Outer obsidian lip.
+      // Outer moulding.
       const outerLip = new THREE.Mesh(
         new THREE.TorusGeometry(outR * 1.02, R * 0.022, 16, 128),
         rimMat
@@ -1865,23 +1919,10 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       outerLip.castShadow = true;
       group.add(outerLip);
 
-      // Water surface — reflector-based ocean water, sitting ~80% up the
-      // interior (a visible gap between water and rim is what reads as
-      // "pool inside bowl" vs "disc on top").
+      // Water sits below the rim with a visible stone interior.
       const waterR = inR * 0.94;
-      const waterGeo = new THREE.CircleGeometry(waterR, 128);
-      const water = this.oceanWater(waterGeo, {
-        color: opts.waterColor ?? 0x0a86c8,
-        distortionScale: 1.6,
-        speed: 1.2,
-        // Tighter ripples for smaller basins — density scales inversely.
-        rippleDensity: Math.max(8.0, 16.0 / Math.max(R, 0.2)),
-        textureWidth: 1024,
-        textureHeight: 1024,
-        normalMapSize: 512,
-      });
-      water.rotation.x = -Math.PI / 2;
-      water.position.y = y + floor + (rimY - floor) * 0.75;
+      const water = this.basinWater({ radius: waterR, depth,
+        color: opts.waterColor, y: y + floor + (rimY - floor) * 0.75 });
       // Engine-built marker — keeps _autoFillVessels' "duplicate water"
       // stripper from removing this surface AND keeps FLUID.normalize
       // from second-guessing the material we already chose.
@@ -1914,8 +1955,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
         waveAmp:  opts.waveAmp  ?? 0.003,        // tiny ripples suit a flask
         waveFreq: opts.waveFreq ?? 8.0,          // tight frequency
         flow: opts.flow || [0.0, 0.0, 0.0],
-        caustics: opts.caustics ?? 0.9,
-        chroma:   opts.chroma   ?? 0.025,
+        caustics: opts.caustics ?? 0.08,
+        chroma:   opts.chroma   ?? 0,
         transmission: opts.transmission ?? 0.8,
         roughness:    opts.roughness    ?? 0.08,
         foamThreshold: opts.foamThreshold ?? 0.85,
@@ -1945,8 +1986,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
       const baseR = opts.baseRadius ?? 0.5;
       const taper = opts.taper ?? 0.55;
       const spacing = opts.spacing ?? 0.32;
-      const waterColor = opts.waterColor ?? 0x5fb4ff;
-      const rimMat = opts.rim || MAT.gold;
+      const waterColor = opts.waterColor ?? 0xe2f0eb;
+      const rimMat = opts.rim || new THREE.MeshStandardMaterial({ color: opts.stoneColor ?? 0xc4b69c, roughness: 0.78 });
       const group = new THREE.Group();
       group.name = "TieredFountain";
       // Engine-built marker — protects every nested mesh from the auto-
@@ -1966,6 +2007,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
           y,
           depth: 0.12 * Math.max(0.6, 1 - i * 0.15),
           rim: rimMat,
+          stoneColor: opts.stoneColor,
           waterColor,
         });
         group.add(basin);
@@ -1978,7 +2020,7 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
         const pillarH = (tiers - 1) * spacing + 0.04;
         const pillar = new THREE.Mesh(
           new THREE.CylinderGeometry(0.035, 0.05, pillarH, 24),
-          opts.pillarMat || MAT.brass
+          opts.pillarMat || rimMat
         );
         pillar.position.y = pillarH / 2;
         pillar.castShadow = true;
@@ -2000,15 +2042,45 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
             fx * top.r * 0.95, top.y + 0.005, fz * top.r * 0.95
           );
           const to = new THREE.Vector3(
-            fx * bot.r * 0.6, bot.y + 0.02, fz * bot.r * 0.6
+            fx * bot.r * 0.6, bot.y - 0.025, fz * bot.r * 0.6
           );
-          const stream = FLUID.stream({
-            from, to, radius: 0.012,
+          const stream = FLUID.jet({
+            from, to, radius: baseR * 0.015,
             color: waterColor,
           });
           group.add(stream);
         }
       }
+      return group;
+    },
+    // Compact clear-water jet, distinct from the stylized waterfall sheet API.
+    jet(opts = {}) {
+      const from = opts.from || new THREE.Vector3(0, 1, 0);
+      const to = opts.to || new THREE.Vector3(0.3, 0, 0);
+      const control = from.clone().lerp(to, 0.55);
+      control.y = from.y + from.distanceTo(to) * 0.08;
+      const path = new THREE.QuadraticBezierCurve3(from, control, to);
+      const mesh = new THREE.Mesh(new THREE.TubeGeometry(path, 32, opts.radius ?? 0.008, 8, false),
+        new THREE.MeshPhysicalMaterial({ color: opts.color ?? 0xe2f0eb, metalness: 0,
+          roughness: 0.12, transmission: 0.8, ior: 1.333, thickness: 0.015 }));
+      const group = new THREE.Group();
+      group.add(mesh);
+      // A few instanced droplets convey flow without full waterfall particle systems.
+      const drops = new THREE.InstancedMesh(new THREE.SphereGeometry(opts.radius ?? 0.008, 6, 4), mesh.material, 12);
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      addUpdateCallback?.(({ time }) => {
+        for (let i = 0; i < 12; i++) {
+          path.getPoint((time * 0.65 + i / 12) % 1, position);
+          matrix.makeTranslation(position.x, position.y, position.z);
+          drops.setMatrixAt(i, matrix);
+        }
+        drops.instanceMatrix.needsUpdate = true;
+      });
+      drops.frustumCulled = false;
+      group.add(drops);
+      group.userData.engineBuilt = true;
+      group.name = 'WaterJet';
       return group;
     },
     // ─── MESH-BASED WATER (the one you should use for fountains) ───────
@@ -2570,9 +2642,8 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
     //     fillLevel?: 0.7,     // 0..1 of vessel interior height
     //   };
     //
-    // The normalizer also defensively swaps obvious "MeshStandardMaterial
-    // with blue tint at low roughness" planes that the LLM forgot to tag,
-    // so legacy generations keep working.
+    // Untagged glass and other authored materials are preserved.
+    // Transparency and surface orientation cannot establish liquid intent.
     //
     // @param {THREE.Object3D} root  scene root returned by user code
     // @param {object}         deps  { helpers } — needs helpers.fillLiquid
@@ -2709,61 +2780,11 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
         }
       }
 
-      // Pass 2 — defensive sweep. ONLY runs if no explicit userData tags
-      // were found anywhere in the scene (signal that the LLM ignored the
-      // convention entirely). Looks for unmistakable water-plane patterns:
-      // horizontal flat disc + (transmission > 0.7 OR very-low roughness +
-      // blue tint). False-positive risk is low because we require the
-      // geometry to be planar AND horizontal AND match the visual signature.
-      if (tagged === 0) {
-        root.traverse((node) => {
-          if (!node.isMesh || !node.geometry) return;
-          if (node.userData?.fluidUpgraded) return;
-          if (node.userData?.autoFilled) return;
-          if (isEngineBuilt(node)) return;
-          const g = node.geometry;
-          const isPlanar = g.type === "PlaneGeometry"
-                        || g.type === "CircleGeometry"
-                        || g.type === "RingGeometry";
-          if (!isPlanar) return;
-          // Horizontal check (rotation.x near ±π/2 OR baked into geometry → 0).
-          const rx = Math.abs(node.rotation.x);
-          const isHorizontal = Math.abs(rx - Math.PI / 2) < 0.3 || rx < 0.3;
-          if (!isHorizontal) return;
-          const m = node.material;
-          if (!m) return;
-          const transmissive = (m.transmission || 0) > 0.7;
-          const lowRough = m.roughness !== undefined && m.roughness < 0.12;
-          let waterTint = false;
-          if (m.color) {
-            const r = m.color.r, gC = m.color.g, b = m.color.b;
-            waterTint = (b > 0.45 && b > r * 1.25 && b > gC * 1.05) || (r + gC + b < 0.5 && b > r);
-          }
-          if (!(transmissive || (lowRough && waterTint))) return;
-
-          try {
-            const color = m.color ? m.color.getHex() : 0x5fb4ff;
-            m.dispose?.();
-            node.material = waterMaterial({
-              color,
-              deep: 0x0a3e5a,
-              waveAmp: 0.018,
-              waveFreq: 4,
-              flow: [0.0, -0.15, 0.0],
-              caustics: 0.85,
-              transmission: 0.9,
-              roughness: 0.06,
-              foamThreshold: 0.72,
-              thickness: 0.6,
-            });
-            node.userData.fluidUpgraded = true;
-            node.userData.isWaterPlane = true;
-            fallback++;
-          } catch (err) {
-            console.warn("[FLUID.normalize] fallback upgrade failed:", err?.message);
-          }
-        });
-      }
+      // Never infer liquid from transparency, tint or local Euler angles.
+      // Glass windows (including upright lantern panes) previously matched the
+      // fallback and were silently replaced by animated water. Authored glass
+      // must survive unchanged; fluid surfaces require explicit userData tags
+      // or a FLUID constructor above.
 
       if (tagged > 0 || fallback > 0) {
         console.log(`[FLUID.normalize] upgraded ${tagged} tagged + ${fallback} fallback meshes`);
@@ -3092,5 +3113,5 @@ export function makeLibs({ THREE, addUpdateCallback, camera, controls, renderer 
     renderer,
   });
 
-  return { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX, GAME };
+  return { MAT, TEX, SHADER, FLUID, P, CELESTIAL, FX, GAME, disposeSurfaces: () => { surfaces.dispose(); scanned.dispose(); } };
 }

@@ -1,9 +1,12 @@
 <template>
-  <div class="background"></div>
-  <div class="shade"></div>
-
-  <div class="bz-tab-shell company-tab">
+  <CompanyWorkspaceAccess @choose-template="openWizard">
+  <div class="bz-tab-shell company-tab company-screen">
     <div class="models__deployment-install company-shell">
+      <p v-if="rosterLoadError" class="bz-notice bz-notice--danger" role="alert">{{ rosterLoadError }}</p>
+      <div v-if="store.state.runtimeError" class="bz-notice bz-notice--danger" role="alert">
+        <strong>{{ $ui('Execution unavailable') }}</strong> · {{ store.state.runtimeError }}
+        <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="store.retryRuntime()">{{ $ui('Retry') }}</button>
+      </div>
       <!-- ════════════ Form mode ════════════ -->
       <CompanyForm
         v-if="showForm"
@@ -12,66 +15,30 @@
       />
 
       <!-- ════════════ Welcome (zero companies) ════════════ -->
-      <template v-else-if="!store.state.companies.length">
-        <div class="company-welcome">
-          <div class="welcome-hero">
-            <p class="bz-eyebrow">Company</p>
-            <h1 class="fira-sans-condensed-black-italic">
-              Agentic teams
-            </h1>
-            <p class="welcome-lede">Automate one recurring workflow at a time.</p>
-            <div class="welcome-actions">
-              <button class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic" @click="openWizard">
-                <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
-                Create first team
-              </button>
-              <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="openForm">
-                <span class="material-symbols-outlined" aria-hidden="true">tune</span>
-                Advanced setup
-              </button>
-              <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="triggerImport">
-                <span class="material-symbols-outlined" aria-hidden="true">upload</span>
-                Import bundle
-              </button>
-            </div>
-          </div>
-
-          <div class="welcome-workflows" aria-label="Starter workflows">
-            <article class="welcome-workflow">
-              <span class="welcome-workflow__label">Invoice</span>
-              <strong>Draft invoices from approved work.</strong>
-            </article>
-            <article class="welcome-workflow">
-              <span class="welcome-workflow__label">Collect</span>
-              <strong>Find overdue money.</strong>
-            </article>
-            <article class="welcome-workflow">
-              <span class="welcome-workflow__label">Leads</span>
-              <strong>Revive follow-ups.</strong>
-            </article>
-            <article class="welcome-workflow">
-              <span class="welcome-workflow__label">Payments</span>
-              <strong>Reconcile exceptions.</strong>
-            </article>
-            <article class="welcome-workflow">
-              <span class="welcome-workflow__label">Report</span>
-              <strong>Prepare the weekly brief.</strong>
-            </article>
-          </div>
-
-          <input
-            ref="importInput"
-            type="file"
-            accept=".json"
-            style="display: none"
-            @change="onImportFile"
-          />
-        </div>
+      <template v-else-if="!store.state.companies.length && !active?.demoRun">
+        <CompanyConversationOnboarding
+          @done="onConversationDone"
+          @advanced="showForm = true"
+          @templates="openWizard"
+          @import="triggerImport"
+        />
+        <input
+          ref="importInput"
+          type="file"
+          accept=".json"
+          style="display: none"
+          @change="onImportFile"
+        />
       </template>
 
       <!-- ════════════ Active company view ════════════ -->
       <template v-else>
-        <div class="company-toolbar" aria-label="Company controls">
+        <div v-if="active?.demoRun && teamView === 'team'" class="bz-notice" data-i18n-skip>
+          <strong>{{ $ui('Demo workspace') }}</strong> · {{ $ui('Sample records only. This team stays outside your operating teams.') }}
+          <button class="bz-btn bz-btn--sm" @click="openTeam(active.id, 'getting-started')">{{ $ui('Guided walkthrough') }}</button>
+          <button class="bz-btn bz-btn--sm" @click="showAllTeams">{{ $ui('Back to my teams') }}</button>
+        </div>
+        <div class="company-toolbar" :aria-label="$ui('Smart Workflows')">
           <div class="company-toolbar__left">
             <div class="company-team-nav" aria-label="Team navigation">
               <button
@@ -80,7 +47,7 @@
                 @click="showAllTeams"
               >
                 <span class="material-symbols-outlined" aria-hidden="true">dashboard</span>
-                <span class="company-switcher__name fira-sans-condensed-black-italic">All teams</span>
+                <span class="company-switcher__name">{{ $ui("My workflows") }}</span>
               </button>
               <button
                 v-for="c in store.state.companies"
@@ -117,13 +84,9 @@
             </button>
             <button
               class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-              :class="{ 'bz-btn--running': newTeamPaymentBusy }"
-              :disabled="newTeamPaymentBusy"
               @click="openNewTeam"
             >
-              <span class="material-symbols-outlined" aria-hidden="true">group_add</span>
-              {{ newTeamPaymentBusy ? 'Confirming fee...' : newTeamLabel }}
-            </button>
+              <span class="material-symbols-outlined" aria-hidden="true">add</span>{{ $ui("New workflow") }}</button>
             <input
               ref="importInput"
               type="file"
@@ -135,15 +98,18 @@
         </div>
 
         <!-- Main dashboard for the active company -->
+        <p v-if="teamView === 'all' && allTeamsError" class="bz-notice bz-notice--danger" role="alert">{{ allTeamsError }}</p>
         <CompanyAllTeamsRoom
           v-if="teamView === 'all'"
           :bundles="allTeamBundles"
           :loading="allTeamsLoading"
           @refresh="loadAllTeams"
+          @browse="openWizard"
           @open-team="openTeam"
         />
         <CompanyDashboard
           v-if="active && teamView === 'team'"
+          :key="active.id"
           :charter="active"
           :state="store.state"
           :initial-view="teamTargetView"
@@ -160,6 +126,8 @@
   <!-- Template intake wizard (overlay) -->
   <CompanyIntakeWizard
     v-if="showWizard"
+    :initial-workflow-id="wizardWorkflowId"
+    :initial-template-id="wizardTemplateId"
     @done="onWizardDone"
     @cancel="onWizardCancel"
   />
@@ -183,41 +151,64 @@
       </button>
     </div>
   </Transition>
+  </CompanyWorkspaceAccess>
 </template>
 
 <script>
-import { ref, computed, onMounted, onUnmounted } from "vue";
-import { ethers } from "ethers";
+import { pendingCompanyWorkflow } from "../services/company/workflowHandoff.js";
+import { findWorkflowTeam } from "../services/company/workflowTeams.js";
+import "./company/company-design.css";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { loadSmartAgents } from "../services/smartAgentCatalog.js";
 import companyStore from "../stores/companyStore.js";
+import CompanyWorkspaceAccess from "./company/CompanyWorkspaceAccess.vue";
 import CompanyForm from "./company/CompanyForm.vue";
 import CompanyDashboard from "./company/CompanyDashboard.vue";
 import CompanyIntakeWizard from "./company/CompanyIntakeWizard.vue";
 import CompanyAllTeamsRoom from "./company/CompanyAllTeamsRoom.vue";
-import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
-import { web3Service } from "../services/web3.service.js";
+import CompanyConversationOnboarding from "./company/CompanyConversationOnboarding.vue";
 
 export default {
   name: "Company",
-  components: { CompanyForm, CompanyDashboard, CompanyIntakeWizard, CompanyAllTeamsRoom },
-  setup() {
+  components: { CompanyWorkspaceAccess, CompanyForm, CompanyDashboard, CompanyIntakeWizard, CompanyAllTeamsRoom, CompanyConversationOnboarding },
+  props: { activityTarget: { type: Object, default: null } },
+  setup(props) {
     const store = companyStore;
+    const rosterLoadError = ref('');
     const showForm = ref(false);
     const showWizard = ref(false);
+    const wizardWorkflowId = ref("");
+    const wizardTemplateId = ref("");
+    const initialized = ref(false);
+    async function consumeWorkflowTarget() {
+      const target = pendingCompanyWorkflow.value;
+      if (!initialized.value || !target) return;
+      pendingCompanyWorkflow.value = null;
+      const team = findWorkflowTeam(store.state.companies, target);
+      if (team) {
+        showWizard.value = false;
+        await openTeam(team.id, "studio");
+      } else if (!target.companyId) {
+        wizardWorkflowId.value = target.skillId;
+        wizardTemplateId.value = '';
+        showWizard.value = true;
+      } else { rosterLoadError.value = "This team is no longer available."; }
+    }
+    watch(pendingCompanyWorkflow, () => { void consumeWorkflowTarget(); });
     const importInput = ref(null);
     const pendingDeleteCompany = ref(null);
     const teamView = ref("team");
     const allTeamBundles = ref([]);
     const allTeamsLoading = ref(false);
-    const teamTargetView = ref("command");
+    const allTeamsError = ref("");
+    const teamTargetView = ref("");
     const teamTargetResultId = ref("");
     const allTeamStatus = ref("open");
-    const newTeamPaymentBusy = ref(false);
 
     const active = computed(() => store.activeCompany.value);
     const activeTeamCount = computed(() =>
       store.state.companies.filter((company) => company.status === "active").length,
     );
-    const newTeamLabel = computed(() => store.state.companies.length ? "New team · 0.1 ETH" : "New team · free");
     const allTeamFilters = [
       { id: "open", label: "Open" },
       { id: "in_progress", label: "In Progress" },
@@ -243,65 +234,66 @@ export default {
       };
     });
 
+    const openDemo = async event => {
+      try {
+        await window.electronAPI.workspace.demoOpen(event.detail.id);
+        await openTeam(event.detail.id, event.detail.view);
+      } catch (error) { rosterLoadError.value = error.message; }
+    };
     onMounted(async () => {
+      window.addEventListener("bonzai:open-demo-team", openDemo);
+      void loadSmartAgents().catch((error) => {
+        rosterLoadError.value = error.message || 'Unable to load saved smart agents.';
+      });
       await store.init();
+      initialized.value = true;
+      await consumeWorkflowTarget();
       if (!store.state.activeId && store.state.companies.length) {
         await store.setActive(store.state.companies[0].id);
       }
     });
-    onUnmounted(() => {});
+    let teamRefresh;
+    watch(()=>store.state.audit,()=>{if(teamView.value==='all'){clearTimeout(teamRefresh);teamRefresh=setTimeout(loadAllTeams,150)}});
+    onUnmounted(() => {clearTimeout(teamRefresh);window.removeEventListener("bonzai:open-demo-team",openDemo);});
 
     function openForm() { showForm.value = true; }
-    function openWizard() { showWizard.value = true; }
+    function openWizard(templateId = '') { wizardWorkflowId.value = ""; wizardTemplateId.value = typeof templateId === 'string' ? templateId : ''; showWizard.value = true; }
     async function openNewTeam() {
-      if (store.state.companies.length) {
-        const ok = confirm("Adding another workflow team costs a flat 0.1 ETH setup. Continue?");
-        if (!ok) return;
-        newTeamPaymentBusy.value = true;
-        try {
-          await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
-          const signer = await web3Service.getSigner();
-          const tx = await signer.sendTransaction({
-            to: CONFIG.treasury.foundationWallet || CONFIG.treasury.address,
-            value: ethers.parseEther("0.1"),
-          });
-          const receipt = await tx.wait();
-          const receipts = await window.electronAPI?.store?.get?.("company-team-fee-receipts", []) || [];
-          await window.electronAPI?.store?.set?.("company-team-fee-receipts", [
-            ...receipts,
-            {
-              txHash: receipt.hash,
-              amountEth: "0.1",
-              paidAt: new Date().toISOString(),
-              teamIndex: store.state.companies.length + 1,
-            },
-          ]);
-        } catch (err) {
-          alert("Team setup fee was not completed: " + (err.message || err));
-          newTeamPaymentBusy.value = false;
-          return;
-        }
-        newTeamPaymentBusy.value = false;
-      }
       openWizard();
     }
     function onFormed() { showForm.value = false; }
     function onEdit() { showForm.value = true; }
     async function onWizardDone(/* charterId */) {
       showWizard.value = false;
+      teamView.value = "team";
+      teamTargetView.value = store.activeCompany.value?.workspace?.executionWorkflowId ? "studio" : "";
+      teamTargetResultId.value = "";
       // setActive already happened inside formFromTemplate.
+    }
+    async function onConversationDone(charterId) {
+      teamView.value = "team";
+      teamTargetView.value = "";
+      teamTargetResultId.value = "";
+      if (charterId && store.state.activeId !== charterId) await store.setActive(charterId);
     }
     function onWizardCancel() { showWizard.value = false; }
     function companyName(company) {
-      return (company?.name || "Untitled Company").replace(/\s+\(Draft\)$/i, "");
+      return (company?.name || "Untitled workflow").replace(/\s+\(Draft\)$/i, "");
     }
     async function selectTeam(id) {
-      teamTargetView.value = "command";
+      teamTargetView.value = "";
       teamTargetResultId.value = "";
       teamView.value = "team";
       await store.setActive(id);
     }
-    async function openTeam(id, view = "command", resultId = "") {
+    watch(() => props.activityTarget, target => {
+      if (target?.id) {
+        showForm.value = false;
+        showWizard.value = false;
+        void openTeam(target.id, "activity");
+      }
+    }, { immediate: true });
+    async function openTeam(id, view = "", resultId = "") {
       teamTargetView.value = view;
       teamTargetResultId.value = resultId;
       teamView.value = "team";
@@ -309,8 +301,11 @@ export default {
     }
     async function loadAllTeams() {
       allTeamsLoading.value = true;
+      allTeamsError.value = "";
       try {
         allTeamBundles.value = await store.loadAllTeamWork();
+      } catch (error) {
+        allTeamsError.value = error.message;
       } finally {
         allTeamsLoading.value = false;
       }
@@ -360,13 +355,13 @@ export default {
     }
 
     return {
-      store, active, showForm, showWizard,
-      openForm, openWizard, openNewTeam, onFormed, onEdit, onWizardDone, onWizardCancel,
+      store, rosterLoadError, active, showForm, showWizard,
+      wizardWorkflowId, wizardTemplateId, openForm, openWizard, openNewTeam, onFormed, onEdit, onWizardDone, onConversationDone, onWizardCancel,
       triggerImport, onImportFile, importInput, companyName,
       pendingDeleteCompany, requestDeleteCompany, dismissDeleteCompany, confirmDeleteCompany,
-      teamView, selectTeam, openTeam, showAllTeams, loadAllTeams, allTeamsLoading, activeTeamCount,
+      teamView, selectTeam, openTeam, showAllTeams, loadAllTeams, allTeamBundles, allTeamsLoading, allTeamsError, activeTeamCount,
       teamTargetView, teamTargetResultId,
-      allTeamFilters, allTeamStatus, allTeamRows, allTeamStats, statusChip, newTeamLabel, newTeamPaymentBusy,
+      allTeamFilters, allTeamStatus, allTeamRows, allTeamStats, statusChip,
     };
   },
 };
@@ -381,48 +376,26 @@ hr {
   background: var(--bz-border);
 }
 .material-symbols-outlined {
-  font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
+  font-variation-settings: "FILL" 0, "wght" 250, "GRAD" 0, "opsz" 24;
   border-radius: 100%;
-}
-
-/* ───────── Backdrop image + shade (mirrors GenerativeText pattern) ───────── */
-.background {
-  position: absolute;
-  z-index: -2;
-  height: 100%;
-  width: 100%;
-  background:
-    linear-gradient(180deg, rgba(11, 10, 14, 0.34), rgba(11, 10, 14, 0.82)),
-    url("../assets/bonzai_company.webp") no-repeat;
-  background-size: cover;
-  background-position: center 30%;
-  overflow: hidden;
-  opacity: 0.52;
-}
-.shade {
-  position: absolute;
-  width: 100% !important;
-  height: 100% !important;
-  background: var(--bz-scrim-strong);
-  z-index: -1;
-  pointer-events: none;
 }
 
 /* ───────── Layout — single-column, no sidebar ───────── */
 .company-tab {
   position: relative;
-  background: transparent;
+  background: var(--bz-canvas);
   padding: 0 !important;
   margin: 0 !important;
-  height: calc(100vh - 32px);
-  min-height: calc(100vh - 32px);
+  height: 100%;
+  min-height: 0;
   overflow: auto;
 }
 .company-shell {
   display: flex;
   flex-direction: column;
-  gap: var(--bz-space-3);
-  padding: var(--bz-space-4) var(--bz-space-5) var(--bz-space-3) !important;
+  flex: 1 0 auto;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-5) clamp(20px, 2.4vw, 40px) var(--bz-space-6) !important;
   min-height: 100%;
   overflow: visible;
 }
@@ -434,11 +407,10 @@ hr {
   justify-content: space-between;
   gap: var(--bz-space-3);
   flex-shrink: 0;
-  padding: var(--bz-space-2) var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r);
-  background: color-mix(in srgb, var(--bz-card) 86%, transparent);
-  backdrop-filter: blur(16px);
+  padding: 0 0 var(--bz-space-4);
+  border: 0;
+  border-bottom: 1px solid var(--bz-border);
+  background: transparent;
 }
 .company-toolbar__left {
   display: flex;
@@ -502,11 +474,13 @@ hr {
   gap: var(--bz-space-2);
   min-height: 32px;
   padding: 0 var(--bz-space-2);
-  color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
   font-size: 12px;
   line-height: 1.2;
   cursor: help;
 }
+.company-toolbar__actions .bz-btn { min-height: 40px; font: 500 13px/1.3 var(--bz-font-body); border-radius: var(--bz-r); }
+.company-toolbar :is(button):focus-visible { outline: 2px solid var(--bz-accent); outline-offset: 3px; }
 .company-switcher__chip--all .material-symbols-outlined {
   font-size: 17px !important;
   color: var(--bz-purple-300);
@@ -626,8 +600,18 @@ hr {
   font-size: 12px;
 }
 .company-shell :deep(.dash) {
-  flex: 1;
+  flex: 1 0 auto;
   min-height: 0;
+}
+
+/* Let the conversation use the remaining workspace height so its composer
+   stays visible beneath the real team switcher and command bar. */
+@media (min-width: 1000px) and (min-height: 800px) {
+  .company-shell:has(.company-command) { height: 100%; box-sizing: border-box; }
+  .company-shell :deep(.company-dashboard-shell:has(.company-command)) { display: flex; min-height: 400px; }
+  .company-shell :deep(.dash-body:has(> .company-command)) { display: flex; flex: 1; min-height: 0; }
+  .company-shell :deep(.company-command) { flex: 1; min-height: 0; min-width: 0; }
+  .company-shell :deep(.company-command .goal-room) { flex: 1; height: auto; min-height: 0; }
 }
 
 .bz-image-delete-toast {
@@ -806,30 +790,34 @@ hr {
   display: inline-flex;
   align-items: center;
   gap: 0.5em;
-  padding: 6px 12px;
-  border-radius: 4px;
-  border: 1px solid var(--bz-fg-faint);
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: var(--bz-r);
+  border: 1px solid transparent;
   background: transparent;
-  color: var(--bz-fg-faint);
+  color: var(--bz-fg-mid);
   cursor: pointer;
-  transition: all 0.2s ease;
-  font-family: "Fira Sans", sans-serif !important;
-  font-weight: 600 !important;
+  transition: background var(--bz-dur-fast) var(--bz-ease), border-color var(--bz-dur-fast) var(--bz-ease), color var(--bz-dur-fast) var(--bz-ease);
+  font-family: var(--bz-font-body);
+  font-weight: 500;
   font-size: 14px;
   white-space: nowrap;
 }
 .company-switcher__chip:hover {
-  background: var(--bz-purple-soft);
-  border-color: var(--bz-fg-low);
-  color: var(--bz-fg-mid);
+  background: var(--bz-raised);
+  border-color: var(--bz-border);
+  color: var(--bz-fg);
 }
 .company-switcher__chip.is-active {
-  color: var(--bz-fg) !important;
-  border: 1px solid var(--bz-fg) !important;
-  background: var(--bz-purple-soft) !important;
+  color: var(--bz-fg);
+  border-color: var(--bz-border-brand);
+  background: var(--bz-accent-soft);
 }
 .company-switcher__name {
-  font-style: italic;
+  font: 500 14px/1.35 var(--bz-font-body);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .company-switcher__mode {
   min-height: 20px;
@@ -1067,6 +1055,9 @@ hr {
 }
 
 @media (max-width: 720px) {
+  .company-toolbar { flex-wrap: wrap; gap: 16px; }
+  .company-toolbar__left { flex-basis: 100%; }
+  .company-toolbar__actions { width: 100%; }
   .company-shell {
     padding: var(--bz-space-3) !important;
   }
@@ -1082,6 +1073,10 @@ hr {
     align-items: stretch;
     flex-direction: column;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .company-tab *, .company-tab *::before, .company-tab *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
 
 .bz-iconbtn--warning {

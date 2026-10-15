@@ -1,113 +1,16 @@
 <template>
-  <div class="skill-downloader">
-    <!-- DOWNLOAD REQUIRED (when not actively downloading and check is complete) -->
-    <div
-      v-if="modelAvailabilityChecked && hasRequirements && hasMissingModels && !downloads.active"
-      class="skill-download-card skill-download-card--danger"
-    >
-      <div class="skill-download-card__body">
-        <strong class="skill-download-card__title fira-sans-condensed-black-italic">
-          Download Required
-        </strong>
-        <!-- Show all missing repos/files -->
-        <ul class="skill-download-list">
-          <template v-for="model in missingModels" :key="model.key">
-            <!-- Repos from readiness check -->
-            <li
-              v-for="repo in modelReadinessDetails[model.key]?.repos || []"
-              :key="repo"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">
-                deployed_code
-              </span>
-              {{ repo }}
-            </li>
-            <!-- Files from readiness check -->
-            <li
-              v-for="file in modelReadinessDetails[model.key]?.files || []"
-              :key="file"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">
-                deployed_code
-              </span>
-              {{ file }}
-            </li>
-            <!-- Fallback for models without detailed readiness info -->
-            <template
-              v-if="
-                !modelReadinessDetails[model.key]?.repos?.length &&
-                !modelReadinessDetails[model.key]?.files?.length
-              "
-            >
-              <!-- Handle array repos (e.g., Qwen TTS) -->
-              <template v-if="Array.isArray(model.repo)">
-                <li v-for="(r, rIdx) in model.repo" :key="model.key + '_repo_' + rIdx">
-                  <span class="material-symbols-outlined" aria-hidden="true">
-                    deployed_code
-                  </span>
-                  {{ r }}
-                </li>
-              </template>
-              <!-- Handle single repo/filename -->
-              <li v-else>
-                <span class="material-symbols-outlined" aria-hidden="true">
-                  deployed_code
-                </span>
-                {{ model.filename || model.repo || model.name }}
-              </li>
-            </template>
-          </template>
-        </ul>
-      </div>
-        <button
-          class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
-          @click="downloadAllMissingModels"
-          :disabled="downloads.active"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">download</span>
-          Download Now
-        </button>
-    </div>
-
-    <!-- DOWNLOAD PROGRESS -->
-    <div
-      v-if="downloads.active"
-      class="skill-download-card"
-    >
-      <div class="skill-download-card__head">
-        <span class="skill-download-card__title fira-sans-condensed-black-italic">
-          <BonzaiPulse variant="dot" />
-          Downloading
-        </span>
-        <span class="skill-download-card__pct fira-sans-condensed-black-italic">
-          {{ Math.round(downloads.total_progress || 0) }}%
-        </span>
-      </div>
-      <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
-      <div v-if="downloadTaskList.length" class="skill-download-scroll">
-        <ul class="skill-download-list">
-          <li
-            v-for="t in downloadTaskList"
-            :key="t.task_id"
-            class="skill-download-task"
-          >
-            <div class="skill-download-task__name">
-              <span class="material-symbols-outlined" aria-hidden="true">
-                deployed_code
-              </span>
-              {{ t.filename }} —
-              <span class="fira-sans-condensed-black-italic">
-                {{ t.status }}
-              </span>
-            </div>
-            <div class="skill-download-task__pct fira-sans-condensed-black-italic">
-              {{ Math.round(t.progress || 0) }}%
-            </div>
-          </li>
-        </ul>
-      </div>
-    </div>
-  </div>
+  <DownloadRequirement
+    v-if="(modelAvailabilityChecked && hasRequirements && hasMissingModels) || downloads.active"
+    :items="missingDownloadItems"
+    :active="downloads.active"
+    cancellable
+    :cancelling="isCancellingDownloads"
+    @cancel="cancelActiveDownloads"
+    :progress="downloads.total_progress || downloads.progress || 0"
+    :tasks="downloadTaskList"
+    :error="downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''"
+    @download="downloadAllMissingModels"
+  />
 </template>
 
 <script>
@@ -115,7 +18,8 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 import { getSkillModelRequirements, MODEL_REQUIREMENTS } from '../../skills/flagship.js';
-import BonzaiPulse from '../BonzaiPulse.vue';
+import { cancelLocalDownloads } from '../../services/downloadCancellation.js';
+import DownloadRequirement from '../DownloadRequirement.vue';
 
 const API_BASE =
   (typeof process !== 'undefined' && process.env?.VITE_API_BASE) ||
@@ -127,7 +31,7 @@ const WS_DL = `${API_BASE}/downloads`;
 export default {
   name: 'SkillDownloader',
   components: {
-    BonzaiPulse,
+    DownloadRequirement,
   },
   props: {
     skillId: {
@@ -170,6 +74,13 @@ export default {
       return skillModelRequirements.value.filter((model) => !isModelReady(model));
     });
 
+    const missingDownloadItems = computed(() => missingModels.value.flatMap(model => {
+      const details = modelReadinessDetails[model.key];
+      const files = [...(details?.repos || []), ...(details?.files || [])];
+      const entries = files.length ? files : Array.isArray(model.repo) ? model.repo : [model.filename || model.repo || model.name];
+      return entries.map(entry => ({ ...(typeof entry === 'string' ? { name: entry } : entry), category: model.type }));
+    }));
+
     const hasMissingModels = computed(() => {
       return missingModels.value.length > 0;
     });
@@ -177,7 +88,7 @@ export default {
     // Download task list computed
     const downloadTaskList = computed(() => {
       const tasks = downloads.pipeline?.tasks || {};
-      const arr = Object.values(tasks);
+      const arr = Object.values(tasks).map(task => ({ ...task, pipeline: task.pipeline || downloads.pipeline?.pipeline_name }));
       const order = {
         downloading: 0,
         pending: 1,
@@ -212,7 +123,9 @@ export default {
       audio_turbo: 'audio_turbo',
       audio_quality: 'audio_quality_persona',
       video_fast: 'video_fast',
-      vision: 'qwen3_vision',
+      video_sota: 'video_sota',
+      video_quality: 'video_quality',
+      vision: 'vision',
       forecast_quality: 'forecast',
     };
 
@@ -282,6 +195,8 @@ export default {
 
     // Download all missing models
     const downloadAllMissingModels = async () => {
+      if (downloads.active || isCancellingDownloads.value) return;
+      const run = ++downloadRun;
       if (missingModels.value.length === 0) return;
 
       downloads.active = true;
@@ -295,6 +210,7 @@ export default {
       let hasActiveDownload = false;
 
       for (const model of missingModels.value) {
+        if (run !== downloadRun) return;
         try {
           // Handle LLM downloads
           if (model.type === 'llm' && model.filename) {
@@ -313,6 +229,11 @@ export default {
           });
 
           if (res.status === 202 && res.data?.pipeline_id) {
+            if (run !== downloadRun) {
+              cancelledPipelines.add(res.data.pipeline_id);
+              await cancelLocalDownloads({ pipelineIds: [res.data.pipeline_id], apiBase: API_BASE });
+              return;
+            }
             hasActiveDownload = true;
             startDownloadTracking(res.data.pipeline_id, res.data.websocket_url || WS_DL);
           } else if (res.status === 200) {
@@ -336,8 +257,29 @@ export default {
       }
     };
 
+    const isCancellingDownloads = ref(false);
+    let downloadRun = 0;
+    const trackedPipelines = new Set();
+    const cancelledPipelines = new Set();
+    const cancelActiveDownloads = async () => {
+      isCancellingDownloads.value = true;
+      downloadRun++;
+      try {
+        await cancelLocalDownloads({ pipelineIds: [...trackedPipelines], apiBase: API_BASE });
+        for (const id of trackedPipelines) cancelledPipelines.add(id);
+        trackedPipelines.clear();
+        downloads.status = 'cancelled';
+        downloads.active = false;
+        cleanupDownloadTracking();
+        emit('downloading', false);
+        await checkModelAvailability();
+      } catch { downloads.status = 'failed'; }
+      finally { isCancellingDownloads.value = false; }
+    };
+
     // Start WebSocket tracking for download progress
     const startDownloadTracking = (pipelineId, wsUrl) => {
+      trackedPipelines.add(pipelineId);
       downloads.pipelineId = pipelineId;
       downloads.wsUrl = wsUrl;
 
@@ -360,7 +302,7 @@ export default {
 
       sock.on('download_progress', handleDownloadProgress);
       sock.on('disconnect', () => {
-        if (downloads.status !== 'completed' && downloads.status !== 'failed') {
+        if (!['completed', 'failed', 'cancelled'].includes(downloads.status)) {
           startHttpPolling();
         }
       });
@@ -371,6 +313,7 @@ export default {
 
     // Handle download progress events
     const handleDownloadProgress = async (data) => {
+      if (downloads.status === 'cancelled' || isCancellingDownloads.value || cancelledPipelines.has(data?.pipeline_id)) return;
       if (data.pipeline_id !== downloads.pipelineId) return;
 
       lastDlEventAt.value = Date.now();
@@ -456,6 +399,9 @@ export default {
       hasRequirements,
       hasMissingModels,
       missingModels,
+      missingDownloadItems,
+      cancelActiveDownloads,
+      isCancellingDownloads,
       modelReadinessDetails,
       downloadAllMissingModels,
       modelAvailability,
@@ -466,102 +412,3 @@ export default {
   },
 };
 </script>
-
-<style scoped>
-.skill-downloader {
-  width: 100%;
-}
-
-.skill-download-card {
-  display: grid;
-  gap: var(--bz-space-3);
-  margin: var(--bz-space-4) 0 var(--bz-space-6);
-  padding: var(--bz-space-4);
-  border: 1px solid var(--bz-border);
-  border-radius: 8px;
-  background: var(--bz-panel);
-  color: var(--bz-fg);
-}
-
-.skill-download-card--danger {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  border-color: color-mix(in srgb, var(--bz-danger) 42%, var(--bz-border));
-  background: var(--bz-danger-soft);
-}
-
-.skill-download-card__body {
-  display: grid;
-  gap: var(--bz-space-2);
-  min-width: 0;
-}
-
-.skill-download-card__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--bz-space-3);
-}
-
-.skill-download-card__title,
-.skill-download-card__pct {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--bz-space-2);
-  color: var(--bz-fg);
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.skill-download-card__pct {
-  font-size: 1.45rem;
-}
-
-.skill-download-list {
-  display: grid;
-  gap: var(--bz-space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  text-transform: lowercase;
-}
-
-.skill-download-list li,
-.skill-download-task {
-  display: flex;
-  align-items: center;
-  gap: var(--bz-space-2);
-  color: var(--bz-fg-mid);
-  font-size: var(--bz-size-meta);
-}
-
-.skill-download-scroll {
-  margin-top: var(--bz-space-4);
-  max-height: 180px;
-  overflow: auto;
-}
-
-.skill-download-task {
-  justify-content: space-between;
-  padding: var(--bz-space-2) 0;
-  border-bottom: 1px solid var(--bz-border);
-}
-
-.skill-download-task__name {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--bz-space-2);
-  min-width: 0;
-}
-
-.skill-download-task__pct {
-  color: var(--bz-fg);
-  font-size: var(--bz-size-meta);
-}
-
-@media (max-width: 720px) {
-  .skill-download-card--danger {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

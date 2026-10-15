@@ -139,7 +139,7 @@ export function release(modelKey) {
  * @param {object} body  OpenAI-compatible request body
  * @returns {Promise<string>}  the assistant message string
  */
-export async function chat({ modelKey, prompt, messages, temperature, maxTokens, stop, seed, enableThinking }) {
+export async function chat({ modelKey, prompt, messages, temperature, maxTokens, stop, seed, enableThinking, responseFormat }) {
   const reg = _lookupModelPath(modelKey);
   const port = await acquire({
     modelKey,
@@ -163,6 +163,7 @@ export async function chat({ modelKey, prompt, messages, temperature, maxTokens,
     if (typeof temperature === "number") body.temperature = temperature;
     if (typeof maxTokens === "number") body.max_tokens = maxTokens;
     if (stop) body.stop = stop;
+    if (responseFormat) body.response_format = responseFormat;
     if (typeof seed === "number") body.seed = seed;
     if (typeof enableThinking === "boolean") {
       body.chat_template_kwargs = { enable_thinking: enableThinking };
@@ -220,6 +221,7 @@ export function inventory() {
     sizeBytes: i.sizeBytes,
     sizeGB: +(i.sizeBytes / 1024 ** 3).toFixed(2),
     inFlight: i.inFlight,
+    phase: i.phase,
     lastUsed: i.lastUsed,
     pid: i.proc?.pid,
   }));
@@ -279,7 +281,7 @@ async function _spawn(spec, sizeBytes) {
 
   const inst = {
     modelKey: spec.modelKey, modelPath: spec.modelPath, port,
-    proc, sizeBytes, lastUsed: Date.now(), inFlight: 0, ready: null,
+    proc, sizeBytes, lastUsed: Date.now(), inFlight: 0, ready: null, phase: "loading",
   };
   _instances.set(spec.modelKey, inst);
   _totalBytes += sizeBytes;
@@ -294,6 +296,7 @@ async function _spawn(spec, sizeBytes) {
 
   inst.ready = _waitReady(port);
   await inst.ready;
+  inst.phase = "ready";
   console.log(`[pool] ${spec.modelKey} ready on :${port}`);
   return inst;
 }

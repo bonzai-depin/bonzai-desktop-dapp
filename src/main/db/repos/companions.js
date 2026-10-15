@@ -9,6 +9,7 @@ import { eq, and, desc } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { get } from "../connection.js";
 import { companions, companionMemory } from "../schema/companions.js";
+import { companionExtraMetadata } from "../../../shared/companionMetadata.js";
 
 export function upsert(record) {
   const { db, orm } = get();
@@ -44,6 +45,7 @@ export function upsert(record) {
     contractAddress: record.contractAddress ?? null,
     tokenId: record.tokenId ?? null,
     agentWallet: record.agentWallet ?? null,
+    extraJson: companionExtraMetadata(record.extraJson),
     createdAt: record.createdAt || now,
     updatedAt: now,
   };
@@ -77,7 +79,19 @@ export function remove(id) {
   return true;
 }
 
-export function bulkInsert(rows) {
+export function replaceRoster(rows) {
+  if (!Array.isArray(rows)) throw new TypeError('Companion roster must be an array.');
+  const ids = new Set();
+  for (const row of rows) {
+    if (!row || typeof row.id !== 'string' || !row.id.trim() || typeof row.name !== 'string' || !row.name.trim() || ids.has(row.id)) {
+      throw new TypeError('Every companion requires a unique ID and name.');
+    }
+    ids.add(row.id);
+  }
+  return bulkInsert(rows, { replaceRoster: true });
+}
+
+export function bulkInsert(rows, { replaceRoster: replace = false } = {}) {
   const { db } = get();
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO companions (
@@ -87,7 +101,7 @@ export function bulkInsert(rows) {
       description, short_bio, personality, appearance, background,
       voice_style, voice_persona, traits, compatible_scenarios,
       big5, spending_habits,
-      chain_id, contract_address, token_id, agent_wallet,
+      chain_id, contract_address, token_id, agent_wallet, extra_json,
       created_at, updated_at
     ) VALUES (
       @id, @name, @firstName, @familyName, @avatar, @archetype, @age, @gender,
@@ -96,11 +110,21 @@ export function bulkInsert(rows) {
       @description, @shortBio, @personality, @appearance, @background,
       @voiceStyle, @voicePersona, @traits, @compatibleScenarios,
       @big5, @spendingHabits,
-      @chainId, @contractAddress, @tokenId, @agentWallet,
+      @chainId, @contractAddress, @tokenId, @agentWallet, @extraJson,
       @createdAt, @updatedAt
     )
   `);
   const tx = db.transaction((items) => {
+    if (replace) {
+      const retained = new Set(items.map(row => row.id));
+      const removed = db.prepare('SELECT id FROM companions').all().filter(row => !retained.has(row.id));
+      const removeMemory = db.prepare('DELETE FROM companion_memory WHERE companion_id = ?');
+      const removeCompanion = db.prepare('DELETE FROM companions WHERE id = ?');
+      for (const row of removed) {
+        removeMemory.run(row.id);
+        removeCompanion.run(row.id);
+      }
+    }
     for (const r of items) stmt.run({
       id: r.id || uuid(),
       name: r.name,
@@ -130,6 +154,7 @@ export function bulkInsert(rows) {
       contractAddress: r.contractAddress ?? null,
       tokenId: r.tokenId ?? null,
       agentWallet: r.agentWallet ?? null,
+      extraJson: JSON.stringify(companionExtraMetadata(r.extraJson)),
       createdAt: r.createdAt || Date.now(),
       updatedAt: r.updatedAt || Date.now(),
     });

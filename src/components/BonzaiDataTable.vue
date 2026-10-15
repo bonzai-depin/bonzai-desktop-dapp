@@ -68,7 +68,7 @@
             >
               <!-- Default render: apply .bz-mono to numeric columns -->
               <span
-                :class="{ 'bz-mono': col.mono || col.type === 'number' || col.type === 'address' }"
+                :class="{ 'bz-mono': col.mono || col.type === 'number' || col.type === 'address', 'bz-metric': col.type === 'number' }"
                 :style="col.type === 'address' ? 'cursor: copy;' : ''"
                 :title="col.type === 'address' ? getCell(row, col) : ''"
                 @click.stop="col.type === 'address' ? copyAddress(getCell(row, col)) : null"

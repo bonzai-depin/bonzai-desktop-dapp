@@ -37,8 +37,14 @@ async function _safe(fn, fallback) {
   }
 }
 
+async function _write(fn) {
+  const api = _api();
+  if (!api) throw new Error('Company ledger storage is unavailable. No entry was saved.');
+  return fn(api);
+}
+
 export async function recordRevenue(companyId, opts) {
-  const out = await _safe((api) => api.recordRevenue(companyId, opts), null);
+  const out = await _write((api) => api.recordRevenue(companyId, opts), null);
   if (out?.entry) {
     await append(companyId, {
       kind: "treasury", direction: "in", role: out.entry.role,
@@ -53,7 +59,7 @@ export async function recordRevenue(companyId, opts) {
 }
 
 export async function paySupplier(companyId, opts) {
-  const out = await _safe((api) => api.paySupplier(companyId, opts), null);
+  const out = await _write((api) => api.paySupplier(companyId, opts), null);
   if (out?.entry) {
     await append(companyId, {
       kind: "treasury", direction: "out", role: out.entry.role,
@@ -79,7 +85,7 @@ export async function listEntries(companyId, opts) {
 }
 
 export async function reset(companyId) {
-  await _safe((api) => api.reset(companyId), null);
+  await _write((api) => api.reset(companyId), null);
 }
 
 /**

@@ -2,19 +2,22 @@
  * BonzAI Companion NFT Service
  *
  * Manages companion NFTs on Ethereum (ERC-721 + ERC-8004 Identity Registry).
- * Atomic NFT + companion-token mint with permanent initial liquidity.
+ * Legacy companion reads and personalization. Atomic mint-and-token writes are retired.
  */
 
 import { ethers } from 'ethers';
+import { BonzaiSmartAgentsABI } from '../contracts/abi/BonzaiSmartAgents.abi.js';
 import { reactive } from 'vue';
 import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
+import { assertLaunchWallet, parseSmartAgentLaunchReceipt } from './smartAgentLaunch.js';
 import { luksoService } from './lukso.service.js';
 import { agentWalletService } from './agentWallet.service.js';
 import { walletProviderService } from './walletProvider.service.js';
 import { coinbaseAgentWalletService } from './coinbaseAgentWallet.service.js';
 import * as skillOwnershipService from './skillOwnership.service.js';
 import { flagshipSkills } from '../skills/flagship.js';
+import { companionExtraMetadata } from '../shared/companionMetadata.js';
 import {
   SPENDING_CATEGORIES_ORDER,
   packSpendingProfile as sharedPackSpendingProfile,
@@ -50,7 +53,6 @@ const COMPANION_BASE_ABI = [
   'function getAgentIdentity(uint256 agentId) view returns (string uri, address wallet, address owner)',
 
   // Write functions
-  'function mintCompanionWithToken(string agentURI, bytes32 personalityHash, uint96 spendingProfile, uint8 gender, address agentWallet, string tokenName, string tokenSymbol) payable returns (uint256)',
   'function setAgentURI(uint256 agentId, string newURI)',
   'function setAgentWallet(uint256 agentId, address newWallet)',
   'function unsetAgentWallet(uint256 agentId)',
@@ -146,19 +148,20 @@ export function computeOASFDomains(spendingHabits = {}) {
  * Get available networks for companion minting
  */
 function getAvailableNetworks() {
+  const network = CONFIG.networks[ECONOMY_NETWORK_KEY];
   return [
     {
-      id: 'base',
-      name: 'Ethereum',
-      chainId: CONFIG.companionNFT_BASE?.chainId || 1,
+      id: ECONOMY_NETWORK_KEY,
+      name: network.name,
+      chainId: network.chainId,
       standard: 'ERC-8004',
-      currency: 'ETH',
-      mintPrice: '0.30',
+      currency: network.currency.symbol,
+      mintPrice: CONFIG.companionNFT_BASE?.mintPrice,
       contractAddress: CONFIG.companionNFT_BASE?.contractAddress,
-      available: !!CONFIG.companionNFT_BASE?.contractAddress,
+      available: false, // Minting is handled by the scheduled slot drop, not this legacy service.
       x402Support: false,
       agentWalletProvider: 'local',
-      description: 'Agent NFT, ERC-20 token, and permanent Uniswap liquidity in one mint',
+      description: 'Mint a slot through the scheduled drop; personalize and issue its token separately.',
       features: ['Self-custody revenue wallet', 'Spending profile on-chain', 'Protocol revenue capture'],
     },
   ];
@@ -172,15 +175,14 @@ function isLuksoAvailable() {
 }
 
 /**
- * Mint companion on Ethereum (primary network).
+ * Mint on the configured economy chain. `base` remains a legacy caller alias.
  * @param {Object} params - Minting parameters
- * @param {string} network - Must be 'base'
+ * @param {string} network - Configured economy network key
  */
-async function mintCompanionMultiNetwork(params, network = 'base') {
-  if (network !== 'base') {
-    throw new Error(`Unsupported network: ${network}. Companion minting is Ethereum-only.`);
+async function mintCompanionMultiNetwork(params, network = ECONOMY_NETWORK_KEY) {
+  if (network !== ECONOMY_NETWORK_KEY && network !== 'base') {
+    throw new Error(`Unsupported network: ${network}. Smart agents launch on ${CONFIG.networks[ECONOMY_NETWORK_KEY].name}.`);
   }
-  console.log('[CompanionService] Minting on Ethereum with local agent wallet...');
   return await mintCompanionBase(params);
 }
 
@@ -201,152 +203,35 @@ function packSpendingProfile(habits) {
  * Mint companion on Ethereum with local self-custody agent wallet.
  * Atomic companion, token, and permanent-liquidity mint at 0.30 ETH.
  */
+async function getLaunchQuote() {
+  throw new Error('Combined mint-and-token launches are retired. Mint an agent slot through the scheduled drop, then personalize it and issue its token.');
+}
+
+async function configuredSigningWallet(expectedWallet = web3Service.state.walletAddress) {
+  const chainId = CONFIG.companionNFT_BASE?.chainId;
+  if (!expectedWallet) throw new Error('Connect a wallet before publishing a smart agent.');
+  if (Number(web3Service.state.currentChainId) !== Number(chainId)) await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
+  await assertLaunchWallet(web3Service, chainId, expectedWallet);
+  const provider = await web3Service.getBrowserProvider();
+  const signer = await provider.getSigner();
+  const userAddress = await signer.getAddress();
+  if (userAddress.toLowerCase() !== expectedWallet.toLowerCase()) throw new Error('The signing wallet changed. Review the action again.');
+  return { provider, signer, userAddress };
+}
+
 async function mintCompanionBase(params) {
-  try {
-    state.isLoading = true;
+  // Kept as a fail-closed compatibility boundary for automation and older callers.
+  // Never route a locally generated profile to the legacy atomic mint-and-token method.
+  return { success: false, error: 'Mint an agent slot through the scheduled drop first. Token issuance is a separate action for minted agents only.' };
+}
 
-    const config = CONFIG.companionNFT_BASE;
-    const chainId = config?.chainId || 1;
-
-    if (!config?.contractAddress) {
-      throw new Error('BonzaiCompanions contract not deployed on Ethereum yet');
-    }
-
-    // Generate spending profile if not provided
-    const spendingHabits = params.spendingHabits || coinbaseAgentWalletService.generateSpendingProfile(params);
-
-    // Create agent wallet for this companion (Privy server wallet or local deterministic)
-    const companionId = params.companionId || `companion-${Date.now()}`;
-    console.log('[CompanionService] Creating agent wallet for companion:', companionId);
-
-    const agentWallet = await walletProviderService.createAgentWallet(companionId, {
-      firstName: params.firstName, lastName: params.lastName,
-    });
-    console.log('[CompanionService] Agent wallet created:', agentWallet.address);
-
-    // Ensure wallet is on Ethereum network
-    const currentChainId = web3Service.state.currentChainId;
-    if (currentChainId !== chainId) {
-      console.log('[CompanionService] Switching to Ethereum...');
-      await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
-    }
-
-    // Get signer
-    const provider = await web3Service.getProvider();
-    const signer = await provider.getSigner();
-    const userAddress = await signer.getAddress();
-
-    // Build ERC-8004 registration with spending profile (OASF v0.8.0)
-    const domains = computeOASFDomains(spendingHabits);
-    const agentUri = params.metadataURI;
-
-    // Get contract instance
-    const contract = new ethers.Contract(config.contractAddress, COMPANION_BASE_ABI, signer);
-
-    // Get mint price from contract (flat price, no discounts)
-    let ethMintPrice;
-    try {
-      ethMintPrice = await contract.mintPrice();
-    } catch {
-      ethMintPrice = ethers.parseEther(config.mintPrice || "0.30");
-    }
-
-    const ethBalance = await provider.getBalance(userAddress);
-    if (ethBalance < ethMintPrice) {
-      throw new Error(`Insufficient ETH on Ethereum. Need ${ethers.formatEther(ethMintPrice)} ETH`);
-    }
-
-    // Hash personality
-    const personalityBytes = typeof params.personalityHash === 'string' && !params.personalityHash.startsWith('0x')
-      ? ethers.keccak256(ethers.toUtf8Bytes(params.personalityHash))
-      : params.personalityHash || ethers.ZeroHash;
-
-    // Pack spending profile into uint96
-    const spendingProfile = packSpendingProfile(spendingHabits);
-
-    // Mint with flat ETH payment
-    console.log(`[CompanionService] Minting BonzaiCompanion on Ethereum for ${ethers.formatEther(ethMintPrice)} ETH...`);
-    const tokenName = String(params.firstName || params.name || '').trim().split(/\s+/)[0];
-    const tokenSymbol = tokenName.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (!tokenName || !tokenSymbol) {
-      throw new Error('A first name is required to issue the companion token');
-    }
-
-    const tx = await contract.mintCompanionWithToken(
-      agentUri,
-      personalityBytes,
-      spendingProfile,
-      params.gender || 0,
-      agentWallet.address,
-      tokenName,
-      tokenSymbol,
-      { value: ethMintPrice }
-    );
-
-    console.log('[CompanionService] Transaction sent:', tx.hash);
-    const receipt = await tx.wait();
-
-    // Find token ID from event
-    let tokenId = null;
-    let tokenAddress = null;
-    let poolId = null;
-    for (const log of receipt.logs) {
-      try {
-        const parsed = contract.interface.parseLog(log);
-        if (parsed?.name === 'CompanionMinted' || parsed?.name === 'Registered') {
-          tokenId = parsed.args.tokenId?.toString() || parsed.args.agentId?.toString();
-        }
-        if (parsed?.name === 'CompanionEconomyLaunched') {
-          tokenAddress = parsed.args.token;
-          poolId = parsed.args.poolId;
-        }
-      } catch { /* skip non-matching logs */ }
-    }
-
-    console.log('[CompanionService] Ethereum companion minted! Token ID:', tokenId);
-
-    // Set ERC-8004 OASF agent traits via setMetadataBatch (single transaction)
-    if (tokenId) {
-      try {
-        const traitKeys = ['oasf_skills', 'oasf_domains', 'x402_support', 'oasf_version'];
-        const traitValues = [
-          ethers.toUtf8Bytes(OASF_SKILLS.map(s => s.id).join(',')),
-          ethers.toUtf8Bytes(domains.map(d => d.id).join(',')),
-          ethers.toUtf8Bytes('false'),
-          ethers.toUtf8Bytes('0.8'),
-        ];
-        const metaTx = await contract.setMetadataBatch(tokenId, traitKeys, traitValues);
-        await metaTx.wait();
-        console.log('[CompanionService] ERC-8004 OASF agent traits set (batch)');
-      } catch (e) {
-        console.warn('[CompanionService] Failed to set agent traits (non-fatal):', e.message);
-      }
-    }
-
-    return {
-      success: true,
-      tokenId,
-      txHash: receipt.hash,
-      network: 'ethereum',
-      standard: 'ERC-8004',
-      agentWallet: agentWallet.address,
-      agentWalletProvider: 'local',
-      x402Support: false,
-      spendingHabits,
-      tokenAddress,
-      poolId,
-      tokenSymbol,
-    };
-  } catch (e) {
-    console.error('[CompanionService] Ethereum mint failed:', e);
-    state.error = e.message;
-    return {
-      success: false,
-      error: e.message,
-    };
-  } finally {
-    state.isLoading = false;
-  }
+async function getLaunchResult(txHash, launchContract) {
+  const config = CONFIG.companionNFT_BASE;
+  if (!config?.contractAddress) throw new Error('Smart agent launches are not configured on this network.');
+  if (launchContract && launchContract.toLowerCase() !== config.contractAddress.toLowerCase()) throw new Error('Restore the original launch contract configuration to refresh this transaction.');
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
+  const receipt = await provider.getTransactionReceipt(txHash);
+  return { txHash, ...parseSmartAgentLaunchReceipt(receipt, config.contractAddress, new ethers.Interface(COMPANION_BASE_ABI)) };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -432,6 +317,9 @@ function buildERC8004RegistrationWithSpending(params, spendingHabits = {}) {
       background: params.background || '',
       voiceStyle: params.voiceStyle || '',
       firstMessage: params.firstMessage || '',
+      // Only explicit workflow IDs are published; private company context and
+      // local execution settings never become registration metadata.
+      assignedWorkflowIds: companionExtraMetadata(params).assignedWorkflowIds || [],
       spendingHabits,
     },
   };
@@ -543,8 +431,7 @@ async function updateAgentWallet(tokenId, newWallet, network = 'base') {
     throw new Error(`Contract not configured for ${network}`);
   }
 
-  const provider = await web3Service.getProvider();
-  const signer = await provider.getSigner();
+  const { signer } = await configuredSigningWallet();
   const contract = new ethers.Contract(config.contractAddress, abi, signer);
 
   const currentWallet = await contract.getAgentWallet(tokenId);
@@ -605,7 +492,7 @@ function mapBareCompanion(tokenId, onChainData) {
   else if (onChainData?.gender === 2) gender = 'male';
 
   return {
-    id: `nft_base_${tokenId}`,
+    id: `nft_${ECONOMY_NETWORK_KEY}_${tokenId}`,
     tokenId: Number(tokenId),
     name: `Companion #${tokenId}`,
     firstName: '',
@@ -626,7 +513,9 @@ function mapBareCompanion(tokenId, onChainData) {
     isNFT: true,
     isBare: true,
     needsSetup: true,
-    network: 'base',
+    network: ECONOMY_NETWORK_KEY,
+    chainId: CONFIG.companionNFT_BASE.chainId,
+    contractAddress: CONFIG.companionNFT_BASE.contractAddress,
     standard: 'ERC-8004',
     agentWallet: onChainData?.agentWallet || null,
     creator: onChainData?.creator || null,
@@ -685,7 +574,7 @@ function mapMetadataToCompanion(metadata, tokenId, onChainData) {
   const familyName = bonzai.familyName || (nameParts.length > 1 ? nameParts.slice(1).join(' ') : '');
 
   return {
-    id: `nft_base_${tokenId}`,
+    id: `nft_${ECONOMY_NETWORK_KEY}_${tokenId}`,
     tokenId: Number(tokenId),
     name: metadata.name || `Companion #${tokenId}`,
     firstName,
@@ -696,6 +585,7 @@ function mapMetadataToCompanion(metadata, tokenId, onChainData) {
     background: bonzai.background || '',
     voiceStyle: bonzai.voiceStyle || '',
     firstMessage: bonzai.firstMessage || '',
+    assignedWorkflowIds: companionExtraMetadata(bonzai).assignedWorkflowIds || [],
     spendingHabits,
     gender,
     age,
@@ -703,7 +593,9 @@ function mapMetadataToCompanion(metadata, tokenId, onChainData) {
     image: resolveMediaUri(metadata.image) || null,
     isCustom: true,
     isNFT: true,
-    network: 'base',
+    network: ECONOMY_NETWORK_KEY,
+    chainId: CONFIG.companionNFT_BASE.chainId,
+    contractAddress: CONFIG.companionNFT_BASE.contractAddress,
     standard: 'ERC-8004',
     agentWallet: onChainData?.agentWallet || null,
     creator: onChainData?.creator || null,
@@ -715,6 +607,29 @@ function mapMetadataToCompanion(metadata, tokenId, onChainData) {
  * Returns companion objects ready for RoleplayChat.
  */
 async function loadOwnedCompanions(walletAddress) {
+  const legacy = await loadLegacyOwnedCompanions(walletAddress);
+  const config = CONFIG.smartAgentIssuance;
+  if (!config?.contractAddress) return legacy;
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
+  if (Number((await provider.getNetwork()).chainId) !== Number(config.chainId)) throw new Error('Wrong agent collection network.');
+  const contract = new ethers.Contract(config.contractAddress, BonzaiSmartAgentsABI, provider);
+  const ids = await contract.getOwnerCompanions(walletAddress);
+  const rows = await Promise.all(ids.map(async tokenId => {
+    const [identity, uri, tokenAddress] = await Promise.all([contract.getIdentity(tokenId), contract.tokenURI(tokenId), contract.socialToken(tokenId)]);
+    const metadata = identity.ready ? await fetchMetadata(uri) : null;
+    const onChain = { creator: walletAddress, gender: 0, agentWallet: identity.wallet };
+    const mapped = metadata ? mapMetadataToCompanion(metadata, tokenId, onChain) : mapBareCompanion(tokenId, onChain);
+    return { ...mapped, id: `agent-${config.chainId}-${config.contractAddress.toLowerCase()}-${tokenId}`,
+      isCustom: true, isDefault: false, name: identity.ready ? identity.name : `Agent slot #${tokenId}`,
+      chainId: config.chainId, contractAddress: config.contractAddress, tokenId: String(tokenId),
+      network: ECONOMY_NETWORK_KEY, standard: 'ERC-721', tokenSymbol: identity.symbol,
+      tokenAddress: tokenAddress === ethers.ZeroAddress ? null : tokenAddress,
+      isBare: !identity.ready, needsSetup: !identity.ready };
+  }));
+  return [...legacy, ...rows];
+}
+
+async function loadLegacyOwnedCompanions(walletAddress) {
   const config = CONFIG.companionNFT_BASE;
   if (!config?.contractAddress) {
     return [];
@@ -793,9 +708,7 @@ async function finalizeCompanion(tokenId, companionData, options = {}) {
 
     // Step 1: Verify ownership
     progress('verify', 'Verifying NFT ownership...', 5);
-    const provider = await web3Service.getProvider();
-    const signer = await provider.getSigner();
-    const userAddress = await signer.getAddress();
+    const { signer, userAddress } = await configuredSigningWallet();
     const contract = new ethers.Contract(config.contractAddress, COMPANION_BASE_ABI, signer);
 
     const owner = await contract.ownerOf(tokenId);
@@ -1034,8 +947,10 @@ export const companionService = {
   state,
 
   // Minting
+  getLaunchQuote,
   mintCompanionMultiNetwork,
   mintCompanionBase,
+  getLaunchResult,
 
   // Metadata
   buildERC8004RegistrationWithSpending,

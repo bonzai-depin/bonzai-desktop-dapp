@@ -2,17 +2,33 @@
   <div class="bz-tab-shell harness-view">
     <header class="harness-hero">
       <div>
-        <p class="bz-eyebrow">External access</p>
-        <h1 class="bz-h1">Harness</h1>
-        <p class="harness-hero__copy">Manage messaging gateways and command access.</p>
+        <p class="bz-eyebrow">{{ t("harness.eyebrow") }}</p>
+        <h1 class="bz-h1">{{ t("harness.title") }}</h1>
+        <p class="harness-hero__copy">{{ t("harness.intro") }}</p>
       </div>
-      <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="refreshAll">
+      <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" :disabled="refreshing || !desktopAvailable" @click="refreshAll">
         <span class="material-symbols-outlined" :class="{ spinning: refreshing }">sync</span>
-        Refresh
+        {{ t("common.refresh") }}
       </button>
     </header>
 
-    <section class="harness-status-grid" aria-label="Gateway status">
+    <p v-if="!desktopAvailable" class="harness-setup-copy" role="status">{{ t("rcWorkflows.desktopRequired") }}</p>
+    <p v-if="errorMessage" class="harness-error" role="alert">{{ errorMessage }}</p>
+
+    <section class="harness-local" aria-live="polite">
+      <div>
+        <p class="bz-eyebrow">{{ t("harness.localGateway") }}</p>
+        <div class="harness-copy-row"><strong class="bz-mono">{{ gateway.baseUrl }}</strong><button type="button" class="bz-btn bz-btn--sm bz-btn--ghost" @click="copyText(gateway.baseUrl)">{{ t("rcWorkflows.copy") }}</button></div>
+        <p>{{ t("harness.loopbackCopy") }}</p>
+      </div>
+      <span class="harness-status" :class="gateway.listening ? 'is-on' : 'is-off'">
+        {{ !statusChecked ? t("rcLicenses.unknown") : gateway.listening ? t("harness.online") : t("harness.offline") }}
+      </span>
+    </section>
+
+    <p v-if="copyMessage" role="status" class="harness-copy-status">{{ copyMessage }}</p>
+
+    <section class="harness-status-grid" :aria-label="t('rcWorkflows.integrationStatus')">
       <article v-for="gateway in gateways" :key="gateway.id" class="harness-gateway">
         <div class="harness-gateway__head">
           <div>
@@ -21,77 +37,140 @@
             <p>{{ gateway.desc }}</p>
           </div>
           <span class="harness-status" :class="gateway.enabled ? 'is-on' : gateway.installed ? 'is-muted' : 'is-off'">
-            {{ gateway.installed ? (gateway.enabled ? "Enabled" : "Installed") : "Not installed" }}
+            {{ integrationStatusLabel(gateway) }}
           </span>
         </div>
         <div class="harness-gateway__meta">
           <span class="bz-mono">{{ gateway.port }}</span>
           <span>{{ gateway.protocol }}</span>
         </div>
-        <button
-          class="bz-btn bz-btn--sm fira-sans-condensed-black-italic"
-          :class="gateway.enabled ? 'bz-btn--destructive' : 'bz-btn--success'"
-          :disabled="gateway.busy || !gateway.installed"
-          @click="toggleGateway(gateway.id)"
-        >
-          <span class="material-symbols-outlined">{{ gateway.enabled ? "power_settings_new" : "bolt" }}</span>
-          {{ gateway.enabled ? "Disable" : "Enable" }}
-        </button>
+        <ol class="harness-setup">
+          <li :class="{ 'is-complete': gateway.installed }">{{ t("rcWorkflows.installStep") }}</li>
+          <li :class="{ 'is-complete': gateway.configured }">{{ t("rcWorkflows.configureStep") }}</li>
+          <li :class="{ 'is-complete': testPassed }">{{ t("rcWorkflows.testStep") }}</li>
+        </ol>
+        <p class="harness-setup-copy">{{ t(gateway.installed ? "rcWorkflows.configureHint" : "rcWorkflows.installHint", { path: gateway.configPath }) }}</p>
+        <div class="harness-actions">
+          <button v-if="!gateway.installed" type="button" class="bz-btn bz-btn--sm bz-btn--primary" @click="openSetupGuide(gateway.installUrl)">{{ t("rcWorkflows.installGuide") }} ↗</button>
+          <button type="button" class="bz-btn bz-btn--sm bz-btn--ghost" :disabled="refreshing || !desktopAvailable" @click="refreshAll">{{ t("rcWorkflows.verify") }}</button>
+          <button
+            class="bz-btn bz-btn--sm fira-sans-condensed-black-italic"
+            :class="gateway.enabled ? 'bz-btn--destructive' : 'bz-btn--success'"
+            v-if="gateway.installed"
+            :disabled="gateway.busy || !desktopAvailable"
+            @click="toggleGateway(gateway.id)"
+          >
+            <span class="material-symbols-outlined">{{ gateway.enabled ? "power_settings_new" : "bolt" }}</span>
+            {{ gateway.enabled ? t("harness.disable") : t("harness.enable") }}
+          </button>
+          <button
+            class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
+            v-if="gateway.enabled"
+            :disabled="gateway.busy || !desktopAvailable"
+            @click="syncGateway(gateway.id)"
+          >
+            <span class="material-symbols-outlined">sync</span>
+            {{ t("harness.sync") }}
+          </button>
+        </div>
+        <details class="harness-diagnostics">
+          <summary>{{ t("rcWorkflows.diagnostics") }}</summary>
+          <p>{{ t("rcWorkflows.diagnosticsHint") }}</p>
+          <div class="harness-copy-row"><code>{{ gateway.id }} doctor</code><button type="button" class="bz-btn bz-btn--sm bz-btn--ghost" @click="copyText(`${gateway.id} doctor`)">{{ t("rcWorkflows.copy") }}</button></div>
+          <code>{{ gateway.configPath }}</code>
+        </details>
       </article>
+    </section>
+
+    <section class="harness-test">
+      <div><strong>{{ t("rcWorkflows.testGateway") }}</strong><p>{{ t("rcWorkflows.testHint") }}</p></div>
+      <button type="button" class="bz-btn bz-btn--ghost" :disabled="testing || !desktopAvailable" @click="testGateway">{{ t(testing ? "rcWorkflows.testing" : "rcWorkflows.test") }}</button>
+      <p v-if="testMessage" role="status">{{ testMessage }}</p>
     </section>
 
     <section class="harness-runtime">
       <div class="runtime-item">
-        <span>OpenAI-compatible API</span>
-        <strong class="bz-mono">localhost:3002</strong>
+        <span>{{ t("harness.apiLabel") }}</span>
+        <strong class="bz-mono">{{ gateway.baseUrl }}</strong>
       </div>
       <div class="runtime-item">
-        <span>Loaded LLM</span>
-        <strong>{{ llama.running ? llama.modelName || "Running" : "Not loaded" }}</strong>
+        <span>{{ t("harness.loadedModel") }}</span>
+        <strong>{{ llama.running ? llama.modelName || t("harness.online") : t("network.noModel") }}</strong>
       </div>
       <div class="runtime-item">
-        <span>P2P node</span>
-        <strong>{{ p2p.started ? `${p2p.connectedPeers || 0} peers` : "Private / offline" }}</strong>
+        <span>{{ t("harness.p2pNode") }}</span>
+        <strong>{{ p2p.started ? `${p2p.connectedPeers || 0} peers` : t("harness.privateOffline") }}</strong>
       </div>
     </section>
 
-    <section class="harness-panel">
-      <div class="harness-section-head">
+    <details class="harness-panel">
+      <summary class="harness-section-head">
         <div>
-          <p class="bz-eyebrow">Command surface</p>
-          <h2 class="bz-h2 fira-sans-condensed-black-italic">Commands</h2>
+          <p class="bz-eyebrow">{{ t("harness.commandSurface") }}</p>
+          <h2 class="bz-h2 fira-sans-condensed-black-italic">{{ t("harness.commands") }}</h2>
         </div>
-        <p>Use <code>!bonzai</code> in OpenClaw channels or <code>/bonzai</code> in Hermes.</p>
-      </div>
-
+        <p>{{ t("harness.commandHint") }}</p>
+      </summary>
+      <label class="harness-command-search" for="harness-command-search">{{ t("rcWorkflows.searchCommands") }}
+        <input id="harness-command-search" v-model="commandQuery" type="search" class="input" :placeholder="t('rcWorkflows.searchCommands')" />
+      </label>
+      <p v-if="!filteredCommandGroups.length" role="status">{{ t("rcWorkflows.noCommands") }}</p>
       <div class="command-groups">
-        <article v-for="group in commandGroups" :key="group.title" class="command-group">
+        <article v-for="group in filteredCommandGroups" :key="group.title" class="command-group">
           <h3 class="bz-h2 fira-sans-condensed-black-italic">{{ group.title }}</h3>
           <div class="command-list">
             <div v-for="cmd in group.items" :key="cmd.name" class="command-row">
               <code>{{ cmd.name }}</code>
               <span>{{ cmd.desc }}</span>
+              <button type="button" class="bz-btn bz-btn--sm bz-btn--ghost" :aria-label="`${t('rcWorkflows.copy')} ${cmd.name}`" @click="copyText(cmd.name)">{{ t("rcWorkflows.copy") }}</button>
             </div>
           </div>
         </article>
       </div>
-    </section>
+    </details>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
+import { useI18n } from "../i18n/index.js";
+import { withTimeout } from "../utils/withTimeout.js";
 
+const { t } = useI18n();
 const refreshing = ref(false);
-const openclaw = reactive({ installed: false, enabled: false, busy: false });
-const hermes = reactive({ installed: false, enabled: false, busy: false });
+const statusChecked = ref(false);
+const desktopAvailable = Boolean(window.electronAPI?.harnessGetStatus);
+const commandQuery = ref("");
+const copyMessage = ref("");
+const testing = ref(false);
+const testMessage = ref("");
+const testPassed = ref(false);
+const errorMessage = ref("");
+const gateway = reactive({ listening: false, baseUrl: "http://127.0.0.1:3002/v1", webhookUrl: "", exposure: "loopback" });
+const openclaw = reactive({ installed: false, enabled: false, configured: false, busy: false });
+const hermes = reactive({ installed: false, enabled: false, configured: false, busy: false });
 const llama = reactive({ running: false, modelName: "", port: null });
 const p2p = reactive({ started: false, connectedPeers: 0 });
 
 const gateways = computed(() => [
-  { id: "openclaw", name: "OpenClaw", port: "18789", protocol: "Messaging webhook", desc: "WhatsApp, Telegram, Discord, and Mattermost gateway.", ...openclaw },
-  { id: "hermes", name: "Hermes", port: "/bonzai", protocol: "Structured command bridge", desc: "Agent command surface and local BonzAI skill bridge.", ...hermes },
+  { id: "openclaw", name: "OpenClaw", installUrl: "https://docs.openclaw.ai/install", configPath: "~/.openclaw", port: "/webhook", protocol: "Messaging + OpenAI API", desc: t("harness.openclawDesc"), ...openclaw },
+  { id: "hermes", name: "Hermes", installUrl: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/", configPath: "~/.hermes", port: "!bonzai", protocol: "Skill + OpenAI API", desc: t("harness.hermesDesc"), ...hermes },
 ]);
+
+function applyHarnessStatus(status) {
+  if (!status || !status.gateway || !status.integrations) throw new Error("Unable to read local integration status.");
+  statusChecked.value = true;
+  Object.assign(gateway, status.gateway || {});
+  Object.assign(openclaw, status.integrations?.openclaw || {});
+  Object.assign(hermes, status.integrations?.hermes || {});
+}
+
+function integrationStatusLabel(integration) {
+  if (!statusChecked.value) return t("rcLicenses.unknown");
+  if (!integration.installed) return t("harness.notInstalled");
+  if (integration.enabled && !integration.configured) return t("harness.needsSync");
+  return integration.enabled ? t("harness.enabled") : t("harness.installed");
+}
 
 const commandGroups = [
   {
@@ -131,7 +210,7 @@ const commandGroups = [
       { name: "!bonzai generate image_standard <prompt>", desc: "Standard SDXL image generation." },
       { name: "!bonzai generate video <prompt>", desc: "Video generation with LTX-2." },
       { name: "!bonzai generate audio <text>", desc: "Fast TTS." },
-      { name: "!bonzai generate audio_quality <text>", desc: "Quality Qwen TTS." },
+      { name: "!bonzai generate audio_quality <text>", desc: "Quality Chatterbox V3 TTS." },
       { name: "!bonzai generate music <prompt>", desc: "Music generation with ACE-Step." },
       { name: "!bonzai generate vision", desc: "Analyze the attached image with Qwen3-VL." },
     ],
@@ -160,30 +239,93 @@ const commandGroups = [
   },
 ];
 
+const filteredCommandGroups = computed(() => {
+  const query = commandQuery.value.trim().toLocaleLowerCase();
+  return commandGroups.map((group) => ({ ...group, items: group.items.filter((cmd) =>
+    `${group.title} ${cmd.name} ${cmd.desc}`.toLocaleLowerCase().includes(query),
+  ) })).filter((group) => group.items.length);
+});
+
+const boundedRequest = (request) => withTimeout(request, 8000, t("rcWorkflows.timeout"));
+
+async function copyText(value) {
+  copyMessage.value = "";
+  try {
+    if (window.electronAPI?.copyText) await window.electronAPI.copyText(value);
+    else await navigator.clipboard.writeText(value);
+    copyMessage.value = t("rcWorkflows.copied");
+  } catch (error) { errorMessage.value = error?.message || String(error); }
+}
+
+function openSetupGuide(url) {
+  if (window.electronAPI?.openExternal) window.electronAPI.openExternal(url);
+  else window.open(url, "_blank", "noopener,noreferrer");
+}
+
+async function testGateway() {
+  if (testing.value) return;
+  testing.value = true;
+  testMessage.value = "";
+  testPassed.value = false;
+  try {
+    const response = await fetch(new URL("/health", gateway.baseUrl), { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    if (result.status !== "ok") throw new Error(t("rcWorkflows.testFailed"));
+    testPassed.value = true;
+    testMessage.value = t(result.llmLoaded ? "rcWorkflows.testPassed" : "rcWorkflows.testNeedsModel");
+  } catch (error) {
+    testMessage.value = `${t("rcWorkflows.testFailed")}: ${error?.message || error}`;
+  } finally { testing.value = false; }
+}
+
 async function refreshAll() {
+  if (refreshing.value) return;
+  errorMessage.value = "";
+  if (!desktopAvailable) return;
   refreshing.value = true;
   try {
-    openclaw.installed = !!(await window.electronAPI?.openclawIsInstalled?.());
-    hermes.installed = !!(await window.electronAPI?.hermesIsInstalled?.());
-    openclaw.enabled = openclaw.installed && !!(await window.electronAPI?.openclawGetEnabled?.());
-    hermes.enabled = hermes.installed && !!(await window.electronAPI?.hermesGetEnabled?.());
-    Object.assign(llama, await window.electronAPI?.llamaRuntimeStatus?.() || {});
-    const p2pStatus = await window.electronAPI?.p2pStatus?.();
-    if (p2pStatus?.ok) Object.assign(p2p, p2pStatus);
-  } finally {
-    refreshing.value = false;
-  }
+    const results = await Promise.allSettled([
+      boundedRequest(window.electronAPI.harnessGetStatus()),
+      boundedRequest(window.electronAPI.llamaRuntimeStatus?.()),
+      boundedRequest(window.electronAPI.p2pStatus?.()),
+    ]);
+    if (results[0].status === "fulfilled") applyHarnessStatus(results[0].value);
+    if (results[1].status === "fulfilled") Object.assign(llama, results[1].value || {});
+    if (results[2].status === "fulfilled" && results[2].value?.ok) Object.assign(p2p, results[2].value);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
+  } catch (error) {
+    errorMessage.value = error?.message || String(error);
+  } finally { refreshing.value = false; }
 }
 
 async function toggleGateway(id) {
   const target = id === "openclaw" ? openclaw : hermes;
   target.busy = true;
+  errorMessage.value = "";
   try {
     const next = !target.enabled;
-    const res = id === "openclaw"
-      ? await window.electronAPI.openclawSetEnabled(next)
-      : await window.electronAPI.hermesSetEnabled(next);
-    if (res?.success !== false) target.enabled = next;
+    const res = await boundedRequest(window.electronAPI.harnessSetEnabled(id, next));
+    if (!res?.success) throw new Error(res?.error || "Integration update failed");
+    applyHarnessStatus(res.status);
+  } catch (error) {
+    errorMessage.value = error?.message || String(error);
+  } finally {
+    target.busy = false;
+  }
+}
+
+async function syncGateway(id) {
+  const target = id === "openclaw" ? openclaw : hermes;
+  target.busy = true;
+  errorMessage.value = "";
+  try {
+    const res = await boundedRequest(window.electronAPI.harnessSync(id));
+    if (!res?.success) throw new Error(res?.error || "Integration sync failed");
+    applyHarnessStatus(res.status);
+  } catch (error) {
+    errorMessage.value = error?.message || String(error);
   } finally {
     target.busy = false;
   }
@@ -193,11 +335,27 @@ onMounted(refreshAll);
 </script>
 
 <style scoped>
+.harness-copy-row { display: flex; flex-wrap: wrap; gap: var(--bz-space-2); align-items: center; }
+.harness-copy-row strong, .harness-diagnostics code { overflow-wrap: anywhere; user-select: text; }
+.harness-copy-status { color: var(--bz-success); margin: 0; }
+.harness-setup { padding-left: var(--bz-space-5); color: var(--bz-fg-mid); line-height: 1.8; margin: 0; }
+.harness-setup .is-complete { color: var(--bz-fg); font-weight: 600; }
+.harness-setup-copy, .harness-diagnostics p, .harness-test p { color: var(--bz-fg-mid); margin: var(--bz-space-2) 0; }
+.harness-diagnostics summary, .harness-panel > summary { cursor: pointer; min-height: 36px; }
+.harness-diagnostics { border-top: 1px solid var(--bz-border); padding-top: var(--bz-space-2); }
+.harness-test { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bz-space-3); }
+.harness-test > div { flex: 1; }
+.harness-test > p { flex-basis: 100%; }
+.harness-command-search { display: grid; gap: var(--bz-space-2); margin-top: var(--bz-space-4); }
+.harness-command-search input { color: var(--bz-fg); background: var(--bz-panel); border-color: var(--bz-border); }
 .harness-view {
   overflow-y: auto;
+  color: var(--bz-fg);
+  background: var(--bz-canvas);
   padding: var(--bz-space-6);
   gap: var(--bz-space-5);
 }
+.harness-view > * { flex-shrink: 0; min-width: 0; }
 .harness-hero {
   display: flex;
   justify-content: space-between;
@@ -217,6 +375,26 @@ onMounted(refreshAll);
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--bz-space-4);
 }
+.harness-local {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-left: 3px solid var(--bz-emerald-500);
+  border-radius: var(--bz-r-sm);
+  background: var(--bz-panel);
+}
+.harness-local p { margin: var(--bz-space-1) 0 0; color: var(--bz-fg-mid); }
+.harness-error {
+  margin: 0;
+  padding: var(--bz-space-3);
+  border: 1px solid var(--bz-danger);
+  border-radius: var(--bz-r-sm);
+  color: var(--bz-danger);
+  overflow-wrap: anywhere;
+}
 .harness-gateway,
 .harness-panel,
 .harness-runtime {
@@ -228,6 +406,11 @@ onMounted(refreshAll);
 .harness-gateway {
   display: grid;
   gap: var(--bz-space-3);
+}
+.harness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bz-space-2);
 }
 .harness-gateway__head {
   display: grid;
@@ -323,7 +506,7 @@ onMounted(refreshAll);
 .command-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: var(--bz-space-3);
   align-items: start;
   padding: var(--bz-space-3);
@@ -358,13 +541,27 @@ code {
     grid-template-columns: 1fr;
   }
   .harness-hero,
-  .harness-section-head {
+  .harness-section-head,
+  .harness-local {
     flex-direction: column;
     align-items: stretch;
   }
 }
 @media (max-width: 640px) {
-  .harness-view {
+  .harness-copy-row { display: flex; flex-wrap: wrap; gap: var(--bz-space-2); align-items: center; }
+.harness-copy-row strong, .harness-diagnostics code { overflow-wrap: anywhere; user-select: text; }
+.harness-copy-status { color: var(--bz-success); margin: 0; }
+.harness-setup { padding-left: var(--bz-space-5); color: var(--bz-fg-mid); line-height: 1.8; margin: 0; }
+.harness-setup .is-complete { color: var(--bz-fg); font-weight: 600; }
+.harness-setup-copy, .harness-diagnostics p, .harness-test p { color: var(--bz-fg-mid); margin: var(--bz-space-2) 0; }
+.harness-diagnostics summary, .harness-panel > summary { cursor: pointer; min-height: 36px; }
+.harness-diagnostics { border-top: 1px solid var(--bz-border); padding-top: var(--bz-space-2); }
+.harness-test { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bz-space-3); }
+.harness-test > div { flex: 1; }
+.harness-test > p { flex-basis: 100%; }
+.harness-command-search { display: grid; gap: var(--bz-space-2); margin-top: var(--bz-space-4); }
+.harness-command-search input { color: var(--bz-fg); background: var(--bz-panel); border-color: var(--bz-border); }
+.harness-view {
     padding: var(--bz-space-4);
   }
   .command-row {

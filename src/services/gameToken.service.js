@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
 import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
-import { getSigner, switchNetwork } from "./web3.service.js";
+import { getSigner, getProvider, switchNetwork } from "./web3.service.js";
 
 const ABI = [
   "function issue(address collectible,uint256 collectibleTokenId,string name,string symbol,string metadataURI) returns (address)",
@@ -24,7 +24,7 @@ const REGISTRY_ABI = [
 
 function requireFactory() {
   const address = CONFIG.gameTokenFactory.contractAddress;
-  if (!ethers.isAddress(address)) {
+  if (!ethers.isAddress(address) || address === ethers.ZeroAddress) {
     throw new Error("Game token issuance is not deployed on the active economy chain");
   }
   return address;
@@ -86,13 +86,13 @@ export async function issueGameToken({
 
 export async function getAllGameTokenAddresses() {
   const address = requireFactory();
-  const provider = new ethers.JsonRpcProvider(CONFIG.networks[ECONOMY_NETWORK_KEY].rpc);
+  const provider = await getProvider(ECONOMY_NETWORK_KEY);
   return new ethers.Contract(address, ABI, provider).getAllTokens();
 }
 
 export async function getGameTokenInfo(address) {
   if (!ethers.isAddress(address)) return null;
-  const provider = new ethers.JsonRpcProvider(CONFIG.networks[ECONOMY_NETWORK_KEY].rpc);
+  const provider = await getProvider(ECONOMY_NETWORK_KEY);
   const token = new ethers.Contract(address, TOKEN_ABI, provider);
   const [name, symbol, creator, collectible, collectibleTokenId, metadataURI, totalSupply] =
     await Promise.all([

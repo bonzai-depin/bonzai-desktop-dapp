@@ -119,6 +119,12 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
 
     mapping(uint256 => Provenance) public provenance;
 
+    /// @notice Failed pool payments retain their original destination and category.
+    mapping(address => mapping(uint8 => uint256)) public pendingPoolFees;
+    uint256 public totalPendingPoolFees;
+    event PoolFeesRetried(address indexed pool, uint8 indexed poolIndex, uint256 amount);
+
+
     event ContentMinted(
         uint256 indexed tokenId,
         address indexed creator,
@@ -287,8 +293,8 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
                     // Pool deposit succeeded
                 } catch {
                     emit PoolDepositFailed(poolAddr, contentType_, poolAmt);
-                    (bool s2, ) = treasury.call{value: poolAmt}("");
-                    require(s2, "Fallback treasury transfer failed");
+                    pendingPoolFees[poolAddr][contentType_] += poolAmt;
+                    totalPendingPoolFees += poolAmt;
                 }
             } else if (poolAmt > 0) {
                 (bool s2, ) = treasury.call{value: poolAmt}("");
@@ -466,13 +472,21 @@ contract BonzaiCollectibles is ERC721URIStorage, Ownable, ReentrancyGuard, IERC2
         require(success && (data.length == 0 || abi.decode(data, (bool))), "Transfer failed");
     }
 
-    /**
-     * @notice Recover any stuck ETH (e.g. if treasury/pool misconfigured)
-     */
-    function withdrawETH() external onlyOwner {
+    /// @notice Anyone may deliver retained fees, without changing their beneficiary.
+    function retryPoolFees(address pool, uint8 poolIndex) external nonReentrant {
+        uint256 amount = pendingPoolFees[pool][poolIndex];
+        require(amount > 0, "No pending pool fees");
+        pendingPoolFees[pool][poolIndex] = 0;
+        totalPendingPoolFees -= amount;
+        IBonzaiMintPool(pool).depositForPool{value: amount}(poolIndex);
+        emit PoolFeesRetried(pool, poolIndex, amount);
+    }
+
+    /// @notice Recover surplus ETH only; reserved pool fees remain payable to their original pool.
+    function withdrawETH() external onlyOwner nonReentrant {
         uint256 balance = address(this).balance;
-        require(balance > 0, "No ETH to withdraw");
-        (bool sent, ) = owner().call{value: balance}("");
+        require(balance > totalPendingPoolFees, "No ETH to withdraw");
+        (bool sent, ) = owner().call{value: balance - totalPendingPoolFees}("");
         require(sent, "ETH transfer failed");
     }
 

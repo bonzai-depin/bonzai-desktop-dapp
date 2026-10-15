@@ -82,6 +82,20 @@ export const ACTION_CLASSES = [
   "accounting.closeBooks",
   "process.map",
   "process.improve",
+  "gmao.createWorkOrder",
+  "gmao.updateStatus",
+  "gmao.completeWorkOrder",
+  "gmao.createQuote",
+  "gmao.updateQuote",
+  "gmao.recordServiceAcceptance", "gmao.validateProcessStep",
+  "gmao.saveInvoice",
+  "gmao.procurement",
+  "gmao.notifyClient",
+  "gmao.compliance",
+  "gmao.export",
+  "gmao.automation",
+  "gmao.recommendSchedule",
+  "gmao.reconcileBilling",
   "spend.under.10",       // pay/transfer < 10 units of charter currency
   "spend.under.50",
   "spend.under.250",
@@ -393,6 +407,66 @@ export const ROLE_LIBRARY = {
     inheritable: true,
   },
 
+  PurchasingManager: {
+    description: 'Achats fournisseurs : consulter les besoins liés aux OI, recueillir les proformas, préparer la commande et rapprocher les réceptions. Aucun achat sans validation humaine.',
+    allowedActions: ['team.directory','team.readConversation','team.requestWork','team.reply','team.readProcurement','team.updateProcurement'],
+    budgetPct: 0, reportsTo: 'CEO', teamMax: 3, inheritable: true, kind: 'digital',
+  },
+  MaintenanceContractManager: {
+    description: "Responsable de contrat HVAC. Supervise le périmètre, les SLA P0–P3, les réunions, les risques et le registre hebdomadaire.",
+    allowedActions: ["gmao.bootstrap", "gmao.evaluateSla", "gmao.runAutomation", "gmao.exportWeeklyRegister", "gmao.notifyClient", "assignWorkload", "recordPerformance"],
+    budgetPct: 0,
+    reportsTo: "COO",
+    teamMax: 1,
+    inheritable: true,
+    kind: "maintenance_ops",
+  },
+  MaintenancePlanner: {
+    description: "Planifie les gammes ST1/ST2/ST3, déclenche les préventifs et contrôle le réalisé par rapport au planifié.",
+    allowedActions: ["gmao.generatePreventive", "gmao.createWorkOrder", "gmao.addEvidence"],
+    budgetPct: 0,
+    reportsTo: "MaintenanceContractManager",
+    teamMax: 3,
+    inheritable: true,
+    kind: "maintenance_ops",
+  },
+  DispatchCoordinator: {
+    description: "Triage les demandes, affecte les techniciens, suit DI/DRS, l'astreinte et le rétablissement du service.",
+    allowedActions: ["gmao.createWorkOrder", "gmao.transitionWorkOrder", "gmao.addEvidence", "gmao.notifyClient", "gmao.updateQuote", "gmao.recommendSchedule", "field.prepareWorkOrder", "field.trackJob", "twilio.sendSMS", "email.send"],
+    budgetPct: 0.1,
+    reportsTo: "MaintenanceContractManager",
+    teamMax: 4,
+    inheritable: true,
+    kind: "maintenance_ops",
+  },
+  QHSEManager: {
+    description: "Contrôle CPR, accès, VIC, plans de prévention, habilitations et contrôles réglementaires avant intervention.",
+    allowedActions: ["gmao.registerCompliance", "gmao.addEvidence", "publishComplianceReport", "vetoAction"],
+    budgetPct: 0,
+    reportsTo: "MaintenanceContractManager",
+    teamMax: 2,
+    inheritable: true,
+    kind: "maintenance_ops",
+  },
+  DocumentController: {
+    description: "Nomme, classe et contrôle les pièces contractuelles, rapports, photos et dépôts RESANA avec leur validité.",
+    allowedActions: ["gmao.registerCompliance", "gmao.exportWeeklyRegister", "gmao.addEvidence"],
+    budgetPct: 0,
+    reportsTo: "QHSEManager",
+    teamMax: 2,
+    inheritable: true,
+    kind: "maintenance_ops",
+  },
+  BillingController: {
+    description: "Prépare les chiffrages BPU/hors BPU, franchise, coefficient K, TVA et rapproche service fait, commande et facture.",
+    allowedActions: ["gmao.updateProcurement", "gmao.createQuote", "gmao.updateQuote", "gmao.recordServiceAcceptance", "gmao.validateProcessStep", "gmao.saveInvoice", "gmao.reconcileBilling", "qbo.createInvoice", "invoice.create", "invoice.send"],
+    budgetPct: 0.2,
+    reportsTo: "CFO",
+    teamMax: 2,
+    inheritable: true,
+    kind: "maintenance_ops",
+  },
+
   // ─── Hybrid roles — companion coordinates a named human ────────────
   // The companion never claims to do the physical work; it briefs +
   // tracks + invoices around a real person. See `humanResources` on
@@ -405,6 +479,7 @@ export const ROLE_LIBRARY = {
       "field.prepareWorkOrder",
       "field.trackJob",
       "field.completeJob",
+      "gmao.recordAttachment",
       "field.followUp",
       "twilio.sendSMS",
       "gcal.createEvent",
@@ -484,6 +559,30 @@ export const GOAL_VERB_TO_ROLE = {
   bookkeep: "AccountingSpecialist",
   map: "ProcessAnalyst",
   document: "ProcessAnalyst",
+  maintain: "MaintenancePlanner",
+  plan: "MaintenancePlanner",
+  dispatch: "DispatchCoordinator",
+  intervene: "DispatchCoordinator",
+  restore: "DispatchCoordinator",
+  inspect: "QHSEManager",
+  certify: "QHSEManager",
+  archive: "DocumentController",
+  quote: "BillingController",
+  importer: "MaintenancePlanner",
+  generer: "MaintenancePlanner",
+  "générer": "MaintenancePlanner",
+  planifier: "MaintenancePlanner",
+  affecter: "DispatchCoordinator",
+  intervenir: "DispatchCoordinator",
+  retablir: "DispatchCoordinator",
+  "rétablir": "DispatchCoordinator",
+  controler: "MaintenanceContractManager",
+  "contrôler": "MaintenanceContractManager",
+  verifier: "QHSEManager",
+  "vérifier": "QHSEManager",
+  preparer: "DocumentController",
+  "préparer": "DocumentController",
+  chiffrer: "BillingController",
   // Treasury
   pay: "CFO",
   transfer: "CFO",
@@ -536,6 +635,15 @@ export function makeCharter(cfg = {}) {
       roleMin: cfg.heartbeat?.roleMin ?? 30,
       cfoMin: cfg.heartbeat?.cfoMin ?? 5,
     },
+    automation: {
+      maxActiveGoals: cfg.automation?.maxActiveGoals ?? 8,
+      maxOpenIssues: cfg.automation?.maxOpenIssues ?? 30,
+      maxAttempts: cfg.automation?.maxAttempts ?? 3,
+      retryBaseMs: cfg.automation?.retryBaseMs ?? 30_000,
+      retryMaxMs: cfg.automation?.retryMaxMs ?? 30 * 60_000,
+      staleRunMs: cfg.automation?.staleRunMs ?? 10 * 60_000,
+      leaseMs: cfg.automation?.leaseMs ?? 30 * 60_000,
+    },
     rules: {
       currency: cfg.currency || "USD",
       perHeartbeatSpendCap: cfg.perHeartbeatSpendCap ?? 5,
@@ -565,6 +673,7 @@ export function makeCharter(cfg = {}) {
       roleFitPolicy:
         "Provision the smallest useful role, bind it to the team memory, grant only required skills, and keep humans approving sensitive work.",
     },
+    workspace: cfg.workspace || null,
     /**
      * execution: per-task-class concurrency policy.
      *
@@ -686,6 +795,21 @@ function _defaultVetoModeMap() {
     "accounting.closeBooks": VETO_MODES.APPROVE,
     "process.map": VETO_MODES.AUTO,
     "process.improve": VETO_MODES.NOTIFY,
+    "gmao.createWorkOrder": VETO_MODES.AUTO,
+    "gmao.updateStatus": VETO_MODES.NOTIFY,
+    "gmao.completeWorkOrder": VETO_MODES.APPROVE,
+    "gmao.createQuote": VETO_MODES.AUTO,
+    "gmao.updateQuote": VETO_MODES.NOTIFY,
+    "gmao.recordServiceAcceptance": VETO_MODES.APPROVE,
+    "gmao.validateProcessStep": VETO_MODES.APPROVE,
+    "gmao.saveInvoice": VETO_MODES.APPROVE,
+    "gmao.procurement": VETO_MODES.NOTIFY,
+    "gmao.notifyClient": VETO_MODES.NOTIFY,
+    "gmao.compliance": VETO_MODES.NOTIFY,
+    "gmao.export": VETO_MODES.AUTO,
+    "gmao.automation": VETO_MODES.AUTO,
+    "gmao.recommendSchedule": VETO_MODES.NOTIFY,
+    "gmao.reconcileBilling": VETO_MODES.AUTO,
     "spend.under.10": VETO_MODES.AUTO,
     "spend.under.50": VETO_MODES.NOTIFY,
     "spend.under.250": VETO_MODES.APPROVE,
@@ -719,6 +843,13 @@ export function validateCharter(charter) {
   const hb = charter.heartbeat || {};
   if (!Number.isFinite(hb.ceoMin) || hb.ceoMin < 1) errors.push("heartbeat.ceoMin must be >= 1");
   if (!Number.isFinite(hb.roleMin) || hb.roleMin < 1) errors.push("heartbeat.roleMin must be >= 1");
+
+  const automation = charter.automation;
+  if (automation) {
+    if (!Number.isFinite(automation.maxActiveGoals) || automation.maxActiveGoals < 1) errors.push("automation.maxActiveGoals must be >= 1");
+    if (!Number.isFinite(automation.maxOpenIssues) || automation.maxOpenIssues < 1) errors.push("automation.maxOpenIssues must be >= 1");
+    if (!Number.isFinite(automation.maxAttempts) || automation.maxAttempts < 1 || automation.maxAttempts > 10) errors.push("automation.maxAttempts must be between 1 and 10");
+  }
 
   const rules = charter.rules || {};
   if (!CURRENCIES.includes(rules.currency)) errors.push(`currency must be one of ${CURRENCIES.join(",")}`);
@@ -779,14 +910,24 @@ export function resolveRoleCompanion(charter, roleKey) {
 }
 
 /**
- * Look up which role owns a goal. Reads the first word of `directive`,
- * lowercases it, strips trailing punctuation, and matches against
- * GOAL_VERB_TO_ROLE.
+ * Route explicit assignments first, then business subjects across the full
+ * brief, then recognized task verbs. Staffing inheritance is resolved separately.
  */
-export function routeGoalToRole(goal) {
-  const verb = (goal?.directive || "").trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z]/g, "");
-  if (!verb) return "CEO"; // fallback — CEO handles unparseable goals
-  return GOAL_VERB_TO_ROLE[verb] || "CEO";
+export function routeGoalToRole(goal, charter = null) {
+  if (ROLE_LIBRARY[goal?.assigneeRole]) return goal.assigneeRole;
+  const text = `${goal?.directive || goal?.title || ''} ${goal?.description || ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if(charter?.roles?.PurchasingManager?.companion) {
+    if(/\b(achats?|approvisionnement|procurement|supplier|suppliers|fournisseur|fournisseurs|proforma|reception de pieces)\b/.test(text))return 'PurchasingManager';
+  }
+  const domains = [
+    ['CFO', /\b(invoice|invoices|facture|factures|billing|overdue|receivable|receivables|collections|payment|refund|budget|cash|financial)\b/],
+    ['CMO', /\b(marketing|campaign|campaigns|leads|prospects|outreach|social|advertis\w*)\b/],
+    ['RnDLead', /\b(code|software|bug|bugs|technical|deploy|website)\b/],
+  ];
+  const domain = domains.find(([role, pattern]) => ROLE_LIBRARY[role] && pattern.test(text));
+  if (domain) return domain[0];
+  for (const word of text.match(/[a-z]+/g) || []) if (GOAL_VERB_TO_ROLE[word]) return GOAL_VERB_TO_ROLE[word];
+  return 'CEO';
 }
 
 /**

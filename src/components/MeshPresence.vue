@@ -1,50 +1,47 @@
 <template>
-  <aside class="mesh-presence" :class="{ 'is-open': open, 'is-embedded': embedded }">
+  <aside ref="presenceRoot" data-i18n-skip class="mesh-presence" :class="{ 'is-open': open, 'is-embedded': embedded, 'is-compact': compact }">
     <button
       type="button"
       class="mesh-presence__trigger"
       :aria-expanded="open"
-      aria-controls="mesh-presence-panel"
+      :aria-controls="panelId"
+      :aria-label="modeLabel"
+      :title="modeLabel"
       @click="toggle"
     >
+      <span class="material-symbols-outlined" aria-hidden="true">sensors</span>
       <span class="mesh-presence__signal" :class="{ 'is-online': store.state.started }" aria-hidden="true"></span>
       <span class="mesh-presence__copy">
-        <strong>{{ store.presenceLabel.value }}</strong>
-        <small>{{ privacyLabel }}</small>
+        <strong>{{ modeLabel }}</strong>
+        <small>{{ presenceLabel }}</small>
       </span>
       <span v-if="store.state.unread" class="mesh-presence__badge">{{ Math.min(store.state.unread, 9) }}</span>
-      <span class="material-symbols-outlined" aria-hidden="true">{{ open ? 'expand_more' : 'hub' }}</span>
     </button>
 
-    <div class="mesh-presence__tokens" title="Total prompt and response tokens processed by BonzAI">
+    <div class="local-token-count" :title="usageAvailable ? i18n.number(lifetimeTokens) + ' ' + i18n.t('rc.mesh.tokens') : 'Available in desktop app'" :aria-label="i18n.t('rc.mesh.tokens')">
       <span class="material-symbols-outlined" aria-hidden="true">data_usage</span>
-      <span><strong>{{ formattedTokenCount }}</strong> Tokens Saved</span>
+      <span class="local-token-count__copy"><span>{{ i18n.t('rc.mesh.tokens') }}</span><strong>{{ usageAvailable ? formattedTokenCount : '—' }}</strong></span>
     </div>
 
-    <section v-if="open" id="mesh-presence-panel" class="mesh-presence__panel">
+    <section v-if="open" :id="panelId" class="mesh-presence__panel">
       <header>
         <div>
-          <p class="bz-eyebrow">Inference mesh</p>
-          <h2 class="bz-h2">You are part of the network</h2>
+          <p class="bz-eyebrow">{{ i18n.t('rc.mesh.title') }}</p>
+          <h2 class="bz-h2">{{ modeLabel }}</h2>
         </div>
-        <button class="bz-iconbtn bz-iconbtn--sm" title="Network settings" aria-label="Open network settings" @click="openSettings">
+        <button class="bz-iconbtn bz-iconbtn--sm" :title="i18n.t('common.settings')" :aria-label="i18n.t('common.settings')" @click="openSettings">
           <span class="material-symbols-outlined">tune</span>
         </button>
       </header>
 
-      <div class="mesh-presence__privacy">
-        <span class="material-symbols-outlined" aria-hidden="true">shield_lock</span>
-        <p><strong>{{ privacyTitle }}</strong><span>{{ privacyCopy }}</span></p>
-      </div>
-
-      <div class="mesh-presence__stats" aria-label="Mesh status">
-        <span><strong>{{ store.state.connectedPeers }}</strong> connected</span>
-        <span><strong>{{ store.state.lanPeers }}</strong> on LAN</span>
-        <span><strong>{{ modeName }}</strong> mode</span>
+      <div class="mesh-presence__stats" :aria-label="i18n.t('rc.mesh.title')">
+        <span><strong>{{ store.state.connectedPeers }}</strong> {{ i18n.t('rc.mesh.connected') }}</span>
+        <span><strong>{{ store.state.lanPeers }}</strong> {{ i18n.t('rc.mesh.lan') }}</span>
+        <span><strong>{{ modeName }}</strong> {{ i18n.t('rc.mesh.mode') }}</span>
       </div>
 
       <div class="mesh-presence__activity">
-        <p class="bz-eyebrow">Live activity</p>
+        <p class="bz-eyebrow">{{ i18n.t('rc.mesh.activity') }}</p>
         <ol v-if="store.state.events.length">
           <li v-for="event in store.state.events.slice(0, 8)" :key="event.id">
             <span class="mesh-presence__event-dot" :class="`is-${event.type}`"></span>
@@ -52,46 +49,61 @@
             <time>{{ relativeTime(event.ts) }}</time>
           </li>
         </ol>
-        <div v-else class="mesh-presence__empty">Listening for nearby BonzAI peers.</div>
+        <div v-else class="mesh-presence__empty">{{ i18n.t('rc.mesh.empty') }}</div>
       </div>
     </section>
   </aside>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, useId } from "vue";
 import meshStore from "../stores/meshStore.js";
 
 defineProps({
   embedded: { type: Boolean, default: false },
+  compact: { type: Boolean, default: false },
 });
 
+import { useI18n } from '../i18n/index.js';
+const i18n = useI18n();
+const panelId = useId();
 const store = meshStore;
+const presenceLabel = computed(() => !store.state.started ? i18n.t('rc.mesh.offline') : Math.max(store.state.connectedPeers, store.state.lanPeers) ? i18n.t('rc.mesh.peers', { count: Math.max(store.state.connectedPeers, store.state.lanPeers) }) : i18n.t('rc.mesh.discovering'));
 const open = ref(false);
 const lifetimeTokens = ref(0);
+const usageAvailable = ref(false);
+const presenceRoot = ref(null);
+function dismissPanels(event) {
+  if (event.type === 'keydown' && event.key !== 'Escape') return;
+  if (event.type === 'pointerdown' && presenceRoot.value?.contains(event.target)) return;
+  open.value = false;
+}
 let stopTokenListener = null;
-const modeName = computed(() => ({ local: "Private", consumer: "Consumer", provider: "Provider" })[store.state.mode] || "Private");
-const privacyLabel = computed(() => store.state.mode === "provider" ? "Serving approved capacity" : "Presence only, work stays private");
-const privacyTitle = computed(() => store.state.mode === "provider" ? "Provider mode is active" : "Discovery does not share your work");
-const privacyCopy = computed(() => store.state.mode === "provider"
-  ? "Inbound requests can use enabled pipelines. Prompts never appear in this activity feed."
-  : "Peers can see that BonzAI is available. Files, prompts, models, wallets and company data remain on this device.");
+const modeName = computed(() => i18n.t(store.state.mode === 'local' ? 'common.private' : `network.${store.state.mode}`));
+const modeLabel = computed(() => `${modeName.value} ${i18n.t('rc.mesh.modeTitle')}`);
 const formattedTokenCount = computed(() => {
   const value = lifetimeTokens.value;
   if (value >= 1_000_000_000) return `${Number((value / 1_000_000_000).toFixed(1))}B`;
   if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(1))}M`;
   if (value >= 10_000) return `${Number((value / 1_000).toFixed(1))}K`;
-  return new Intl.NumberFormat().format(value);
+  return i18n.number(value);
 });
 
 onMounted(async () => {
-  lifetimeTokens.value = Number(await window.electronAPI?.usage?.getLifetimeTokens?.()) || 0;
+  document.addEventListener('pointerdown', dismissPanels);
+  document.addEventListener('keydown', dismissPanels);
+  try {
+    const total = await window.electronAPI?.usage?.getLifetimeTokens?.();
+    usageAvailable.value = total != null && Number.isFinite(Number(total));
+    lifetimeTokens.value = Math.max(0, Number(total) || 0);
+  } catch { usageAvailable.value = false; }
   stopTokenListener = window.electronAPI?.usage?.onLifetimeTokensChanged?.((total) => {
-    lifetimeTokens.value = Number(total) || 0;
+    usageAvailable.value = Number.isFinite(Number(total));
+    lifetimeTokens.value = Math.max(0, Number(total) || 0);
   });
 });
 
-onUnmounted(() => stopTokenListener?.());
+onUnmounted(() => { stopTokenListener?.(); document.removeEventListener('pointerdown', dismissPanels); document.removeEventListener('keydown', dismissPanels); });
 
 function toggle() {
   open.value = !open.value;
@@ -102,10 +114,7 @@ function openSettings() {
   window.dispatchEvent(new CustomEvent("bonzai:open-network"));
 }
 function relativeTime(ts) {
-  const seconds = Math.max(0, Math.floor((Date.now() - Number(ts || Date.now())) / 1000));
-  if (seconds < 60) return "now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  return `${Math.floor(seconds / 3600)}h`;
+  return i18n.relative(Number(ts || Date.now()));
 }
 </script>
 
@@ -120,7 +129,7 @@ function relativeTime(ts) {
 .mesh-presence__copy { display: grid; flex: 1; min-width: 0; line-height: 1.25; }
 .mesh-presence__copy strong { font-size: var(--bz-size-meta); font-weight: 400; }
 .mesh-presence__copy small { color: var(--bz-fg-low); font-size: var(--bz-size-micro); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mesh-presence__badge { min-width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; color: var(--bz-fg); background: var(--bz-purple-500); font: 11px/1 var(--bz-font-mono); }
+.mesh-presence__badge { min-width: 20px; height: 20px; display: grid; place-items: center; border-radius: 10px; color: var(--bz-on-accent); background: var(--bz-purple-500); font: 11px/1 var(--bz-font-mono); }
 .mesh-presence__tokens { display: flex; align-items: center; gap: var(--bz-space-2); min-height: 30px; padding: var(--bz-space-1) var(--bz-space-2); color: var(--bz-fg-low); font-size: var(--bz-size-micro); }
 .mesh-presence__tokens .material-symbols-outlined { color: var(--bz-purple-300); font-size: 15px; }
 .mesh-presence__tokens strong { color: var(--bz-fg); font-family: var(--bz-font-mono); font-weight: 500; }
@@ -144,15 +153,39 @@ function relativeTime(ts) {
 .mesh-presence__event-dot.is-peer_disconnected { background: var(--bz-fg-faint); }
 .mesh-presence__empty { margin-top: var(--bz-space-3); padding: var(--bz-space-5) 0; color: var(--bz-fg-low); text-align: center; font-size: var(--bz-size-meta); }
 @media (max-width: 720px) { .mesh-presence { top: var(--bz-space-2); right: var(--bz-space-2); width: calc(100vw - 16px); } }
-@media (max-width: 1024px) {
-  .mesh-presence.is-embedded { display: grid; justify-items: center; margin-top: 0; }
-  .is-embedded .mesh-presence__trigger { width: 40px; min-height: 36px; justify-content: center; }
-  .is-embedded .mesh-presence__copy,
-  .is-embedded .mesh-presence__badge,
-  .is-embedded .mesh-presence__trigger > .material-symbols-outlined { display: none; }
-  .is-embedded .mesh-presence__tokens { display: grid; justify-items: center; gap: 0; padding-inline: 0; }
-  .is-embedded .mesh-presence__tokens > span:last-child { font-size: 0; }
-  .is-embedded .mesh-presence__tokens strong { font-size: 10px; }
-  .is-embedded .mesh-presence__panel { position: fixed; top: var(--bz-space-3); left: 80px; width: min(300px, calc(100vw - 96px)); }
+.mesh-presence.is-embedded.is-compact { display: grid; justify-items: center; margin-top: 0; }.is-embedded.is-compact .mesh-presence__trigger { width: 40px; min-height: 36px; justify-content: center; }.is-embedded.is-compact .mesh-presence__copy, .is-embedded.is-compact .mesh-presence__badge, .is-embedded.is-compact .mesh-presence__trigger > .material-symbols-outlined { display: none; }.is-embedded.is-compact .mesh-presence__tokens { display: grid; justify-items: center; gap: 0; padding-inline: 0; }.is-embedded.is-compact .mesh-presence__tokens > span:last-child { font-size: 0; }.is-embedded.is-compact .mesh-presence__tokens strong { font-size: 10px; }.is-embedded.is-compact .mesh-presence__panel { position: fixed; top: var(--bz-space-3); left: 96px; width: min(300px, calc(100vw - 112px)); }
+
+.mesh-presence.is-embedded { display: flex; flex-direction: column; gap: 12px; }
+.local-token-count { order: -1; display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 0; border-radius: var(--bz-r-sm); padding: 14px 10px; color: var(--bz-fg); background: var(--bz-emerald-soft); }
+.local-token-count > .material-symbols-outlined { color: var(--bz-emerald-500); }
+.local-token-count__copy { display: grid; gap: 3px; flex: 1; font-size: 11px; }
+.local-token-count__copy strong { font: italic 900 28px/1.15 'Fira Sans Condensed', sans-serif; color: var(--bz-fg); }
+.mesh-presence__copy strong, .mesh-presence__privacy strong { color: var(--bz-fg); }
+.is-embedded .mesh-presence__trigger { background: var(--bz-raised); border: 1px solid var(--bz-border-strong); padding: 10px 8px; }
+.is-compact .local-token-count { flex-direction: column; gap: 4px; padding: 8px 2px; }
+.is-compact .local-token-count__copy > span { display: none; }
+.is-compact .local-token-count__copy strong { font-size: 12px; }
+.mesh-presence.is-embedded.is-compact { align-items: center; }
+.is-embedded.is-compact .mesh-presence__trigger { position: relative; }
+.is-embedded.is-compact .mesh-presence__trigger > .material-symbols-outlined { display: block; font-size: 20px; color: var(--bz-fg-mid); }
+.is-embedded.is-compact .mesh-presence__signal { position: absolute; width: 5px; height: 5px; top: 5px; right: 5px; box-shadow: none; }
+.mesh-presence__trigger:hover { border-color: var(--bz-accent); background: var(--bz-control-hover); }
+.mesh-presence__panel { max-height: calc(100dvh - 96px); overflow-y: auto; }
+/* Same control treatment as the sidebar model and hardware buttons. */
+.is-embedded .mesh-presence__trigger {
+  position: relative; min-height: 36px; padding: var(--bz-space-2) var(--bz-space-3);
+  gap: var(--bz-space-2); background: var(--bz-card); border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-sm); color: var(--bz-fg-low); font-family: var(--bz-font-body);
+  font-size: var(--bz-size-meta); box-shadow: none;
+  transition: border-color var(--bz-dur-fast), color var(--bz-dur-fast);
+}
+.is-embedded .mesh-presence__trigger:hover { background: var(--bz-card); border-color: var(--bz-purple-300); color: var(--bz-fg); }
+.is-embedded .mesh-presence__trigger > .material-symbols-outlined { font-size: 14px; color: var(--bz-purple-300); }
+.is-embedded .mesh-presence__copy strong { color: inherit; font-weight: 500; }
+.is-embedded .mesh-presence__copy small { display: none; }
+.is-embedded .mesh-presence__signal { display: none; }
+.is-embedded.is-compact .mesh-presence__trigger { width: 100%; }
+@media (max-height: 900px) and (min-width: 1025px) {
+  .is-embedded .mesh-presence__trigger { padding: 4px var(--bz-space-2); }
 }
 </style>

@@ -40,6 +40,9 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
     mapping(address => address) public collections;
     address[] public allCollections;
 
+    /// @notice Immutable membership of clones created by this factory, independent of NFT ownership.
+    mapping(address => bool) public isCollection;
+
     event CollectionCreated(address indexed owner, address indexed collection, string name);
     event StakingVaultUpdated(address indexed oldVault, address indexed newVault);
 
@@ -88,6 +91,7 @@ contract BonzaiCollectiblesFactory is Ownable, ReentrancyGuard {
         }
 
         collections[msg.sender] = clone;
+        isCollection[clone] = true;
         allCollections.push(clone);
 
         emit CollectionCreated(msg.sender, clone, name_);

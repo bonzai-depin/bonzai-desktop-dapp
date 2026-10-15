@@ -163,7 +163,7 @@ _PIPELINE_ID = {
     "ltx2_video":      9,   # video_fast
     "wan22_high":      9,   # video_quality (until VIDEO_QUALITY=10 lands)
     "wan22_low":       9,
-    "qwen3_tts":       7,   # audio_quality
+    "chatterbox":      7,   # audio_quality
     "ace_step":        8,   # music
 }
 

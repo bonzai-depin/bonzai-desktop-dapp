@@ -357,6 +357,7 @@
       </div>
 
       <!-- Create Market Button -->
+      <p v-if="!configuredSources" class="help">Add a named verification source and its URL before preparing the proposal.</p>
       <div class="control mt-5 has-text-centered">
         <button
           class="bz-btn bz-btn--agent-cta bz-btn--lg"
@@ -372,7 +373,7 @@
           <span v-else class="material-symbols-outlined">
             online_prediction
           </span>
-          {{ isCreating ? 'Creating...' : 'Create Prediction Market' }}
+          {{ isCreating ? 'Preparing...' : 'Prepare market proposal' }}
         </button>
       </div>
     </div>
@@ -380,7 +381,7 @@
     <!-- Active Markets -->
     <div v-if="markets.length > 0" class="skill-panel mt-5 has-text-left">
       <h2 class="fira-sans-condensed-black-italic is-size-3 has-text-brand has-text-left mb-4">
-        Your Prediction Markets
+        Your market proposals
       </h2>
       <div
         v-for="market in markets"
@@ -397,6 +398,7 @@
             </p>
           </div>
           <div class="column is-narrow">
+            <span class="skill-chip">Draft · not published</span>
             <span class="skill-chip skill-chip--info">{{ market.useCase }}</span>
             <span class="skill-chip skill-chip--warning ml-2">{{ market.leverage }}x</span>
           </div>
@@ -408,9 +410,7 @@
 
 <script>
 import { ref, reactive, computed } from 'vue';
-import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 
-const SKILL_ID = 'prediction-market-maker-v1.0.0';
 
 export default {
   name: 'DSLASkill',
@@ -614,7 +614,8 @@ export default {
         slaForm.sloValue > 0 &&
         slaForm.startDate &&
         slaForm.endDate &&
-        new Date(slaForm.endDate) > new Date(slaForm.startDate)
+        new Date(slaForm.endDate) > new Date(slaForm.startDate) &&
+        slaForm.dataSources.some(source => source.name?.trim() && /^https?:\/\//i.test(source.endpoint?.trim()))
       );
     });
 
@@ -684,10 +685,6 @@ export default {
 
     const createPredictionMarket = async () => {
       if (!canCreate.value) return;
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        console.warn('[DSLA] Skill not purchased — execution blocked.');
-        return;
-      }
 
       isCreating.value = true;
 
@@ -711,6 +708,8 @@ export default {
           dataSources: slaForm.dataSources.filter(s => s.name || s.endpoint),
           question,
           createdAt: new Date().toISOString(),
+          status: 'draft',
+          published: false,
         };
 
         markets.value.push(market);

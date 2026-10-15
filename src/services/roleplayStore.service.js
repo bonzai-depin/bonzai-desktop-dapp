@@ -22,19 +22,130 @@
  *   - New roleplay-generated images (Phase 5+): will be `bonzai-blob://`
  *     URLs once the renderer migrates session writes.
  */
+import { localVideoPath } from '../utils/roleplayVideo.js';
 import { memoryService } from './memory.service.js';
+import { companionExtraMetadata } from '../shared/companionMetadata.js';
 
 const COMPANIONS_KEY = "roleplayCompanions";
+const COMPANION_LAUNCHES_KEY = "roleplayCompanionLaunches";
+// Only migration state lives here. The roster stays in its existing key.
+const PENDING_SQLITE_KEY = "roleplayCompanionsPendingSQLite";
 const SESSIONS_KEY = "roleplaySessions";
 
-const _api = () => window.electronAPI?.db || null;
+const _api = () => typeof window !== 'undefined' ? window.electronAPI?.db || null : null;
+
+/** Companion records cross IPC and persist as JSON. Reading their JSON
+ * values also unwraps nested Vue proxies, which structuredClone cannot do.
+ * Preserve integer token IDs exactly when a chain result supplies bigint.
+ */
+export function serializeCompanionData(value) {
+  return JSON.parse(JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item));
+}
+
+async function _readLocal(key, fallback = null) {
+  const store = typeof window !== 'undefined' ? window.electronAPI?.store : null;
+  if (store?.get) return store.get(key, fallback);
+  try {
+    const raw = typeof window !== 'undefined' ? window.localStorage?.getItem(key) : null;
+    return raw == null ? fallback : JSON.parse(raw);
+  } catch { return fallback; }
+}
+
+async function _legacyCompanions() {
+  const stored = await _readLocal(COMPANIONS_KEY, []);
+  return Array.isArray(stored) ? stored : [];
+}
+
+async function _writeLocal(key, value) {
+  const store = typeof window !== 'undefined' ? window.electronAPI?.store : null;
+  if (store?.set) return store.set(key, value);
+  const storage = typeof window !== 'undefined' ? window.localStorage : null;
+  if (!storage?.setItem) throw new Error('Local companion storage is unavailable.');
+  storage.setItem(key, JSON.stringify(value));
+}
+
+async function _launchJournal() {
+  const rows = await _readLocal(COMPANION_LAUNCHES_KEY, []);
+  return Array.isArray(rows) ? rows : [];
+}
+
+function _missingRosterHandler(error) {
+  return /No handler registered for ['"]db:companions:replaceRoster['"]/.test(String(error?.message || error));
+}
+
+async function _rosterFingerprint(rows) {
+  const bytes = new TextEncoder().encode(JSON.stringify(rows));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function _pendingLocalRoster() {
+  const state = await _readLocal(PENDING_SQLITE_KEY);
+  if (state?.version !== 1 || !Array.isArray(state.fingerprints)) return null;
+  // Missing/corrupt storage must never turn a stale marker into a deletion.
+  const rows = await _readLocal(COMPANIONS_KEY);
+  if (!Array.isArray(rows)) return null;
+  const fingerprint = await _rosterFingerprint(rows);
+  return state.fingerprints.includes(fingerprint) ? { rows, fingerprint } : null;
+}
+
+async function _savePendingRoster(rows, pending) {
+  const fingerprint = await _rosterFingerprint(rows);
+  // Write the small marker first. If the roster write fails, its previous
+  // accepted local version remains readable; an uncommitted mirror never
+  // overrides SQLite. No second roster or per-agent store is introduced.
+  await _writeLocal(PENDING_SQLITE_KEY, {
+    version: 1,
+    fingerprints: [...new Set([pending?.fingerprint, fingerprint].filter(Boolean))],
+  });
+  await _writeLocal(COMPANIONS_KEY, rows);
+}
+
+async function _reconcilePendingRoster(api, pending) {
+  const rows = await _restoreLaunches(pending.rows);
+  await api.replaceRoster(rows.map(_normalizeCompanionForDB));
+  // Clear only after the atomic replacement succeeds, including deletions.
+  // A failed clear leaves the same accepted roster safe to retry. A later
+  // save must finish this step before committing a different SQL roster.
+  await _writeLocal(PENDING_SQLITE_KEY, null);
+  return rows;
+}
+
+let _companionOperation = Promise.resolve();
+function _withCompanionStorage(operation) {
+  const result = _companionOperation.then(operation);
+  _companionOperation = result.catch(() => {});
+  return result;
+}
+
+const LAUNCH_FIELDS = ['tokenLaunchTx', 'tokenLaunchStatus', 'txHash', 'launchStatus', 'chainId', 'contractAddress', 'network', 'standard', 'tokenId', 'tokenAddress', 'poolId', 'tokenSymbol', 'agentWallet', 'agentWalletProvider'];
+function _launchRecord(companion) {
+  const row = { id: companion.id };
+  for (const key of LAUNCH_FIELDS) {
+    const value = companion[key];
+    if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) row[key] = value;
+  }
+  return row;
+}
+
+async function _restoreLaunches(companions) {
+  let journal;
+  try { journal = await _launchJournal(); } catch { return companions; }
+  const byId = new Map(journal.filter(row => row?.id && (row.txHash || row.tokenLaunchTx)).map(row => [row.id, row]));
+  return companions.map(companion => {
+    const entry = byId.get(companion.id);
+    if (!entry || (companion.txHash === entry.txHash && ['confirmed', 'reverted'].includes(companion.launchStatus) && companion.tokenLaunchTx === entry.tokenLaunchTx && companion.tokenLaunchStatus === entry.tokenLaunchStatus)) return companion;
+    // A compact journal cannot introduce a companion or overwrite private
+    // profile/workflow data. It only recovers its submitted transaction.
+    return { ...companion, ..._launchRecord(entry) };
+  });
+}
 let _warned = false;
 function _warnOnce(err) {
   if (_warned) return;
   _warned = true;
   console.warn(
-    "[roleplayStore] data layer not reachable — companion reads will " +
-    "fall back to electron-store. Run `npm install` and restart. Error: " +
+    "[roleplayStore] companion database unavailable. Error: " +
     (err?.message || err || "no IPC handler"),
   );
 }
@@ -47,39 +158,94 @@ function _warnOnce(err) {
  * Load all companions (defaults + custom). Always returns a flat array,
  * matching the legacy `roleplayCompanions` shape.
  */
-export async function loadCompanions() {
-  const api = _api()?.companions;
-  if (api) {
-    try {
-      const rows = await api.list();
-      return Array.isArray(rows) ? rows.map(_normalizeCompanionFromDB) : [];
-    } catch (err) { _warnOnce(err); }
-  }
-  // Legacy fallback
-  const stored = await window.electronAPI?.store?.get?.(COMPANIONS_KEY, []);
-  return Array.isArray(stored) ? stored : [];
+export function loadCompanions() {
+  return _withCompanionStorage(async () => {
+    const api = _api()?.companions;
+    const pending = await _pendingLocalRoster();
+    if (pending) {
+      // A save accepted by an older main process remains authoritative on
+      // reload. Once the new handler exists, move that exact roster to SQL.
+      if (typeof api?.replaceRoster === 'function') {
+        try { return await _reconcilePendingRoster(api, pending); }
+        catch (err) { _warnOnce(err); }
+      }
+      return _restoreLaunches(pending.rows);
+    }
+    if (api) {
+      try {
+        const rows = await api.list();
+        // Older SQLite imports omitted these metadata fields. Recover only
+        // their allowlisted extras from the matching legacy companion; SQL
+        // still owns the roster, identity and all dedicated columns.
+        let legacy = [];
+        try { legacy = await _legacyCompanions(); } catch {}
+        const legacyById = new Map(legacy.filter(c => c?.id).map(c => [c.id, c]));
+        return _restoreLaunches(Array.isArray(rows) ? rows.map(row => _normalizeCompanionFromDB(row, legacyById.get(row.id))) : []);
+      } catch (err) { _warnOnce(err); }
+    }
+    return _restoreLaunches(await _legacyCompanions());
+  });
 }
 
 /**
- * Save the full companion roster. We upsert each row to SQLite + also
+ * Save the full companion roster atomically to SQLite + also
  * mirror back to the legacy electron-store key so any code paths still
  * reading from there (during the migration window) stay in sync.
  */
-export async function saveCompanions(companions) {
-  const list = Array.isArray(companions) ? companions : [];
-  const api = _api()?.companions;
-  if (api) {
-    try {
-      // Bulk upsert is faster than per-row upserts when 14+ companions.
-      const rows = list.map(_normalizeCompanionForDB);
-      await api.bulkInsert(rows);
-    } catch (err) { _warnOnce(err); }
+export function saveCompanions(companions) {
+  return _withCompanionStorage(() => _saveCompanions(companions));
+}
+
+async function _saveCompanions(companions) {
+  if (!Array.isArray(companions)) throw new TypeError('Companion roster must be an array.');
+  const list = serializeCompanionData(companions);
+  const ids = new Set();
+  for (const companion of list) {
+    if (!companion || typeof companion.id !== 'string' || !companion.id.trim() || typeof companion.name !== 'string' || !companion.name.trim() || ids.has(companion.id)) {
+      throw new TypeError('Every companion requires a unique ID and name.');
+    }
+    ids.add(companion.id);
   }
-  // Mirror to legacy store so any other consumer (or rollback) still
-  // sees the same data. Removed in Phase 9 cleanup.
-  try {
-    await window.electronAPI?.store?.set?.(COMPANIONS_KEY, list);
-  } catch {}
+  // Store submitted transactions separately from potentially large images.
+  // If the full browser roster exceeds its quota, the existing companion
+  // still reloads with its pending tx and cannot invite a duplicate launch.
+  const launches = list.filter(companion => (companion.txHash && companion.launchStatus) || (companion.tokenLaunchTx && companion.tokenLaunchStatus)).map(_launchRecord);
+  if (launches.length) {
+    try {
+      const previous = await _launchJournal();
+      const byId = new Map(previous.filter(row => row?.id).map(row => [row.id, _launchRecord(row)]));
+      for (const launch of launches) byId.set(launch.id, launch);
+      await _writeLocal(COMPANION_LAUNCHES_KEY, [...byId.values()]);
+    } catch {}
+  }
+  const api = _api()?.companions;
+  const pending = await _pendingLocalRoster();
+  let databaseSaved = false;
+  if (typeof api?.replaceRoster === 'function') {
+    try {
+      if (pending) await _reconcilePendingRoster(api, pending);
+      await api.replaceRoster(list.map(_normalizeCompanionForDB));
+      databaseSaved = true;
+    } catch (err) {
+      _warnOnce(err);
+      // Only the old-main missing-handler case permits a durable local
+      // save. A real SQL failure must not accept edits or a deletion.
+      if (!_missingRosterHandler(err)) {
+        throw new Error(`Companions could not be saved: ${err?.message || err}`, { cause: err });
+      }
+    }
+  }
+  if (databaseSaved) {
+    // SQLite committed. Its optional mirror cannot invalidate that save.
+    try { await _writeLocal(COMPANIONS_KEY, list); } catch {}
+  } else {
+    try { await _savePendingRoster(list, pending); }
+    catch (err) {
+      throw new Error(`Companions could not be saved: ${err?.message || 'local storage unavailable'}`, { cause: err });
+    }
+  }
+  try { await _writeLocal(COMPANION_LAUNCHES_KEY, launches); } catch {}
+  return { saved: true, storage: databaseSaved ? 'sqlite' : 'local' };
 }
 
 /**
@@ -372,6 +538,8 @@ function _sessionRowToLegacyShape(sess, messages, ctx = {}) {
       // Renderer-supported extras (preserved from legacy)
       emotion: legacy?.emotion ?? null,
       action: legacy?.action ?? null,
+      mediaErrors: legacy?.mediaErrors ?? null,
+
       images: legacy?.images ?? null,                    // plural — multi-image messages
       isAutonomous: legacy?.isAutonomous ?? false,
       autonomousActivity: legacy?.autonomousActivity ?? null,
@@ -494,10 +662,11 @@ async function _resolveMediaRefs(m, blobsApi, sourceId) {
     // Local file path (Flask returns these for TTS/video as audio_path /
     // video_path). Pull the file off disk into the content-addressed
     // blob store before the temp file gets cleaned up.
-    if (s.src.startsWith("/") && !s.src.startsWith("//")) {
+    const localPath = localVideoPath(s.src);
+    if (localPath) {
       try {
-        const ext = (s.src.split(".").pop() || s.defaultExt).toLowerCase();
-        const ref = await blobsApi.writeFromPath(s.src, ext, {
+        const ext = (localPath.split(".").pop() || s.defaultExt).toLowerCase();
+        const ref = await blobsApi.writeFromPath(localPath, ext, {
           mimeType: s.defaultMime,
           source: "roleplay-msg",
           sourceId,
@@ -551,7 +720,7 @@ function _modesFromSettings(s) {
 }
 function _captureMessageMeta(m) {
   const meta = {};
-  for (const k of ["model", "tokens", "tokensIn", "tokensOut", "elapsedMs", "usage", "ttsVoice", "imageModel", "videoModel", "contentLevel", "thinking"]) {
+  for (const k of ["mediaErrors", "workflowResult", "model", "tokens", "tokensIn", "tokensOut", "elapsedMs", "usage", "ttsVoice", "imageModel", "videoModel", "contentLevel", "thinking"]) {
     if (m[k] !== undefined) meta[k] = m[k];
   }
   return Object.keys(meta).length ? meta : null;
@@ -567,8 +736,13 @@ function _parseJSON(s) { try { return JSON.parse(s); } catch { return null; } }
  * to objects/arrays so the renderer doesn't have to know the storage
  * shape. Booleans come back as 0/1 (SQLite has no bool); coerce.
  */
-function _normalizeCompanionFromDB(row) {
-  const out = { ...row };
+function _normalizeCompanionFromDB(row, legacy) {
+  const out = {
+    ...(row.extraJson == null ? companionExtraMetadata(legacy) : {}),
+    ...companionExtraMetadata(row.extraJson),
+    ...row,
+  };
+  delete out.extraJson;
   // Coerce booleans
   out.isCustom = !!row.isCustom;
   out.isDefault = !!row.isDefault;
@@ -599,7 +773,7 @@ function _normalizeCompanionForDB(c) {
     image: c.image ?? null,
     imagePromptBase: c.imagePromptBase ?? null,
     contentLevelDefault: c.contentLevelDefault ?? null,
-    isDefault: !c.isCustom,
+    isDefault: c.isDefault ?? !c.isCustom,
     isCustom: !!c.isCustom,
     description: c.description ?? null,
     shortBio: c.shortBio ?? null,
@@ -616,6 +790,7 @@ function _normalizeCompanionForDB(c) {
     contractAddress: c.contractAddress ?? null,
     tokenId: c.tokenId ?? null,
     agentWallet: c.agentWallet ?? null,
+    extraJson: companionExtraMetadata(c),
     createdAt: c.createdAt || Date.now(),
     updatedAt: c.updatedAt || Date.now(),
   };

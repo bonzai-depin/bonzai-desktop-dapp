@@ -383,7 +383,7 @@ describe("BonzaiUnlock", function () {
       ).to.be.revertedWithCustomError(unlock, "OwnableUnauthorizedAccount");
     });
 
-    it("should succeed when foundation wallet rejects ETH (liquidity receives full amount)", async function () {
+    it("preserves both shares when the foundation rejects ETH", async function () {
       const [owner, , , user1] = await ethers.getSigners();
 
       const ETHRejector = await ethers.getContractFactory("ETHRejector");
@@ -400,14 +400,14 @@ describe("BonzaiUnlock", function () {
       const halfPrice = UNLOCK_PRICE / 2n;
 
       await expect(unlockBad.connect(owner).withdrawProceeds())
-        .to.emit(unlockBad, "ProceedsWithdrawn")
-        .withArgs(rejectorAddr, 0, liquidity.address, halfPrice, anyValue);
+        .to.be.revertedWith("Proceeds transfer failed");
 
       const liquidityAfter = await ethers.provider.getBalance(liquidity.address);
-      expect(liquidityAfter - liquidityBefore).to.equal(halfPrice);
+      expect(liquidityAfter - liquidityBefore).to.equal(0n);
+      expect(await ethers.provider.getBalance(await unlockBad.getAddress())).to.equal(UNLOCK_PRICE);
     });
 
-    it("should succeed when liquidity wallet rejects ETH (foundation receives full amount)", async function () {
+    it("preserves both shares when liquidity rejects ETH", async function () {
       const [owner, foundation, , user1] = await ethers.getSigners();
 
       const ETHRejector = await ethers.getContractFactory("ETHRejector");
@@ -423,11 +423,11 @@ describe("BonzaiUnlock", function () {
       const halfPrice = UNLOCK_PRICE / 2n;
 
       await expect(unlockBad.connect(owner).withdrawProceeds())
-        .to.emit(unlockBad, "ProceedsWithdrawn")
-        .withArgs(foundation.address, halfPrice, rejectorAddr, 0, anyValue);
+        .to.be.revertedWith("Proceeds transfer failed");
 
       const foundationAfter = await ethers.provider.getBalance(foundation.address);
-      expect(foundationAfter - foundationBefore).to.equal(halfPrice);
+      expect(foundationAfter - foundationBefore).to.equal(0n);
+      expect(await ethers.provider.getBalance(await unlockBad.getAddress())).to.equal(UNLOCK_PRICE);
     });
   });
 

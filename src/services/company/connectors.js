@@ -43,7 +43,7 @@ async function _writeSecret(companyId, connId, secret, metadata = {}) {
   if (window.electronAPI?.companyConnector?.setSecret) {
     await window.electronAPI.companyConnector.setSecret(companyId, connId, secret, metadata);
   } else {
-    await window.electronAPI?.store?.set?.(SECRET_KEY(companyId, connId), secret);
+    throw new Error("Secure connector storage is unavailable. Restart BonzAI before connecting this service.");
   }
   return SECRET_KEY(companyId, connId);
 }
@@ -168,12 +168,12 @@ export async function request(companyId, connector, spec) {
       ...spec,
     });
     await update(companyId, connector.id, { lastUsedAt: Date.now(), lastValidatedAt: Date.now(), error: null });
-    return result.data;
+    return spec.includeResponseMetadata ? { data: result.data, status: result.status, headers: result.headers || {} } : result.data;
   } catch (error) {
     const message = error?.message || "Connector request failed";
     const authFailure = /\b(401|403)\b|unauthori[sz]ed|forbidden|expired|invalid token/i.test(message);
     await update(companyId, connector.id, {
-      status: authFailure ? "expired" : "broken",
+      status: authFailure ? "expired" : connector.status,
       error: message.slice(0, 240),
     });
     throw error;

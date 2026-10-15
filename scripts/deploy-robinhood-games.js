@@ -1,4 +1,4 @@
-const hre = require("hardhat");
+import hre from "hardhat";
 
 async function main() {
   const { ethers, network } = hre;
@@ -23,6 +23,7 @@ async function main() {
   if (!ethers.isAddress(collectiblesFactory)) {
     throw new Error("BONZAI_COLLECTIBLES_FACTORY_ADDRESS is required");
   }
+  if (await ethers.provider.getCode(collectiblesFactory) === '0x') throw new Error('Collectibles factory has no bytecode on the selected chain');
   const Registry = await ethers.getContractFactory("BonzaiGameRegistry");
   const registry = await Registry.deploy(collectiblesFactory);
   await registry.waitForDeployment();

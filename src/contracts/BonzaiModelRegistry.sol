@@ -52,6 +52,7 @@ contract BonzaiModelRegistry is Ownable, ReentrancyGuard, Pausable {
         bytes32[] calldata datasetIds,
         bytes32[] calldata evaluationIds
     ) external nonReentrant whenNotPaused returns (bytes32 modelId) {
+        require(modelHash != bytes32(0), "Content hash required");
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
         if (bytes(licenseURI).length == 0) revert EmptyLicenseURI();
         if (revenueRecipient == address(0)) revert ZeroRevenueRecipient();
@@ -93,6 +94,11 @@ contract BonzaiModelRegistry is Ownable, ReentrancyGuard, Pausable {
         if (model.publisher != msg.sender) revert NotPublisher(msg.sender, model.publisher);
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
         if (qualityScore > 100) revert InvalidQualityScore(qualityScore);
+        // A verification attests to the reviewed metadata, not future edits.
+        if (model.verified) {
+            model.verified = false;
+            emit ModelVerificationChanged(modelId, false, block.timestamp);
+        }
         model.metadataURI = metadataURI;
         model.qualityScore = qualityScore;
         model.active = active;

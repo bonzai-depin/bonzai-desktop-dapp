@@ -3,12 +3,17 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./BonzaiV4Liquidity.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+
+interface IBonzaiCollectiblesMembership {
+    function isCollection(address collection) external view returns (bool);
+}
 
 /**
  * @title IPoolManager (Uniswap V4)
@@ -37,16 +42,8 @@ interface IPositionManagerFTF {
         address hooks;
     }
 
-    function mint(
-        PoolKey calldata poolKey,
-        int24 tickLower,
-        int24 tickUpper,
-        uint256 liquidity,
-        uint128 amount0Max,
-        uint128 amount1Max,
-        address owner,
-        bytes calldata hookData
-    ) external payable returns (uint256 tokenId, uint128 liquidity0, uint128 liquidity1);
+    function nextTokenId() external view returns (uint256);
+    function modifyLiquidities(bytes calldata unlockData, uint256 deadline) external payable;
 
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
 }
@@ -74,10 +71,13 @@ interface IBonzaiUniswapHookFTF {
 
 /**
  * @title FineTuneToken
- * @notice Burnable ERC-20 token for fine-tuned AI models on Base
- * @dev Simple token linking to content NFT token ID and IPFS model hash
+ * @notice Burnable ERC-20 token for published AI models
+ * @dev Links to a collection and token ID; model metadata and validation hash are publisher assertions, not independent verification.
  */
 contract FineTuneToken is ERC20, ERC20Burnable {
+    /// @notice Factory-registered collection containing the published model NFT.
+    address public immutable contentCollection;
+
     /// @notice Content NFT token ID that this model token represents
     uint256 public immutable contentTokenId;
 
@@ -87,6 +87,7 @@ contract FineTuneToken is ERC20, ERC20Burnable {
     string public description;
     string public imageURI;
     string public modelKind;
+    /// @notice Publisher-supplied artifact/evaluation commitment; not a verification verdict.
     bytes32 public validationHash;
 
     /// @notice Creator address
@@ -103,6 +104,7 @@ contract FineTuneToken is ERC20, ERC20Burnable {
         string memory symbol,
         uint256 totalSupply,
         address recipient,
+        address _contentCollection,
         uint256 _contentTokenId,
         string memory _modelIrysHash,
         address _creator,
@@ -114,6 +116,8 @@ contract FineTuneToken is ERC20, ERC20Burnable {
         require(recipient != address(0), "Invalid recipient");
         require(_creator != address(0), "Invalid creator");
 
+        require(_contentCollection != address(0), "Invalid collection");
+        contentCollection = _contentCollection;
         contentTokenId = _contentTokenId;
         modelIrysHash = _modelIrysHash;
         metadataURI = _modelIrysHash;
@@ -230,12 +234,12 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Minimum ETH required for liquidity
     uint256 public minEthLiquidity = 0.01 ether;
 
-    /// @notice BonzaiContent NFT contract (for ownership verification)
+    /// @notice Canonical BonzaiCollectiblesFactory (collection membership verification).
     address public contentContract;
-    bool public legacyLaunchEnabled = true;
+    bool public legacyLaunchEnabled;
 
-    /// @notice Mapping from content NFT tokenId to model token address
-    mapping(uint256 => address) public modelTokens;
+    /// @notice One model token per (collection, NFT token ID), including after transfers.
+    mapping(address => mapping(uint256 => address)) public modelTokens;
 
     /// @notice Array of all launched token addresses
     address[] public allTokens;
@@ -246,6 +250,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
 
     /// @notice Emitted when a new model token is launched
     event ModelTokenLaunched(
+        address contentCollection,
         uint256 indexed contentTokenId,
         address indexed token,
         bytes32 indexed poolId,
@@ -292,34 +297,22 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     // TOKEN LAUNCH
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Launch a new model token with Uniswap V4 liquidity
-     * @dev Deploys token, creates V4 pool, mints full-range LP, locks LP NFT,
-     *      and registers with hook — all atomically.
-     *
-     * @param contentTokenId BonzaiContent NFT token ID for the fine-tuned model
-     * @param name Full name (e.g., "BonzAI Fine-Tune: My Custom Model")
-     * @param symbol Token symbol (e.g., "BZCUSTOM")
-     * @param modelIrysHash IPFS/Pinata hash of the model weights
-     * @param creator Creator address (receives 4% of supply + 80% hook fees)
-     *
-     * @return token Address of the deployed token
-     * @return poolId Pool ID hash for the V4 pool
-     */
+    /// @notice Legacy global-token-ID publication cannot identify a collection and is disabled.
     function launchToken(
-        uint256 contentTokenId,
-        string calldata name,
-        string calldata symbol,
-        string calldata modelIrysHash,
-        address creator
-    ) external payable nonReentrant returns (address token, bytes32 poolId) {
-        require(legacyLaunchEnabled, "Use validated model launch");
-        return _launchToken(
-            contentTokenId, name, symbol, modelIrysHash, "", "", "fine_tuned", bytes32(0), creator
-        );
+        uint256,
+        string calldata,
+        string calldata,
+        string calldata,
+        address
+    ) external payable returns (address, bytes32) {
+        revert("Use validated model launch");
     }
 
+    /// @notice Publish a model linked to a canonical collection NFT owned by the caller.
+    /// @dev Metadata and validationHash are supplied by the publisher. Their presence
+    ///      does not establish independent model quality, provenance, or safety review.
     function launchValidatedToken(
+        address contentCollection,
         uint256 contentTokenId,
         string calldata name,
         string calldata symbol,
@@ -331,6 +324,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         address creator
     ) external payable nonReentrant returns (address token, bytes32 poolId) {
         require(validationHash != bytes32(0), "Validation required");
+        require(bytes(metadataURI).length > 0, "Metadata required");
         require(bytes(description).length > 0, "Description required");
         require(bytes(imageURI).length > 0, "Image required");
         require(
@@ -339,11 +333,12 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
             "Invalid model kind"
         );
         return _launchToken(
-            contentTokenId, name, symbol, metadataURI, description, imageURI, modelKind, validationHash, creator
+            contentCollection, contentTokenId, name, symbol, metadataURI, description, imageURI, modelKind, validationHash, creator
         );
     }
 
     function _launchToken(
+        address contentCollection,
         uint256 contentTokenId,
         string memory name,
         string memory symbol,
@@ -355,12 +350,13 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         address creator
     ) internal returns (address token, bytes32 poolId) {
         require(msg.value >= minEthLiquidity, "Insufficient ETH for liquidity");
-        require(modelTokens[contentTokenId] == address(0), "Token already launched for this model");
+        require(modelTokens[contentCollection][contentTokenId] == address(0), "Token already launched for this model");
         require(creator != address(0), "Invalid creator address");
         require(bytes(symbol).length > 0, "Symbol required");
         require(bytes(name).length > 0, "Name required");
         require(contentContract != address(0), "Content contract not set");
-        require(IERC721(contentContract).ownerOf(contentTokenId) == msg.sender, "Not NFT owner");
+        require(IBonzaiCollectiblesMembership(contentContract).isCollection(contentCollection), "Unregistered collection");
+        require(IERC721(contentCollection).ownerOf(contentTokenId) == msg.sender, "Not NFT owner");
 
         // 1. Calculate supply split: 96% to pool, 4% to creator
         uint256 lpAmount = (TOTAL_SUPPLY * LP_SHARE_BPS) / BPS_DENOMINATOR;
@@ -372,6 +368,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
             symbol,
             TOTAL_SUPPLY,
             address(this),
+            contentCollection,
             contentTokenId,
             metadataURI,
             creator,
@@ -383,7 +380,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         token = address(newToken);
 
         // 3. Register token
-        modelTokens[contentTokenId] = token;
+        modelTokens[contentCollection][contentTokenId] = token;
         allTokens.push(token);
 
         // 4. Transfer 4% to creator
@@ -415,22 +412,25 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         newToken.approve(address(permit2), lpAmount);
         permit2.approve(token, address(positionManager), uint160(lpAmount), uint48(block.timestamp + 3600));
 
-        // 9. Mint full-range LP position (2% slippage tolerance)
-        (uint256 positionId, , ) = positionManager.mint{value: msg.value}(
-            poolKey,
-            MIN_TICK,
-            MAX_TICK,
-            0,
-            uint128(lpAmount * 98 / 100),       // 2% slippage tolerance on tokens
-            uint128(msg.value * 98 / 100),       // 2% slippage tolerance on ETH
-            address(this),
-            ""
+        // 9. Mint using the canonical V4 PositionManager action interface.
+        // Initialization and mint happen atomically at the same price; no slippage
+        // allowance is needed. Maxima follow currency0=ETH, currency1=token.
+        uint256 positionId = positionManager.nextTokenId();
+        bytes[] memory params = new bytes[](3);
+        params[0] = abi.encode(
+            poolKey, MIN_TICK, MAX_TICK,
+            uint256(BonzaiV4Liquidity.liquidity(msg.value, lpAmount, sqrtPriceX96)),
+            uint128(msg.value), uint128(lpAmount), BURN_ADDRESS, bytes("")
         );
-
-        require(positionId > 0, "Position mint failed");
-
-        // 10. Burn LP position NFT (transferred to 0xdead — canonical V4 burn)
-        positionManager.safeTransferFrom(address(this), BURN_ADDRESS, positionId);
+        params[1] = abi.encode(NATIVE_ETH, token);
+        params[2] = abi.encode(NATIVE_ETH, msg.sender);
+        positionManager.modifyLiquidities{value: msg.value}(abi.encode(hex"020d14", params), block.timestamp);
+        require(IERC721(address(positionManager)).ownerOf(positionId) == BURN_ADDRESS, "Position not locked");
+        // Any rounding remainder is inaccessible to the factory administrator.
+        uint256 tokenDust = newToken.balanceOf(address(this));
+        if (tokenDust > 0) newToken.transfer(BURN_ADDRESS, tokenDust);
+        newToken.approve(address(permit2), 0);
+        permit2.approve(token, address(positionManager), 0, 0);
 
         // 11. Compute poolId and register with hook
         poolId = keccak256(abi.encode(poolKey));
@@ -438,6 +438,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         feeHook.registerPool(poolId, creator, address(0), 0, 1, MINT_POOL_INDEX); // 1 = FINETUNE
 
         emit ModelTokenLaunched(
+            contentCollection,
             contentTokenId,
             token,
             poolId,
@@ -460,12 +461,12 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     // VIEW FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function hasToken(uint256 contentTokenId) external view returns (bool) {
-        return modelTokens[contentTokenId] != address(0);
+    function hasToken(address contentCollection, uint256 contentTokenId) external view returns (bool) {
+        return modelTokens[contentCollection][contentTokenId] != address(0);
     }
 
-    function getToken(uint256 contentTokenId) external view returns (address) {
-        return modelTokens[contentTokenId];
+    function getToken(address contentCollection, uint256 contentTokenId) external view returns (address) {
+        return modelTokens[contentCollection][contentTokenId];
     }
 
     function totalTokensLaunched() external view returns (uint256) {
@@ -481,7 +482,8 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function setContentContract(address _contentContract) external onlyOwner {
-        require(_contentContract != address(0), "Invalid address");
+        require(_contentContract.code.length > 0, "Invalid collection factory");
+        require(!IBonzaiCollectiblesMembership(_contentContract).isCollection(address(0)), "Invalid collection factory");
         contentContract = _contentContract;
     }
 
@@ -523,30 +525,9 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function _calculateSqrtPriceX96(uint256 ethAmount, uint256 tokenAmount)
-        internal
-        pure
-        returns (uint160)
+        internal pure returns (uint160)
     {
-        require(ethAmount > 0 && tokenAmount > 0, "Zero amount");
-        // sqrtPriceX96 = sqrt(ethAmount * 2^192 / tokenAmount)
-        // Split shift to avoid overflow: (ethAmount << 192) overflows for ethAmount >= 2^64
-        // Instead: compute (ethAmount << 96) / tokenAmount, then shift result << 96 before sqrt
-        uint256 step1 = (ethAmount << 96) / tokenAmount;
-        uint256 ratioX192 = step1 << 96;
-        uint256 sqrtResult = _sqrt(ratioX192);
-        require(sqrtResult > 0 && sqrtResult <= type(uint160).max, "Invalid sqrt price");
-        return uint160(sqrtResult);
-    }
-
-    function _sqrt(uint256 x) internal pure returns (uint256) {
-        if (x == 0) return 0;
-        uint256 z = (x + 1) / 2;
-        uint256 y = x;
-        while (z < y) {
-            y = z;
-            z = (x / z + z) / 2;
-        }
-        return y;
+        return BonzaiV4Liquidity.sqrtPrice(ethAmount, tokenAmount);
     }
 
     receive() external payable {}

@@ -34,6 +34,8 @@ export const PIPELINE_CATEGORY_IDS = {
   audio_quality: 7,
   music: 8,
   video_fast: 9,
+  video_sota: 9,
+  video_quality: 9,
   vision: 10,
   pipeline_shard: 11,
 };
@@ -41,6 +43,7 @@ export const PIPELINE_CATEGORY_IDS = {
 async function registry(needsSigner = false) {
   const address = CONFIG.p2pNetwork?.providerRegistryAddress;
   if (!address) throw new Error('Provider registry not deployed');
+  if (needsSigner) await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
   const connection = needsSigner
     ? await web3Service.getSigner()
     : await web3Service.getProvider(ECONOMY_NETWORK_KEY);

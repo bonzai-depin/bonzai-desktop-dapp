@@ -185,3 +185,30 @@ export function diskUsage() {
   const r = db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(byte_length), 0) AS bytes FROM blobs").get();
   return { count: r?.n ?? 0, bytes: r?.bytes ?? 0 };
 }
+
+/** Stream large trained weights into the same content-addressed store. */
+export async function writeFromPathStream(source, ext, meta = {}) {
+  if (!/^[a-z0-9]{1,12}$/.test(ext)) throw new Error('Invalid blob extension.');
+  const root = _rootDir(), temporary = path.join(root, `.incoming-${crypto.randomUUID()}`);
+  const hash = crypto.createHash('sha256');
+  let size = 0;
+  try {
+    const output = await fs.promises.open(temporary, 'wx', 0o600);
+    try {
+      for await (const chunk of fs.createReadStream(source, { flags: fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) })) {
+        size += chunk.length;
+        if (size > 32 * 1024 ** 3) throw new Error('Delivery exceeds 32 GiB.');
+        hash.update(chunk); await output.writeFile(chunk);
+      }
+      await output.sync();
+    } finally { await output.close(); }
+    const id = hash.digest('hex');
+    if (!size || (meta.sha256 && id !== meta.sha256) || (meta.size && size !== meta.size)) throw new Error('Artifact integrity check failed.');
+    const target = blobPath(id, ext); await fs.promises.mkdir(path.dirname(target), {recursive:true});
+    await fs.promises.rename(temporary, target);
+    const { db } = get();
+    db.prepare(`INSERT INTO blobs (id,ext,byte_length,mime_type,source,source_id,created_at,ref_count)
+      VALUES (?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET ref_count=ref_count+1`).run(id, ext, size, meta.mimeType || null, meta.source || 'peer-worker', meta.sourceId || null, Date.now());
+    return {id, path:target, size};
+  } finally { await fs.promises.rm(temporary, {force:true}); }
+}

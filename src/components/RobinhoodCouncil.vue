@@ -5,19 +5,19 @@
       <button
         v-if="state.status !== 'connected'"
         class="bz-btn bz-btn--primary"
-        :disabled="busy"
+        :disabled="busy || running || !desktopAvailable"
         @click="connect"
       >
-        <span class="material-symbols-outlined">link</span>
+        <span class="material-symbols-outlined" aria-hidden="true">link</span>
         Connect Robinhood
       </button>
-      <button v-else class="bz-btn bz-btn--ghost" @click="disconnect">
-        <span class="material-symbols-outlined">link_off</span>
+      <button v-else class="bz-btn bz-btn--ghost" :disabled="busy || running" @click="disconnect">
+        <span class="material-symbols-outlined" aria-hidden="true">link_off</span>
         Disconnect
       </button>
     </div>
 
-    <div v-if="state.error" class="bz-notice bz-notice--danger">{{ state.error }}</div>
+    <div v-if="state.error" class="bz-notice bz-notice--danger" role="alert">{{ state.error }}</div>
 
     <section class="rh__execution">
       <div class="rh__section-head">
@@ -59,7 +59,7 @@
 
           <div class="rh__actions">
             <span class="rh__policy">
-              <span class="material-symbols-outlined">shield</span>
+              <span class="material-symbols-outlined" aria-hidden="true">shield</span>
               {{ policyLabel }}
             </span>
             <button
@@ -67,7 +67,7 @@
               :disabled="!canExecute"
               @click="execute"
             >
-              <span class="material-symbols-outlined">{{ requiresApproval ? "check_circle" : "play_arrow" }}</span>
+              <span class="material-symbols-outlined" aria-hidden="true">{{ requiresApproval ? "check_circle" : "play_arrow" }}</span>
               {{ running ? "Running" : requiresApproval ? "Confirm & run" : "Run" }}
             </button>
           </div>
@@ -80,34 +80,14 @@
           </div>
           <pre v-if="result">{{ result }}</pre>
           <div v-else class="rh__empty">
-            <span class="material-symbols-outlined">terminal</span>
+            <span class="material-symbols-outlined" aria-hidden="true">terminal</span>
             <p>Results, reviews, and order receipts appear here.</p>
           </div>
         </div>
       </div>
     </section>
 
-    <div class="rh__reference">
-      <section>
-        <div class="rh__section-head"><h2 class="bz-h2">Mandate</h2><span>Applied before execution</span></div>
-        <div class="rh__fields">
-          <label>Maximum order <span class="bz-mono">USD</span><input v-model.number="mandate.maxOrder" type="number" min="0" /></label>
-          <label>Daily limit <span class="bz-mono">USD</span><input v-model.number="mandate.dailyLimit" type="number" min="0" /></label>
-          <label>Cash reserve <span class="bz-mono">%</span><input v-model.number="mandate.cashReserve" type="number" min="0" max="100" /></label>
-          <label>Position limit <span class="bz-mono">%</span><input v-model.number="mandate.positionLimit" type="number" min="0" max="100" /></label>
-        </div>
-        <p class="rh__disclosure">BonzAI does not provide investment advice. Orders remain under your control and responsibility.</p>
-      </section>
 
-      <section>
-        <div class="rh__section-head"><h2 class="bz-h2">Council</h2><span>Five checks, one decision</span></div>
-        <div v-for="role in roles" :key="role.name" class="rh__role">
-          <span class="material-symbols-outlined">{{ role.icon }}</span>
-          <div><strong>{{ role.name }}</strong><small>{{ role.brief }}</small></div>
-          <span>{{ role.authority }}</span>
-        </div>
-      </section>
-    </div>
   </section>
 </template>
 
@@ -117,6 +97,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 const props = defineProps({
   locked: { type: Boolean, default: false },
 });
+const emit = defineEmits(['result-created']);
 const state = reactive({ status: "disconnected", tools: [], error: null });
 const busy = ref(false);
 const running = ref(false);
@@ -125,14 +106,7 @@ const argumentsJson = ref("{}");
 const approved = ref(false);
 const result = ref("");
 const lastRunAt = ref("");
-const mandate = reactive({ maxOrder: 500, dailyLimit: 1500, cashReserve: 20, positionLimit: 15 });
-const roles = [
-  { name: "Research", brief: "Evidence and thesis", authority: "Read", icon: "search" },
-  { name: "Strategy", brief: "Allocation and scenarios", authority: "Propose", icon: "account_tree" },
-  { name: "Risk", brief: "Limits and concentration", authority: "Veto", icon: "shield" },
-  { name: "Execution", brief: "Exact order review", authority: "Confirm", icon: "fact_check" },
-  { name: "Reporting", brief: "Journal and attribution", authority: "Record", icon: "analytics" },
-];
+const desktopAvailable = Boolean(window.electronAPI?.robinhood);
 let unsubscribe;
 
 const selectedTool = computed(() => state.tools.find((tool) => tool.name === selectedToolName.value));
@@ -163,21 +137,37 @@ const humanize = (value) => String(value || "")
   .replace(/\b\w/g, (character) => character.toUpperCase());
 const apply = (next) => Object.assign(state, next || {});
 const connect = async () => {
+  if (!desktopAvailable || busy.value || running.value) return;
+  state.error = null;
   busy.value = true;
-  try { apply(await window.electronAPI.robinhood.connect()); } finally { busy.value = false; }
+  try { apply(await window.electronAPI.robinhood.connect()); } catch (cause) { state.error = cause?.message || String(cause); } finally { busy.value = false; }
 };
-const disconnect = async () => apply(await window.electronAPI.robinhood.disconnect());
+const disconnect = async () => {
+  if (!desktopAvailable || busy.value || running.value) return;
+  busy.value = true;
+  try { apply(await window.electronAPI.robinhood.disconnect()); }
+  catch (cause) { state.error = cause?.message || String(cause); }
+  finally { busy.value = false; }
+};
 const execute = async () => {
+  if (!canExecute.value) return;
+  const toolName = selectedToolName.value;
+  const needsApproval = requiresApproval.value;
+  const onceApproved = approved.value;
+  approved.value = false;
   state.error = null;
   running.value = true;
   try {
     const args = JSON.parse(argumentsJson.value || "{}");
+    if (!args || Array.isArray(args) || typeof args !== 'object') throw new Error('Enter parameters as a JSON object.');
     const response = await window.electronAPI.robinhood.callTool({
-      name: selectedToolName.value,
+      name: toolName,
       arguments: args,
-      approved: requiresApproval.value ? approved.value : false,
+      approved: needsApproval ? onceApproved : false,
     });
     result.value = JSON.stringify(response, null, 2);
+    if (!response || response.isError === true || response.success === false || response.error) throw new Error(response?.error || 'The connected tool did not return a successful result.');
+    emit('result-created', { tool: toolName, arguments: args, result: response });
     lastRunAt.value = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   } catch (cause) {
     state.error = cause?.message || String(cause);
@@ -192,13 +182,16 @@ watch(() => state.tools, (tools) => {
     selectedToolName.value = tools[0]?.name || "";
   }
 }, { deep: true });
-watch(selectedToolName, () => {
+watch([selectedToolName, argumentsJson], () => {
   approved.value = false;
   result.value = "";
-});
+}, { flush: "sync" });
 onMounted(async () => {
-  apply(await window.electronAPI.robinhood.status());
-  unsubscribe = window.electronAPI.robinhood.onState(apply);
+  if (!desktopAvailable) { state.error = 'Open the desktop app to connect your brokerage account.'; return; }
+  try {
+    apply(await window.electronAPI.robinhood.status());
+    unsubscribe = window.electronAPI.robinhood.onState(apply);
+  } catch (cause) { state.error = cause?.message || String(cause); }
 });
 onUnmounted(() => unsubscribe?.());
 </script>

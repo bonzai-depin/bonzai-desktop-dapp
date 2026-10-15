@@ -1,5 +1,5 @@
 <template scoped>
-  <div class="background"></div>
+  <div v-if="!companyWorkflowId" class="background"></div>
 
   <!-- Status Notification Toast -->
   <Transition name="notification-slide">
@@ -25,17 +25,18 @@
     </div>
   </Transition>
 
-  <div class="bz-tab-shell bz-tab-shell--agent">
+  <div class="bz-tab-shell bz-tab-shell--agent" :class="{ 'company-workflow-runtime': companyWorkflowId }">
     <ChatLayout
       class="agent-command-center"
       :messages="[]"
+      :autoscroll="false"
       :busy="isAnalyzing || isGenerating || isExecuting"
       :rail-collapsed="isAgentRailCollapsed"
       rail-label="agent workspace"
       :rail-count="agentRailItems.length"
       @toggle-rail="toggleAgentRail"
     >
-      <template #rail>
+      <template v-if="!companyWorkflowId && !isAgentRailCollapsed" #rail>
         <aside class="agent-command-rail" aria-label="Agent workspace navigation">
           <div class="agent-command-rail__head">
             <span class="bz-eyebrow">Menu</span>
@@ -60,7 +61,9 @@
       </template>
 
       <template #header>
-        <div class="agent-command-head">
+        <CompanyWorkflowContext :skill-id="selectedSkillId" :task-context="companyTaskContext" :saving="savingWorkflowResult" :save-error="workflowResultError" :can-retry-save="canRetryWorkflowResult" :saved-result="savedWorkflowResult" @retry-save="retryWorkflowResult" @reviewed="handleWorkflowReviewed"
+            @loaded="savedWorkflowResult = { ...savedWorkflowResult, issue: $event }" />
+        <div v-if="!companyWorkflowId" class="agent-command-head">
           <div class="agent-command-head__title">
             <span class="bz-eyebrow">{{ agentModeEyebrow }}</span>
             <h1 class="bz-h1 fira-sans-condensed-black-italic">
@@ -90,285 +93,58 @@
       <template #stream>
         <div class="agent-command-stream">
           <section class="agent-mode-surface">
-          <!-- BROWSE SKILLS TAB -->
-          <div v-if="activeTab === 'browseSkills'" class="agent-market">
-            <ModeChipBar
-              :model-value="selectedCategory || 'all'"
-              :items="categoryItems"
-              class="category-filter"
-              compact
-              @update:model-value="setCategory($event === 'all' ? null : $event)"
-            />
-
-            <div v-if="filteredSkills.length > 0" class="agent-market-grid">
-              <article
-                v-for="skill in filteredSkills"
-                :key="skill.id"
-                class="agent-market-card"
-                :class="{
-                  'is-owned': (!isTokenGated(skill) && canRunSkill(skill.id).canRun) || hasSkillAccess(skill.id),
-                  'is-featured': skill.featured,
-                }"
-              >
-                <div class="agent-market-card__main">
-                  <div class="agent-market-card__top">
-                    <span class="agent-market-card__icon">
-                      <span class="material-symbols-outlined" aria-hidden="true">
-                        {{ getCategoryIcon(skill.category) }}
-                      </span>
-                    </span>
-                    <div class="agent-market-card__meta">
-                      <h3 class="fira-sans-condensed-black-italic">
-                        {{ skill.name }}
-                      </h3>
-                      <p>{{ getCategoryLabel(skill.category) }}</p>
-                    </div>
-                  </div>
-
-                  <p class="agent-market-card__description">{{ skill.description }}</p>
-
-                  <div class="agent-market-card__badges">
-                    <span v-if="skill.featured" class="agent-market-pill agent-market-pill--featured">Featured</span>
-                    <span v-if="skill.author?.verified" class="agent-market-pill">Verified</span>
-                    <span v-if="skill.tags?.includes('demo')" class="agent-market-pill">Demo</span>
-                    <span v-if="hasSkillAccess(skill.id)" class="agent-market-pill agent-market-pill--success">Token access</span>
-                  </div>
-                  <div v-if="skillTokenOptions(skill).length" class="agent-market-card__owners">
-                    <span
-                      v-for="owner in skillTokenOptions(skill)"
-                      :key="owner.id"
-                      class="agent-market-owner"
-                    >{{ owner.firstName }} <b>${{ owner.tokenSymbol }}</b></span>
-                  </div>
-                </div>
-
-                <dl class="agent-market-card__facts">
-                  <div>
-                    <dt>Fit</dt>
-                    <dd>{{ skillCompatibilityLabel(skill) }}</dd>
-                  </div>
-                  <div>
-                    <dt>Access</dt>
-                    <dd>{{ skillRequirementLabel(skill) }}</dd>
-                  </div>
-                  <div>
-                    <dt>Execution</dt>
-                    <dd>{{ skillRoiLabel(skill) }}</dd>
-                  </div>
-                </dl>
-
-                <div class="agent-market-card__actions">
-                  <span
-                    v-if="skill.platform && !isAppleSilicon"
-                    class="agent-market-card__blocked"
-                  >
-                    <span class="material-symbols-outlined" aria-hidden="true">laptop_mac</span>
-                    Requires Apple Silicon
-                  </span>
-                  <template v-else-if="!isTokenGated(skill) || hasSkillAccess(skill.id)">
-                      <button
-                        class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
-                        :aria-label="`Run ${skill.name}`"
-                        @click="runSkill(skill)"
-                      >
-                      <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
-                        Run
-                      </button>
-                    </template>
-                  <template v-else>
-                      <button
-                        class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-                        @click="previewSkill(skill)"
-                      >
-                      <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
-                        Preview
-                      </button>
-                      <button
-                        class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
-                        @click="buyCompanionToken(skillTokenOptions(skill)[0])"
-                      >
-                        <span class="material-symbols-outlined" aria-hidden="true">token</span>
-                        Buy ${{ skillTokenOptions(skill)[0]?.tokenSymbol }}
-                      </button>
-                    </template>
-                </div>
-              </article>
-            </div>
-
-            <BonzaiEmptyState
-              v-else
-              size="small"
-              icon="extension"
-              title="Coming soon"
-              :show-orb="false"
-            />
-          </div>
-
+          <ModeChipBar v-if="!companyWorkflowId && isAgentRailCollapsed" class="agent-mode-tabs" :model-value="activeTab" :items="agentRailItems" compact @update:model-value="selectAgentMode" />
           <!-- BROWSE AGENTS TAB -->
           <div v-if="activeTab === 'browseAgents'" class="agent-agents-view">
-            <BrowseAgents :skills="marketplaceSkills" />
+            <RoleplayChat
+              ref="companionCreator"
+              :skill="roleplayCompanion"
+              management-only
+              @companions-changed="refreshCompanionRoster"
+              @hire-agent="hireCompanion"
+              @start-roleplay="startAgentRoleplay"
+            >
+              <template #requirements>
+                <DownloadRequirement
+                  v-if="!isCompanionDemo && modelAvailabilityChecked && (hasMissingModels || downloads.active)"
+                  :items="downloadRequirementItems"
+                  :active="downloads.active"
+                  cancellable
+                  :cancelling="isCancellingDownloads"
+                  @cancel="cancelActiveDownloads"
+                  :progress="downloads.total_progress || downloads.progress || 0"
+                  :tasks="downloadTaskList"
+                  :disabled="desktopDownloadRequired"
+                  :error="downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''"
+                  @download="downloadAllMissingModels"
+                />
+                <p v-if="!isCompanionDemo && modelAvailabilityChecked && desktopDownloadRequired" class="bz-meta" role="status">{{ $t('rcWorkflows.desktopModelRequired') }}</p>
+              </template>
+            </RoleplayChat>
           </div>
 
           <!-- MY SKILLS TAB -->
-          <div v-if="activeTab === 'my-skills'" class="agent-runner-view">
+          <div v-if="activeTab === 'my-skills' && !companyWorkflowFinished" class="agent-runner-view">
             <!-- Always show skill UI - gating happens inside the skill component -->
             <div>
-              <!-- DOWNLOAD REQUIRED (only when not actively downloading and check is complete) -->
-              <div
-                v-if="
-                  !isCompanionDemo &&
-                  modelAvailabilityChecked &&
-                  skillModelRequirements.length > 0 &&
-                  hasMissingModels &&
-                  !downloads.active
-                "
-                class="agent-notice agent-notice--danger"
-              >
-                <div class="agent-notice__body">
-                  <strong class="agent-notice__title fira-sans-condensed-black-italic">
-                    Download Required
-                  </strong>
-                  <!-- Show all missing repos -->
-                  <ul class="agent-model-list">
-                    <template v-for="model in missingModels" :key="model.key">
-                      <li
-                        v-for="repo in modelReadinessDetails[model.key]
-                          ?.repos || []"
-                        :key="repo"
-                      >
-                        <span class="material-symbols-outlined" aria-hidden="true">
-                          deployed_code
-                        </span>
-                        {{ repo }}
-                      </li>
-                    </template>
-                  </ul>
-                  <!-- Show all missing files/ggufs -->
-                  <ul class="agent-model-list">
-                    <template
-                      v-for="model in missingModels"
-                      :key="model.key + '_files'"
-                    >
-                      <li
-                        v-for="file in modelReadinessDetails[model.key]
-                          ?.files || []"
-                        :key="file"
-                      >
-                        <span class="material-symbols-outlined" aria-hidden="true">
-                          deployed_code
-                        </span>
-                        {{ file }}
-                      </li>
-                      <!-- Fallback for models without repo/file details -->
-                      <template
-                        v-if="
-                          !modelReadinessDetails[model.key]?.repos?.length &&
-                          !modelReadinessDetails[model.key]?.files?.length
-                        "
-                      >
-                        <!-- Handle array repos (e.g., Qwen TTS) -->
-                        <template v-if="Array.isArray(model.repo)">
-                          <li
-                            v-for="(r, rIdx) in model.repo"
-                            :key="model.key + '_fallback_repo_' + rIdx"
-                          >
-                            <span
-                              class="material-symbols-outlined"
-                              aria-hidden="true"
-                            >
-                              deployed_code
-                            </span>
-                            {{ r }}
-                          </li>
-                        </template>
-                        <!-- Handle single repo/filename -->
-                        <li v-else>
-                          <span class="material-symbols-outlined" aria-hidden="true">
-                            deployed_code
-                          </span>
-                          {{ model.filename || model.repo || model.name }}
-                        </li>
-                      </template>
-                    </template>
-                  </ul>
-                </div>
-                <button
-                  class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
-                  @click="downloadAllMissingModels"
-                  :disabled="downloads.active"
-                >
-                  <span class="material-symbols-outlined" aria-hidden="true">download</span>
-                  Download Now
-                </button>
-              </div>
-
-              <!-- DOWNLOAD PROGRESS (like GenerativeImage.vue) -->
-              <div
-                v-if="downloads && downloads.active"
-                class="agent-progress-card"
-              >
-                <div class="agent-progress-card__head">
-                  <span class="agent-progress-card__title fira-sans-condensed-black-italic">
-                    <BonzaiPulse variant="dot" />
-                    Downloading
-                  </span>
-                  <span class="agent-progress-card__pct fira-sans-condensed-black-italic">
-                    {{ Math.round(downloads.total_progress || 0) }}%
-                  </span>
-                </div>
-                <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
-                <div v-if="downloadTaskList.length" class="agent-download-scroll">
-                  <ul class="agent-download-list">
-                    <li
-                      v-for="t in downloadTaskList"
-                      :key="t.task_id"
-                      class="agent-download-task"
-                    >
-                      <div class="agent-download-task__name">
-                        <span class="material-symbols-outlined" aria-hidden="true">
-                          deployed_code
-                        </span>
-                        {{ t.filename || t.name || t.task_id }} —
-                        <span class="fira-sans-condensed-black-italic">
-                          {{ t.status }}
-                        </span>
-                      </div>
-                      <div class="agent-download-task__pct fira-sans-condensed-black-italic">
-                        {{ Math.round(t.progress || 0) }}%
-                      </div>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-
-              <!-- COMPANION TOKEN GATE -->
-              <div
-                v-if="isPreviewMode && selectedSkill && isTokenGated(selectedSkill) && !hasSkillAccess(selectedSkill.id)"
-                class="preview-purchase-gate"
-              >
-                <div class="preview-gate-content">
-                  <span class="material-symbols-outlined preview-gate-icon">lock</span>
-                  <h3 class="bz-h3 fira-sans-condensed-black-italic">
-                    Preview Mode
-                  </h3>
-                  <p class="preview-gate-desc">
-                    Own one specialist token to unlock this workflow.
-                  </p>
-                  <div class="preview-gate-actions">
-                    <button
-                      v-for="owner in skillTokenOptions(selectedSkill)"
-                      :key="owner.id"
-                      class="bz-btn bz-btn--primary"
-                      @click="buyCompanionToken(owner)"
-                    >
-                      Buy ${{ owner.tokenSymbol }}
-                    </button>
-                  </div>
-                </div>
+              <div v-if="!isCompanionDemo && modelAvailabilityChecked && (hasMissingModels || downloads.active)" class="agent-runner-requirements">
+                <DownloadRequirement
+                  :items="downloadRequirementItems"
+                  :active="downloads.active"
+                  cancellable
+                  :cancelling="isCancellingDownloads"
+                  @cancel="cancelActiveDownloads"
+                  :progress="downloads.total_progress || downloads.progress || 0"
+                  :tasks="downloadTaskList"
+                  :disabled="desktopDownloadRequired"
+                  :error="downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''"
+                  @download="downloadAllMissingModels"
+                />
+                <p v-if="desktopDownloadRequired" class="bz-meta" role="status">{{ $t('rcWorkflows.desktopModelRequired') }}</p>
               </div>
 
               <section
-                v-if="selectedSkill"
+                v-if="!companyWorkflowId && selectedSkill && selectedSkillId !== 'roleplay-companion-v1.0.0'"
                 class="agent-runner-cockpit"
                 :class="'agent-runner-cockpit--' + selectedSkillProfile.tone"
               >
@@ -438,7 +214,8 @@
                 class="agent-skill-runtime agent-skill-runtime--flush"
               >
                 <RobinhoodCouncil
-                  :locked="isTokenGated(selectedSkill) && !hasSkillAccess(selectedSkill.id)"
+                  :locked="false"
+                  @result-created="captureWorkflowResult('robinhood-portfolio-council-v1.0.0', $event)"
                 />
               </div>
 
@@ -451,6 +228,7 @@
                   :skill="selectedSkill"
                   :model-available="isModelAvailable"
                   @analyzing="isAnalyzing = $event"
+                  @analysis-created="captureWorkflowResult('polymarket-top-performers-v1.0.0', $event)"
                 />
               </div>
 
@@ -461,9 +239,7 @@
               >
                 <DSLASkill
                   :skill="selectedSkill"
-                  @market-created="
-                    showNotification('Prediction market created!', 'success')
-                  "
+                  @market-created="handleWorkflowResult('prediction-market-maker-v1.0.0', $event, 'Market proposal prepared!')"
                 />
               </div>
 
@@ -475,9 +251,8 @@
                 <MeditationForgeSkill
                   :skill="selectedSkill"
                   :model-available="isModelAvailable"
-                  @meditation-created="
-                    showNotification('Meditation session created!', 'success')
-                  "
+                  @meditation-created="handleWorkflowResult('meditation-forge-v1.0.0', $event, 'Meditation session created!')"
+                  :company-task="companyTaskContext"
                   @status-update="loadingMessage = $event"
                 />
               </div>
@@ -490,9 +265,19 @@
                 <VideoCaptioningSkill
                   :skill="selectedSkill"
                   :model-available="isModelAvailable"
-                  @caption-created="
-                    showNotification('Video captioning session saved!', 'success')
-                  "
+                  @caption-created="handleWorkflowResult('video-captioning-v1.0.0', $event, 'Video captioning session saved!')"
+                  @status-update="loadingMessage = $event"
+                />
+              </div>
+
+              <div
+                v-else-if="selectedSkillId === 'finger-frame-director-v1.0.0'"
+                class="agent-skill-runtime agent-skill-runtime--flush"
+              >
+                <FingerFrameSkill
+                  :skill="selectedSkill"
+                  @model-requirements-change="updateWorkflowModelRequirements"
+                  @effect-created="handleWorkflowResult('finger-frame-director-v1.0.0', $event, 'Finger frame effect created!')"
                   @status-update="loadingMessage = $event"
                 />
               </div>
@@ -503,11 +288,10 @@
                 class="meditation-interface agent-skill-runtime"
               >
                 <TCGScannerSkill
+                  :downloads-managed="true"
                   :skill="selectedSkill"
-                  :model-available="isModelAvailable"
-                  @card-scanned="
-                    showNotification('Card analysis complete!', 'success')
-                  "
+                  :model-available="modelAvailabilityChecked && !hasMissingModels"
+                  @card-scanned="handleWorkflowResult('tcg-analysis-v1.0.0', $event, 'Card analysis complete!')"
                   @status-update="loadingMessage = $event"
                 />
               </div>
@@ -518,8 +302,10 @@
                 class="meditation-interface agent-skill-runtime"
               >
                 <LiveStreamerSkill
+                  @model-requirements-change="updateWorkflowModelRequirements"
                   :skill="selectedSkill"
                   :model-available="isModelAvailable"
+                  @result-created="captureWorkflowResult('live-streaming-v1.0.0', $event)"
                   @status-update="loadingMessage = $event"
                 />
               </div>
@@ -528,6 +314,7 @@
               <div v-else-if="selectedSkillId === 'mass-chat-v1.0.0'" class="agent-skill-runtime">
                 <MassChatSkill
                   :skill="selectedSkill"
+                  @result-created="captureWorkflowResult('mass-chat-v1.0.0', $event)"
                   @status-update="loadingMessage = $event"
                 />
               </div>
@@ -536,6 +323,7 @@
               <div v-else-if="selectedSkillId === 'chart-forecaster-v1.0.0'" class="agent-skill-runtime">
                 <ChartForecasterSkill
                   :skill="selectedSkill"
+                  @result-created="captureWorkflowResult('chart-forecaster-v1.0.0', $event)"
                   @status-update="loadingMessage = $event"
                 />
               </div>
@@ -547,6 +335,7 @@
               >
                 <RoleplayChat
                   :skill="selectedSkill"
+                  :initial-companion="roleplayStartAgent"
                   @charge-fee="handleRoleplayFee"
                 />
               </div>
@@ -556,56 +345,6 @@
         </div>
       </template>
 
-      <template #input>
-        <ChatInput
-          v-if="!isAgentCommandBarCollapsed"
-          v-model="agentPrompt"
-          :placeholder="agentCommandPlaceholder"
-          :enable-attachments="false"
-          :enable-dictation="false"
-          :hint="agentCommandHint"
-          :slash-commands="agentSlashCommands"
-          submit-label="Apply"
-          aria-label="Agent command composer"
-          @submit="submitAgentCommand"
-          @run-command="runAgentSlashCommand"
-        >
-          <template #tools>
-            <button
-              type="button"
-              class="agent-command-tool"
-              title="Collapse command bar"
-              aria-label="Collapse command bar"
-              @click="toggleAgentCommandBar"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_down</span>
-              Collapse
-            </button>
-            <button type="button" class="agent-command-tool" @click="selectAgentMode('browseSkills')">
-              <span class="material-symbols-outlined" aria-hidden="true">search</span>
-              Search workflows
-            </button>
-            <button type="button" class="agent-command-tool" @click="selectAgentMode('browseAgents')">
-              <span class="material-symbols-outlined" aria-hidden="true">groups</span>
-              Open agents
-            </button>
-            <button type="button" class="agent-command-tool" @click="selectAgentMode('my-skills')">
-              <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
-              Open runner
-            </button>
-          </template>
-        </ChatInput>
-        <div v-else class="agent-command-bar-collapsed">
-          <button
-            type="button"
-            class="agent-command-bar-collapsed__button fira-sans-condensed-black-italic"
-            @click="toggleAgentCommandBar"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">keyboard_arrow_up</span>
-            Search workflows
-          </button>
-        </div>
-      </template>
     </ChatLayout>
 
     <!-- Loading Overlay -->
@@ -1019,7 +758,12 @@
 </template>
 
 <script>
+import CompanyWorkflowContext from './company/CompanyWorkflowContext.vue';
+import { createWorkflowResultCapture } from '../services/company/workflowResults.js';
+import { createWorkflowRecovery, workflowBridgeReady, WORKFLOW_RECOVERED_MESSAGE } from '../services/company/workflowRecovery.js';
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import { withTimeout } from "../utils/withTimeout.js";
+import { useI18n } from "../i18n/index.js";
 import VueMarkdown from "vue-markdown-render";
 import axios from "axios";
 import { io } from "socket.io-client";
@@ -1029,16 +773,14 @@ import { SKILL_CATEGORY_META } from "../skills/types.js";
 import BonzaiEmptyState from "./BonzaiEmptyState.vue";
 import BonzaiPulse from "./BonzaiPulse.vue";
 import BzCloseButton from "./BzCloseButton.vue";
-import ChatInput from "./chat/ChatInput.vue";
 import ChatLayout from "./chat/ChatLayout.vue";
 import ModeChipBar from "./generative/ModeChipBar.vue";
 import polymarketAgent from "./polymarketAgent.js";
 import { tokenService } from "../services/token.service.js";
-import { loadSkillTokenAccessOnChain, isDevMode } from "../services/agent.service.js";
 import { requestOpenLevelModal } from "../services/level.service.js";
 import { CONFIG } from "../config/web3.config.js";
-import { getMarketplaceSkillOwners } from "../skills/companionSkillRoadmap.js";
 import SkillRunner from "./skills/SkillRunner.vue";
+import { cancelLocalDownloads } from '../services/downloadCancellation.js';
 import RoleplayChat from "./skills/RoleplayChat.vue";
 import SkillDownloader from "./skills/SkillDownloader.vue";
 import PolymarketSkill from "./skills/PolymarketSkill.vue";
@@ -1047,14 +789,17 @@ import MassChatSkill from "./skills/MassChatSkill.vue";
 import ChartForecasterSkill from "./skills/ChartForecasterSkill.vue";
 import MeditationForgeSkill from "./skills/MeditationForgeSkill.vue";
 import VideoCaptioningSkill from "./skills/VideoCaptioningSkill.vue";
+import FingerFrameSkill from "./skills/FingerFrameSkill.vue";
 import TCGScannerSkill from "./skills/TCGScannerSkill.vue";
 import LiveStreamerSkill from "./skills/LiveStreamerSkill.vue";
-import BrowseAgents from "./skills/BrowseAgents.vue";
+import { loadSmartAgents, smartAgentCatalog } from "../services/smartAgentCatalog.js";
+import DownloadRequirement from "./DownloadRequirement.vue";
 import RobinhoodCouncil from "./RobinhoodCouncil.vue";
 import {
   getSkillModelRequirements,
   MODEL_REQUIREMENTS,
   SKILL_MODEL_REQUIREMENTS,
+  roleplayCompanion,
 } from "../skills/flagship.js";
 
 // Map model type keys to content icons (matches nav menu icons)
@@ -1184,6 +929,18 @@ const SKILL_RUNNER_PROFILES = {
     steps: ["Load source", "Analyze frames", "Sync text", "Export"],
     outcomes: ["Local files", "Direct URLs", "Accessibility-ready"],
   },
+  "finger-frame-director-v1.0.0": {
+    tone: "scene",
+    workspace: "Finger Frame Director",
+    mode: "Local VFX",
+    promise: "A hand gesture becomes a tracked cinematic portal without uploading the source clip.",
+    icon: "auto_awesome_motion",
+    primaryOutput: "Composited video",
+    cadence: "One-shot workflow",
+    confidenceLabel: "Gesture lock",
+    steps: ["Track hands", "Direct world", "Generate", "Composite"],
+    outcomes: ["Local processing", "Preserved audio", "Perspective tracking"],
+  },
   "tcg-analysis-v1.0.0": {
     tone: "grading",
     workspace: "Grading Bench",
@@ -1249,6 +1006,7 @@ const SKILL_RUNNER_PROFILES = {
 export default {
   name: "SmartAgent",
   components: {
+    CompanyWorkflowContext,
     VueMarkdown,
     SkillRunner,
     RoleplayChat,
@@ -1259,33 +1017,35 @@ export default {
     ChartForecasterSkill,
     MeditationForgeSkill,
     VideoCaptioningSkill,
+    FingerFrameSkill,
     TCGScannerSkill,
     LiveStreamerSkill,
-    BrowseAgents,
+    DownloadRequirement,
     RobinhoodCouncil,
     BonzaiEmptyState,
     BonzaiPulse,
     BzCloseButton,
-    ChatInput,
     ChatLayout,
     ModeChipBar,
   },
-  setup() {
+  props: {
+    companyWorkflowId: { type: String, default: "" },
+    companyTask: { type: Object, default: null },
+  },
+  emits: ['task-result-saved'],
+  setup(props, { emit }) {
     // Store
     const skillStore = useSkillStore();
     const web3Store = useWeb3Store();
 
     // Tab state
-    const activeTab = ref("browseSkills");
+    const activeTab = ref("browseAgents");
+    const companionCreator = ref(null);
     const isCompanionDemo = new URLSearchParams(window.location.search).get("demo")?.startsWith("companion-") || false;
-    const isAgentRailCollapsed = ref(false);
-    const isAgentCommandBarCollapsed = ref(false);
-    const agentPrompt = ref("");
-    const agentCommandMode = ref("search");
+    const isAgentRailCollapsed = ref(true);
     const agentTabs = [
-      { value: "browseSkills", label: "Workflows", icon: "manage_search" },
       { value: "browseAgents", label: "Agents", icon: "groups" },
-      { value: "my-skills", label: "Runner", icon: "play_arrow" },
+      { value: "my-skills", label: "Roleplay", icon: "play_arrow" },
     ];
 
     // Notifications
@@ -1310,6 +1070,36 @@ export default {
     const executionStatus = ref("");
     const executionResults = reactive({});
 
+    const savingWorkflowResult = ref(false);
+    const workflowResultError = ref('');
+    const canRetryWorkflowResult = ref(false);
+    const savedWorkflowResult = ref(null);
+    const workflowCapture = createWorkflowResultCapture({
+      taskContext: props.companyTask,
+      recovery: createWorkflowRecovery(props.companyTask),
+      save: (companyId, issueId, input) => {
+        const api = window.electronAPI?.db?.issues;
+        if (!workflowBridgeReady()) throw new Error(WORKFLOW_RECOVERED_MESSAGE);
+        return api.saveWorkflowResult(companyId, issueId, input);
+      },
+      onState: state => { savingWorkflowResult.value = state.saving; workflowResultError.value = state.error; canRetryWorkflowResult.value = state.canRetry; },
+      onSaved: result => { savedWorkflowResult.value = result; emit('task-result-saved', result); },
+    });
+    const companyTaskContext = workflowCapture.context;
+    onMounted(() => workflowCapture.restore());
+    const companyWorkflowFinished = computed(() => savedWorkflowResult.value?.issue?.status === 'done'
+      || savedWorkflowResult.value?.issue?.execution?.steps?.some(step => step.action?.workflowId === companyTaskContext?.skillId && step.status === 'completed'));
+    const captureWorkflowResult = (workflowId, result) => workflowCapture.capture(workflowId, result, selectedSkill.value?.name);
+    const retryWorkflowResult = () => workflowCapture.retry();
+    const handleWorkflowReviewed = issue => {
+      savedWorkflowResult.value = { ...savedWorkflowResult.value, issue };
+      emit('task-result-saved', issue);
+    };
+    const handleWorkflowResult = (workflowId, result, message) => {
+      showNotification(message, 'success');
+      return captureWorkflowResult(workflowId, result);
+    };
+
     // Model requirements state
     const modelAvailability = reactive({});
     const modelReadinessDetails = reactive({}); // Stores { repos: [], files: [] } per model key
@@ -1329,6 +1119,37 @@ export default {
       wsUrl: null,
     });
     const downloadsSocket = ref(null);
+    const isCancellingDownloads = ref(false);
+    let downloadRun = 0;
+    const trackedPipelines = new Set();
+    const cancelledPipelines = new Set();
+    const cancelActiveDownloads = async () => {
+      if (isCancellingDownloads.value) return;
+      isCancellingDownloads.value = true;
+      downloadRun++;
+      try {
+        const filenames = Object.values(downloads.pipeline?.tasks || {}).filter(task => /^llm[_-]/.test(task.task_id || '') && !['completed', 'failed', 'cancelled'].includes(task.status)).map(task => task.filename);
+        await cancelLocalDownloads({ filenames, pipelineIds: [...trackedPipelines], apiBase: API_BASE });
+        for (const id of trackedPipelines) cancelledPipelines.add(id);
+        trackedPipelines.clear();
+        downloads.status = 'cancelled';
+        downloads.active = false;
+        downloadingModelKey.value = null;
+        if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; }
+        if (completionCheckTimer) { clearInterval(completionCheckTimer); completionCheckTimer = null; }
+        await checkModelAvailability(true);
+        await companionCreator.value?.refreshModelAvailability?.();
+      } catch (error) {
+        showNotification(error.message, 'danger');
+      } finally { isCancellingDownloads.value = false; }
+    };
+    watch(() => downloads.status, async (status) => {
+      if (status === 'completed') {
+        // LLM downloads finish through Electron and do not emit Flask events.
+        // Refresh the existing creator's own readiness before enabling Generate.
+        await companionCreator.value?.refreshModelAvailability?.();
+      }
+    });
     const lastDlEventAt = ref(0);
     let httpPollTimer = null;
     let completionCheckTimer = null;
@@ -1350,10 +1171,32 @@ export default {
       return arr;
     });
 
+    const workflowModelOverrides = reactive({});
+    const updateWorkflowModelRequirements = ({ workflowId, keys } = {}) => {
+      if (workflowId !== selectedSkillId.value || !Array.isArray(keys)) return;
+      workflowModelOverrides[workflowId] = keys.filter(key => MODEL_REQUIREMENTS[key]);
+    };
     // Computed: Model requirements for selected skill
     const skillModelRequirements = computed(() => {
       if (!selectedSkillId.value) return [];
-      return getSkillModelRequirements(selectedSkillId.value);
+      // Image pipelines own their GGUF transformers. Other additional
+      // files can be independent LLMs (for example, music's lyrics model).
+      let requirements = getSkillModelRequirements(selectedSkillId.value).filter((model) => !['image_quality', 'image_turbo'].includes(model.parentKey));
+      // Native meditation writes with the assigned worker's model, as company tasks do.
+      if (selectedSkillId.value === 'meditation-forge-v1.0.0' && companyTaskContext?.llm && MODEL_REQUIREMENTS[companyTaskContext.llm]) {
+        requirements = [...requirements.filter(model => model.type !== 'llm'), { key: companyTaskContext.llm, ...MODEL_REQUIREMENTS[companyTaskContext.llm] }];
+      }
+      const override = workflowModelOverrides[selectedSkillId.value];
+      if (override) return [...requirements.filter(model => model.type === 'llm'), ...override.map(key => ({ key, ...MODEL_REQUIREMENTS[key] }))];
+      // Creating a profile and portrait does not need the scene model used in chat.
+      if (activeTab.value === 'browseAgents') return [
+        ...requirements.filter((model) => !['image_turbo', 'image_quality', 'video_quality'].includes(model.key)),
+        { key: 'image_quality', ...MODEL_REQUIREMENTS.image_quality },
+      ];
+      // Existing companions need scene images, not the portrait-creation pipeline.
+      return selectedSkillId.value === 'roleplay-companion-v1.0.0'
+        ? requirements.filter((model) => model.key !== 'image_quality')
+        : requirements;
     });
 
     const missingModels = computed(() => {
@@ -1365,6 +1208,9 @@ export default {
     const hasMissingModels = computed(() => {
       return missingModels.value.length > 0;
     });
+
+    const desktopDownloadRequired = computed(() => !window.electronAPI?.downloadModel
+      && missingModels.value.some((model) => model.type === 'llm'));
 
     // Check if a model is ready/available
     const isModelReady = (model) => {
@@ -1397,47 +1243,28 @@ export default {
 
     // Cache for model availability checks (5 minute TTL)
     const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
-    let lastModelCheckTimestamp = 0;
+    const modelCheckCache = new Map();
+    let modelCheckRevision = 0;
 
     // Check model availability on mount and when skill changes
     const checkModelAvailability = async (forceRefresh = false) => {
-      // Skip if recently checked (within TTL) unless forced
+      const requirements = [...skillModelRequirements.value];
+      const key = requirements.map(model => model.filename || model.key).sort().join('|');
+      const revision = ++modelCheckRevision;
       const now = Date.now();
-      if (!forceRefresh && lastModelCheckTimestamp > 0 && now - lastModelCheckTimestamp < MODEL_CACHE_TTL_MS) {
-        console.log("[SmartAgent] Using cached model availability (checked", Math.round((now - lastModelCheckTimestamp) / 1000), "s ago)");
+      if (!forceRefresh && now - (modelCheckCache.get(key) || 0) < MODEL_CACHE_TTL_MS) {
+        modelAvailabilityChecked.value = true;
         return;
       }
-
-      console.log("[SmartAgent] Checking model availability...");
-
-      // Check LLM models via electron API - PARALLEL checks
+      modelAvailabilityChecked.value = false;
       if (window.electronAPI?.checkModel) {
-        // Collect all unique LLM model keys referenced by any skill
-        const llmModelKeys = [...new Set(
-          Object.values(SKILL_MODEL_REQUIREMENTS)
-            .flat()
-            .filter(key => key.startsWith('llm_'))
-        )];
-
-        // Run all LLM checks in parallel
-        const llmChecks = llmModelKeys.map(async (key) => {
-          const model = MODEL_REQUIREMENTS[key];
-          if (model?.filename) {
-            try {
-              const exists = await window.electronAPI.checkModel(model.filename);
-              modelAvailability[model.filename] = exists;
-              console.log(
-                `[SmartAgent] LLM model ${model.filename}: ${exists ? "available" : "not found"}`,
-              );
-            } catch (e) {
-              console.warn(`[SmartAgent] Failed to check model ${model.filename}:`, e);
-              modelAvailability[model.filename] = false;
-            }
-          }
-        });
-
-        await Promise.all(llmChecks);
+        await Promise.all(requirements.filter(model => model.type === 'llm').map(async model => {
+          let exists = false;
+          try { exists = await window.electronAPI.checkModel(model.filename); } catch {}
+          if (revision === modelCheckRevision) modelAvailability[model.filename] = exists;
+        }));
       }
+      if (revision !== modelCheckRevision) return;
 
       // Check Flask server readiness for diffusion/audio/video models via /pipelines/plan
       const port = window.BONZAI_SERVER_PORT || 65000;
@@ -1454,14 +1281,15 @@ export default {
         music: "music",
         music_fast: "music",
         video_fast: "video_fast",
+        video_sota: "video_sota",
         video_quality: "video_quality",
-        vision: "qwen3_vision",
+        vision: "vision",
         vision_caption: "vision_caption",
         forecast_quality: "forecast",
       };
 
       // Check each pipeline in parallel
-      const pipelineChecks = Object.entries(pipelineMap).map(
+      const pipelineChecks = [...new Set(requirements.filter(model => model.type !== 'llm').map(model => model.key))].map(key => [key, pipelineMap[key] || key]).map(
         async ([modelKey, pipeline]) => {
           try {
             console.log(
@@ -1473,10 +1301,13 @@ export default {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ pipeline }),
+                signal: AbortSignal.timeout(10000),
               },
             );
+            if (revision !== modelCheckRevision) return;
             if (response.ok) {
               const data = await response.json();
+              if (revision !== modelCheckRevision) return;
               console.log(
                 `[SmartAgent] Pipeline ${pipeline} (${modelKey}) response:`,
                 JSON.stringify(data, null, 2),
@@ -1490,17 +1321,18 @@ export default {
               } else {
                 modelAvailability[modelKey] = false;
                 // Store missing repos and files for display
-                // Flatten repos in case r.repo is an array (e.g., Qwen TTS has multiple repos)
+                // Flatten repos in case a model spans multiple repositories.
                 const missingRepos = (data.repos || [])
                   .filter(
                     (r) =>
                       r.ok === false ||
                       (Number.isFinite(r.missing) && r.missing > 0),
                   )
-                  .flatMap((r) => (Array.isArray(r.repo) ? r.repo : [r.repo]));
+                  .flatMap((r) => (Array.isArray(r.repo) ? r.repo : [r.repo])
+                    .map((repo) => ({ repo, size: r.size || r.filesize || '' })));
                 const missingFiles = (data.required_files || [])
                   .filter((f) => !f.ok || !f.exists)
-                  .map((f) => (f.path || f.name || "").split("/").pop());
+                  .map((f) => ({ name: (f.path || f.name || "").split("/").pop(), size: f.size || f.filesize || '' }));
                 modelReadinessDetails[modelKey] = {
                   repos: missingRepos,
                   files: missingFiles,
@@ -1522,6 +1354,7 @@ export default {
               };
             }
           } catch (e) {
+            if (revision !== modelCheckRevision) return;
             console.error(
               `[SmartAgent] Failed to check pipeline ${pipeline}:`,
               e.message,
@@ -1539,8 +1372,9 @@ export default {
 
       await Promise.all(pipelineChecks);
 
+      if (revision !== modelCheckRevision) return;
       modelAvailabilityChecked.value = true;
-      lastModelCheckTimestamp = Date.now();
+      modelCheckCache.set(key, Date.now());
     };
 
     const getModelTypeIcon = (type) => {
@@ -1591,7 +1425,7 @@ export default {
     };
 
     const applyPipelineUpdate = (p) => {
-      if (!p) return;
+      if (!p || isCancellingDownloads.value || downloads.status === 'cancelled' || cancelledPipelines.has(p.pipeline_id)) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
 
@@ -1599,7 +1433,7 @@ export default {
       const incoming = p.tasks || {};
       const merged = { ...existing };
       for (const [tid, t] of Object.entries(incoming)) {
-        merged[tid] = mergeTask(existing[tid], t);
+        merged[tid] = mergeTask(existing[tid], { ...t, pipeline: t.pipeline || p.pipeline_name || existing[tid]?.pipeline });
       }
       downloads.pipeline = {
         ...(downloads.pipeline || {}),
@@ -1639,7 +1473,7 @@ export default {
       // Immediately refresh model availability when download completes
       if (wasActive && !downloads.active && downloads.status === "completed") {
         console.log("[Downloads] Download completed, refreshing model availability");
-        checkModelAvailability();
+        checkModelAvailability(true);
       }
     };
 
@@ -1700,6 +1534,7 @@ export default {
 
     const connectAndSubscribe = (pipelineId, websocketUrl) => {
       if (!pipelineId) return;
+      trackedPipelines.add(pipelineId);
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
@@ -1842,7 +1677,9 @@ export default {
     // Download all missing models
     const downloadAllMissingModels = async () => {
       const missing = missingModels.value;
-      if (missing.length === 0) return;
+      if (missing.length === 0 || desktopDownloadRequired.value || downloads.active || isCancellingDownloads.value) return;
+      const run = ++downloadRun;
+      const wasCancelled = () => run !== downloadRun;
 
       // Reset download state
       downloads.active = true;
@@ -1859,6 +1696,7 @@ export default {
         // Collect all pipelines to prefetch
         const pipelines = [];
         for (const model of missing) {
+          if (wasCancelled()) return;
           if (model.type === "llm" && model.url) {
             // LLM models via electron API
             if (window.electronAPI?.downloadModel) {
@@ -1868,6 +1706,7 @@ export default {
               const taskId = `llm_${model.filename}`;
               downloads.pipeline.tasks[taskId] = {
                 task_id: taskId,
+                category: model.type,
                 filename: model.filename,
                 status: "downloading",
                 progress: 0,
@@ -1876,7 +1715,7 @@ export default {
               };
 
               const progressHandler = (e, data) => {
-                if (data.filename === model.filename) {
+                if (!wasCancelled() && data.filename === model.filename) {
                   const pct = Math.round(data.percent * 100);
 
                   // Update task progress
@@ -1900,6 +1739,7 @@ export default {
                 model.filename,
               );
 
+              if (wasCancelled()) return;
               // Mark task as completed or failed
               if (downloads.pipeline.tasks[taskId]) {
                 downloads.pipeline.tasks[taskId].status = success ? "completed" : "failed";
@@ -1933,6 +1773,7 @@ export default {
         // Prefetch all Flask pipelines together
         if (pipelines.length > 0) {
           for (const { pipeline, model } of pipelines) {
+            if (wasCancelled()) return;
             try {
               const res = await axios.post(
                 `${API_BASE}/pipelines/prefetch`,
@@ -1947,6 +1788,11 @@ export default {
               );
 
               if (res.status === 202 && res.data?.pipeline_id) {
+                if (wasCancelled()) {
+                  cancelledPipelines.add(res.data.pipeline_id);
+                  await cancelLocalDownloads({ pipelineIds: [res.data.pipeline_id], apiBase: API_BASE });
+                  return;
+                }
                 // Start tracking downloads via socket
                 hasActiveDownload = true;
                 startDownloadTracking(
@@ -1984,18 +1830,20 @@ export default {
           downloads.total_progress = 100;
         }
       } catch (e) {
+        if (wasCancelled()) return;
         console.error("[SmartAgent] Download error:", e);
         downloads.status = "failed";
         downloads.active = false;
       } finally {
         // Reset helper state if no active downloads
-        if (!hasActiveDownload) {
+        if (!wasCancelled() && !hasActiveDownload) {
           downloadingModelKey.value = null;
           downloadProgress.value = 0;
         }
       }
 
       // Re-check availability after downloads complete
+      if (wasCancelled()) return;
       await checkModelAvailability();
     };
 
@@ -2205,7 +2053,7 @@ Return ONLY the JSON, no explanation.`;
     const selectedCategory = computed(() => skillStore.selectedCategory);
     const categoryItems = computed(() => [
       { value: "all", label: "All", icon: "apps" },
-      ...categories.value.map((cat) => ({
+      ...categories.value.filter((cat) => skillStore.skills.some((skill) => !skill.disabled && skill.category === cat.key)).map((cat) => ({
         value: cat.key,
         label: cat.label,
         icon: cat.icon,
@@ -2218,54 +2066,39 @@ Return ONLY the JSON, no explanation.`;
     const filteredSkills = computed(() => skillStore.filteredSkills);
     const marketplaceSkills = computed(() => skillStore.skills || []);
     const accessibleSkills = computed(() => skillStore.accessibleSkills);
+    const downloadRequirementItems = computed(() => missingModels.value.flatMap((model) => {
+      const detail = modelReadinessDetails[model.key] || {};
+      const entries = [...(detail.repos || []), ...(detail.files || [])];
+      const primaryNames = [model.filename || model.repo || model.name].flat();
+      const knownFiles = [...primaryNames.map((name) => ({ name, size: model.size })), ...(model.additionalFiles || [])];
+      return (entries.length ? entries : primaryNames).map((entry) => {
+        const value = typeof entry === 'string' ? { name: entry } : entry;
+        const name = value.filename || value.repo || value.name;
+        const known = knownFiles.find((file) => String(file.filename || file.repo || file.name).toLowerCase() === String(name).toLowerCase());
+        return { name, category: model.type, size: value.size || value.filesize || known?.size || '' };
+      });
+    }));
     const agentRailItems = computed(() => [
-      {
-        value: "browseSkills",
-        label: "Workflows",
-        icon: "manage_search",
-        count: filteredSkills.value.length,
-      },
-      {
-        value: "browseAgents",
-        label: "Agents",
-        icon: "groups",
-        count: null,
-      },
+      { value: "browseAgents", label: "Smart agents", icon: "person", count: null },
       {
         value: "my-skills",
-        label: "Runner",
+        label: "Roleplay",
         icon: "play_arrow",
         count: !isCompanionDemo && hasMissingModels.value ? missingModels.value.length : null,
       },
     ]);
     const activeAgentTab = computed(() => agentTabs.find((tab) => tab.value === activeTab.value) || agentTabs[0]);
     const agentModeEyebrow = computed(() => {
-      if (activeTab.value === "browseAgents") return "Agents";
-      if (activeTab.value === "my-skills") return "Run";
+      if (activeTab.value === "browseAgents") return "Smart agents";
+      if (activeTab.value === "my-skills") return "Roleplay";
       return "Automate";
     });
     const agentModeIcon = computed(() => activeAgentTab.value.icon);
     const agentModeTitle = computed(() => {
-      if (activeTab.value === "browseAgents") return "Companion Operations";
-      if (activeTab.value === "my-skills") return selectedSkill.value?.name || "Skill Runner";
-      return "Agentic Skills";
+      if (activeTab.value === "browseAgents") return "Smart agents";
+      if (activeTab.value === "my-skills") return selectedSkill.value?.name || "Roleplay";
+      return "Workflows";
     });
-    const agentCommandPlaceholder = computed(() => {
-      if (activeTab.value === "browseAgents") return "Search agents, wallets, revenue, or type /run...";
-      if (activeTab.value === "my-skills") return "Search workflows, type /agents, or /workflows...";
-      return "Search workflows, type /agents or /run...";
-    });
-    const agentCommandHint = computed(() => {
-      if (agentCommandMode.value === "agents") return "Opens Agents";
-      if (agentCommandMode.value === "runner") return selectedSkill.value?.name || "Opens Runner";
-      return activeTab.value === "browseSkills" ? String(filteredSkills.value.length) + " workflows" : "Search and route";
-    });
-    const agentSlashCommands = [
-      { id: "workflows", label: "Workflows", description: "Open the workflow list", icon: "manage_search" },
-      { id: "agents", label: "Agents", description: "Open companion operations", icon: "groups" },
-      { id: "run", label: "Runner", description: "Open the selected workflow runner", icon: "play_arrow" },
-      { id: "clear", label: "Clear Search", description: "Clear workflow filtering", icon: "backspace" },
-    ];
     const selectedSkillProfile = computed(() => ({
       ...DEFAULT_SKILL_PROFILE,
       ...(SKILL_RUNNER_PROFILES[selectedSkillId.value] || {}),
@@ -2312,50 +2145,33 @@ Return ONLY the JSON, no explanation.`;
       isAgentRailCollapsed.value = !isAgentRailCollapsed.value;
     };
 
-    const toggleAgentCommandBar = () => {
-      isAgentCommandBarCollapsed.value = !isAgentCommandBarCollapsed.value;
-    };
-
     const selectAgentMode = (mode) => {
+      if (props.companyWorkflowId) return;
+      if (!["browseAgents", "my-skills"].includes(mode)) return;
+      if (mode === "browseAgents" || mode === "my-skills") selectSkillById(roleplayCompanion.id);
       activeTab.value = mode;
-      agentCommandMode.value =
-        mode === "browseAgents" ? "agents" : mode === "my-skills" ? "runner" : "search";
     };
 
-    const routeAgentCommand = (query) => {
-      const lower = query.toLowerCase();
-      if (["/agents", "agents", "agent", "companions", "companion", "wallet", "wallets", "revenue"].includes(lower)) {
-        selectAgentMode("browseAgents");
-        return;
-      }
-      if (["/run", "runner", "run", "active skill", "skill runner"].includes(lower)) {
-        selectAgentMode("my-skills");
-        return;
-      }
-      if (["/workflows", "workflows", "workflow", "browse", "search"].includes(lower)) {
-        selectAgentMode("browseSkills");
-        return;
-      }
-      selectAgentMode("browseSkills");
-      searchQuery.value = query.replace(/^find\s+/i, "").replace(/^search\s+/i, "");
+    const refreshCompanionRoster = () => loadSmartAgents().catch(error => {
+      showNotification(error.message || 'Unable to refresh smart agents', 'danger');
+    });
+    const roleplayStartAgent = ref(null);
+    const startAgentRoleplay = companion => {
+      roleplayStartAgent.value = companion;
+      selectSkillById('roleplay-companion-v1.0.0');
+      activeTab.value = 'my-skills';
     };
-
-    const submitAgentCommand = (value) => {
-      const query = String(value || "").trim();
-      if (!query) return;
-      routeAgentCommand(query);
-      agentPrompt.value = "";
-    };
-
-    const runAgentSlashCommand = (cmd) => {
-      const id = cmd?.id;
-      if (id === "clear") {
-        searchQuery.value = "";
-        agentPrompt.value = "";
-        return;
+    const hireCompanion = async (companion) => {
+      try {
+        const companions = await loadSmartAgents();
+        if (!companions.some((saved) => saved.id === companion?.id)) {
+          throw new Error('This smart agent is no longer saved. Refresh the roster before adding it to a team.');
+        }
+        smartAgentCatalog.pendingHireId = companion.id;
+        window.dispatchEvent(new CustomEvent('bonzai:hire-smart-agent', { detail: { agentId: companion.id } }));
+      } catch (error) {
+        showNotification(error.message || 'Unable to load this smart agent', 'danger');
       }
-      routeAgentCommand("/" + id);
-      agentPrompt.value = "";
     };
 
     const getCategoryLabel = (categoryKey) => {
@@ -2367,7 +2183,6 @@ Return ONLY the JSON, no explanation.`;
     };
 
     const skillRequirementLabel = (skill) => {
-      if (isTokenGated(skill)) return hasSkillAccess(skill.id) ? "Ready" : "Companion token";
       const access = canRunSkill(skill.id);
       if (access.canRun) return "Ready";
       return getRequiredLevel(skill) || "Locked";
@@ -2474,50 +2289,19 @@ Return ONLY the JSON, no explanation.`;
       }
     };
 
+    const { t } = useI18n();
+    const skillsLoading = ref(false);
+    const skillsLoadError = ref("");
+    const clearWorkflowFilters = () => skillStore.clearFilters();
     const refreshSkills = async () => {
-      await skillStore.refresh();
-      showNotification("Skills refreshed!", "success");
-    };
-
-    // Token access is rebuilt from the on-chain registry whenever the wallet changes.
-    const accessibleSkillIds = ref(new Set());
-
-    const hasSkillAccess = (skillId) => {
-      if (isDevMode()) return true;
-      return accessibleSkillIds.value.has(skillId);
-    };
-
-    const isTokenGated = (skill) => skill?.access?.type === "companion-token";
-    const isFreeSkill = (skill) => !isTokenGated(skill);
-    const skillTokenOptions = (skill) => getMarketplaceSkillOwners(skill?.id).map((career) => ({
-      ...career,
-      ...(CONFIG.companionTokens.byCompanionId[career.id] || {}),
-    }));
-
-    const buyCompanionToken = (owner) => {
-      if (!owner) return;
-      if (!owner.address) {
-        showNotification(`$${owner.tokenSymbol} launches with the default companion cold start.`, "info", 5000);
-        return;
-      }
-      const url = CONFIG.companionTokens.tradeUrlTemplate.replace(
-        "{tokenAddress}",
-        encodeURIComponent(owner.address),
-      );
-      if (window.electronAPI?.openExternal) window.electronAPI.openExternal(url);
-      else window.open(url, "_blank", "noopener,noreferrer");
-    };
-
-    const syncSkillAccess = async () => {
-      const paidIds = (skillStore.skills || [])
-        .filter(isTokenGated)
-        .map((s) => s.id);
-      if (!paidIds.length) return;
+      if (skillsLoading.value) return;
+      skillsLoading.value = true;
+      skillsLoadError.value = "";
       try {
-        accessibleSkillIds.value = await loadSkillTokenAccessOnChain(paidIds);
-      } catch (e) {
-        console.warn("[SmartAgent] Failed to sync companion-token access:", e.message);
-      }
+        await withTimeout(skillStore.refresh(), 10000, t("rcWorkflows.timeout"));
+        if (skillStore.error) throw new Error(skillStore.error);
+      } catch (error) { skillsLoadError.value = error?.message || String(error); }
+      finally { skillsLoading.value = false; }
     };
 
     const isPreviewMode = ref(false);
@@ -2526,14 +2310,12 @@ Return ONLY the JSON, no explanation.`;
       isPreviewMode.value = false;
       selectSkillById(skill.id);
       activeTab.value = "my-skills";
-      isAgentCommandBarCollapsed.value = true;
     };
 
     const previewSkill = (skill) => {
       isPreviewMode.value = true;
       selectSkillById(skill.id);
       activeTab.value = "my-skills";
-      isAgentCommandBarCollapsed.value = true;
     };
 
     const selectSkillById = (skillId) => {
@@ -2761,7 +2543,7 @@ Provide a concise analysis covering:
         selectedUseCase.value = null;
 
         // Switch to browse tab
-        activeTab.value = "browseSkills";
+        activeTab.value = "browseAgents";
         await skillStore.initialize();
       } else {
         showNotification(`Failed to create skill: ${result.error}`, "danger");
@@ -2871,7 +2653,7 @@ Provide a concise analysis covering:
         skillForm.steps = [];
 
         // Switch to browse tab
-        activeTab.value = "browseSkills";
+        activeTab.value = "browseAgents";
       } else {
         showNotification(`Failed to publish: ${result.error}`, "danger");
       }
@@ -3043,38 +2825,46 @@ Provide a concise analysis covering:
     };
 
     // Lifecycle - optimized with parallel initialization
+    let initialSkillsReady = false;
+    let isUnmounted = false;
+    const consumePendingSkill = () => {
+      if (props.companyWorkflowId) return false;
+      const pendingId = skillStore.pendingSkillId;
+      if (!pendingId) return false;
+      const skill = skillStore.getSkillById(pendingId);
+      if (!skill || skill.disabled) return false;
+      if (pendingId !== roleplayCompanion.id) {
+        skillStore.clearPendingSkillId();
+        window.dispatchEvent(new CustomEvent('bonzai:run-agent-workflow', { detail: { skillId: pendingId } }));
+        return true;
+      }
+      runSkill(skill);
+      skillStore.clearPendingSkillId();
+      return true;
+    };
     onMounted(async () => {
       // Refresh skill store on every mount (Agents tab re-entry)
-      await skillStore.refresh();
+      await refreshSkills();
+      if (isUnmounted) return;
+      initialSkillsReady = true;
+      if (props.companyWorkflowId) { selectSkillById(props.companyWorkflowId); activeTab.value = "my-skills"; }
+      const navigated = consumePendingSkill();
+      if (!navigated && activeTab.value === "browseAgents") selectSkillById(roleplayCompanion.id);
 
       // Run independent checks in parallel for faster startup
-      const [, , ] = await Promise.all([
+      await Promise.all([
         checkModelAvailability(),
-        checkPolymarketModelAvailability(),
+        ...(selectedSkillId.value === "polymarket-top-performers-v1.0.0" ? [checkPolymarketModelAvailability()] : []),
         resumeActiveDownloadIfAny(),
-        syncSkillAccess(),
       ]);
 
-      // Set default skill to Roleplay on load
-      selectSkillById('roleplay-companion-v1.0.0');
-
       // Non-blocking initialization
-      tokenService.initialize();
-
-      // Auto-select the featured Roleplay Companion skill by default
-      const roleplaySkillId = 'roleplay-companion-v1.0.0';
-      if (skillStore.getSkillById(roleplaySkillId)) {
-        selectSkillById(roleplaySkillId);
-      }
+      if (!isUnmounted) tokenService.initialize();
     });
 
-    // Re-sync companion-token access when the wallet address changes.
-    watch(
-      () => web3Store.walletAddress,
-      () => { syncSkillAccess(); }
-    );
-
     onBeforeUnmount(() => {
+      isUnmounted = true;
+      modelCheckRevision++;
       // Clean up download socket when leaving view
       if (downloadsSocket.value?.connected) {
         try {
@@ -3102,53 +2892,55 @@ Provide a concise analysis covering:
       },
     );
 
-    // Watch for skill changes to refresh model availability
-    watch(selectedSkillId, async (newSkillId) => {
-      if (newSkillId) {
-        console.log("[SmartAgent] Skill changed to:", newSkillId);
-        // Re-check model availability when skill changes
-        await checkModelAvailability();
-      }
+    // Refresh only when the current workflow's actual requirements change.
+    watch(() => skillModelRequirements.value.map(model => model.filename || model.key).join('|'), () => {
+      if (initialSkillsReady) checkModelAvailability();
     });
 
     // Watch for pending skill navigation from external sources (e.g., companion notification)
-    // Note: removed { immediate: true } to avoid redundant execution on mount
     watch(
-      () => skillStore.pendingSkillId,
-      (pendingId) => {
-        if (pendingId) {
-          console.log("[SmartAgent] Navigating to pending skill:", pendingId);
-          selectSkillById(pendingId);
-          skillStore.clearPendingSkillId();
-        }
-      }
+      () => [skillStore.pendingSkillId, skillStore.skills],
+      () => { if (initialSkillsReady) consumePendingSkill(); },
     );
 
     return {
+      companyTaskContext,
+      updateWorkflowModelRequirements,
+      savingWorkflowResult,
+      workflowResultError,
+      canRetryWorkflowResult,
+      savedWorkflowResult,
+      companyWorkflowFinished,
+      handleWorkflowReviewed,
+      captureWorkflowResult,
+      retryWorkflowResult,
+      handleWorkflowResult,
+      roleplayCompanion,
+      companionCreator,
+      cancelActiveDownloads,
+      isCancellingDownloads,
+      refreshCompanionRoster,
+      hireCompanion,
+      roleplayStartAgent,
+      startAgentRoleplay,
       // Tab
       activeTab,
       agentTabs,
       activeAgentTab,
       isAgentRailCollapsed,
-      isAgentCommandBarCollapsed,
-      agentPrompt,
       agentRailItems,
+      downloadRequirementItems,
+      desktopDownloadRequired,
       isCompanionDemo,
       agentModeEyebrow,
       agentModeIcon,
       agentModeTitle,
-      agentCommandPlaceholder,
-      agentCommandHint,
-      agentSlashCommands,
       selectedSkillProfile,
       selectedSkillModelCount,
       selectedSkillReadiness,
       selectedSkillStageIndex,
       toggleAgentRail,
-      toggleAgentCommandBar,
       selectAgentMode,
-      submitAgentCommand,
-      runAgentSlashCommand,
 
       // Notifications
       statusNotification,
@@ -3180,16 +2972,11 @@ Provide a concise analysis covering:
       getRequiredLevel,
       getSkillContentIcons,
       openUnlockModal,
-      refreshSkills,
+      refreshSkills, skillsLoading, skillsLoadError, clearWorkflowFilters,
       runSkill,
       previewSkill,
       isPreviewMode,
       availableSkills,
-      hasSkillAccess,
-      isFreeSkill,
-      isTokenGated,
-      skillTokenOptions,
-      buyCompanionToken,
       web3Store,
 
       // Skill execution
@@ -3323,6 +3110,44 @@ Provide a concise analysis covering:
   min-width: 0;
 }
 
+/* Company owns the page scroll. The standalone chat shell otherwise imposes
+   a second fixed-height grid and traps long workflow forms inside its stream. */
+.bz-tab-shell--agent.company-workflow-runtime,
+.company-workflow-runtime .agent-command-center {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+.company-workflow-runtime .agent-command-center {
+  display: block;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.company-workflow-runtime :deep(.bz-chat__main) {
+  display: block;
+  height: auto;
+  overflow: visible;
+}
+.company-workflow-runtime :deep(.bz-chat__stream) {
+  height: auto;
+  overflow: visible;
+  overscroll-behavior: auto;
+}
+.company-workflow-runtime :deep(.bz-chat__header) {
+  padding: 0 0 var(--bz-space-5);
+  border: 0;
+  background: transparent;
+}
+.company-workflow-runtime .agent-command-stream {
+  padding: 0;
+}
+.company-workflow-runtime .agent-skill-runtime {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .agent-command-rail {
   height: 100%;
   display: flex;
@@ -3442,73 +3267,11 @@ Provide a concise analysis covering:
   padding: var(--bz-space-4) var(--bz-space-4) var(--bz-space-6);
 }
 
-.agent-command-tool {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--bz-space-2);
-  height: 32px;
-  padding: 0 var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r-sm);
-  background: transparent;
-  color: var(--bz-fg-mid);
-  font-family: var(--bz-font-body);
-  font-size: var(--bz-size-meta);
-  cursor: pointer;
-  transition:
-    background var(--bz-dur-fast),
-    color var(--bz-dur-fast),
-    border-color var(--bz-dur-fast);
-}
-
-.agent-command-tool:hover {
-  border-color: var(--bz-border-strong);
-  background: var(--bz-raised);
-  color: var(--bz-fg);
-}
-
-.agent-command-tool .material-symbols-outlined {
-  font-size: 16px !important;
-}
-
-.agent-command-bar-collapsed {
-  display: flex;
-  justify-content: center;
-  padding: var(--bz-space-2) var(--bz-space-3);
-  border-top: 1px solid var(--bz-border);
-  background: var(--bz-panel);
-}
-
-.agent-command-bar-collapsed__button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--bz-space-2);
-  height: 32px;
-  padding: 0 var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r);
-  background: var(--bz-canvas);
-  color: var(--bz-fg-mid);
-  font-family: var(--bz-font-body);
-  font-size: var(--bz-size-meta);
-  font-weight: 400;
-  font-style: normal;
-  cursor: pointer;
-  transition:
-    background var(--bz-dur-fast),
-    color var(--bz-dur-fast),
-    border-color var(--bz-dur-fast);
-}
-
-.agent-command-bar-collapsed__button:hover {
-  border-color: var(--bz-border-strong);
-  background: var(--bz-raised);
-  color: var(--bz-fg);
-}
-
-.agent-command-bar-collapsed__button .material-symbols-outlined {
-  font-size: 18px !important;
-}
+.agent-command-center :deep(.bz-chat__input) { display: none; }
+.agent-workflow-search { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--bz-border); border-radius: var(--bz-r); background: var(--bz-panel); color: var(--bz-fg-mid); }
+.agent-workflow-search:focus-within { border-color: var(--bz-accent); }
+.agent-workflow-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--bz-fg); font: inherit; }
+.agent-workflow-search input::placeholder { color: var(--bz-fg-mid); }
 
 .agent-mode-surface,
 .agent-mode-surface > div,
@@ -3541,6 +3304,16 @@ Provide a concise analysis covering:
 .agent-command-center :deep(.bz-input__field) {
   min-height: 48px;
 }
+
+.agent-runner-requirements {
+  display: grid;
+  gap: var(--bz-space-2);
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 var(--bz-space-5);
+}
+.agent-runner-requirements :deep(.bz-download-requirement),
+.agent-runner-requirements > p { margin: 0; }
 
 .agent-runner-cockpit {
   --agent-runner-accent: var(--bz-purple-300);
@@ -5295,4 +5068,9 @@ input:checked + .slider:before {
     transform-origin: bottom left;
   }
 }
+</style>
+
+<style scoped>
+.agent-mode-tabs { margin-bottom: var(--bz-space-4); }
+.agent-agents-view { width: 100%; max-width: none; margin-inline: 0; overflow-x: auto; }
 </style>

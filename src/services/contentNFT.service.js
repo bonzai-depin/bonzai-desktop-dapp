@@ -1,3 +1,4 @@
+import {buildMintGLBViewer} from './mintGLBViewer.js';
 /**
  * BonzAI — Content NFT Minting Service
  *
@@ -5,7 +6,9 @@
  * 4 stages: upload content → upload metadata → mint on-chain → update store.
  */
 
+import { mintLicenseStatus, mintMediaBytes, validateMintFormat } from './mintValidation.js';
 import { ethers } from 'ethers';
+import { exportCodeGLB, uploadGLBArtifact } from '../components/gen3d/glbExport.js';
 import { storageService } from './storage.service.js';
 import { getEip1193Provider, switchNetwork, getSigner } from './web3.service.js';
 import { markAsMinted } from '../stores/inferenceStore.js';
@@ -294,11 +297,29 @@ export async function mintContent({
   const networkConfig = mintStore.activeMintNetwork.value;
 
   try {
+    const { MODEL_REQUIREMENTS } = await import('../skills/flagship.js');
+    const rights = mintLicenseStatus(generation, MODEL_REQUIREMENTS);
+    if (!rights.allowed) throw new Error(rights.reason);
+    if (!title?.trim()) throw new Error('Enter a title before minting.');
+    if (!(inferenceType in CONTENT_TYPE_MAP)) throw new Error('Unsupported media type.');
+    validateMintFormat(inferenceType, contentType);
+    const contentBytes = mintMediaBytes(content, contentType);
+    if (!CONFIG.contentNFT?.economy?.factoryAddress) throw new Error('Mint is not configured on the selected network yet.');
     // ─── Level gate: check if user can mint this content type ────────
     await checkAllLevels();
     const { canMint, levelRequired, reason } = canMintContentType(inferenceType);
     if (!canMint) {
       return { success: false, error: `${levelRequired} required. ${reason}`, levelBlocked: true };
+    }
+
+    // Prepare locally before any uploads or wallet transactions. A 3D mint
+    // must not proceed without a valid portable model.
+    let glbBytes = null;
+    if (inferenceType === 'object') {
+      onProgress('upload', 'Preparing GLB model...', 3);
+      if (content !== generation.threeCode) throw new Error('The selected 3D source does not match its metadata. Reopen the selected asset.');
+      glbBytes = await exportCodeGLB(generation.threeCode);
+      contentType = 'application/javascript';
     }
 
     // ─── Pre-flight: ensure we're on Ethereum ─────────────────────
@@ -390,51 +411,22 @@ export async function mintContent({
       creator: attribution.creator,
     });
 
-    let contentReceipt;
-    onProgress('upload', 'Uploading content to IPFS...', 12);
-    if (typeof content === 'string' && (content.startsWith('data:') || isBase64(content))) {
-      contentReceipt = await storageService.uploadBase64({
-        base64Data: content,
-        contentType,
-        generation: {
-          type: generation.type,
-          model: generation.model,
-          modelVersion: generation.modelVersion,
-          promptHash,
-          timestamp: generation.timestamp || Date.now(),
-          parameters: generation.parameters,
-        },
-        attribution,
-      });
-    } else if (typeof content === 'string') {
-      // Plain text content
-      const textBuffer = new TextEncoder().encode(content);
-      contentReceipt = await storageService.uploadContent({
-        data: textBuffer,
-        contentType: contentType || 'text/plain',
-        generation: {
-          type: generation.type,
-          model: generation.model,
-          promptHash,
-          timestamp: generation.timestamp || Date.now(),
-        },
-        attribution,
-      });
-    } else {
-      // Buffer / Uint8Array
-      contentReceipt = await storageService.uploadContent({
-        data: content,
-        contentType,
-        generation: {
-          type: generation.type,
-          model: generation.model,
-          promptHash,
-          timestamp: generation.timestamp || Date.now(),
-        },
-        attribution,
-      });
+    let glbArtifact = null;
+    if (glbBytes) {
+      onProgress('upload', 'Uploading GLB model to IPFS...', 10);
+      glbArtifact = await uploadGLBArtifact({ bytes: glbBytes,
+        uploadContent: (args) => storageService.uploadContent(args), generation, attribution });
     }
 
+    let contentReceipt;
+    onProgress('upload', 'Uploading content to IPFS...', 12);
+    contentReceipt = await storageService.uploadContent({
+      data: contentBytes, contentType,
+      generation: {type:generation.type, model:generation.model, promptHash,
+        timestamp:generation.timestamp, parameters:generation.parameters}, attribution,
+    });
+
+    if (!/^(ipfs|ar):\/\//.test(contentReceipt?.url || '')) throw new Error('Storage did not return a permanent media URI.');
     onProgress('upload', 'Content uploaded to IPFS', 30);
 
     // ─── Stage 1b: Branded thumbnail (non-image content) ────────────
@@ -467,8 +459,7 @@ export async function mintContent({
     let viewerReceipt = null;
     if (inferenceType === 'object' && generation.threeCode) {
       onProgress('upload', 'Uploading 3D viewer...', 35);
-      const userCode = extractUserCode(generation.threeCode);
-      const viewerHtml = buildInteractive3DViewer(userCode, brandedImageReceipt?.gatewayUrl);
+      const viewerHtml = buildMintGLBViewer(glbArtifact.uri);
       const viewerBuffer = new TextEncoder().encode(viewerHtml);
       viewerReceipt = await storageService.uploadContent({
         data: viewerBuffer,
@@ -512,9 +503,11 @@ export async function mintContent({
     onProgress('metadata', 'Uploading metadata...', 40);
 
     // Standard ERC-721 JSON metadata
-    // animation_url priority: 3D viewer > media player > raw audio/video
+    // Portable GLB is the 3D marketplace preview; preserve the HTML viewer as an attachment.
     // Use ipfs:// URIs (not HTTP gateway URLs) so metadata is gateway-agnostic
-    const animationUrl = viewerReceipt
+    const animationUrl = glbArtifact
+      ? glbArtifact.uri
+      : viewerReceipt
       ? viewerReceipt.url
       : mediaPlayerReceipt
         ? mediaPlayerReceipt.url
@@ -529,7 +522,7 @@ export async function mintContent({
     const inspectorMetadata = {
       prompt: prompt || generation.prompt || generation.question || '',
       negativePrompt: generation.negativePrompt || generation.negative_prompt || '',
-      outputText: generation.outputText || generation.answer?.text || '',
+      outputText: inferenceType === 'text' ? content : generation.outputText || generation.answer?.text || '',
       systemPrompt: generation.systemPrompt || '',
       model: generation.model || modelSlug,
       pipeline: generation.pipeline || '',
@@ -544,7 +537,7 @@ export async function mintContent({
       width: generation.width || generation.parameters?.width || null,
       height: generation.height || generation.parameters?.height || null,
       steps: generation.steps || generation.parameters?.steps || null,
-      seed: generation.seed || generation.parameters?.seed || null,
+      seed: generation.seed ?? generation.parameters?.seed ?? null,
     };
     const metadata = {
       name: title || `${generation.type || 'Untitled'} #${Date.now().toString(36)}`,
@@ -569,12 +562,24 @@ export async function mintContent({
         { trait_type: 'Content Safety', value: contentSafety.nsfw ? 'NSFW' : 'SFW' },
       ],
       properties: {
+        ...(glbArtifact ? {
+          model: glbArtifact,
+          files: [glbArtifact, { uri: contentReceipt.url, type: 'application/javascript', name: 'source.js' },
+            ...(viewerReceipt ? [{ uri: viewerReceipt.url, type: 'text/html', name: 'viewer.html' }] : [])],
+          interactive_viewer: viewerReceipt?.url,
+          exportNotes: 'GLB contains geometry, materials and authored glTF animation clips. Runtime JavaScript, physics and postprocessing remain in source.js and require the BonzAI runtime.',
+        } : {}),
+        files: [...(glbArtifact ? [glbArtifact] : []), {uri:contentReceipt.url,type:contentType,name:glbArtifact?'source.js':'original'}, ...(viewerReceipt ? [{uri:viewerReceipt.url,type:'text/html',name:'viewer.html'}] : [])],
+        license: rights.licenses,
+        generationMetadata: generation.metadata || {},
+        mediaDetails: {music:generation.musicParams || null, language:generation.language || null, voiceGender:generation.voiceGender || null},
         assetKind: generation.assetKind || null,
         projectManifest: generation.projectManifest || null,
         marketplace,
         trainingMaterial,
         contentSafety,
         provenance: {
+          ...(generation.threeCode ? { threeCode: generation.threeCode } : {}),
           transactionId: contentReceipt.transactionId,
           contentUrl: contentReceipt.url,
           promptHash,
@@ -611,6 +616,7 @@ export async function mintContent({
       model: modelSlug,
     }, attribution);
 
+    if (!/^(ipfs|ar):\/\//.test(metadataReceipt?.url || '')) throw new Error('Storage did not return a permanent metadata URI.');
     onProgress('metadata', 'Metadata uploaded', 55);
 
     // ─── Stage 3: Mint on-chain ──────────────────────────────────────
@@ -638,6 +644,7 @@ export async function mintContent({
       standard: networkConfig.standard,
       network: network,
       transactionId: contentReceipt.transactionId,
+      ...(glbArtifact ? { modelUrl: glbArtifact.uri, modelContentType: glbArtifact.type, interactiveViewerUrl: viewerReceipt?.url } : {}),
       contentUrl: contentReceipt.gatewayUrl,
       metadataUrl: metadataReceipt.gatewayUrl,
       marketplaceUrl: openseaAssetUrl(networkConfig.chainId, mintResult.contractAddress, mintResult.tokenId),
@@ -649,7 +656,8 @@ export async function mintContent({
     };
 
     if (inferenceType && inferenceId) {
-      await markAsMinted(inferenceType, inferenceId, nftData);
+      try { await markAsMinted(inferenceType, inferenceId, nftData); }
+      catch (error) { nftData.localRecordWarning = 'Mint confirmed onchain, but the local record could not be updated.'; }
     }
 
     // Mirror the mint to the SQL web3 cache (Phase 7b). Best-effort —
@@ -674,17 +682,20 @@ export async function mintContent({
       });
     } catch (e) { console.warn('[ContentNFT] mint mirror to SQL failed:', e?.message); }
 
-    onProgress('done', 'Complete!', 100);
+    onProgress('finalize', 'Complete!', 100);
 
     return {
       success: true,
       ...nftData,
+      inferenceId,
     };
   } catch (error) {
     console.error('[ContentNFT] Mint failed:', error);
     return {
       success: false,
       error: error.message || 'Minting failed',
+      transactionHash: error.transactionHash || null,
+      confirmationPending: !!error.transactionHash,
     };
   }
 }
@@ -696,7 +707,7 @@ export async function mintContent({
 async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, inferenceType }) {
   const factoryAddress = CONFIG.contentNFT?.economy?.factoryAddress;
   if (!factoryAddress) {
-    throw new Error('BonzaiCollectiblesFactory not deployed on Ethereum yet. Factory address not configured.');
+    throw new Error('Mint is not configured on the selected network yet.');
   }
 
   // Ensure we're on Ethereum (legacy "base" key is mapped to Ethereum in config)
@@ -736,7 +747,7 @@ async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, 
   try {
     mintFee = await contract.mintFees(contentType);
   } catch {
-    mintFee = ethers.parseEther(CONFIG.contentNFT.economy.mintFees[contentType]);
+    throw new Error('Could not verify the current Mint fee. Try again when the network is available.');
   }
 
   onProgress('mint', 'Confirm transaction in your wallet...', 72);
@@ -745,11 +756,19 @@ async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, 
   console.log('[ContentNFT] Ethereum mint tx sent:', tx.hash);
 
   onProgress('mint', 'Waiting for confirmation...', 78);
-  const receipt = await tx.wait();
+  let receipt;
+  try { receipt = await tx.wait(); }
+  catch (error) {
+    if (error.receipt?.status === 0) throw new Error('The Mint transaction reverted. No asset was created.');
+    const pending = new Error('The transaction was submitted but confirmation could not be verified. Check your wallet or explorer before trying again.');
+    pending.transactionHash = tx.hash;
+    throw pending;
+  }
 
   // Parse ContentMinted event for tokenId
   let tokenId = null;
   for (const log of receipt.logs) {
+    if (log.address && log.address.toLowerCase() !== collectionAddress.toLowerCase()) continue;
     try {
       const parsed = contract.interface.parseLog({ topics: log.topics, data: log.data });
       if (parsed && parsed.name === 'ContentMinted') {
@@ -761,6 +780,11 @@ async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, 
     }
   }
 
+  if (tokenId === null) {
+    const unresolved = new Error('The transaction confirmed, but the asset identifier could not be read. Check the transaction in your explorer; do not Mint again.');
+    unresolved.transactionHash = receipt.hash;
+    throw unresolved;
+  }
   return {
     tokenId,
     contractAddress: collectionAddress,

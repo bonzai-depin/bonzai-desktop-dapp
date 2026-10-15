@@ -11,6 +11,7 @@
  */
 
 const _listeners = new Set();
+let relay = null;
 
 /**
  * Emit an event. Listeners are called synchronously; throwing in a
@@ -30,6 +31,7 @@ export function emit(ev) {
  * Subscribe. Returns an unsubscribe function.
  */
 export function subscribe(listener) {
+  if (!relay && !globalThis.window?.__BONZAI_COMPANY_RUNTIME__) relay = globalThis.window?.electronAPI?.companyRuntime?.onStream(emit);
   _listeners.add(listener);
   return () => _listeners.delete(listener);
 }

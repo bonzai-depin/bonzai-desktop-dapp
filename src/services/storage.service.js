@@ -159,6 +159,7 @@ function extFromMime(contentType) {
     "text/html": "html",
     "text/plain": "txt",
     "application/json": "json",
+    "application/javascript": "js",
     "model/gltf-binary": "glb",
     "model/gltf+json": "gltf",
     "application/octet-stream": "bin",

@@ -186,6 +186,9 @@ export async function getDailySpending(companionId) {
  * @returns {Promise<{allowed: boolean, reason?: string}>}
  */
 export async function canMakePurchase(companionId, amountWei, settings = {}) {
+  if (!CONFIG.x402.enabled || !CONFIG.agentWallet.enabledOperations?.includes('pay')) {
+    return { allowed: false, reason: 'Companion payments are unavailable in this release.' };
+  }
   // Check if purchases are enabled
   if (!settings.enablePurchases) {
     return { allowed: false, reason: 'Autonomous purchases disabled' };

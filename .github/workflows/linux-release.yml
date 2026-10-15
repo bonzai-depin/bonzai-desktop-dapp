@@ -1,20 +1,28 @@
 name: "Release (Linux)"
 on:
   release:
-    types: [created, published, prereleased, released]
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. 2.1.2)'
+        description: 'Existing release tag (e.g. v4.0.0-rc.1)'
         required: true
         type: string
+      publish:
+        description: 'Publish installers (false builds and validates only)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
   group: release-linux-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish_on_linux:
@@ -29,11 +37,11 @@ jobs:
         gpu_backend: [cuda, rocm]
         include:
           - gpu_backend: cuda
-            torch_index_url: https://download.pytorch.org/whl/cu124
-            backend_label: CUDA 12.4
+            torch_index_url: https://download.pytorch.org/whl/nightly/cu130
+            backend_label: CUDA 13.0 nightly
           - gpu_backend: rocm
-            torch_index_url: https://download.pytorch.org/whl/rocm6.1
-            backend_label: ROCm 6.1
+            torch_index_url: https://download.pytorch.org/whl/nightly/rocm10.0
+            backend_label: ROCm 10.0 nightly
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY: linux
@@ -42,6 +50,7 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish }}
       CI: true
     steps:
       # Free ~30GB by removing pre-installed tools we don't need.
@@ -58,11 +67,20 @@ jobs:
           swap-storage: false
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
-      - name: Resolve tag
+      - name: Resolve version
+        shell: bash
         run: |
-          RAW="${{ env.RELEASE_TAG }}"
-          echo "TAG=${RAW#v}" >> "$GITHUB_ENV"
+          python - <<'PYCODE'
+          import json, os
+          version = json.load(open('package.json'))['version']
+          if os.environ.get('PUBLISH_RELEASE') == 'true' and os.environ['RELEASE_TAG'].removeprefix('v') != version:
+              raise SystemExit('Release tag must match package.json version')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'TAG={version}\n')
+          PYCODE
 
       - name: Install system dependencies
         run: |
@@ -74,21 +92,18 @@ jobs:
         with:
           python-version: '3.11'
 
-      # GPU-enabled PyTorch wheel selection per matrix backend. CUDA cu124
-      # for NVIDIA, ROCm 6.1 for AMD. Both fall back to CPU at runtime if
+      # GPU-enabled nightly PyTorch wheel selection per matrix backend. CUDA
+      # 13.0 for NVIDIA, ROCm 10.0 for AMD. Both fall back to CPU at runtime if
       # the corresponding driver/toolkit isn't present.
       - name: Install PyTorch (${{ matrix.backend_label }})
         run: |
-          pip install --no-cache-dir --upgrade \
+          pip install --no-cache-dir --upgrade --pre \
             torch torchvision torchaudio \
             --index-url ${{ matrix.torch_index_url }}
 
       - name: Install Python deps
         run: |
-          pip install -r requirements.txt
-          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
-          pip install -U qwen-tts --no-deps
-          pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
+          python scripts/install-python-deps.py --skip-torch
 
       # basicsr 1.4.2 (used by /video/enhance via realesrgan) imports
       # `torchvision.transforms.functional_tensor` which was removed in
@@ -130,166 +145,17 @@ jobs:
           # process smokes miss.
           node scripts/smoke-shard-twohost.mjs
 
-      # Strip CUDA libs BEFORE PyInstaller bundles them — keeps onefile under 4GB
-      - name: Strip CUDA from torch installation
-        if: matrix.gpu_backend == 'cuda'
+      - name: Build Python runtime
+        shell: bash
         run: |
-          TORCH_DIR=$(python -c "import torch; import os; print(os.path.dirname(torch.__file__))")
-          echo "Torch dir: $TORCH_DIR"
-          echo "Size before: $(du -sh "$TORCH_DIR" | cut -f1)"
-
-          # Remove training-only and unused CUDA libs from the installed torch package
-          find "$TORCH_DIR" -name "libnvJitLink*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libnvrtc*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcupti*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libnvToolsExt*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcurand*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcudnn_*_train*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcudnn_adv*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcudnn_heur*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcudnn_cnn_train*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libnccl*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcusparse*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcufft*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcusolver*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libtorch_python*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libc10d*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -type d -name "caffe2" -exec rm -rf {} + 2>/dev/null || true
-          # Remove cuBLAS (huge, only needed for large GEMM — inference uses cuBLASLt instead)
-          find "$TORCH_DIR" -name "libcublas.so*" -delete 2>/dev/null || true
-          # Remove nvptx compiler libs (JIT compilation, not needed at runtime)
-          find "$TORCH_DIR" -name "libnvptxcompiler*" -delete 2>/dev/null || true
-          # NEW: additional torch CUDA bloat — safe to strip for inference
-          find "$TORCH_DIR" -name "libtorch_cuda_linalg*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libnvrtc-builtins*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcusparseLt*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libcudnn_ops_train*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libtorch_cuda_cpp*" -delete 2>/dev/null || true
-          # Remove Triton (JIT kernel compiler, not needed for inference)
-          find "$(python -c 'import site; print(site.getsitepackages()[0])')" -type d -name "triton" -exec rm -rf {} + 2>/dev/null || true
-          # Remove test/benchmark files from torch
-          find "$TORCH_DIR" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
-          find "$TORCH_DIR" -type d -name "benchmarks" -exec rm -rf {} + 2>/dev/null || true
-          # NEW: strip torchvision + diffusers + transformers test/doc assets.
-          # Adds ~200MB of removals on top of the torch-specific strips above.
-          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
-          for PKG in torchvision diffusers transformers datasets peft; do
-            if [ -d "$SITE/$PKG" ]; then
-              find "$SITE/$PKG" -type d \( -name tests -o -name test -o -name docs -o -name "docs_src" -o -name examples -o -name benchmarks -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
-              find "$SITE/$PKG" -name "*.md" -delete 2>/dev/null || true
-              find "$SITE/$PKG" -name "*.rst" -delete 2>/dev/null || true
-              find "$SITE/$PKG" -name "*.pyi" -delete 2>/dev/null || true
-            fi
-          done
-          # Bundled torchvision model weights / fixture images
-          find "$SITE/torchvision" -type d -name "datasets" -exec rm -rf {} + 2>/dev/null || true
-          # ONNX runtime CUDA provider (if installed; some deps pull it in)
-          find "$SITE" -name "libonnxruntime_providers_cuda*" -delete 2>/dev/null || true
-          find "$SITE" -name "libonnxruntime_providers_tensorrt*" -delete 2>/dev/null || true
-
-          find "$TORCH_DIR" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
-          find "$TORCH_DIR" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
-
-          echo "Size after: $(du -sh "$TORCH_DIR" | cut -f1)"
-
-      # ROCm strip pass — mirrors the CUDA pass above for AMD's HIP
-      # runtime. The wheel ships rocBLAS / MIOpen / hipblasLt which are
-      # ~800MB-1.2GB combined; stripping the training-only and JIT-only
-      # libs keeps the onefile under 4GB. RDNA2/RDNA3 inference uses
-      # rocBLAS LT (different lib than rocBLAS) so we keep that one.
-      - name: Strip ROCm from torch installation
-        if: matrix.gpu_backend == 'rocm'
-        run: |
-          TORCH_DIR=$(python -c "import torch; import os; print(os.path.dirname(torch.__file__))")
-          SITE=$(python -c 'import site; print(site.getsitepackages()[0])')
-          echo "Torch dir: $TORCH_DIR"
-          echo "Size before: $(du -sh "$TORCH_DIR" | cut -f1)"
-
-          # rocBLAS Tensile kernels — large fixture archive used for
-          # training matmul shapes. Inference uses a much smaller subset.
-          find "$TORCH_DIR" -path "*/rocblas*/library*" -delete 2>/dev/null || true
-          find "$SITE" -path "*/rocblas/library*" -delete 2>/dev/null || true
-          # MIOpen kernels database (training paths)
-          find "$TORCH_DIR" -name "libMIOpen*train*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libMIOpen*db*" -delete 2>/dev/null || true
-          # RCCL (collective comm — multi-GPU training, not inference)
-          find "$TORCH_DIR" -name "librccl*" -delete 2>/dev/null || true
-          # hipFFT / hipsolver / hipsparse — most diffusion ops don't use these
-          find "$TORCH_DIR" -name "libhipfft*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libhipsolver*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "libhipsparse*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "librocfft*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "librocsolver*" -delete 2>/dev/null || true
-          find "$TORCH_DIR" -name "librocsparse*" -delete 2>/dev/null || true
-          # Hip runtime debug variants
-          find "$TORCH_DIR" -name "libamd*debug*" -delete 2>/dev/null || true
-          # Triton (HIP backend is experimental; torch.compile is gated to CUDA only)
-          find "$SITE" -type d -name "triton" -exec rm -rf {} + 2>/dev/null || true
-          # caffe2 + tests + docs (same as CUDA strip)
-          find "$TORCH_DIR" -type d -name "caffe2" -exec rm -rf {} + 2>/dev/null || true
-          find "$TORCH_DIR" -type d -name "test" -exec rm -rf {} + 2>/dev/null || true
-          find "$TORCH_DIR" -type d -name "benchmarks" -exec rm -rf {} + 2>/dev/null || true
-          for PKG in torchvision diffusers transformers datasets peft; do
-            if [ -d "$SITE/$PKG" ]; then
-              find "$SITE/$PKG" -type d \( -name tests -o -name test -o -name docs -o -name "docs_src" -o -name examples -o -name benchmarks -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
-              find "$SITE/$PKG" -name "*.md" -delete 2>/dev/null || true
-              find "$SITE/$PKG" -name "*.rst" -delete 2>/dev/null || true
-              find "$SITE/$PKG" -name "*.pyi" -delete 2>/dev/null || true
-            fi
-          done
-
-          find "$TORCH_DIR" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
-          find "$TORCH_DIR" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
-
-          echo "Size after: $(du -sh "$TORCH_DIR" | cut -f1)"
-
-      # Onefile: single compressed binary. GPU libs stripped above keep it under 4GB.
-      - name: Build Python binary (Linux x64)
-        run: |
-          pyinstaller \
-            --onefile \
-            --strip \
-            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath $RUNNER_TEMP/pybuild \
-            --specpath $RUNNER_TEMP \
-            --collect-submodules=engineio \
-            --collect-submodules=socketio \
-            --collect-submodules=diffusers \
-            --collect-submodules=transformers \
-            --collect-submodules=huggingface_hub \
-            --collect-submodules=accelerate \
-            --collect-submodules=safetensors \
-            --collect-submodules=peft \
-            --collect-submodules=datasets \
-            --collect-submodules=qwen_tts \
-            --collect-submodules=qwen_vl_utils \
-            --collect-submodules=acestep \
-            --collect-submodules=torch \
-            --collect-submodules=realesrgan \
-            --collect-submodules=basicsr \
-            --collect-data=basicsr \
-            --collect-submodules=imageio_ffmpeg \
-            --collect-data=imageio_ffmpeg \
-            --hidden-import=pytorch_lightning \
-            --hidden-import=torchaudio \
-            --hidden-import=torchaudio.functional \
-            --hidden-import=torchvision \
-            --hidden-import=torchvision.transforms \
-            --hidden-import=soundfile \
-            --hidden-import=compel \
-            --hidden-import=onnxruntime \
-            --hidden-import=psutil \
-            --hidden-import=PIL \
-            --hidden-import=PIL.Image \
-            --hidden-import=torch.cuda \
-            --hidden-import=torch.backends.cudnn \
-            --hidden-import=cv2 \
-            ${{ env.MAIN_PY_FILE }}
+          python -m PyInstaller --noconfirm --clean \
+            --distpath "binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" \
+            --workpath "$RUNNER_TEMP/pybuild" diffuser.spec
 
       - name: Verify Python binary
         run: |
-          # onefile produces: binaries/<os>-<arch>/diffuser (single compressed binary)
-          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
+          # onedir executable plus complete shared-library tree
+          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser"
           file "$BINARY"
           file "$BINARY" | grep -q "ELF 64-bit" || { echo "ERROR: Not a 64-bit binary!"; exit 1; }
           ls -lh "$BINARY"
@@ -302,11 +168,14 @@ jobs:
           pip cache purge 2>/dev/null || true
           rm -rf $RUNNER_TEMP/pybuild
           rm -rf ~/.cache/pip
-          SITE_PKGS=$(python -c "import site; print(site.getsitepackages()[0])")
-          echo "Removing $SITE_PKGS (~10GB of CUDA/torch packages)..."
-          rm -rf "$SITE_PKGS"
+          # Retain packages for post-build validation.
           echo "Disk space after Python cleanup:"
           df -h /
+
+      - name: Smoke-test frozen inference runtime
+        shell: bash
+        run: |
+          binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -322,11 +191,11 @@ jobs:
           npm run build:rpc
 
       - name: Build Vite bundles
+        shell: bash
         env:
-          VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}
+          BONZAI_VALIDATE_WEB3: ${{ vars.BONZAI_VALIDATE_WEB3 }}
           VITE_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
           VITE_ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
-          PRIVY_APP_SECRET: ${{ secrets.PRIVY_APP_SECRET }}
           VITE_BONZAI_ECONOMY_CHAIN_ID: ${{ secrets.BONZAI_ECONOMY_CHAIN_ID }}
           VITE_ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
           VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS: ${{ secrets.BONZAI_TOKEN_ROBINHOOD_ADDRESS }}
@@ -357,7 +226,9 @@ jobs:
           VITE_UNISWAP_V4_UNIVERSAL_ROUTER: ${{ secrets.UNISWAP_V4_UNIVERSAL_ROUTER }}
           VITE_UNISWAP_V4_QUOTER: ${{ secrets.UNISWAP_V4_QUOTER }}
           VITE_UNISWAP_V4_STATE_VIEW: ${{ secrets.UNISWAP_V4_STATE_VIEW }}
-        run: npm run web3:verify && npm run build:vite
+        run: |
+          if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
+          npm run build:vite
 
       - name: Package Electron app
         run: |
@@ -367,7 +238,7 @@ jobs:
             --out=out \
             --overwrite \
             --icon=src/assets/logo.png \
-            --ignore="^/(dist|bonzai|binaries|out|\.venv|venv|build)$"
+            --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$"
 
       # main.js expects: resources/server/python-runtime/linux-x64/diffuser + _internal/
       - name: Copy Python runtime to app
@@ -375,8 +246,8 @@ jobs:
           APP_RESOURCES="out/BonzAI-linux-x64/resources"
           DEST="$APP_RESOURCES/server/python-runtime/linux-x64"
           mkdir -p "$DEST"
-          # onefile: copy single binary
-          cp binaries/linux-x64/diffuser "$DEST/diffuser"
+          # Preserve symlinks and the complete onedir runtime
+          cp -a binaries/linux-x64/diffuser/. "$DEST/"
           chmod +x "$DEST/diffuser"
           echo "Python runtime copied:"
           ls -lh "$DEST/diffuser"
@@ -387,65 +258,8 @@ jobs:
           rm -rf binaries/
           df -h /
 
-      # Strip Electron app to reduce .deb size below GitHub's 2GB limit
-      - name: Strip app for size
-        run: |
-          APP="out/BonzAI-linux-x64"
-          echo "App size before stripping: $(du -sh "$APP" | cut -f1)"
-
-          # Strip debug symbols from all .so files in the app
-          find "$APP" -name "*.so" -exec strip --strip-debug {} + 2>/dev/null || true
-          find "$APP" -name "*.so.*" -exec strip --strip-debug {} + 2>/dev/null || true
-          find "$APP" -name "*.node" -exec strip --strip-debug {} + 2>/dev/null || true
-
-          # Remove unnecessary Electron/Chromium files
-          rm -rf "$APP/resources/app/node_modules/.cache" 2>/dev/null || true
-          rm -rf "$APP/resources/app/node_modules/**/test" 2>/dev/null || true
-          rm -rf "$APP/resources/app/node_modules/**/tests" 2>/dev/null || true
-          rm -rf "$APP/resources/app/node_modules/**/__tests__" 2>/dev/null || true
-          rm -rf "$APP/resources/app/node_modules/**/docs" 2>/dev/null || true
-          rm -rf "$APP/resources/app/node_modules/**/example" 2>/dev/null || true
-          rm -rf "$APP/resources/app/node_modules/**/examples" 2>/dev/null || true
-          find "$APP/resources/app/node_modules" -name "*.md" -delete 2>/dev/null || true
-          find "$APP/resources/app/node_modules" -name "*.ts" ! -name "*.d.ts" -delete 2>/dev/null || true
-          find "$APP/resources/app/node_modules" -name "*.map" -delete 2>/dev/null || true
-          find "$APP/resources/app/node_modules" -name "CHANGELOG*" -delete 2>/dev/null || true
-          find "$APP/resources/app/node_modules" -name "LICENSE*" -delete 2>/dev/null || true
-          find "$APP/resources/app/node_modules" -name "README*" -delete 2>/dev/null || true
-
-          # Remove Electron locales except English
-          LOCALES_DIR="$APP/locales"
-          if [ -d "$LOCALES_DIR" ]; then
-            find "$LOCALES_DIR" -name "*.pak" ! -name "en-US.pak" -delete 2>/dev/null || true
-          fi
-
-          # Remove source maps from Chromium
-          find "$APP" -name "*.js.map" -delete 2>/dev/null || true
-
-          # node-llama-cpp lives in devDependencies only (build-time source
-          # bundle for llama-server compilation). It should not be in runtime
-          # node_modules, but we prune defensively in case a lockfile quirk
-          # leaves stale entries behind.
-          rm -rf "$APP/resources/app/node_modules/node-llama-cpp" 2>/dev/null || true
-
-          # NEW: @dimforge/rapier3d-compat JS build files duplicated per target
-          find "$APP/resources/app/node_modules/@dimforge/rapier3d-compat" \
-            -name "*.wasm.d.ts" -delete 2>/dev/null || true
-
-          # NEW: three/examples docs & addons unused at runtime
-          find "$APP/resources/app/node_modules/three" -type d \
-            \( -name "docs" -o -name "editor" -o -name "manual" \
-               -o -name "files" -o -name "screenshots" \) \
-            -exec rm -rf {} + 2>/dev/null || true
-
-          # NEW: electron's native modules — strip prebuilt binaries for
-          # platforms other than linux-x64 (leftover from npm ci).
-          find "$APP/resources/app/node_modules" -type d -name "prebuilds" | while read -r d; do
-            find "$d" -mindepth 1 -maxdepth 1 -type d ! -name "linux-x64" ! -name "linux-*" -exec rm -rf {} + 2>/dev/null || true
-          done
-
-          echo "App size after stripping: $(du -sh "$APP" | cut -f1)"
-
+      # Keep GPU libraries, locales and third-party licenses intact. The
+      # uncompressed onedir runtime is compressed once by the installer.
       - name: Build .deb package (xz compressed)
         run: |
           TAG="${{ env.TAG }}"
@@ -489,80 +303,36 @@ jobs:
             echo "Repacked DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
           fi
 
-          # Split-into-parts fallback — if xz repack still exceeds 2GB,
-          # split the .deb into ~1.9GB zip chunks so GitHub accepts each
-          # asset. Users reassemble with: cat BonzAI-*.deb.part-* > BonzAI.deb
-          if [ "$DEB_SIZE" -gt 2000000000 ]; then
-            echo "DEB still exceeds 2GB after xz repack — splitting into parts"
-            cd out/make
-            split -b 1900M -d -a 2 "$(basename "$DEB_PATH")" "$(basename "$DEB_PATH").part-"
-            echo "Split result:"
-            ls -lh *.part-* 2>/dev/null | awk '{print $9, $5}'
-            # Write a small README so users know how to reassemble.
-            printf '%s\n' \
-              'GitHub rejected the single .deb (>2GB). To reassemble:' \
-              '' \
-              "  cat BonzAI-${TAG}-linux-amd64-${BACKEND}.deb.part-* > BonzAI-${TAG}-linux-amd64-${BACKEND}.deb" \
-              "  sudo dpkg -i BonzAI-${TAG}-linux-amd64-${BACKEND}.deb" \
-              '' \
-              "GPU backend: ${BACKEND} (use the cuda variant on NVIDIA, rocm on AMD)." \
-              'Verify checksum if published alongside this file.' \
-              > "BonzAI-${TAG}-linux-amd64-${BACKEND}.README.txt"
-            # Remove the original oversize .deb so we only upload parts.
-            rm -f "$(basename "$DEB_PATH")"
-            cd - >/dev/null
-          fi
-
-          echo "Final package:"
-          ls -lh out/make/
-
       - name: Disk report
         if: always()
         run: |
           df -h /
           du -sh out/make/* 2>/dev/null || true
 
-      - name: Create Release & Upload
-        run: |
-          TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-linux-amd64.deb"
+      - name: Prepare checksummed release assets
+        shell: bash
+        run: python scripts/release-assets.py prepare out/make
 
-          # Collect everything in out/make: either the single .deb or
-          # the split .part-* chunks + README (split fallback). `ls -1`
-          # of the dir returns every artifact we want to upload.
-          cd out/make
-          ASSETS=( $(ls -1) )
-          cd - >/dev/null
-
-          # Ensure the release exists (create if first upload, reuse otherwise).
-          gh release view "${TAG}" >/dev/null 2>&1 \
-            || gh release create "${TAG}" \
-              --title "BonzAI v${TAG}" \
-              --generate-notes
-
-          for f in "${ASSETS[@]}"; do
-            FULL="out/make/$f"
-            echo "Uploading: $FULL ($(stat --format='%s' "$FULL" | numfmt --to=iec))"
-            gh release upload "${TAG}" "$FULL" --clobber
-          done
-
-          echo "Released Linux build for v${TAG}"
+      - name: Upload release assets
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
+        run: python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
 
       - name: Mirror to bonzai-releases
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
         env:
           MIRROR_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
-          if [ -z "$MIRROR_TOKEN" ]; then
-            echo "RELEASES_PAT not configured, skipping mirror"
-            exit 0
+          if [ -n "$MIRROR_TOKEN" ]; then
+            GH_TOKEN="$MIRROR_TOKEN" python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo bonzai-depin/bonzai-releases
           fi
-          export GH_TOKEN="$MIRROR_TOKEN"
 
-          TAG="${{ env.TAG }}"
-          # Upload every artifact in out/make (single .deb OR split parts + README).
-          for FULL in out/make/*; do
-            [ -f "$FULL" ] || continue
-            gh release upload "$TAG" "$FULL" --clobber \
-              --repo bonzai-depin/bonzai-releases \
-              || echo "Mirror upload skipped for $FULL"
-          done
+      - name: Save validated build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bonzai-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}-${{ matrix.gpu_backend || 'default' }}
+          path: out/make/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7

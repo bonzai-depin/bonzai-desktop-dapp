@@ -1,0 +1,21 @@
+// Explanations describe the deterministic rehearsal, never an unverified live action.
+export const demoGuide = {
+ 'Create client and site': ['Keep customer details once, then reuse them for future visits.', 'Enregistrez le client une fois pour réutiliser ses coordonnées lors des prochaines visites.'],
+ 'Register and schedule intervention': ['Create the work order and reserve time for the visit.', 'Créez le dossier d’intervention et réservez un créneau pour la visite.'],
+ 'Assign technician and record arrival': ['Follow the technician from assignment to arrival. These movements are simulated here.', 'Suivez le technicien de son affectation à son arrivée. Ces déplacements sont simulés ici.'],
+ 'Record completed field work': ['Save what was done so the office can prepare billing without asking the technician again.', 'Conservez le compte rendu pour préparer la facturation sans redemander les informations au technicien.'],
+ 'Record sample customer acceptance': ['Keep evidence that the customer accepted the work. This acceptance is fictional.', 'Conservez la preuve que le client a accepté les travaux. Cette acceptation est fictive.'],
+ 'Hand off to billing': ['Make the completed intervention available for invoicing, with its supporting evidence.', 'Transmettez l’intervention terminée à la facturation avec ses justificatifs.'],
+ 'Verify saved outcome': ['Read the saved work order again and check that it is restored and accepted.', 'Relisez le dossier enregistré et vérifiez que le service est rétabli et accepté.'],
+ 'Prepare invoice': ['Create a €200 invoice plus €40 VAT using a fictional maintenance visit.', 'Préparez une facture de 200 € HT, soit 240 € TTC, pour une visite fictive.'],
+ 'Validate and number invoice': ['Validate the invoice and assign its number before sending it.', 'Validez la facture et attribuez son numéro avant son envoi.'],
+ 'Generate invoice document': ['Produce and save an actual PDF from the invoice data.', 'Produisez et enregistrez un véritable PDF à partir des données de la facture.'],
+ 'Record simulated delivery and acceptance': ['Record sample delivery evidence. No message is sent to a customer.', 'Enregistrez une preuve d’envoi fictive. Aucun message n’est envoyé à un client.'],
+ 'Reconcile sample partial payment': ['Record a fictional €100 payment. The invoice stays open because €140 remains due.', 'Enregistrez un règlement fictif de 100 €. La facture reste ouverte : il manque 140 €.'],
+ 'Reconcile sample final payment': ['Record the remaining fictional €140 and verify that the invoice is paid.', 'Enregistrez les 140 € fictifs restants et vérifiez que la facture est soldée.'],
+ 'Store reusable company document': ['Save a company document once instead of uploading it again for every application.', 'Conservez une pièce d’entreprise réutilisable au lieu de la ressaisir pour chaque dossier.'],
+ 'Create installation application': ['Create a separate application for this installation and link the reusable document.', 'Créez un dossier propre à cette installation et rattachez la pièce réutilisable.'],
+ 'Review eligibility and prepare documents': ['Check the configured requirements and stop if evidence is missing. This uses fictional grant rules, not EDF eligibility.', 'Vérifiez les exigences configurées et bloquez si une pièce manque. Les règles sont fictives : ce test ne valide pas l’éligibilité EDF.'],
+ 'Record simulated submission and award': ['Follow submission, review and award using sample receipts. No government portal is contacted.', 'Suivez le dépôt, l’instruction et l’attribution avec des reçus fictifs. Aucun portail administratif n’est contacté.'],
+ 'Reconcile sample payment': ['Match a fictional €500 bank receipt to the application and verify settlement.', 'Rapprochez un reçu bancaire fictif de 500 € du dossier et vérifiez son règlement.'],
+};

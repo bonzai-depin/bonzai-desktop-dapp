@@ -6,6 +6,7 @@
 import { eq, and, desc, sql } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { get } from "../connection.js";
+import * as issuesRepo from "./issues.js";
 import { goals } from "../schema/companies.js";
 
 export function create(companyId, input) {
@@ -29,6 +30,15 @@ export function create(companyId, input) {
   };
   orm.insert(goals).values(row).run();
   return row;
+}
+
+export function createWithTasks(companyId, input, tasks) {
+  if (!Array.isArray(tasks) || !tasks.length) throw new Error('A goal needs at least one task.');
+  return get().db.transaction(() => {
+    const goal = create(companyId, input);
+    const createdIssues = tasks.map(task => issuesRepo.create(companyId, { ...task, goalId: goal.id }));
+    return { ...goal, createdIssues };
+  })();
 }
 
 export function list(companyId, filter = {}) {
@@ -69,9 +79,10 @@ export function complete(companyId, goalId) {
 
 /** Auto-complete a goal when all child issues are terminal. */
 export function maybeComplete(companyId, goalId, allIssuesForGoal) {
-  if (!goalId || !Array.isArray(allIssuesForGoal) || !allIssuesForGoal.length) return null;
-  const open = allIssuesForGoal.filter((i) => i.status !== "done" && i.status !== "cancelled");
-  if (open.length > 0) return null;
+  if (!goalId || getById(companyId, goalId)?.status !== 'active') return null;
+  const { db } = get();
+  const children = db.prepare('SELECT status FROM issues WHERE company_id = ? AND goal_id = ?').all(companyId, goalId);
+  if (!children.length || children.some(issue => issue.status !== 'done')) return null;
   return complete(companyId, goalId);
 }
 

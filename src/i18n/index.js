@@ -1,9 +1,18 @@
+import { operationText } from "./operations.js"
+import { levelEditorMessages } from './level-editor.js'
+import { teamExchangeMessages } from "./team-exchanges.js"
+import { rcWorkflowMessages } from './rc-workflows.js'
+import { rcShellMessages } from './rc-shell.js'
 import { computed, inject, reactive } from 'vue'
 import { messages, supportedLocales } from './messages.js'
 import { featureMessages } from './features.js'
+import { connectionMessages } from './connection.js'
+import { rcDownloadMessages } from './rc-downloads.js'
+import { basketMessages } from './basket.js'
+import { smartAgentMessages } from './smart-agents.js'
 
 for (const locale of supportedLocales.map(item => item.code)) {
-  messages[locale] = { ...messages[locale], ...featureMessages[locale] }
+  messages[locale] = { ...messages[locale], ...teamExchangeMessages[locale], ...featureMessages[locale], ...rcShellMessages[locale], ...rcWorkflowMessages[locale], ...rcLicenseMessages[locale], ...rcTrainingMessages[locale], ...connectionMessages[locale], ...rcDownloadMessages[locale], ...basketMessages[locale], ...smartAgentMessages[locale], ...levelEditorMessages[locale] }
 }
 
 const STORAGE_KEY = 'bonzai.locale'
@@ -53,6 +62,7 @@ export function createI18nPlugin() {
     install(app) {
       document.documentElement.lang = state.locale === 'zh' ? 'zh-CN' : state.locale
       app.provide(I18N_KEY, i18n)
+      app.config.globalProperties.$ui = (source,params) => operationText(source,state.locale,params)
       app.config.globalProperties.$t = translate
       app.config.globalProperties.$tc = plural
       app.config.globalProperties.$n = number
@@ -61,3 +71,5 @@ export function createI18nPlugin() {
   }
 }
 export function useI18n() { return inject(I18N_KEY, i18n) }
+import { rcLicenseMessages } from './rc-licenses.js'
+import { rcTrainingMessages } from './rc-training.js'

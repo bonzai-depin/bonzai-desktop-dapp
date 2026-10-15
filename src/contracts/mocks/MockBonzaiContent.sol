@@ -12,6 +12,9 @@ contract MockBonzaiContent is ERC721 {
 
     constructor() ERC721("MockContent", "MCONT") {}
 
+    // Clone initializer used by the real collection factory in publication tests.
+    function initialize(address, string calldata, address, address) external {}
+
     function mintTo(address to) external returns (uint256) {
         _tokenIdCounter++;
         _mint(to, _tokenIdCounter);

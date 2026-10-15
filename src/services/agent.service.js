@@ -62,7 +62,7 @@ const AGENT_REGISTRY_ABI = [
 
 const state = reactive({
   purchasedAgents: {},
-  runningFee: CONFIG.agents?.runningFee || 1,
+  runningFee: 0,
   purchasePrice: CONFIG.agents?.purchasePrice || 10,
   isPurchasing: false,
   isPayingFee: false,
@@ -188,71 +188,13 @@ export const purchaseAgent = async (agentId) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// RUNNING FEE (USDC per execution, via BonzaiSkillRegistry)
+// SKILL EXECUTION — no execution payment in the current registry
 // ═══════════════════════════════════════════════════════════════════════════
 
-// TODO: Check USDC balance on Base when BonzaiSkillRegistry is deployed
-export const hasEnoughForRunningFee = () => {
-  return true;
-};
+export const hasEnoughForRunningFee = () => true;
 
-const getUsdcContract = async (withSigner = false) => {
-  const usdcAddress = CONFIG.tokens?.usdc?.[ECONOMY_NETWORK_KEY];
-  if (!usdcAddress) throw new Error(`USDC address not configured for ${ECONOMY_NETWORK_KEY}`);
-
-  if (withSigner) {
-    const signer = await web3Service.getSigner();
-    return new ethers.Contract(usdcAddress, ERC20_ABI, signer);
-  }
-
-  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
-  return new ethers.Contract(usdcAddress, ERC20_ABI, provider);
-};
-
-export const payRunningFee = async (agentId) => {
-  state.isPayingFee = true;
-  state.error = null;
-
-  try {
-    // Dev mode: mock the running fee. Production: real USDC via
-    // BonzaiSkillRegistry.recordExecution(skillId). Not yet wired for prod;
-    // running fees are 0 in the contract today, so the mock path is also
-    // taken in prod until running-fee collection is enabled.
-    const ENABLE_RUNNING_FEE_COLLECTION = skillRegistryReady()
-      && CONFIG.skillRegistry?.enforceRunningFee === true;
-
-    if (isDevMode() || !ENABLE_RUNNING_FEE_COLLECTION) {
-      const mockTxHash = `mock-fee-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-
-      state.transactions.push({
-        type: 'agent-run-fee',
-        agentId,
-        amount: state.runningFee,
-        token: 'USDC',
-        txHash: mockTxHash,
-        timestamp: Date.now(),
-        mock: true,
-      });
-
-      return { success: true, txHash: mockTxHash, mock: true };
-    }
-
-    if (!hasEnoughForRunningFee()) {
-      throw new Error(`Insufficient USDC balance. Need ${state.runningFee} USDC to run this skill.`);
-    }
-
-    // TODO: Call BonzaiSkillRegistry.recordExecution(skillId) on Base
-    // The contract handles USDC transfer and revenue distribution
-    throw new Error('Real USDC fee payments not yet enabled');
-  } catch (e) {
-    const error = e.shortMessage || e.message || String(e);
-    state.error = error;
-    console.error('[Agent] Fee payment failed:', error);
-    return { success: false, error };
-  } finally {
-    state.isPayingFee = false;
-  }
-};
+/** Free execution does not create a payment or a synthetic transaction receipt. */
+export const payRunningFee = async () => ({ success: true, free: true, amount: '0', txHash: null });
 
 export const executeAgentWithFee = async (agent, inputs, context = {}) => {
   const agentId = agent.id || agent.name;
@@ -265,27 +207,6 @@ export const executeAgentWithFee = async (agent, inputs, context = {}) => {
     };
   }
   
-  if (!hasEnoughForRunningFee()) {
-    return { 
-      success: false, 
-      error: `Insufficient USDC. Need ${state.runningFee} USDC to run this skill.`,
-      insufficientBalance: true,
-      required: state.runningFee,
-      current: web3Service.state.balances.total,
-    };
-  }
-  
-  context.updateStatus?.('Paying running fee...');
-  const feeResult = await payRunningFee(agentId);
-  
-  if (!feeResult.success) {
-    return { 
-      success: false, 
-      error: `Fee payment failed: ${feeResult.error}`,
-      feeFailed: true,
-    };
-  }
-  
   try {
     context.updateStatus?.('Executing agent...');
     const results = await agent.execute(inputs, context);
@@ -293,14 +214,14 @@ export const executeAgentWithFee = async (agent, inputs, context = {}) => {
     return { 
       success: true, 
       results,
-      feeTxHash: feeResult.txHash,
+      feeTxHash: null,
     };
   } catch (e) {
     return { 
       success: false, 
       error: `Agent execution failed: ${e.message}`,
-      feePaid: true, // Fee was paid even though execution failed
-      feeTxHash: feeResult.txHash,
+      feePaid: false,
+      feeTxHash: null,
     };
   }
 };
@@ -323,7 +244,7 @@ export const initialize = () => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// USDC SKILL PURCHASE (on-chain via BonzaiSkillRegistry)
+// COMPANION TOKEN ACCESS (on-chain via BonzaiSkillRegistry)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -347,7 +268,7 @@ const SKILL_REGISTRY_ABI = [
 ];
 
 /**
- * Get the BonzaiSkillRegistry contract instance (Base only).
+ * Get the BonzaiSkillRegistry contract instance on the configured economy chain.
  * @param {boolean} [withSigner=false]
  * @returns {Promise<ethers.Contract|null>}
  */
@@ -356,6 +277,7 @@ async function getSkillRegistryContract(withSigner = false) {
   if (!registryAddress) return null;
 
   if (withSigner) {
+    await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
     const signer = await web3Service.getSigner();
     return new ethers.Contract(registryAddress, SKILL_REGISTRY_ABI, signer);
   }

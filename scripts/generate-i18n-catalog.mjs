@@ -3,6 +3,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from '@vue/compiler-sfc'
 import { baseParse, NodeTypes } from '@vue/compiler-dom'
+import { isSafeCatalogPhrase, translationIssue } from '../src/i18n/catalogQuality.js'
+import { reviewedCatalogOverrides } from '../src/i18n/reviewed-catalog.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const componentsRoot = path.join(root, 'src/components')
@@ -32,6 +34,7 @@ function filesIn(directory, output = []) {
 function usefulPhrase(value) {
   const phrase = String(value || '').replace(/\s+/g, ' ').trim()
   if (!phrase || phrase.length > 500 || !/[A-Za-z]/.test(phrase)) return ''
+  if (!isSafeCatalogPhrase(phrase)) return ''
   if (/^(?:https?:|0x)[^ ]+$/i.test(phrase)) return ''
   if (/^[a-z0-9_./:@+-]+$/i.test(phrase) && !phrase.includes(' ') && !translatableSingleWords.has(phrase)) return ''
   if (/^[A-Z0-9_]{2,16}$/.test(phrase)) return ''
@@ -57,7 +60,7 @@ function extractTemplatePhrases(source, filename, phrases) {
       const phrase = usefulPhrase(node.content)
       if (phrase) phrases.add(phrase)
     }
-    if (!nodeIgnored && node.type === NodeTypes.INTERPOLATION) addExpressionStrings(node.content?.content)
+    // Interpolations are executable Vue expressions, not translatable prose.
     if (!nodeIgnored && node.type === NodeTypes.ELEMENT) {
       for (const prop of node.props || []) {
         if (prop.type === NodeTypes.ATTRIBUTE && ['placeholder', 'title', 'aria-label', 'headline', 'subtitle', 'label'].includes(prop.name)) {
@@ -145,28 +148,67 @@ for (const filename of filesIn(componentsRoot)) {
   extractScriptLabels(source, phrases)
   extractRuntimePhrases(source, phrases)
 }
-const ordered = [...phrases].sort((a, b) => a.localeCompare(b))
+// Stable code-point order keeps regeneration identical across machine locales.
+const ordered = [...phrases].sort()
 const existing = fs.existsSync(outputPath) ? JSON.parse(fs.readFileSync(outputPath, 'utf8')) : {}
-const catalog = { en: Object.fromEntries(ordered.map(value => [value, value])) }
-
+const reviewedOnly = process.argv.includes('--reviewed-only')
+const checkOnly = process.argv.includes('--check')
+if (checkOnly && !reviewedOnly) throw new Error('--check requires --reviewed-only (no network requests)')
+const cacheIndex = process.argv.indexOf('--translation-cache')
+const translationCache = cacheIndex < 0 ? {} : JSON.parse(fs.readFileSync(path.resolve(process.argv[cacheIndex + 1]), 'utf8'))
+const translations = {}
 for (const locale of targets) {
-  const saved = existing[locale] || {}
-  const missing = ordered.filter(phrase => !saved[phrase])
-  const batches = batchesFor(missing)
-  const translated = { ...saved }
-  console.log(`${locale}: ${missing.length} missing phrases in ${batches.length} batches`)
-  for (let index = 0; index < batches.length; index += 1) {
-    const batch = batches[index]
-    const values = await translateBatch(batch, locale)
-    batch.forEach((phrase, offset) => { translated[phrase] = normalizeTranslation(locale, values[offset] || phrase) })
-    if ((index + 1) % 10 === 0 || index === batches.length - 1) {
-      catalog[locale] = translated
-      fs.writeFileSync(outputPath, `${JSON.stringify(catalog, null, 2)}\n`)
-      console.log(`${locale}: ${index + 1}/${batches.length}`)
-    }
-  }
-  catalog[locale] = Object.fromEntries(ordered.map(phrase => [phrase, normalizeTranslation(locale, translated[phrase] || phrase)]))
+  translations[locale] = { ...(translationCache[locale] || {}), ...(existing[locale] || {}), ...(reviewedCatalogOverrides[locale] || {}) }
 }
 
-fs.writeFileSync(outputPath, `${JSON.stringify(catalog, null, 2)}\n`)
-console.log(`Wrote ${ordered.length} interface phrases to ${path.relative(root, outputPath)}`)
+// The extractor cannot see every runtime-composed label. Preserve known safe
+// complete rows in offline mode instead of treating extraction as a deletion list.
+const offlinePhrases = [...new Set([
+  ...ordered, ...Object.keys(existing.en || {}), ...Object.keys(translationCache.en || {}),
+])].sort()
+let retained = ordered
+if (reviewedOnly) {
+  // Offline mode retains usable existing translations and reviewed corrections.
+  // It never invents a translation or silently saves English as a fallback.
+  const rejected = []
+  retained = offlinePhrases.filter(phrase => {
+    const failures = targets.flatMap(locale => {
+      const issue = translationIssue(phrase, translations[locale][phrase], locale)
+      return issue ? [`${locale}: ${issue}`] : []
+    })
+    if (failures.length) rejected.push({ phrase, failures })
+    return !failures.length
+  })
+  console.log(`Offline catalog: ${retained.length} retained; ${rejected.length} incomplete or invalid source phrases omitted`)
+  for (const item of rejected.slice(0, 8)) console.log(`- ${item.phrase}: ${item.failures.join('; ')}`)
+} else {
+  for (const locale of targets) {
+    const missing = ordered.filter(phrase => translationIssue(phrase, translations[locale][phrase], locale))
+    const batches = batchesFor(missing)
+    console.log(`${locale}: ${missing.length} missing or invalid phrases in ${batches.length} batches`)
+    for (const batch of batches) {
+      const values = await translateBatch(batch, locale)
+      batch.forEach((phrase, offset) => {
+        const value = normalizeTranslation(locale, values[offset])
+        const issue = translationIssue(phrase, value, locale)
+        if (issue) throw new Error(`${locale}: ${issue}: ${phrase}`)
+        translations[locale][phrase] = value
+      })
+    }
+  }
+}
+
+const catalog = { en: Object.fromEntries(retained.map(value => [value, value])) }
+for (const locale of targets) {
+  catalog[locale] = Object.fromEntries(retained.map(phrase => [phrase, normalizeTranslation(locale, translations[locale][phrase])]))
+}
+const output = `${JSON.stringify(catalog, null, 2)}\n`
+if (checkOnly) {
+  if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, 'utf8') !== output) {
+    throw new Error('Generated catalog is stale; run npm run i18n:generate -- --reviewed-only')
+  }
+  console.log('Generated catalog is current')
+} else {
+  fs.writeFileSync(outputPath, output)
+  console.log(`Wrote ${retained.length} interface phrases to ${path.relative(root, outputPath)}`)
+}

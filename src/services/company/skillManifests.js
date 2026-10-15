@@ -1,3 +1,6 @@
+import { FINANCE_MANIFESTS } from "./finance/actions.js";
+import { OPERATIONAL_MANIFESTS } from './operationalActions.js';
+import { SUPPLIER_SOURCING_MANIFEST } from "./supplierSourcing.js";
 /**
  * BonzAI Company — Skill Manifests (operational skill library)
  *
@@ -11,6 +14,8 @@
  */
 
 export const SKILL_CATEGORIES = [
+  "grants",       // evidence-backed grant applications and settlement
+  "browser",      // supervised local portal interactions
   "comms",        // SMS / voice / email / WhatsApp / chat
   "billing",      // invoicing / payments / subscriptions / payouts
   "calendar",     // scheduling / availability
@@ -22,6 +27,8 @@ export const SKILL_CATEGORIES = [
   "documents",    // PDFs / e-sign / contracts
   "social",       // GBP / Yelp / social listening
   "analytics",    // metrics / reporting
+  "maintenance",  // assets / preventive / corrective / field evidence
+  "purchasing",   // sourcing / supplier orders / receipts / shared equipment
 ];
 
 /**
@@ -34,12 +41,27 @@ export const SKILL_CATEGORIES = [
  *   }
  */
 export const SKILL_MANIFESTS = {
+  [SUPPLIER_SOURCING_MANIFEST.id]: SUPPLIER_SOURCING_MANIFEST,
+  ...OPERATIONAL_MANIFESTS,
+  "skill.team_communication": {
+    id: "skill.team_communication", name: "Team communication", category: "operations", requiredConnectors: [],
+    actions: [
+      {type:"team.directory",summary:"List local teams and staffed roles",params:{}},
+      {type:"team.readConversation",summary:"Read a conversation shared with this team",params:{conversationId:"string"}},
+      {type:"team.requestWork",summary:"Create a request in another team's work queue",params:{targetTeamId:"string",targetRole:"string",subject:"string",body:"string",procurementId:"optional owned purchasing request ID"}},
+      {type:"team.reply",summary:"Reply with the actual result or a question",params:{conversationId:"string",body:"string"}},
+      {type:"team.readProcurement",summary:"Read only the purchasing request explicitly shared in a conversation",params:{conversationId:"string"}},
+      {type:"team.updateProcurement",summary:"Return a purchasing update to the originating team after approval",params:{conversationId:"string",status:"string",supplierName:"string",amountCents:"integer",proformaReference:"string",orderReference:"string",receiptReference:"string",items:"array of {label, quantity, received}"}},
+    ],
+  },
+  ...FINANCE_MANIFESTS,
+  "skill.finance_reconciliation": { id: "skill.finance_reconciliation", name: "Settlement reconciliation", category: "billing", description: "Compare supplied Stripe payouts and Qonto settlements locally; flag ambiguity without posting entries.", requiredConnectors: [], suggestedRoles: ["CFO", "AccountingSpecialist"], actions: [{ type: "finance.listEvidence", summary: "List saved financial evidence in this company", params: {} }, { type: "finance.readEvidence", summary: "Read saved financial evidence by contentId", params: { contentId: "string" } }, { type: "finance.reconcilePayouts", summary: "Find payout settlement candidates and exceptions without moving money", params: { payouts: "array", transactions: "array" } }] },
   // ─── COMMS ──────────────────────────────────────────────────────────────
   "skill.twilio_voice": {
     id: "skill.twilio_voice",
     name: "Twilio Voice Triage",
     category: "comms",
-    description: "Inbound call answering, IVR menu, voicemail capture, callbacks. Persona voice via Qwen3-TTS.",
+    description: "Inbound call answering, IVR menu, voicemail capture, callbacks. Persona voice via Chatterbox V3.",
     requiredConnectors: ["twilio"],
     suggestedRoles: ["CSO"],
     actions: [
@@ -121,7 +143,7 @@ export const SKILL_MANIFESTS = {
     suggestedRoles: ["CFO", "CSO", "InvoicingSpecialist", "PaymentsSpecialist"],
     actions: [
       { type: "stripe.createCheckout", summary: "Create a Checkout Session URL", params: { priceId: "string", quantity: "number", successUrl: "string", cancelUrl: "string" } },
-      { type: "stripe.refund",         summary: "Refund a charge", params: { chargeId: "string", amount: "number" } },
+      { type: "stripe.refund",         summary: "Refund a charge", params: { chargeId: "string", amount: "number (major units, positive)", currency: "string" } },
     ],
   },
   "skill.stripe_subscriptions": {
@@ -134,7 +156,7 @@ export const SKILL_MANIFESTS = {
     actions: [
       { type: "stripe.createSubscription", summary: "Subscribe a customer to a plan", params: { customerId: "string", priceId: "string" } },
       { type: "stripe.cancelSubscription", summary: "Cancel an active subscription", params: { subscriptionId: "string" } },
-      { type: "stripe.chargeOnFile",       summary: "Charge a saved card", params: { customerId: "string", amount: "number", memo: "string" } },
+      { type: "stripe.chargeOnFile",       summary: "Charge a saved card", params: { customerId: "string", amount: "number (major units, positive)", currency: "string", memo: "string" } },
     ],
   },
 
@@ -429,13 +451,85 @@ export const SKILL_MANIFESTS = {
     name: "Field-Service Coordination",
     category: "comms",
     description: "Drives the human-in-the-loop state machine: dispatch → en-route → on-site → wrap → done. Bridges Twilio SMS for tech updates and customer ETAs.",
-    requiredConnectors: ["twilio"],
-    suggestedRoles: ["COO"],
+    requiredConnectors: [],
+    suggestedRoles: ["COO", "DispatchCoordinator", "FieldTech"],
     actions: [
       { type: "field.prepareWorkOrder", summary: "Brief the assigned human technician", params: { humanId: "string", jobId: "string", brief: "string" } },
-      { type: "field.trackJob",         summary: "Poll the human for status update", params: { jobId: "string" } },
-      { type: "field.completeJob",      summary: "Capture photos + notes from the human, mark done", params: { jobId: "string", notes: "string", photoUrls: "string[]" } },
-      { type: "field.followUp",         summary: "Send post-visit message to customer", params: { jobId: "string" } },
+      { type: "field.trackJob",         summary: "Lire l’état enregistré de l’intervention", params: { jobId: "string" } },
+      { type: "field.completeJob",      summary: "Capture photos and checklist, mark the intervention complete, then wait for customer service acceptance", params: { jobId: "string", notes: "string", photoUrls: "string[]", checklist: "string[]", technicianName: "string" } },
+      { type: "field.followUp",         summary: "Préparer une note de suivi, sans envoi externe", params: { jobId: "string" } },
+    ],
+  },
+
+  // ─── LOCAL HVAC GMAO ──────────────────────────────────────────────────
+  "skill.gmao_contract": {
+    id: "skill.gmao_contract",
+    name: "Pilotage du marché GMAO",
+    category: "maintenance",
+    description: "Pilote le marché multi-site, ses SLA P0–P3, les risques de pénalité et le registre hebdomadaire.",
+    requiredConnectors: [],
+    suggestedRoles: ["MaintenanceContractManager"],
+    actions: [
+      { type:'gmao.searchWorkOrders', summary:'Chercher une intervention par numéro, client, site ou titre. Ne jamais inventer un identifiant.', params:{query:'string',clientId:'string',status:'string'} },
+      { type:'gmao.getDossier', summary:'Lire le dossier complet et ses preuves avant de modifier son état.', params:{reference:'string'} },
+      { type: "gmao.bootstrap", summary: "Initialiser le référentiel contractuel HVAC", params: { name: "string", marketNumber: "string", emergencyPhone: "string" } },
+      { type: "gmao.evaluateSla", summary: "Contrôler les délais DI/DRS et chiffrer les risques de pénalité", params: {} },
+      { type: "gmao.runAutomation", summary: "Détecter localement les exceptions et proposer les prochaines actions", params: {} },
+      { type: "gmao.exportWeeklyRegister", summary: "Préparer l'extrait hebdomadaire du registre GMAO", params: { from: "number", to: "number" } },
+    ],
+  },
+  "skill.gmao_maintenance": {
+    id: "skill.gmao_maintenance",
+    name: "Maintenance HVAC préventive et corrective",
+    category: "maintenance",
+    description: "Gère le patrimoine ST1/ST2/ST3, génère le préventif et orchestre les ordres de travail.",
+    requiredConnectors: [],
+    suggestedRoles: ["MaintenancePlanner", "DispatchCoordinator", "FieldTech"],
+    actions: [
+      { type:'gmao.searchWorkOrders',summary:'Retrouver les identifiants réels des interventions.',params:{query:'string'} },
+      { type:'gmao.getDossier',summary:'Consulter contexte, documents, achats, envois et chronologie.',params:{reference:'string'} },
+      { type:'gmao.scheduleWorkOrder',summary:'Proposer un créneau sans chevauchement ; ne prouve pas une arrivée terrain.',params:{workOrderId:'string',scheduledAt:'number',durationMinutes:'number',assigneeHuman:'string'} },
+      { type: "gmao.generatePreventive", summary: "Générer les OT préventifs arrivés à échéance", params: { now: "number" } },
+      { type: "gmao.createWorkOrder", summary: "Créer et prioriser un OT P0–P3", params: { siteId: "string", assetId: "string", type: "string", priority: "string", title: "string", description: "string" } },
+      { type: "gmao.transitionWorkOrder", summary: "Faire progresser un OT dans son cycle contrôlé", params: { workOrderId: "string", status: "string", notes: "string", photoRefs: "string[]", serviceAcceptance: "boolean" } },
+      { type: 'gmao.validateProcessStep', summary: 'Valider une étape OI avec preuve réelle : BC signé local, retour email au client, demande SF transmise, transmission facturation, clôture après accord client. Ne jamais inventer une preuve. Approbation du responsable obligatoire.', params: { workOrderId:'string', step:'string', confirmed:'boolean', documentId:'string', signer:'string', outboxId:'string', customerSignatory:'string', evidenceReference:'string' } },
+      { type: "gmao.addEvidence", summary: "Tracer une preuve, une mesure ou un compte-rendu", params: { workOrderId: "string", note: "string", evidence: "object" } },
+      { type: "gmao.recordAttachment", summary: "Enregistrer la feuille d'attachement et orienter vers clôture ou réparation", params: { workOrderId: "string", technicianName: "string", diagnosis: "string", workPerformed: "string", resolved: "boolean", repairMode: "string", supplierName: "string", repairDescription: "string", photoRefs: "string[]" } },
+      { type: "gmao.notifyClient", summary: "Préparer un brouillon email ou SMS ; ne l’envoie pas. L’utilisateur valide le destinataire dans la boîte d’envoi.", params: { workOrderId: "string", channel: "string", sender: "string", recipient: "string", subject: "string", message: "string", documentId: "string" } },
+      { type: "gmao.recommendSchedule", summary: "Classer les techniciens par compétences, disponibilité, distance, charge et astreinte", params: { workOrderId: "string", candidates: "object[]" } },
+    ],
+  },
+  "skill.gmao_compliance": {
+    id: "skill.gmao_compliance",
+    name: "Conformité QHSE et documentaire",
+    category: "compliance",
+    description: "Suit CPR, accès, VIC, plans de prévention, DC4 et contrôles réglementaires avec dates de validité.",
+    requiredConnectors: [],
+    suggestedRoles: ["QHSEManager", "DocumentController"],
+    actions: [
+      { type: "gmao.registerCompliance", summary: "Enregistrer une exigence et sa validité", params: { recordType: "string", subjectName: "string", status: "string", validUntil: "number", siteId: "string" } },
+      { type: "gmao.addEvidence", summary: "Tracer une preuve de conformité sur un OT", params: { workOrderId: "string", note: "string", evidence: "object" } },
+    ],
+  },
+  "skill.gmao_finance": {
+    id: "skill.gmao_finance",
+    name: "Chiffrage BPU et hors BPU",
+    category: "billing",
+    description: "Calcule franchise, coefficient K, HT, TVA et TTC avant validation humaine et facturation.",
+    requiredConnectors: [],
+    suggestedRoles: ["BillingController", "CFO"],
+    actions: [
+      {type:'gmao.getDossier',summary:'Lire les preuves et les pièces du dossier.',params:{reference:'string'}},
+      {type:'gmao.searchWorkOrders',summary:'Retrouver une intervention.',params:{query:'string'}},
+      {type:'gmao.generateDocument',summary:'Générer et conserver un PDF local de devis, facture ou intervention.',params:{workOrderId:'string',kind:'string',recordId:'string'}},
+      {type:'gmao.acknowledgeHandoff',summary:'Prendre en charge une demande achats liée au dossier.',params:{handoffId:'string',responsible:'string'}},
+      { type: "gmao.updateProcurement", summary: "Suivre la demande fournisseur, la proforma, la commande et la réception", params: { id: "string", workOrderId: "string", requestType: "string", supplierName: "string", description: "string", status: "string", proformaReference: "string", amountCents: "integer", supplierId: "string", responsible: "string", orderReference: "string", receiptReference: "string", items: "array of {label, quantity, received}", dueAt: "unix milliseconds" } },
+      { type: "gmao.validateProcessStep", summary: "Valider une transmission à la facturation après réception du SF, avec approbation du responsable.", params: {workOrderId:"string",step:"string",confirmed:"boolean"} },
+      { type: "gmao.createQuote", summary: "Calculer un projet de devis BPU ou hors BPU", params: { workOrderId: "string", quoteType: "string", partsCents: "integer", laborCents: "integer", travelCents: "integer", accessCents: "integer", franchiseCents: "integer", coefficient: "number", vatRate: "number" } },
+      { type: "gmao.updateQuote", summary: "Enregistrer une décision client étayée ; les envois passent par la boîte d’envoi", params: { quoteId: "string", status: "string", purchaseOrder: "string", evidenceReference: "string", documentId: "string" } },
+      { type: "gmao.recordServiceAcceptance", summary: "Réceptionner le service fait et rendre l'OI facturable", params: { workOrderId: "string", reference: "string", receivedAt: "number", documentId: "string", customerSignatory: "string" } },
+      { type: "gmao.saveInvoice", summary: "Créer puis tracer l'envoi de la facture client", params: { id: "string", workOrderId: "string", invoiceNumber: "string", status: "string", recipient: "string" } },
+      { type: "gmao.reconcileBilling", summary: "Rapprocher devis, bon de commande, service fait et facture", params: { workOrderId: "string" } },
     ],
   },
   "skill.fulfillment_coordination": {
@@ -495,7 +589,7 @@ export function actionListForPrompt(skillIds) {
     const m = SKILL_MANIFESTS[id];
     if (!m) continue;
     for (const a of m.actions) {
-      lines.push(`- ${a.type}: ${a.summary}`);
+      lines.push(`- ${a.type}: ${a.summary}. Parameters: ${JSON.stringify(a.params || {})}`);
     }
   }
   return lines;

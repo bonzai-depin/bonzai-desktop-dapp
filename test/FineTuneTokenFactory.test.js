@@ -9,19 +9,101 @@ const {
   POOL_TYPE_FINETUNE,
 } = require("./helpers/constants");
 
+function launchValidatedModel(factory, contentCollection, tokenId, name, symbol, metadataURI, creator, overrides) {
+  return factory.launchValidatedToken(contentCollection, tokenId, name, symbol, metadataURI,
+    "Publisher-declared model", "ipfs://image", "fine_tuned", ethers.id("validation"), creator, overrides);
+}
+
 describe("FineTuneTokenFactory", function () {
+  describe("Collection identity", function () {
+    async function collectionFixture() {
+      const f = await deployFineTuneTokenFactory();
+      await f.mockContent.mintTo(f.owner.address);
+      await f.collectiblesFactory.connect(f.user1).getOrCreateCollection("Another model collection");
+      const secondAddress = await f.collectiblesFactory.collections(f.user1.address);
+      const second = await ethers.getContractAt("MockBonzaiContent", secondAddress);
+      await second.mintTo(f.user1.address);
+      return { ...f, second, secondAddress };
+    }
+
+    it("issues independent models for the same token ID in two canonical collections", async function () {
+      const f = await loadFixture(collectionFixture);
+      await launchValidatedModel(f.factory, f.contentCollection, 1, "First", "ONE", "ipfs://one", f.owner.address, { value: MIN_ETH_LIQUIDITY });
+      await launchValidatedModel(f.factory.connect(f.user1), f.secondAddress, 1, "Second", "TWO", "ipfs://two", f.user1.address, { value: MIN_ETH_LIQUIDITY });
+      const first = await f.factory.getToken(f.contentCollection, 1);
+      const second = await f.factory.getToken(f.secondAddress, 1);
+      expect(first).to.not.equal(second);
+      const token = await ethers.getContractAt("FineTuneToken", first);
+      expect(await token.contentCollection()).to.equal(f.contentCollection);
+      expect(await token.contentTokenId()).to.equal(1);
+      expect(await f.factory.modelTokens(f.secondAddress, 1)).to.equal(second);
+      expect(await f.factory.totalTokensLaunched()).to.equal(2);
+    });
+
+    it("rejects an NFT outside the canonical factory even when the caller owns it", async function () {
+      const f = await loadFixture(collectionFixture);
+      const NFT = await ethers.getContractFactory("MockBonzaiContent");
+      const rogue = await NFT.deploy();
+      await rogue.mintTo(f.owner.address);
+      expect(await f.collectiblesFactory.isCollection(await rogue.getAddress())).to.equal(false);
+      await expect(launchValidatedModel(f.factory, await rogue.getAddress(), 1, "Fake", "FAKE", "ipfs://fake", f.owner.address, { value: MIN_ETH_LIQUIDITY })).to.be.revertedWith("Unregistered collection");
+      expect(await f.factory.totalTokensLaunched()).to.equal(0);
+    });
+
+    it("lets the current NFT owner publish after transfer, while denying the former owner", async function () {
+      const f = await loadFixture(collectionFixture);
+      await f.mockContent.transferFrom(f.owner.address, f.user1.address, 1);
+      await expect(launchValidatedModel(f.factory, f.contentCollection, 1, "Transferred", "OWN", "ipfs://owned", f.owner.address, { value: MIN_ETH_LIQUIDITY })).to.be.revertedWith("Not NFT owner");
+      await launchValidatedModel(f.factory.connect(f.user1), f.contentCollection, 1, "Transferred", "OWN", "ipfs://owned", f.user1.address, { value: MIN_ETH_LIQUIDITY });
+      expect(await f.factory.hasToken(f.contentCollection, 1)).to.equal(true);
+    });
+
+    it("does not allow transfer to reset the one-token-per-NFT constraint", async function () {
+      const f = await loadFixture(collectionFixture);
+      await launchValidatedModel(f.factory, f.contentCollection, 1, "Original", "OLD", "ipfs://old", f.owner.address, { value: MIN_ETH_LIQUIDITY });
+      await f.mockContent.transferFrom(f.owner.address, f.user1.address, 1);
+      await expect(launchValidatedModel(f.factory.connect(f.user1), f.contentCollection, 1, "Duplicate", "DUP", "ipfs://dup", f.user1.address, { value: MIN_ETH_LIQUIDITY })).to.be.revertedWith("Token already launched for this model");
+    });
+
+    it("registers only deployed clones and preserves membership after collection ownership transfer", async function () {
+      const [owner, newOwner] = await ethers.getSigners();
+      const NFT = await ethers.getContractFactory("BonzaiCollectibles");
+      const implementation = await NFT.deploy();
+      const Factory = await ethers.getContractFactory("BonzaiCollectiblesFactory");
+      const registry = await Factory.deploy(await implementation.getAddress(), owner.address, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress);
+      expect(await registry.isCollection(await implementation.getAddress())).to.equal(false);
+      expect(await registry.isCollection(owner.address)).to.equal(false);
+      await registry.getOrCreateCollection("Original");
+      const address = await registry.collections(owner.address);
+      expect(await registry.isCollection(address)).to.equal(true);
+      await registry.getOrCreateCollection("Repeated");
+      expect(await registry.totalCollections()).to.equal(1);
+      const collection = NFT.attach(address);
+      await collection.transferOwnership(newOwner.address);
+      expect(await registry.isCollection(address)).to.equal(true);
+      expect(await registry.collections(owner.address)).to.equal(address);
+    });
+
+    it("rejects an EOA or implementation as the canonical collection registry", async function () {
+      const f = await loadFixture(collectionFixture);
+      await expect(f.factory.setContentContract(f.owner.address)).to.be.revertedWith("Invalid collection factory");
+      await expect(f.factory.setContentContract(await f.contentImplementation.getAddress())).to.be.reverted;
+      expect(await f.factory.contentContract()).to.equal(await f.collectiblesFactory.getAddress());
+    });
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // DEPLOYMENT
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("Deployment", function () {
     it("should set deployer as owner", async function () {
-      const { factory, owner } = await loadFixture(deployFineTuneTokenFactory);
+      const { factory, contentCollection, owner } = await loadFixture(deployFineTuneTokenFactory);
       expect(await factory.owner()).to.equal(owner.address);
     });
 
     it("should set correct immutable addresses", async function () {
-      const { factory, poolManager, positionManager, permit2, feeHook } =
+      const { factory, contentCollection, poolManager, positionManager, permit2, feeHook } =
         await loadFixture(deployFineTuneTokenFactory);
 
       expect(await factory.poolManager()).to.equal(await poolManager.getAddress());
@@ -31,12 +113,17 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should set default minEthLiquidity to 0.01 ether", async function () {
-      const { factory } = await loadFixture(deployFineTuneTokenFactory);
+      const { factory, contentCollection } = await loadFixture(deployFineTuneTokenFactory);
       expect(await factory.minEthLiquidity()).to.equal(MIN_ETH_LIQUIDITY);
     });
 
+    it("disables unvalidated model issuance at deployment", async function () {
+      const {factory} = await loadFixture(deployFineTuneTokenFactory);
+      expect(await factory.legacyLaunchEnabled()).to.equal(false);
+    });
+
     it("should start with zero tokens launched", async function () {
-      const { factory } = await loadFixture(deployFineTuneTokenFactory);
+      const { factory, contentCollection } = await loadFixture(deployFineTuneTokenFactory);
       expect(await factory.totalTokensLaunched()).to.equal(0);
     });
 
@@ -68,7 +155,7 @@ describe("FineTuneTokenFactory", function () {
 
     async function launchFixture() {
       const deployed = await deployFineTuneTokenFactory();
-      const { factory, mockContent, owner, creator } = deployed;
+      const { factory, contentCollection, mockContent, owner, creator } = deployed;
 
       // Mint a content NFT to the owner (who will call launchToken)
       const mintTx = await mockContent.mintTo(owner.address);
@@ -78,10 +165,11 @@ describe("FineTuneTokenFactory", function () {
       return { ...deployed, contentTokenId };
     }
 
-    it("issues a validated fine-tuned model token with complete identity metadata", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+    it("issues a fine-tuned model token with publisher-declared metadata", async function () {
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
       const validationHash = ethers.id("validated-model-artifacts");
       await factory.launchValidatedToken(
+        contentCollection,
         contentTokenId,
         "BonzAI Research Model",
         "BZRM",
@@ -93,32 +181,33 @@ describe("FineTuneTokenFactory", function () {
         creator.address,
         { value: MIN_ETH_LIQUIDITY },
       );
-      const token = await ethers.getContractAt("FineTuneToken", await factory.getToken(contentTokenId));
+      const token = await ethers.getContractAt("FineTuneToken", await factory.getToken(contentCollection, contentTokenId));
       const profile = await token.getModelProfile();
       expect(profile.description_).to.include("attributable dataset lineage");
       expect(profile.modelKind_).to.equal("fine_tuned");
       expect(profile.validationHash_).to.equal(validationHash);
     });
 
-    it("supports validated abliterated model tokens and disables legacy issuance", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+    it("supports publisher-declared abliterated model tokens and disables legacy issuance", async function () {
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
       await factory.disableLegacyLaunch();
       await expect(
         factory.launchToken(contentTokenId, tokenName, tokenSymbol, modelIrysHash, creator.address, { value: MIN_ETH_LIQUIDITY }),
       ).to.be.revertedWith("Use validated model launch");
       await factory.launchValidatedToken(
+        contentCollection,
         contentTokenId, "BonzAI Open Model", "BZOPEN", "ipfs://metadata",
-        "A validated abliterated model.", "ipfs://image", "abliterated",
+        "A publisher-declared abliterated model.", "ipfs://image", "abliterated",
         ethers.id("abliteration-validation"), creator.address, { value: MIN_ETH_LIQUIDITY },
       );
-      const token = await ethers.getContractAt("FineTuneToken", await factory.getToken(contentTokenId));
+      const token = await ethers.getContractAt("FineTuneToken", await factory.getToken(contentCollection, contentTokenId));
       expect(await token.modelKind()).to.equal("abliterated");
     });
 
     it("should deploy a FineTuneToken and return its address", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
 
-      const tx = await factory.launchToken(
+      const tx = await launchValidatedModel(factory, contentCollection,
         contentTokenId,
         tokenName,
         tokenSymbol,
@@ -128,14 +217,14 @@ describe("FineTuneTokenFactory", function () {
       );
       const receipt = await tx.wait();
 
-      const tokenAddr = await factory.getToken(contentTokenId);
+      const tokenAddr = await factory.getToken(contentCollection, contentTokenId);
       expect(tokenAddr).to.not.equal(ethers.ZeroAddress);
     });
 
     it("should allocate 96% of supply to liquidity and 4% to creator", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
 
-      await factory.launchToken(
+      await launchValidatedModel(factory, contentCollection,
         contentTokenId,
         tokenName,
         tokenSymbol,
@@ -144,7 +233,7 @@ describe("FineTuneTokenFactory", function () {
         { value: MIN_ETH_LIQUIDITY }
       );
 
-      const tokenAddr = await factory.getToken(contentTokenId);
+      const tokenAddr = await factory.getToken(contentCollection, contentTokenId);
       const token = await ethers.getContractAt("FineTuneToken", tokenAddr);
 
       const creatorBalance = await token.balanceOf(creator.address);
@@ -153,9 +242,9 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should register pool with feeHook using poolType=1 and mintPoolIndex=5", async function () {
-      const { factory, feeHook, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, feeHook, contentTokenId, creator } = await loadFixture(launchFixture);
 
-      const tx = await factory.launchToken(
+      const tx = await launchValidatedModel(factory, contentCollection,
         contentTokenId,
         tokenName,
         tokenSymbol,
@@ -189,10 +278,10 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should emit ModelTokenLaunched event with correct args", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
 
       await expect(
-        factory.launchToken(
+        launchValidatedModel(factory, contentCollection,
           contentTokenId,
           tokenName,
           tokenSymbol,
@@ -204,10 +293,10 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should lock LP position NFT to BURN_ADDRESS", async function () {
-      const { factory, positionManager, contentTokenId, creator } =
+      const { factory, contentCollection, positionManager, contentTokenId, creator } =
         await loadFixture(launchFixture);
 
-      const tx = await factory.launchToken(
+      const tx = await launchValidatedModel(factory, contentCollection,
         contentTokenId,
         tokenName,
         tokenSymbol,
@@ -223,17 +312,17 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should increment totalTokensLaunched after each launch", async function () {
-      const { factory, mockContent, owner, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, mockContent, owner, creator } = await loadFixture(launchFixture);
 
       // Launch first token (contentTokenId=1 already minted)
-      await factory.launchToken(1, tokenName, tokenSymbol, modelIrysHash, creator.address, {
+      await launchValidatedModel(factory, contentCollection, 1, tokenName, tokenSymbol, modelIrysHash, creator.address, {
         value: MIN_ETH_LIQUIDITY,
       });
       expect(await factory.totalTokensLaunched()).to.equal(1);
 
       // Mint second content NFT and launch
       await mockContent.mintTo(owner.address);
-      await factory.launchToken(2, "Model2", "BZM2", "hash2", creator.address, {
+      await launchValidatedModel(factory, contentCollection, 2, "Model2", "BZM2", "hash2", creator.address, {
         value: MIN_ETH_LIQUIDITY,
       });
       expect(await factory.totalTokensLaunched()).to.equal(2);
@@ -242,11 +331,11 @@ describe("FineTuneTokenFactory", function () {
     // ─── Validation ──────────────────────────────────────────────────────────
 
     it("should revert if msg.value < minEthLiquidity", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
       const tooLow = MIN_ETH_LIQUIDITY - 1n;
 
       await expect(
-        factory.launchToken(
+        launchValidatedModel(factory, contentCollection,
           contentTokenId,
           tokenName,
           tokenSymbol,
@@ -258,10 +347,10 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should revert if token already launched for content token (no duplicates)", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
 
       // Launch first time
-      await factory.launchToken(
+      await launchValidatedModel(factory, contentCollection,
         contentTokenId,
         tokenName,
         tokenSymbol,
@@ -272,7 +361,7 @@ describe("FineTuneTokenFactory", function () {
 
       // Attempt duplicate
       await expect(
-        factory.launchToken(
+        launchValidatedModel(factory, contentCollection,
           contentTokenId,
           "Another",
           "DUP",
@@ -284,10 +373,10 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should revert if creator is zero address", async function () {
-      const { factory, contentTokenId } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId } = await loadFixture(launchFixture);
 
       await expect(
-        factory.launchToken(
+        launchValidatedModel(factory, contentCollection,
           contentTokenId,
           tokenName,
           tokenSymbol,
@@ -299,11 +388,11 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should revert if caller is not NFT owner", async function () {
-      const { factory, contentTokenId, user1, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, user1, creator } = await loadFixture(launchFixture);
 
       // user1 does not own contentTokenId=1 (owner does)
       await expect(
-        factory.connect(user1).launchToken(
+        launchValidatedModel(factory.connect(user1), contentCollection,
           contentTokenId,
           tokenName,
           tokenSymbol,
@@ -315,10 +404,10 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should revert if symbol is empty", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
 
       await expect(
-        factory.launchToken(
+        launchValidatedModel(factory, contentCollection,
           contentTokenId,
           tokenName,
           "",
@@ -330,10 +419,10 @@ describe("FineTuneTokenFactory", function () {
     });
 
     it("should revert if name is empty", async function () {
-      const { factory, contentTokenId, creator } = await loadFixture(launchFixture);
+      const { factory, contentCollection, contentTokenId, creator } = await loadFixture(launchFixture);
 
       await expect(
-        factory.launchToken(
+        launchValidatedModel(factory, contentCollection,
           contentTokenId,
           "",
           tokenSymbol,
@@ -365,9 +454,10 @@ describe("FineTuneTokenFactory", function () {
         await feeHook.getAddress()
       );
 
+      const contentCollection = owner.address;
       // Do NOT call setContentContract
       await expect(
-        factory.launchToken(1, tokenName, tokenSymbol, modelIrysHash, creator.address, {
+        launchValidatedModel(factory, contentCollection, 1, tokenName, tokenSymbol, modelIrysHash, creator.address, {
           value: MIN_ETH_LIQUIDITY,
         })
       ).to.be.revertedWith("Content contract not set");
@@ -385,12 +475,12 @@ describe("FineTuneTokenFactory", function () {
 
     async function tokenFixture() {
       const deployed = await deployFineTuneTokenFactory();
-      const { factory, mockContent, owner, creator } = deployed;
+      const { factory, contentCollection, mockContent, owner, creator } = deployed;
 
       await mockContent.mintTo(owner.address);
       const contentTokenId = 1n;
 
-      await factory.launchToken(
+      await launchValidatedModel(factory, contentCollection,
         contentTokenId,
         tokenName,
         tokenSymbol,
@@ -399,7 +489,7 @@ describe("FineTuneTokenFactory", function () {
         { value: MIN_ETH_LIQUIDITY }
       );
 
-      const tokenAddr = await factory.getToken(contentTokenId);
+      const tokenAddr = await factory.getToken(contentCollection, contentTokenId);
       const token = await ethers.getContractAt("FineTuneToken", tokenAddr);
 
       return { ...deployed, contentTokenId, token, tokenAddr };
@@ -461,12 +551,12 @@ describe("FineTuneTokenFactory", function () {
 
     async function viewFixture() {
       const deployed = await deployFineTuneTokenFactory();
-      const { factory, mockContent, owner, creator } = deployed;
+      const { factory, contentCollection, mockContent, owner, creator } = deployed;
 
       await mockContent.mintTo(owner.address);
       const contentTokenId = 1n;
 
-      await factory.launchToken(
+      await launchValidatedModel(factory, contentCollection,
         contentTokenId,
         tokenName,
         tokenSymbol,
@@ -479,52 +569,52 @@ describe("FineTuneTokenFactory", function () {
     }
 
     it("hasToken() should return true for launched content token", async function () {
-      const { factory, contentTokenId } = await loadFixture(viewFixture);
-      expect(await factory.hasToken(contentTokenId)).to.be.true;
+      const { factory, contentCollection, contentTokenId } = await loadFixture(viewFixture);
+      expect(await factory.hasToken(contentCollection, contentTokenId)).to.be.true;
     });
 
     it("hasToken() should return false for non-launched content token", async function () {
-      const { factory } = await loadFixture(viewFixture);
-      expect(await factory.hasToken(999)).to.be.false;
+      const { factory, contentCollection } = await loadFixture(viewFixture);
+      expect(await factory.hasToken(contentCollection, 999)).to.be.false;
     });
 
     it("getToken() should return the deployed token address", async function () {
-      const { factory, contentTokenId } = await loadFixture(viewFixture);
-      const tokenAddr = await factory.getToken(contentTokenId);
+      const { factory, contentCollection, contentTokenId } = await loadFixture(viewFixture);
+      const tokenAddr = await factory.getToken(contentCollection, contentTokenId);
       expect(tokenAddr).to.not.equal(ethers.ZeroAddress);
     });
 
     it("getToken() should return zero address for non-launched content token", async function () {
-      const { factory } = await loadFixture(viewFixture);
-      expect(await factory.getToken(999)).to.equal(ethers.ZeroAddress);
+      const { factory, contentCollection } = await loadFixture(viewFixture);
+      expect(await factory.getToken(contentCollection, 999)).to.equal(ethers.ZeroAddress);
     });
 
     it("totalTokensLaunched() should reflect accurate count", async function () {
-      const { factory, mockContent, owner, creator } = await loadFixture(viewFixture);
+      const { factory, contentCollection, mockContent, owner, creator } = await loadFixture(viewFixture);
 
       // Already launched 1
       expect(await factory.totalTokensLaunched()).to.equal(1);
 
       // Launch a second
       await mockContent.mintTo(owner.address);
-      await factory.launchToken(2, "Model2", "BZM2", "hash2", creator.address, {
+      await launchValidatedModel(factory, contentCollection, 2, "Model2", "BZM2", "hash2", creator.address, {
         value: MIN_ETH_LIQUIDITY,
       });
       expect(await factory.totalTokensLaunched()).to.equal(2);
     });
 
     it("getAllTokens() should return all launched token addresses", async function () {
-      const { factory, mockContent, owner, creator, contentTokenId } =
+      const { factory, contentCollection, mockContent, owner, creator, contentTokenId } =
         await loadFixture(viewFixture);
 
-      const firstToken = await factory.getToken(contentTokenId);
+      const firstToken = await factory.getToken(contentCollection, contentTokenId);
 
       // Launch a second token
       await mockContent.mintTo(owner.address);
-      await factory.launchToken(2, "Model2", "BZM2", "hash2", creator.address, {
+      await launchValidatedModel(factory, contentCollection, 2, "Model2", "BZM2", "hash2", creator.address, {
         value: MIN_ETH_LIQUIDITY,
       });
-      const secondToken = await factory.getToken(2);
+      const secondToken = await factory.getToken(contentCollection, 2);
 
       const allTokens = await factory.getAllTokens();
       expect(allTokens.length).to.equal(2);
@@ -540,21 +630,22 @@ describe("FineTuneTokenFactory", function () {
   describe("Admin Functions", function () {
     describe("setContentContract()", function () {
       it("should allow owner to set content contract", async function () {
-        const { factory, owner } = await loadFixture(deployFineTuneTokenFactory);
-        const newAddr = ethers.Wallet.createRandom().address;
+        const { factory, contentCollection, owner } = await loadFixture(deployFineTuneTokenFactory);
+        const { collectiblesFactory } = await deployFineTuneTokenFactory();
+        const newAddr = await collectiblesFactory.getAddress();
         await factory.connect(owner).setContentContract(newAddr);
         expect(await factory.contentContract()).to.equal(newAddr);
       });
 
       it("should revert if setting to zero address", async function () {
-        const { factory } = await loadFixture(deployFineTuneTokenFactory);
+        const { factory, contentCollection } = await loadFixture(deployFineTuneTokenFactory);
         await expect(
           factory.setContentContract(ethers.ZeroAddress)
-        ).to.be.revertedWith("Invalid address");
+        ).to.be.revertedWith("Invalid collection factory");
       });
 
       it("should revert if called by non-owner", async function () {
-        const { factory, user1 } = await loadFixture(deployFineTuneTokenFactory);
+        const { factory, contentCollection, user1 } = await loadFixture(deployFineTuneTokenFactory);
         const addr = ethers.Wallet.createRandom().address;
         await expect(
           factory.connect(user1).setContentContract(addr)
@@ -564,14 +655,14 @@ describe("FineTuneTokenFactory", function () {
 
     describe("setMinEthLiquidity()", function () {
       it("should allow owner to update min ETH liquidity", async function () {
-        const { factory } = await loadFixture(deployFineTuneTokenFactory);
+        const { factory, contentCollection } = await loadFixture(deployFineTuneTokenFactory);
         const newMin = ethers.parseEther("0.05");
         await factory.setMinEthLiquidity(newMin);
         expect(await factory.minEthLiquidity()).to.equal(newMin);
       });
 
       it("should emit MinEthLiquidityUpdated event", async function () {
-        const { factory } = await loadFixture(deployFineTuneTokenFactory);
+        const { factory, contentCollection } = await loadFixture(deployFineTuneTokenFactory);
         const newMin = ethers.parseEther("0.05");
         await expect(factory.setMinEthLiquidity(newMin))
           .to.emit(factory, "MinEthLiquidityUpdated")
@@ -579,19 +670,19 @@ describe("FineTuneTokenFactory", function () {
       });
 
       it("should revert if new min is zero", async function () {
-        const { factory } = await loadFixture(deployFineTuneTokenFactory);
+        const { factory, contentCollection } = await loadFixture(deployFineTuneTokenFactory);
         await expect(factory.setMinEthLiquidity(0)).to.be.revertedWith("Min must be positive");
       });
 
       it("should revert if called by non-owner", async function () {
-        const { factory, user1 } = await loadFixture(deployFineTuneTokenFactory);
+        const { factory, contentCollection, user1 } = await loadFixture(deployFineTuneTokenFactory);
         await expect(
           factory.connect(user1).setMinEthLiquidity(ethers.parseEther("1"))
         ).to.be.revertedWithCustomError(factory, "OwnableUnauthorizedAccount");
       });
 
       it("should enforce updated minEthLiquidity on subsequent launches", async function () {
-        const { factory, mockContent, owner, creator } =
+        const { factory, contentCollection, mockContent, owner, creator } =
           await loadFixture(deployFineTuneTokenFactory);
 
         // Increase min to 1 ETH
@@ -602,14 +693,14 @@ describe("FineTuneTokenFactory", function () {
 
         // Old amount should fail
         await expect(
-          factory.launchToken(1, "Test", "TST", "hash", creator.address, {
+          launchValidatedModel(factory, contentCollection, 1, "Test", "TST", "hash", creator.address, {
             value: MIN_ETH_LIQUIDITY,
           })
         ).to.be.revertedWith("Insufficient ETH for liquidity");
 
         // New amount should succeed
         await expect(
-          factory.launchToken(1, "Test", "TST", "hash", creator.address, {
+          launchValidatedModel(factory, contentCollection, 1, "Test", "TST", "hash", creator.address, {
             value: highMin,
           })
         ).to.not.be.reverted;

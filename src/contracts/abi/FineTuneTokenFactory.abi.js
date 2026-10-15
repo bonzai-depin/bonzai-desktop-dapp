@@ -92,6 +92,12 @@ export const FineTuneTokenFactoryABI = [
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "address",
+        "name": "contentCollection",
+        "type": "address"
+      },
+      {
         "indexed": true,
         "internalType": "uint256",
         "name": "contentTokenId",
@@ -360,6 +366,11 @@ export const FineTuneTokenFactoryABI = [
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "contentCollection",
+        "type": "address"
+      },
+      {
         "internalType": "uint256",
         "name": "contentTokenId",
         "type": "uint256"
@@ -378,6 +389,11 @@ export const FineTuneTokenFactoryABI = [
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "contentCollection",
+        "type": "address"
+      },
       {
         "internalType": "uint256",
         "name": "contentTokenId",
@@ -399,27 +415,27 @@ export const FineTuneTokenFactoryABI = [
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "contentTokenId",
+        "name": "",
         "type": "uint256"
       },
       {
         "internalType": "string",
-        "name": "name",
+        "name": "",
         "type": "string"
       },
       {
         "internalType": "string",
-        "name": "symbol",
+        "name": "",
         "type": "string"
       },
       {
         "internalType": "string",
-        "name": "modelIrysHash",
+        "name": "",
         "type": "string"
       },
       {
         "internalType": "address",
-        "name": "creator",
+        "name": "",
         "type": "address"
       }
     ],
@@ -427,12 +443,12 @@ export const FineTuneTokenFactoryABI = [
     "outputs": [
       {
         "internalType": "address",
-        "name": "token",
+        "name": "",
         "type": "address"
       },
       {
         "internalType": "bytes32",
-        "name": "poolId",
+        "name": "",
         "type": "bytes32"
       }
     ],
@@ -441,6 +457,11 @@ export const FineTuneTokenFactoryABI = [
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "contentCollection",
+        "type": "address"
+      },
       {
         "internalType": "uint256",
         "name": "contentTokenId",
@@ -531,6 +552,11 @@ export const FineTuneTokenFactoryABI = [
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
       {
         "internalType": "uint256",
         "name": "",

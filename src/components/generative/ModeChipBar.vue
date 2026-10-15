@@ -10,6 +10,8 @@
         'bz-mode-chip--compact': compact,
       }"
       :disabled="m.disabled || disabled"
+      :aria-pressed="modelValue === m.value"
+      :aria-label="m.label || m.title"
       :title="m.title"
       @click="$emit('update:modelValue', m.value)"
     >
@@ -90,10 +92,11 @@ const iconStyle = computed(() => ({
   color: var(--bz-fg);
 }
 .bz-mode-chip--compact {
-  height: 28px;
+  height: 36px;
   padding: 0 var(--bz-space-3);
   font-size: var(--bz-size-meta);
 }
+.bz-mode-chip:focus-visible { outline: 2px solid var(--bz-purple-300); outline-offset: 2px; }
 .bz-mode-chip:disabled { opacity: 0.5; cursor: not-allowed; }
 .bz-mode-chip .material-symbols-outlined { font-size: 18px !important; }
 

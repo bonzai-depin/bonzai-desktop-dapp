@@ -2,10 +2,10 @@
   <div class="browse-agents">
     <header class="browse-agents__head">
       <div>
-        <p class="bz-eyebrow">Earn</p>
+        <p class="bz-eyebrow">Marketplace ownership</p>
         <h2 class="browse-agents__title fira-sans-condensed-black-italic">
           <span class="material-symbols-outlined" aria-hidden="true">person_pin</span>
-          My Companions
+          Owned smart agents
         </h2>
       </div>
     </header>
@@ -14,15 +14,18 @@
       v-if="isLoading"
       size="compact"
       icon="hourglass_empty"
-      title="Loading companions"
+      title="Loading smart agents"
       :show-orb="false"
     />
+    <BonzaiEmptyState v-else-if="companionsError" size="small" icon="error" :title="companionsError" :show-orb="false">
+      <template #actions><button type="button" class="bz-btn bz-btn--primary" @click="loadCompanions">{{ $t('common.refresh') }}</button></template>
+    </BonzaiEmptyState>
     <BonzaiEmptyState
       v-else-if="companions.length === 0"
       size="small"
       icon="person_pin"
-      title="No companions yet"
-      subtitle="Mint or import an agentic specialist to bring their workflows into BonzAI and Company."
+      title="No onchain smart agents yet"
+      subtitle="Create a smart agent in Agents, then issue its social token when ready."
       :show-orb="false"
     />
     <div v-else class="companions-grid">
@@ -31,6 +34,11 @@
         :key="companion.id"
         class="companion-card"
         :class="{ 'bare-companion': companion.isBare }"
+        role="button"
+        tabindex="0"
+        :aria-label="companion.name"
+        @keydown.enter.prevent="companion.isBare ? openSetupWizard(companion) : selectCompanion(companion)"
+        @keydown.space.prevent="companion.isBare ? openSetupWizard(companion) : selectCompanion(companion)"
         @click="companion.isBare ? openSetupWizard(companion) : selectCompanion(companion)"
       >
         <div class="companion-card__avatar">
@@ -736,7 +744,7 @@
           Demo data shown until on-chain companion leaderboard data is available.
         </p>
       </div>
-      <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="loadLeaderboard">
+      <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" :disabled="isLeaderboardLoading" @click="loadLeaderboard">
         <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
         Refresh
       </button>
@@ -792,6 +800,8 @@
 
 <script>
 import { ref, onMounted, watch, computed } from "vue";
+import { withTimeout } from "../../utils/withTimeout.js";
+import { walletCredentials } from "../../services/walletCredentials.service.js";
 import { companionService } from "../../services/companion.service.js";
 import { getLeaderboard, isUsingMockData } from "../../services/leaderboard.service.js";
 import { skillOwnershipService } from "../../services/skillOwnership.service.js";
@@ -824,6 +834,7 @@ export default {
   setup(props) {
     const companions = ref([]);
     const isLoading = ref(true);
+    const companionsError = ref("");
     const selectedCompanion = ref(null);
     const careerFor = (companion) => getCompanionCareer(companion?.id || companion?.companionId);
     const selectedCareer = computed(() => careerFor(selectedCompanion.value));
@@ -1066,7 +1077,7 @@ export default {
       const id = selectedCompanion.value.id || selectedCompanion.value.tokenId;
       try {
         const owsMapping = await window.electronAPI?.store?.get(`ows-wallet-${id}`);
-        const passphrase = await window.electronAPI?.store?.get(`ows-passphrase-${id}`);
+        const passphrase = await walletCredentials.getOWS(id, 'passphrase');
         if (!owsMapping || !passphrase) return;
 
         const { owsService } = await import('../../services/ows.service.js');
@@ -1471,7 +1482,7 @@ export default {
       isLeaderboardLoading.value = true;
       leaderboardError.value = null;
       try {
-        leaderboard.value = await getLeaderboard();
+        leaderboard.value = await withTimeout(getLeaderboard(), 12000);
         isMockData.value = isUsingMockData() || leaderboard.value.some((row) => row.isMock);
       } catch (err) {
         leaderboardError.value = err.message;
@@ -1480,20 +1491,26 @@ export default {
       }
     }
 
-    onMounted(async () => {
-      const userAddress = web3Service.state.walletAddress;
-      if (userAddress) {
-        companions.value =
-          await companionService.loadOwnedCompanions(userAddress);
-      }
-      isLoading.value = false;
+    async function loadCompanions() {
+      isLoading.value = true;
+      companionsError.value = "";
+      try {
+        const userAddress = web3Service.state.walletAddress;
+        companions.value = userAddress
+          ? await withTimeout(companionService.loadOwnedCompanions(userAddress), 12000)
+          : [];
+      } catch (error) { companionsError.value = error?.message || String(error); }
+      finally { isLoading.value = false; }
+    }
 
-      await loadLeaderboard();
+    onMounted(() => {
+      void loadCompanions();
+      void loadLeaderboard();
     });
 
     return {
       companions,
-      isLoading,
+      isLoading, companionsError, loadCompanions,
       selectedCompanion,
       selectedCareer,
       careerFor,

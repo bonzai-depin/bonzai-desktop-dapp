@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "mechanism": "Battery-powered emergency lantern with clear glass panels, protective metal body, and carrying handle",
+  "parts": [
+    {
+      "id": "base",
+      "role": "Battery compartment base with switch and contacts",
+      "surface": "opaque",
+      "bounds": [
+        [
+          -0.3,
+          0,
+          -0.3
+        ],
+        [
+          0.3,
+          0.15,
+          0.3
+        ]
+      ]
+    },
+    {
+      "id": "frame_bottom",
+      "role": "Lower protective metal frame ring",
+      "surface": "opaque",
+      "bounds": [
+        [
+          -0.35,
+          0.15,
+          -0.35
+        ],
+        [
+          0.35,
+          0.2,
+          0.35
+        ]
+      ]
+    },
+    {
+      "id": "glass_panel_front",
+      "role": "Clear glass front panel",
+      "surface": "glass",
+      "bounds": [
+        [
+          -0.3,
+          0.2,
+          -0.3
+        ],
+        [
+          0.3,
+          0.8,
+          -0.28
+        ]
+      ]
+    },
+    {
+      "id": "glass_panel_back",
+      "role": "Clear glass back panel",
+      "surface": "glass",
+      "bounds": [
+        [
+          -0.3,
+          0.2,
+          0.28
+        ],
+        [
+          0.3,
+          0.8,
+          0.3
+        ]
+      ]
+    },
+    {
+      "id": "glass_panel_left",
+      "role": "Clear glass left panel",
+      "surface": "glass",
+      "bounds": [
+        [
+          -0.3,
+          0.2,
+          -0.28
+        ],
+        [
+          -0.28,
+          0.8,
+          0.28
+        ]
+      ]
+    },
+    {
+      "id": "glass_panel_right",
+      "role": "Clear glass right panel",
+      "surface": "glass",
+      "bounds": [
+        [
+          0.28,
+          0.2,
+          -0.28
+        ],
+        [
+          0.3,
+          0.8,
+          0.28
+        ]
+      ]
+    },
+    {
+      "id": "emitter",
+      "role": "LED light source with reflector",
+      "surface": "emissive",
+      "bounds": [
+        [
+          -0.1,
+          0.35,
+          -0.1
+        ],
+        [
+          0.1,
+          0.65,
+          0.1
+        ]
+      ]
+    },
+    {
+      "id": "frame_top",
+      "role": "Upper protective metal frame ring",
+      "surface": "opaque",
+      "bounds": [
+        [
+          -0.35,
+          0.8,
+          -0.35
+        ],
+        [
+          0.35,
+          0.85,
+          0.35
+        ]
+      ]
+    },
+    {
+      "id": "handle",
+      "role": "Carrying handle arch",
+      "surface": "opaque",
+      "bounds": [
+        [
+          -0.15,
+          0.85,
+          -0.35
+        ],
+        [
+          0.15,
+          1.1,
+          0.35
+        ]
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "type": "contact",
+      "a": "frame_bottom",
+      "b": "base"
+    },
+    {
+      "type": "contact",
+      "a": "glass_panel_front",
+      "b": "frame_bottom"
+    },
+    {
+      "type": "contact",
+      "a": "glass_panel_back",
+      "b": "frame_bottom"
+    },
+    {
+      "type": "contact",
+      "a": "glass_panel_left",
+      "b": "frame_bottom"
+    },
+    {
+      "type": "contact",
+      "a": "glass_panel_right",
+      "b": "frame_bottom"
+    },
+    {
+      "type": "inside",
+      "a": "emitter",
+      "b": "glass_panel_front"
+    },
+    {
+      "type": "contact",
+      "a": "frame_top",
+      "b": "glass_panel_front"
+    },
+    {
+      "type": "contact",
+      "a": "frame_top",
+      "b": "glass_panel_back"
+    },
+    {
+      "type": "contact",
+      "a": "frame_top",
+      "b": "glass_panel_left"
+    },
+    {
+      "type": "contact",
+      "a": "frame_top",
+      "b": "glass_panel_right"
+    },
+    {
+      "type": "contact",
+      "a": "handle",
+      "b": "frame_top"
+    }
+  ]
+}

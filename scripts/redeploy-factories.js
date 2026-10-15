@@ -1,3 +1,6 @@
+// Legacy migration disabled for the v4 contract interfaces.
+throw new Error('Legacy redeployment is disabled: global content identities and optional staking vaults are incompatible with v4. Use the canonical v4 deployment workflow for new contracts; existing funds require a separately reviewed migration.');
+
 /**
  * Redeploy CompanionTokenFactory + FineTuneTokenFactory using Hardhat artifacts.
  *

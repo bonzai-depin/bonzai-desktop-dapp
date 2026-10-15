@@ -1,8 +1,29 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 const { contextBridge, ipcRenderer } = require("electron");
+import { COMPANY_OPERATIONS } from './shared/companyOperations.js';
+
+const operationalApi = Object.fromEntries(Object.entries(COMPANY_OPERATIONS).map(([namespace, methods]) => [namespace, {
+  ...Object.fromEntries([...methods.reads, ...methods.writes, ...(['companyBilling', 'purchasing'].includes(namespace) ? ['generateDocument'] : []), ...(namespace === 'companyBilling' ? ['chorusAction'] : [])].map(method => [method, (companyId, ...args) => ipcRenderer.invoke(`db:${namespace}:${method}`, companyId, ...args)])),
+  onChanged: callback => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on(`db:${namespace}:changed`, handler);
+    return () => ipcRenderer.removeListener(`db:${namespace}:changed`, handler);
+  },
+}]));
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  workspace: Object.fromEntries(['status','checkout','verify','backup','restore','demo','demoOpen'].map(method => [method, (...args) => ipcRenderer.invoke('workspace:'+method,...args)])),
+  onWorkspaceDemo: cb => { const h=(_e,v)=>cb(v); ipcRenderer.on('workspace:demo-progress',h); return ()=>ipcRenderer.removeListener('workspace:demo-progress',h); },
+  companyRuntime: {
+    invoke: (name, args = []) => ipcRenderer.invoke('company-runtime:invoke', name, args),
+    ready: error => ipcRenderer.send('company-runtime:ready', error),
+    result: result => ipcRenderer.send('company-runtime:result', result),
+    stream: event => ipcRenderer.send('company-runtime:stream', event),
+    onCommand: cb => { const h = (_e, value) => cb(value); ipcRenderer.on('company-runtime:command', h); return () => ipcRenderer.removeListener('company-runtime:command', h); },
+    onStream: cb => { const h = (_e, value) => cb(value); ipcRenderer.on('company-runtime:stream', h); return () => ipcRenderer.removeListener('company-runtime:stream', h); },
+    onStatus: cb => { const h = (_e, value) => cb(value); ipcRenderer.on('company-runtime:status', h); return () => ipcRenderer.removeListener('company-runtime:status', h); },
+  },
   robinhood: {
     connect: () => ipcRenderer.invoke("robinhood-mcp:connect"),
     status: () => ipcRenderer.invoke("robinhood-mcp:status"),
@@ -41,7 +62,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   loadModel: (modelname) => ipcRenderer.invoke("model-load", modelname),
   unloadModel: () => ipcRenderer.invoke("model-unload"),
   getLoadedModel: () => ipcRenderer.invoke("model-get-loaded"),
+  completionBudget: (prompt, maxTokens) => ipcRenderer.invoke('model-completion-budget', { prompt, maxTokens }),
   llamaRuntimeStatus: () => ipcRenderer.invoke("llama-runtime-status"),
+  localExecutionStatus: () => ipcRenderer.invoke("local-execution-status"),
   broadcastModelState: () => ipcRenderer.invoke("broadcast-model-state"),
   llamaGetRpcPeers: () => ipcRenderer.invoke("llama-get-rpc-peers"),
   llamaSetRpcPeers: (peers) => ipcRenderer.invoke("llama-set-rpc-peers", peers),
@@ -95,6 +118,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * data. New tables get wired here as the migration progresses.
    */
   db: {
+    ...operationalApi,
+    automation: {
+      renew: (id, runId, leaseMs) => ipcRenderer.invoke("db:automation:renew", id, runId, leaseMs),
+      begin: (companyId, input) => ipcRenderer.invoke("db:automation:begin", companyId, input),
+      finish: (companyId, runId, input) => ipcRenderer.invoke("db:automation:finish", companyId, runId, input),
+      state: (companyId) => ipcRenderer.invoke("db:automation:state", companyId),
+      recent: (companyId, limit) => ipcRenderer.invoke("db:automation:recent", companyId, limit),
+      recover: (companyId, staleBefore) => ipcRenderer.invoke("db:automation:recover", companyId, staleBefore),
+      clear: (companyId) => ipcRenderer.invoke("db:automation:clear", companyId),
+      onChanged: (cb) => {
+        const h = (_e, payload) => cb(payload);
+        ipcRenderer.on("db:automation:changed", h);
+        return () => ipcRenderer.removeListener("db:automation:changed", h);
+      },
+    },
     audit: {
       append: (companyId, entry) => ipcRenderer.invoke("db:audit:append", companyId, entry),
       recent: (companyId, n) => ipcRenderer.invoke("db:audit:recent", companyId, n),
@@ -146,6 +184,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       diskUsage: () => ipcRenderer.invoke("db:blobs:diskUsage"),
       sweepOrphans: () => ipcRenderer.invoke("db:blobs:sweepOrphans"),
     },
+    companyPortability: {
+      export: (id, options) => ipcRenderer.invoke('db:companyPortability:export', id, options),
+      import: (bundle, options) => ipcRenderer.invoke('db:companyPortability:import', bundle, options),
+    },
     companies: {
       save: (charter) => ipcRenderer.invoke("db:companies:save", charter),
       get: (id) => ipcRenderer.invoke("db:companies:get", id),
@@ -161,6 +203,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       },
     },
     goals: {
+      createWithTasks: (companyId, input, tasks) => ipcRenderer.invoke("db:goals:createWithTasks", companyId, input, tasks),
       create: (companyId, input) => ipcRenderer.invoke("db:goals:create", companyId, input),
       list: (companyId, filter) => ipcRenderer.invoke("db:goals:list", companyId, filter),
       get: (companyId, goalId) => ipcRenderer.invoke("db:goals:get", companyId, goalId),
@@ -178,6 +221,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       },
     },
     issues: {
+      wakeTeamWaits: id => ipcRenderer.invoke('db:issues:wakeTeamWaits', id),
+      answerQuestion: (id, issueId, answer) => ipcRenderer.invoke('db:issues:answerQuestion', id, issueId, answer),
+      reconcileExecution: (id, issueId, stepId, input) => ipcRenderer.invoke('db:issues:reconcileExecution', id, issueId, stepId, input),
+      saveWorkflowResult: (companyId, issueId, input) => ipcRenderer.invoke('db:issues:saveWorkflowResult', companyId, issueId, input),
+      reviewWorkflowResult: (companyId, issueId, stepId, input) => ipcRenderer.invoke('db:issues:reviewWorkflowResult', companyId, issueId, stepId, input),
+      saveExecution: (companyId, id, execution, revision) => ipcRenderer.invoke("db:issues:saveExecution", companyId, id, execution, revision),
+      resumeApproval: (companyId, id) => ipcRenderer.invoke("db:issues:resumeApproval", companyId, id),
       create: (companyId, input) => ipcRenderer.invoke("db:issues:create", companyId, input),
       list: (companyId, filter) => ipcRenderer.invoke("db:issues:list", companyId, filter),
       get: (companyId, id) => ipcRenderer.invoke("db:issues:get", companyId, id),
@@ -185,16 +235,82 @@ contextBridge.exposeInMainWorld("electronAPI", {
       reopen: (companyId, id) => ipcRenderer.invoke("db:issues:reopen", companyId, id),
       remove: (companyId, id) => ipcRenderer.invoke("db:issues:remove", companyId, id),
       nextForRole: (companyId, roleKey, currentCompanion) => ipcRenderer.invoke("db:issues:nextForRole", companyId, roleKey, currentCompanion),
+      claimNextForRole: (companyId, roleKey, currentCompanion) => ipcRenderer.invoke("db:issues:claimNextForRole", companyId, roleKey, currentCompanion),
       startAttempt: (companyId, issueId, role, companion) => ipcRenderer.invoke("db:issues:startAttempt", companyId, issueId, role, companion),
       finishAttempt: (companyId, issueId, outcome) => ipcRenderer.invoke("db:issues:finishAttempt", companyId, issueId, outcome),
       attempts: (issueId) => ipcRenderer.invoke("db:issues:attempts", issueId),
       counts: (companyId) => ipcRenderer.invoke("db:issues:counts", companyId),
+      recoverStale: (companyId, staleBefore) => ipcRenderer.invoke("db:issues:recoverStale", companyId, staleBefore),
       clear: (companyId) => ipcRenderer.invoke("db:issues:clear", companyId),
       bulkInsert: (rows) => ipcRenderer.invoke("db:issues:bulkInsert", rows),
       onChanged: (cb) => {
         const h = (_e, p) => cb(p);
         ipcRenderer.on("db:issues:changed", h);
         return () => ipcRenderer.removeListener("db:issues:changed", h);
+      },
+    },
+    teams: {
+      list: id => ipcRenderer.invoke('db:teams:list',id),
+      directory: id => ipcRenderer.invoke('db:teams:directory',id),
+      read: (id,thread) => ipcRenderer.invoke('db:teams:read',id,thread),
+      request: (id,input) => ipcRenderer.invoke('db:teams:request',id,input),
+      reply: (id,input) => ipcRenderer.invoke('db:teams:reply',id,input),
+      execute: (id,type,input,context) => ipcRenderer.invoke('db:teams:execute',id,type,input,context),
+      onChanged: cb => {const h=(_e,data)=>cb(data);ipcRenderer.on('db:teams:changed',h);return ()=>ipcRenderer.removeListener('db:teams:changed',h);},
+    },
+    gmao: {
+      saveClient: (companyId, ...args) => ipcRenderer.invoke("db:gmao:saveClient", companyId, ...args),
+      saveServiceContract: (companyId, ...args) => ipcRenderer.invoke("db:gmao:saveServiceContract", companyId, ...args),
+      saveSupplier: (companyId, ...args) => ipcRenderer.invoke("db:gmao:saveSupplier", companyId, ...args),
+      acknowledgeHandoff: (companyId, ...args) => ipcRenderer.invoke("db:gmao:acknowledgeHandoff", companyId, ...args),
+      saveOutbox: (companyId, ...args) => ipcRenderer.invoke("db:gmao:saveOutbox", companyId, ...args),
+      resolveOutbox: (companyId, ...args) => ipcRenderer.invoke("db:gmao:resolveOutbox", companyId, ...args),
+      getDossier: (companyId, ...args) => ipcRenderer.invoke("db:gmao:getDossier", companyId, ...args),
+      searchWorkOrders: (companyId, ...args) => ipcRenderer.invoke("db:gmao:searchWorkOrders", companyId, ...args),
+      generateDocument: (companyId, ...args) => ipcRenderer.invoke("db:gmao:generateDocument", companyId, ...args),
+      sendOutbox: (companyId, ...args) => ipcRenderer.invoke("db:gmao:sendOutbox", companyId, ...args),
+      checkDelivery: (companyId, ...args) => ipcRenderer.invoke("db:gmao:checkDelivery", companyId, ...args),
+
+      bootstrap: (companyId, input) => ipcRenderer.invoke("db:gmao:bootstrap", companyId, input),
+      snapshot: (companyId, now) => ipcRenderer.invoke("db:gmao:snapshot", companyId, now),
+      saveContract: (companyId, input) => ipcRenderer.invoke("db:gmao:saveContract", companyId, input),
+      saveSite: (companyId, input) => ipcRenderer.invoke("db:gmao:saveSite", companyId, input),
+      saveAsset: (companyId, input) => ipcRenderer.invoke("db:gmao:saveAsset", companyId, input),
+      importAssets: (companyId, rows) => ipcRenderer.invoke("db:gmao:importAssets", companyId, rows),
+      savePlan: (companyId, input) => ipcRenderer.invoke("db:gmao:savePlan", companyId, input),
+      createWorkOrder: (companyId, input) => ipcRenderer.invoke("db:gmao:createWorkOrder", companyId, input),
+      updateWorkOrder: (companyId, id, input) => ipcRenderer.invoke("db:gmao:updateWorkOrder", companyId, id, input),
+      transitionWorkOrder: (companyId, id, status, input) => ipcRenderer.invoke("db:gmao:transitionWorkOrder", companyId, id, status, input),
+      addEvent: (companyId, workOrderId, input) => ipcRenderer.invoke("db:gmao:addEvent", companyId, workOrderId, input),
+      recordAttachmentSheet: (companyId, workOrderId, input) => ipcRenderer.invoke("db:gmao:recordAttachmentSheet", companyId, workOrderId, input),
+      saveProcurement: (companyId, input) => ipcRenderer.invoke("db:gmao:saveProcurement", companyId, input),
+      saveNotification: (companyId, input) => ipcRenderer.invoke("db:gmao:saveNotification", companyId, input),
+      addDocument: (companyId, input) => ipcRenderer.invoke("db:gmao:addDocument", companyId, input),
+      saveCompliance: (companyId, input) => ipcRenderer.invoke("db:gmao:saveCompliance", companyId, input),
+      saveSubcontractor: (companyId, input) => ipcRenderer.invoke("db:gmao:saveSubcontractor", companyId, input),
+      saveRate: (companyId, input) => ipcRenderer.invoke("db:gmao:saveRate", companyId, input),
+      createQuote: (companyId, workOrderId, input) => ipcRenderer.invoke("db:gmao:createQuote", companyId, workOrderId, input),
+      updateQuote: (companyId, quoteId, input) => ipcRenderer.invoke("db:gmao:updateQuote", companyId, quoteId, input),
+      validateProcessStep: (companyId, workOrderId, input) => ipcRenderer.invoke("db:gmao:validateProcessStep", companyId, workOrderId, input),
+      recordServiceAcceptance: (companyId, workOrderId, input) => ipcRenderer.invoke("db:gmao:recordServiceAcceptance", companyId, workOrderId, input),
+      saveInvoice: (companyId, input) => ipcRenderer.invoke("db:gmao:saveInvoice", companyId, input),
+      saveOnCallShift: (companyId, input) => ipcRenderer.invoke("db:gmao:saveOnCallShift", companyId, input),
+      generatePreventive: (companyId, now) => ipcRenderer.invoke("db:gmao:generatePreventive", companyId, now),
+      evaluateSla: (companyId, now) => ipcRenderer.invoke("db:gmao:evaluateSla", companyId, now),
+      ingestDocument: (companyId, input) => ipcRenderer.invoke("db:gmao:ingestDocument", companyId, input),
+      applyDocumentIntake: (companyId, id, input) => ipcRenderer.invoke("db:gmao:applyDocumentIntake", companyId, id, input),
+      resolveRecommendation: (companyId, id, status, input) => ipcRenderer.invoke("db:gmao:resolveRecommendation", companyId, id, status, input),
+      recommendSchedule: (companyId, workOrderId, candidates) => ipcRenderer.invoke("db:gmao:recommendSchedule", companyId, workOrderId, candidates),
+      recordAssetSignal: (companyId, assetId, input) => ipcRenderer.invoke("db:gmao:recordAssetSignal", companyId, assetId, input),
+      saveBillingLine: (companyId, input) => ipcRenderer.invoke("db:gmao:saveBillingLine", companyId, input),
+      reconcileBilling: (companyId, workOrderId) => ipcRenderer.invoke("db:gmao:reconcileBilling", companyId, workOrderId),
+      runAutomation: (companyId, now) => ipcRenderer.invoke("db:gmao:runAutomation", companyId, now),
+      exportWeeklyRegister: (companyId, options) => ipcRenderer.invoke("db:gmao:exportWeeklyRegister", companyId, options),
+      exportInventory: (companyId) => ipcRenderer.invoke("db:gmao:exportInventory", companyId),
+      onChanged: (cb) => {
+        const h = (_e, payload) => cb(payload);
+        ipcRenderer.on("db:gmao:changed", h);
+        return () => ipcRenderer.removeListener("db:gmao:changed", h);
       },
     },
     treasury: {
@@ -261,6 +377,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       list: (filter) => ipcRenderer.invoke("db:companions:list", filter),
       remove: (id) => ipcRenderer.invoke("db:companions:remove", id),
       bulkInsert: (rows) => ipcRenderer.invoke("db:companions:bulkInsert", rows),
+      replaceRoster: (rows) => ipcRenderer.invoke("db:companions:replaceRoster", rows),
       memoryAdd: (companionId, mem) => ipcRenderer.invoke("db:companions:memoryAdd", companionId, mem),
       memoryList: (companionId, scope) => ipcRenderer.invoke("db:companions:memoryList", companionId, scope),
       memoryRecall: (companionId, scope, limit) => ipcRenderer.invoke("db:companions:memoryRecall", companionId, scope, limit),
@@ -384,7 +501,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
    */
   zhcChatStream: ({ streamId, prompt, temperature, maxTokens, enableThinking }) =>
     ipcRenderer.invoke("zhc-chat-stream", {
-      streamId, message: prompt, temperature, maxTokens, enableThinking,
+      streamId, message: prompt, temperature, maxTokens, enableThinking, isolated: true,
     }),
   /**
    * Subscribe to ZHC stream tokens. The callback receives `{ streamId, chunk }`.
@@ -400,6 +517,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("chat-token", handler);
     return () => ipcRenderer.removeListener("chat-token", handler);
   },
+  analyzeLocalImage: (payload) => ipcRenderer.invoke("vision-analyze-local", payload),
   // Vision chat for multimodal models (MiniCPM-V, etc.)
   chatVision: (message, imageBase64) =>
     ipcRenderer.invoke("model-chat-vision", { message, imageBase64 }),
@@ -416,6 +534,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     delete: (key) => ipcRenderer.invoke("store-delete", key),
   },
   companyConnector: {
+    oauthStatus: input => ipcRenderer.invoke("company-connector:oauth-status", input),
+    configureOAuth: input => ipcRenderer.invoke("company-connector:configure-oauth", input),
+    authorizeOAuth: input => ipcRenderer.invoke("company-connector:authorize-oauth", input),
+    cancelOAuth: input => ipcRenderer.invoke("company-connector:cancel-oauth", input),
+    authorizeMail: input => ipcRenderer.invoke("company-connector:authorize-mail",input),
+    cancelMail: input => ipcRenderer.invoke("company-connector:cancel-mail",input),
     setSecret: (companyId, connectorId, secret, metadata = {}) => ipcRenderer.invoke("company-connector:set-secret", { companyId, connectorId, secret, ...metadata }),
     deleteSecret: (companyId, connectorId) => ipcRenderer.invoke("company-connector:delete-secret", { companyId, connectorId }),
     request: (request) => ipcRenderer.invoke("company-connector:request", request),
@@ -459,6 +583,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // ─────────────────────────────────────────────────────────────────────────
   // Open Wallet Standard (OWS) — encrypted vault-based wallets via NAPI-RS
   // ─────────────────────────────────────────────────────────────────────────
+  walletCredentials: {
+    ensureAvailable: () => ipcRenderer.invoke("wallet-credentials:available"),
+    ensureOWSPassphrase: (companionId) => ipcRenderer.invoke("ows:credential-ensure-passphrase", companionId),
+    getAttestationKey: () => ipcRenderer.invoke("skill-attestation:credential-get"),
+    setAttestationKey: (secret) => ipcRenderer.invoke("skill-attestation:credential-set", secret),
+    getOWS: (companionId, kind) => ipcRenderer.invoke("ows:credential-get", { companionId, kind }),
+    setOWS: (companionId, kind, secret) => ipcRenderer.invoke("ows:credential-set", { companionId, kind, secret }),
+    getLegacyWallet: (companionId) => ipcRenderer.invoke("agent-wallet:credential-get", companionId),
+    setLegacyWallet: (companionId, wallet) => ipcRenderer.invoke("agent-wallet:credential-set", { companionId, wallet }),
+    deleteLegacyWallet: (companionId) => ipcRenderer.invoke("agent-wallet:credential-delete", companionId),
+    getMasterSecret: (create = false) => ipcRenderer.invoke("agent-wallet:master-secret", create),
+  },
   ows: {
     createWallet: (opts) => ipcRenderer.invoke("ows:create-wallet", opts),
     listWallets: () => ipcRenderer.invoke("ows:list-wallets"),
@@ -501,6 +637,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Open URL in default browser
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   // Server status events (for self-healing notifications)
+  getServerStatus: () => ipcRenderer.invoke("get-server-status"),
   onServerStatus: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on("server-status", handler);
@@ -543,6 +680,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   hermesGetEnabled: () => ipcRenderer.invoke("hermes-get-enabled"),
   hermesSetEnabled: (enabled) => ipcRenderer.invoke("hermes-set-enabled", enabled),
   hermesIsInstalled: () => ipcRenderer.invoke("hermes-is-installed"),
+
+  // Unified, local-first OpenClaw and Hermes integration management.
+  harnessGetStatus: () => ipcRenderer.invoke("harness-get-status"),
+  harnessSetEnabled: (id, enabled) => ipcRenderer.invoke("harness-set-enabled", { id, enabled }),
+  harnessSync: (id) => ipcRenderer.invoke("harness-sync", id),
 
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -597,6 +739,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
    */
   p2pInference: (peerId, request) =>
     ipcRenderer.invoke("p2p-inference", { peerId, request }),
+  agentWorkerPublish: (descriptor, binding) => ipcRenderer.invoke('agent-worker-publish', descriptor, binding),
+  agentWorkerUnpublish: key => ipcRenderer.invoke('agent-worker-unpublish', key),
+  agentWorkerRuns: () => ipcRenderer.invoke('agent-worker-runs'),
+  agentWorkerPeers: () => ipcRenderer.invoke('agent-worker-peers'),
+  agentWorkerStoreMedia: (artifact, base64) => ipcRenderer.invoke('agent-worker-store-media', artifact, base64),
+  agentWorkerTransferStart: artifact => ipcRenderer.invoke('agent-worker-transfer-start', artifact),
+  agentWorkerTransferChunk: (id, offset, data) => ipcRenderer.invoke('agent-worker-transfer-chunk', id, offset, data),
+  agentWorkerTransferFinish: id => ipcRenderer.invoke('agent-worker-transfer-finish', id),
+  agentWorkerTransferAbort: id => ipcRenderer.invoke('agent-worker-transfer-abort', id),
+  agentWorkerExportMedia: artifact => ipcRenderer.invoke('agent-worker-export-media', artifact),
+  agentJobsInbox: () => ipcRenderer.invoke('agent-jobs-inbox'),
+  agentJobsList: scope => ipcRenderer.invoke('agent-jobs-list', scope),
+  agentJobsSave: (scope, record) => ipcRenderer.invoke('agent-jobs-save', scope, record),
+  agentJobsDismiss: id => ipcRenderer.invoke('agent-jobs-dismiss', id),
+  agentJobsSend: (peerId, packet) => ipcRenderer.invoke('agent-jobs-send', { peerId, packet }),
 
   /**
    * Check health of a remote peer
@@ -752,6 +909,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // ─────────────────────────────────────────────────────────────────────────
 
   social: {
+    xRequest: (agentId, input) => ipcRenderer.invoke('social:x-request', agentId, input),
+    xClient: (clientId) => ipcRenderer.invoke('social:x-client', clientId),
+    publicList: () => ipcRenderer.invoke('social:public-list'),
+    publicConfigure: (agentId, settings) => ipcRenderer.invoke('social:public-configure', agentId, settings),
+    publicPause: (agentId) => ipcRenderer.invoke('social:public-pause', agentId),
+    publicRequests: (agentId) => ipcRenderer.invoke('social:public-requests', agentId),
+    publicNext: (agentId) => ipcRenderer.invoke('social:public-next', agentId),
+    publicEdit: (id, text) => ipcRenderer.invoke('social:public-edit', id, text),
+    publicPoll: (agentId) => ipcRenderer.invoke('social:public-poll', agentId),
+    publicClaim: (id) => ipcRenderer.invoke('social:public-claim', id),
+    publicComplete: (id, result, error) => ipcRenderer.invoke('social:public-complete', id, result, error),
+    publicDismiss: (id) => ipcRenderer.invoke('social:public-dismiss', id),
+    publicRetry: (id) => ipcRenderer.invoke('social:public-retry', id),
+    publicPublish: (id, automatic = false) => ipcRenderer.invoke('social:public-publish', id, automatic),
+    wrapAudioInVideo: (input) => ipcRenderer.invoke('social:wrap-audio-video', input),
     /** Start OAuth flow for a platform */
     oauthStart: ({ platform, companionId }) =>
       ipcRenderer.invoke("social:oauth-start", { platform, companionId }),

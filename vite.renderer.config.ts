@@ -22,6 +22,8 @@ export default defineConfig({
     ],
   },
   build: {
+    target: 'esnext',
+    rollupOptions: { input: { main: 'index.html', companyRuntime: 'company-runtime.html', worker3d: 'worker-3d-runtime.html' } },
     commonjsOptions: {
       include: [/node_modules/],
     },

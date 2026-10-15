@@ -19,7 +19,20 @@ export function useInferenceRouter() {
    */
   async function inferenceRequest(pipeline, params) {
     if (!window.electronAPI?.inferenceRequest) return null;
-    return window.electronAPI.inferenceRequest(pipeline, params);
+    const started = performance.now();
+    const response = await window.electronAPI.inferenceRequest(pipeline, params);
+    if (!response) return response;
+    const elapsedMs = Math.round(performance.now() - started);
+    // Include remote execution/transport, retaining the provider's own timing
+    // when supplied. A useLocal response is only routing, not a generation.
+    if (response.useLocal) return response;
+    const result = response.result;
+    return {
+      ...response,
+      elapsedMs,
+      ...(result && typeof result === 'object' && !Array.isArray(result)
+        ? { result: { ...result, elapsed_ms: result.elapsed_ms ?? elapsedMs } } : {}),
+    };
   }
 
   return { inferenceRequest };

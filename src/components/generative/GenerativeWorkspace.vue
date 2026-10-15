@@ -26,6 +26,7 @@
         class="bz-mode-chip"
         :class="{ 'bz-mode-chip--on': modelValue === m.value }"
         :disabled="m.disabled || disabled"
+        :aria-pressed="modelValue === m.value"
         :title="m.title"
         @click="$emit('update:modelValue', m.value)"
       >

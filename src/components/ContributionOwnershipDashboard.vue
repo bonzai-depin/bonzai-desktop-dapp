@@ -1,890 +1,201 @@
 <template>
-  <div class="bz-tab-shell bz-economy">
-    <header class="bz-screen-header bz-economy__header">
-      <div class="bz-screen-titleblock">
-        <p class="bz-eyebrow">{{ $t('views.ownership.eyebrow') }}</p>
-        <h1 class="bz-h1 fira-sans-condensed-black-italic">
-          <span class="material-symbols-outlined bz-title-icon" aria-hidden="true">account_tree</span>
-          {{ $t('views.ownership.title') }}
-        </h1>
-        <p class="bz-screen-subtitle">Stake, publish, and track revenue.</p>
-      </div>
-      <button class="bz-btn bz-btn--ghost" type="button" @click="refreshDashboard">
-        <span class="material-symbols-outlined">sync</span>
-        {{ $t('common.refresh') }}
-      </button>
-    </header>
+  <div class="ownership bz-economy">
+    <div class="ownership__workspace">
+      <header class="ownership__header">
+        <div><p class="bz-eyebrow">Your part of BonzAI</p><h1 class="bz-h1">Ownership</h1><p class="ownership__intro">Original work. Lasting provenance. A stake in what comes next.</p></div>
+        <div class="ownership__header-actions"><span class="ownership__network"><span class="material-symbols-outlined" aria-hidden="true">hub</span>{{ network.name }}</span><button class="bz-iconbtn" aria-label="Refresh ownership" :disabled="loading" @click="refreshDashboard"><span class="material-symbols-outlined" :class="{ rotating: loading }" aria-hidden="true">refresh</span></button></div>
+      </header>
 
-    <section class="bz-economy__identity">
-      <article class="bz-economy__identity-card">
-        <span class="material-symbols-outlined" aria-hidden="true">{{ walletAddress ? 'account_balance_wallet' : 'devices' }}</span>
-        <div>
-          <p class="bz-eyebrow">{{ identityLabel }}</p>
-          <strong>{{ walletAddress ? shortWallet(walletAddress) : localIdentity }}</strong>
-          <small>{{ walletAddress ? 'Web3 identity is wallet-scoped across BonzAI products.' : 'Local identity keeps the app useful without a wallet.' }}</small>
-        </div>
-      </article>
-      <article class="bz-economy__identity-card">
-        <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
-        <div>
-          <p class="bz-eyebrow">Memory instance</p>
-          <strong>{{ userMemory?.label || 'Loading memory' }}</strong>
-          <small>{{ memorySummary }}</small>
-        </div>
-      </article>
-    </section>
+      <section class="ownership__overview" aria-label="Your asset overview">
+        <div v-for="metric in metrics" :key="metric.label"><span>{{ metric.label }}</span><strong class="bz-metric">{{ loading && !assets.length ? '—' : number(metric.value) }}</strong><small>{{ metric.note }}</small></div>
+      </section>
 
-    <section class="bz-economy__staking">
-      <div class="bz-economy__stake-hero">
-        <div class="bz-economy__stake-titleblock">
-          <p class="bz-eyebrow">$BONZAI Utility Stake</p>
-          <h2 class="bz-economy__stake-title fira-sans-condensed-black-italic">Stake BONZAI</h2>
-          <p>Unlock publishing rights and increase your protocol weight.</p>
-        </div>
-        <div class="bz-economy__stake-orb" :class="{ 'is-live': stakingConfigured && stakePosition.amount }">
-          <span class="bz-economy__stake-orb-label">Utility tier</span>
-          <strong class="fira-sans-condensed-black-italic">{{ formatNumber(stakePosition.weight) }}</strong>
-          <small>{{ stakingConfigured ? stakePosition.tierLabel : 'Awaiting deployment' }}</small>
-        </div>
-      </div>
-
-      <div class="bz-economy__stake-progress">
-        <div>
-          <span>{{ stakeProgressLabel }}</span>
-          <strong>{{ stakeProgressPercent }}%</strong>
-        </div>
-        <span class="bz-economy__stake-track">
-          <i :style="{ width: `${stakeProgressPercent}%` }"></i>
-        </span>
-      </div>
-
-      <div class="bz-economy__stake-grid">
-        <article class="bz-economy__stake-stat">
-          <small>Staked</small>
-          <strong>{{ formatNumber(stakePosition.amount) }} BONZAI</strong>
-        </article>
-        <article class="bz-economy__stake-stat">
-          <small>Utility weight</small>
-          <strong>{{ formatNumber(stakePosition.weight) }}</strong>
-        </article>
-        <article class="bz-economy__stake-stat">
-          <small>Contribution score</small>
-          <strong>{{ stakePosition.contributionScore }}/10000</strong>
-        </article>
-        <article class="bz-economy__stake-stat">
-          <small>Lock</small>
-          <strong>{{ stakeLockLabel }}</strong>
-        </article>
-      </div>
-      <div class="bz-economy__stake-form">
-        <input v-model="stakeForm.amount" class="bz-economy__input" type="number" min="0" step="100" placeholder="BONZAI amount" />
-        <select v-model.number="stakeForm.lockSeconds" class="bz-economy__input">
-          <option v-for="option in lockOptions" :key="option.seconds" :value="option.seconds">
-            {{ option.label }}
-          </option>
-        </select>
-        <button class="bz-btn bz-btn--primary" type="button" :disabled="!stakingConfigured || stakingState.isStaking" @click="stakeBonzai">
-          {{ stakingState.isStaking ? 'Working...' : 'Stake BONZAI' }}
-        </button>
-        <button class="bz-btn bz-btn--ghost" type="button" :disabled="!stakingConfigured || stakingState.isStaking || !stakePosition.amount" @click="unstakeBonzai">
-          Unstake
-        </button>
-        <button class="bz-btn bz-btn--ghost" type="button" :disabled="!stakingConfigured || stakingState.isStaking || !stakePosition.amount || !stakeForm.lockSeconds" @click="extendStakeLock">
-          Extend lock
-        </button>
-      </div>
-      <p v-if="stakingState.error" class="bz-economy__stake-error">{{ stakingState.error }}</p>
-    </section>
-
-    <section class="bz-economy__stats">
-      <article v-for="stat in stats" :key="stat.label" class="bz-economy__stat">
-        <span class="material-symbols-outlined" aria-hidden="true">{{ stat.icon }}</span>
-        <strong class="bz-shout">{{ stat.value }}</strong>
-        <small>{{ stat.label }}</small>
-      </article>
-    </section>
-
-    <section class="bz-economy__grid">
-      <article class="bz-economy__panel">
-        <div class="bz-economy__panel-head">
-          <div>
-            <p class="bz-eyebrow">Dataset economy</p>
-            <h2 class="bz-economy__title">Datasets</h2>
-          </div>
-          <span class="skill-chip skill-chip--brand">{{ contributionLedger.length }}</span>
-        </div>
-        <div v-if="!contributionLedger.length" class="bz-economy__empty">
-          Import a BonzAI+ contribution pack in Tune to populate the local ledger.
-        </div>
-        <div v-else class="bz-economy__list">
-          <article v-for="entry in contributionLedger.slice(0, 5)" :key="entry.id" class="bz-economy__row">
-            <div>
-              <strong>{{ entry.fileName || entry.packId || 'Contribution pack' }}</strong>
-              <small>{{ entry.recordCount || 0 }} records · {{ entry.royaltyBearing || 0 }} royalty-bearing · {{ entry.dataOwnerCount || 0 }} data owners</small>
+      <div class="ownership__layout">
+        <main class="ownership__library" :aria-busy="loading">
+          <div class="ownership__library-head"><div><p class="bz-eyebrow">Made by you</p><h2>Your library</h2></div><button class="bz-btn bz-btn--primary bz-btn--sm" @click="navigate('image')"><span class="material-symbols-outlined" aria-hidden="true">add</span>Create</button></div>
+          <div class="ownership__tabs" role="tablist" aria-label="Asset categories"><button v-for="item in categories" :id="`ownership-tab-${item.id}`" :key="item.id" role="tab" :aria-selected="category === item.id" aria-controls="ownership-results" :tabindex="category === item.id ? 0 : -1" @click="category = item.id" @keydown="tabKey($event, item.id)">{{ item.label }}<span class="bz-metric">{{ item.id === 'all' ? assets.length : assets.filter(asset => asset.kind === item.id).length }}</span></button></div>
+          <div class="ownership__toolbar"><label class="ownership__search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input v-model="query" type="search" aria-label="Search your assets" placeholder="Search your work, tokens or contributors" /></label><select v-model="filter" aria-label="Filter publishing status"><option value="all">All statuses</option><option value="minted">Mint recorded</option><option value="training">Training-ready</option><option value="blocked">Restricted</option></select><select v-model="sort" aria-label="Sort assets"><option value="recent">Recent first</option><option value="name">Name A–Z</option></select></div>
+          <div v-if="errors.length" class="ownership__notice" role="alert"><span class="material-symbols-outlined" aria-hidden="true">info</span><div><p v-for="error in errors" :key="error">{{ error }}</p><button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="loading" @click="refreshDashboard">Retry</button></div></div>
+          <section id="ownership-results" role="tabpanel" :aria-labelledby="`ownership-tab-${category}`" tabindex="0">
+            <div v-if="loading && !assets.length" class="ownership__loading" role="status"><span class="material-symbols-outlined rotating" aria-hidden="true">progress_activity</span>Loading your library…</div>
+            <div v-else-if="!filtered.length" class="ownership__empty">
+              <div class="ownership__empty-art" aria-hidden="true"><span class="material-symbols-outlined">fingerprint</span></div>
+              <h3>{{ assets.length ? 'No matching assets' : 'Your next creation starts here.' }}</h3>
+              <p>{{ assets.length ? 'Try another name, category or publishing status.' : 'Minted creations, trained models and contribution packs come together in this library.' }}</p>
+              <button v-if="assets.length" class="bz-btn bz-btn--ghost" @click="resetFilters">Reset filters</button>
+              <div v-else class="ownership__empty-actions"><button class="bz-btn bz-btn--primary" @click="navigate('image')">Create something original</button><button class="bz-btn bz-btn--ghost" @click="navigate('tune')">Train a model</button></div>
             </div>
-            <span class="skill-chip" :class="entry.status === 'published' ? 'skill-chip--success' : 'skill-chip--muted'">
-              {{ entry.status || 'imported' }}
-            </span>
-          </article>
-        </div>
-      </article>
-
-      <article class="bz-economy__panel">
-        <div class="bz-economy__panel-head">
-          <div>
-            <p class="bz-eyebrow">Revenue routing</p>
-            <h2 class="bz-economy__title">Contributors</h2>
-          </div>
-          <span class="skill-chip skill-chip--success">{{ dataOwnerWallets.length }}</span>
-        </div>
-        <div v-if="!dataOwnerWallets.length" class="bz-economy__empty">
-          Wallet-attributed dataset samples will appear here once imported.
-        </div>
-        <div v-else class="bz-economy__wallets">
-          <span v-for="wallet in dataOwnerWallets.slice(0, 18)" :key="wallet" class="bz-economy__wallet bz-mono">
-            {{ shortWallet(wallet) }}
-          </span>
-        </div>
-      </article>
-    </section>
-
-    <section class="bz-economy__panel">
-      <div class="bz-economy__panel-head">
-        <div>
-          <p class="bz-eyebrow">Model economy</p>
-          <h2 class="bz-economy__title">Models</h2>
-        </div>
-        <span class="skill-chip skill-chip--brand">{{ trainedModels.length }}</span>
-      </div>
-
-      <div v-if="!trainedModels.length" class="bz-economy__empty">
-        Fine-tuned models with provenance, NFT, token, or registry status will appear here after training.
-      </div>
-      <div v-else class="bz-economy__model-list">
-        <article v-for="model in trainedModels.slice(0, 6)" :key="model.id" class="bz-economy__model">
-          <div>
-            <strong>{{ model.base_model || model.filename || model.id }}</strong>
-            <small>
-              {{ modelTypeLabel(model.type) }} · {{ model.origin_record_count || 0 }} origins · {{ (model.data_owner_wallets || []).length }} data owners
-            </small>
-          </div>
-          <div class="bz-economy__mint-tags">
-            <span class="skill-chip" :class="model.nft?.tokenId ? 'skill-chip--success' : 'skill-chip--muted'">
-              {{ model.nft?.tokenId ? `NFT #${model.nft.tokenId}` : 'Not minted' }}
-            </span>
-            <span class="skill-chip" :class="model.fineTuneToken?.tokenAddress ? 'skill-chip--brand' : 'skill-chip--muted'">
-              {{ model.fineTuneToken?.symbol ? `$${model.fineTuneToken.symbol}` : 'No token' }}
-            </span>
-            <span class="skill-chip" :class="model.modelRegistry?.modelId ? 'skill-chip--success' : 'skill-chip--muted'">
-              {{ model.modelRegistry?.modelId ? 'Registry' : 'Local' }}
-            </span>
-            <span class="skill-chip" :class="model.revenueRoute?.assetId ? 'skill-chip--brand' : 'skill-chip--muted'">
-              {{ model.revenueRoute?.assetId ? 'Revenue route' : 'No route' }}
-            </span>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section class="bz-economy__panel">
-      <div class="bz-economy__panel-head">
-        <div>
-          <p class="bz-eyebrow">Minted generations</p>
-          <h2 class="bz-economy__title">Published work</h2>
-        </div>
-        <div class="bz-economy__filters">
-          <button
-            v-for="filter in filters"
-            :key="filter.id"
-            class="bz-btn bz-btn--ghost bz-btn--sm"
-            :class="{ 'is-active': activeFilter === filter.id }"
-            type="button"
-            @click="activeFilter = filter.id"
-          >
-            {{ filter.label }}
-          </button>
-        </div>
-      </div>
-
-      <div v-if="!filteredMints.length" class="bz-economy__empty">
-        Minted generations with marketplace or training metadata will appear here.
-      </div>
-      <div v-else class="bz-economy__mint-list">
-        <article v-for="item in filteredMints" :key="item.id" class="bz-economy__mint">
-          <div class="bz-economy__mint-main">
-            <span class="material-symbols-outlined" aria-hidden="true">{{ iconForType(item.type) }}</span>
-            <div>
-              <strong>{{ item.question || item.prompt || item.type || 'Minted generation' }}</strong>
-              <small>
-                {{ item.type }} · Token #{{ item.nft?.tokenId || 'unknown' }} · {{ formatDate(item.nft?.mintedAt || item.timestamp) }}
-              </small>
+            <div v-else class="ownership__grid">
+              <button v-for="asset in pageAssets" :key="asset.id" class="ownership__asset" :class="{ 'is-selected': selectedId === asset.id }" :aria-pressed="selectedId === asset.id" @click="selectAsset(asset)">
+                <div class="ownership__preview" :class="`is-${asset.kind}`"><img v-if="asset.image && !failedImages.has(asset.id)" :src="asset.image" :alt="asset.title" @error="failedImages.add(asset.id)" /><template v-else><span class="material-symbols-outlined ownership__asset-glyph" aria-hidden="true">{{ icon(asset) }}</span><span class="ownership__preview-label">{{ asset.kind === 'dataset' ? 'Contribution pack' : asset.kind === 'model' ? 'Trained on your terms' : `${asset.type} creation` }}</span><strong v-if="asset.kind === 'dataset'" class="bz-metric">{{ number(asset.records) }}<small> records</small></strong></template><span class="ownership__type">{{ asset.kind === 'creation' ? asset.type : asset.kind }}</span></div>
+                <div class="ownership__asset-body"><h3 :title="asset.title">{{ asset.title }}</h3><p>{{ asset.tokenId != null ? `Token #${asset.tokenId}` : asset.symbol ? `$${asset.symbol}` : date(asset.date) }}</p><div class="ownership__asset-foot"><span class="ownership__status" :class="{ 'is-restricted': asset.blocked }"><span aria-hidden="true"></span>{{ asset.blocked ? 'Restricted' : asset.status }}</span><span class="material-symbols-outlined" aria-hidden="true">arrow_outward</span></div></div>
+              </button>
             </div>
-          </div>
-          <div class="bz-economy__mint-tags">
-            <span class="skill-chip" :class="item.nft?.marketplace?.discoverable ? 'skill-chip--success' : 'skill-chip--muted'">
-              {{ item.nft?.marketplace?.discoverable ? 'Discoverable' : 'Private' }}
-            </span>
-            <span class="skill-chip" :class="item.nft?.trainingMaterial?.eligible ? 'skill-chip--brand' : 'skill-chip--muted'">
-              {{ item.nft?.trainingMaterial?.eligible ? 'Training material' : 'Not training material' }}
-            </span>
-            <span v-if="item.nft?.contentSafety?.nsfw" class="skill-chip skill-chip--danger">NSFW blocked</span>
-          </div>
-          <div class="bz-economy__mint-actions">
-            <a v-if="item.nft?.marketplaceUrl" class="bz-btn bz-btn--ghost bz-btn--sm" :href="item.nft.marketplaceUrl" target="_blank" rel="noopener noreferrer">
-              <span class="material-symbols-outlined">open_in_new</span>
-              OpenSea
-            </a>
-            <button class="bz-btn bz-btn--ghost bz-btn--sm" type="button" @click="goToTraining">
-              <span class="material-symbols-outlined">model_training</span>
-              Use in Tune
-            </button>
-          </div>
-        </article>
+            <div v-if="filtered.length > pageSize" class="ownership__pagination"><span>{{ page * pageSize + 1 }}–{{ Math.min((page + 1) * pageSize, filtered.length) }} of {{ filtered.length }}</span><div><button class="bz-iconbtn" aria-label="Previous assets" :disabled="page === 0" @click="page--"><span class="material-symbols-outlined" aria-hidden="true">chevron_left</span></button><button class="bz-iconbtn" aria-label="Next assets" :disabled="(page + 1) * pageSize >= filtered.length" @click="page++"><span class="material-symbols-outlined" aria-hidden="true">chevron_right</span></button></div></div>
+          </section>
+        </main>
+
+        <aside ref="inspector" class="ownership__rail" aria-label="Ownership details">
+          <section v-if="selected" class="ownership__inspector" aria-live="polite">
+            <div class="ownership__section-head"><p class="bz-eyebrow">Asset details</p><button class="bz-iconbtn" aria-label="Close asset details" @click="selectedId = ''"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></div>
+            <h2>{{ selected.title }}</h2><span class="ownership__detail-kind">{{ selected.kind }} · {{ selected.status }}</span>
+            <dl class="ownership__facts"><div><dt>Record source</dt><dd>This device</dd></div><div v-if="selected.tokenId != null"><dt>Token ID</dt><dd class="bz-metric">#{{ selected.tokenId }}</dd></div><div v-if="selected.kind === 'creation'"><dt>Discovery</dt><dd>{{ selected.discoverable ? 'Enabled in record' : 'Private' }}</dd></div><div v-if="selected.kind === 'creation'"><dt>Training use</dt><dd>{{ selected.training ? 'Eligible in record' : 'Not enabled' }}</dd></div><div v-if="selected.kind === 'model'"><dt>Base model</dt><dd>{{ selected.baseModel || 'Not recorded' }}</dd></div><div v-if="selected.kind === 'model'"><dt>Revenue route</dt><dd>{{ selected.route ? 'Registered in record' : 'Not configured' }}</dd></div><div v-if="selected.kind === 'dataset'"><dt>Royalty-bearing records</dt><dd class="bz-metric">{{ number(selected.royalties) }}</dd></div><div><dt>Contributors</dt><dd class="bz-metric">{{ number(selected.owners.length || selected.ownerCount || 0) }}</dd></div></dl>
+            <p v-if="selected.detail" class="ownership__notice">{{ selected.detail }}</p>
+            <div v-if="selected.owners.length" class="ownership__contributors"><p class="bz-eyebrow">Attribution</p><span v-for="owner in selected.owners" :key="owner" class="bz-mono" :title="owner">{{ short(owner) }}</span></div>
+            <div class="ownership__detail-actions"><a v-if="marketLink" class="bz-btn bz-btn--primary" :href="marketLink" target="_blank" rel="noopener noreferrer">View on marketplace<span class="material-symbols-outlined" aria-hidden="true">north_east</span></a><button class="bz-btn bz-btn--ghost" @click="navigate(selected.kind === 'creation' ? 'markets' : 'tune')">{{ selected.kind === 'creation' ? 'Explore token markets' : 'Open Tune' }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button></div>
+          </section>
+          <section v-else class="ownership__identity"><div class="ownership__identity-mark" aria-hidden="true"><span class="material-symbols-outlined">fingerprint</span></div><p class="bz-eyebrow">Creator identity</p><h2>{{ walletAddress ? 'Connected & creating.' : 'Start local. Own more.' }}</h2><p>{{ walletAddress ? 'Your library stays on this device. Use your wallet to inspect onchain records.' : 'Create and train freely. Connect a wallet when you’re ready for onchain ownership.' }}</p><div v-if="walletAddress" class="ownership__wallet bz-mono" :title="walletAddress">{{ short(walletAddress) }}</div><button v-else class="bz-btn bz-btn--primary" @click="connect">Connect<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button><div class="ownership__memory"><span class="material-symbols-outlined" aria-hidden="true">lock</span><span>Local provenance<strong>{{ memorySummary }}</strong></span></div></section>
+          <section class="ownership__membership"><span class="material-symbols-outlined" aria-hidden="true">workspace_premium</span><p class="bz-eyebrow">Beyond your own creations</p><h2>Own a share of the activity.</h2><p>Stake BONZAI to join level-based rewards from protocol fees in USDC and social tokens.</p><div v-if="walletAddress && stakingConfigured" class="ownership__stake"><strong class="bz-metric">{{ number(stakingState.position?.amount || 0) }}</strong><span>BONZAI staked</span></div><button class="bz-btn bz-btn--ghost" @click="openRewards">Explore rewards<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button></section>
+        </aside>
       </div>
-    </section>
+      <footer class="ownership__footer"><span class="material-symbols-outlined" aria-hidden="true">hard_drive</span><p>Library records are stored locally. Mint records and revenue routes shown here are not a live wallet balance or verification of current ownership.</p><span v-if="refreshedAt">Updated {{ time(refreshedAt) }}</span></footer>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js'
 import { allInferences, initializeStore } from '../stores/inferenceStore.js'
 import { loadContributionLedger } from '../services/contribution.service.js'
 import { memoryService } from '../services/memory.service.js'
 import { bonzaiStakingService } from '../services/bonzaiStaking.service.js'
 import { useBonzaiWeb3 } from '../composables/useBonzaiWeb3.js'
 import { useI18n } from '../i18n/index.js'
-
-const i18n = useI18n()
-
-const API_BASE = import.meta.env.VITE_API_BASE
-  || window.electronAPI?.env?.API_BASE
-  || 'http://127.0.0.1:65000'
-const { walletAddress } = useBonzaiWeb3()
-
-const contributionLedger = ref([])
-const userMemory = ref(null)
-const activeFilter = ref('all')
-const trainedModels = ref([])
-const stakeForm = ref({
-  amount: '',
-  lockSeconds: 0,
-})
-
-const filters = [
-  { id: 'all', label: 'All' },
-  { id: 'marketplace', label: 'Marketplace' },
-  { id: 'training', label: 'Training' },
-  { id: 'blocked', label: 'Blocked' },
-]
-
-const minted = computed(() => allInferences.value.filter(item => item.nft))
-const marketplaceMints = computed(() => minted.value.filter(item => item.nft?.marketplace?.discoverable))
-const trainingMints = computed(() => minted.value.filter(item => item.nft?.trainingMaterial?.eligible))
-const blockedMints = computed(() => minted.value.filter(item => item.nft?.contentSafety?.nsfw || item.nft?.marketplace?.blockedReason))
-const routedModels = computed(() => trainedModels.value.filter(model => model.revenueRoute?.assetId))
-
-const filteredMints = computed(() => {
-  if (activeFilter.value === 'marketplace') return marketplaceMints.value
-  if (activeFilter.value === 'training') return trainingMints.value
-  if (activeFilter.value === 'blocked') return blockedMints.value
-  return minted.value
-})
-
-const dataOwnerWallets = computed(() => {
-  const wallets = new Set()
-  contributionLedger.value.forEach(entry => {
-    ;(entry.dataOwnerWallets || []).forEach(wallet => wallets.add(String(wallet).toLowerCase()))
-  })
-  minted.value.forEach(item => {
-    const owners = item.nft?.trainingMaterial?.downstreamRevenue?.dataOwners || []
-    owners.forEach(owner => {
-      if (owner?.wallet) wallets.add(String(owner.wallet).toLowerCase())
-    })
-  })
-  trainedModels.value.forEach(model => {
-    ;(model.data_owner_wallets || []).forEach(wallet => wallets.add(String(wallet).toLowerCase()))
-    const owners = model.fineTuneToken?.contributionRouting?.revenuePlan?.participants || []
-    owners.forEach(owner => {
-      if (owner?.wallet) wallets.add(String(owner.wallet).toLowerCase())
-    })
-  })
-  return [...wallets]
-})
-
-const identityLabel = computed(() => walletAddress.value ? 'Wallet identity' : 'Local identity')
-const localIdentity = computed(() => userMemory.value?.id || 'local memory')
-const stakingState = bonzaiStakingService.state
-const stakingConfigured = computed(() => bonzaiStakingService.isConfigured.value)
-const lockOptions = computed(() => bonzaiStakingService.lockOptions.value)
-const stakePosition = computed(() => stakingState.position || {
-  amount: 0,
-  weight: 0,
-  tier: 0,
-  tierLabel: 'No stake',
-  contributionScore: 0,
-  lockedUntil: 0,
-})
-const stakeLockLabel = computed(() => {
-  if (!stakePosition.value.lockedUntil) return 'Flexible'
-  const now = Math.floor(Date.now() / 1000)
-  if (stakePosition.value.lockedUntil <= now) return 'Unlocked'
-  return formatDate(stakePosition.value.lockedUntil * 1000)
-})
-const stakeProgressPercent = computed(() => {
-  const amount = Number(stakePosition.value.amount || 0)
-  if (!amount) return 0
-  const nextTarget = amount < 1000 ? 1000
-    : amount < 5000 ? 5000
-      : amount < 10000 ? 10000
-        : amount < 25000 ? 25000
-          : amount < 33000 ? 33000
-            : amount < 50000 ? 50000
-              : amount
-  return Math.min(100, Math.round((amount / Math.max(1, nextTarget)) * 100))
-})
-const stakeProgressLabel = computed(() => {
-  const amount = Number(stakePosition.value.amount || 0)
-  if (!stakingConfigured.value) return 'Staking vault not configured'
-  if (!amount) return 'Start staking to activate ownership utility'
-  if (amount >= 50000) return 'Maximum utility tier active'
-  const nextTarget = amount < 1000 ? '1,000'
-    : amount < 5000 ? '5,000'
-      : amount < 10000 ? '10,000'
-        : amount < 25000 ? '25,000'
-          : amount < 33000 ? '33,000'
-            : '50,000'
-  return `Progress toward ${nextTarget} BONZAI utility tier`
-})
-const memorySummary = computed(() => {
-  if (!userMemory.value) return 'Loading local memory graph.'
-  const notes = userMemory.value.atomicNotes?.length || 0
-  const sources = userMemory.value.rawSources?.length || 0
-  const parents = userMemory.value.contributionParents?.length || 0
-  return `${sources} sources · ${notes} notes · ${parents} contribution links`
-})
-
-const stats = computed(() => [
-  { label: 'Minted assets', value: minted.value.length, icon: 'token' },
-  { label: 'Discoverable', value: marketplaceMints.value.length, icon: 'storefront' },
-  { label: 'Training-ready', value: trainingMints.value.length, icon: 'model_training' },
-  { label: 'Trained models', value: trainedModels.value.length, icon: 'neurology' },
-  { label: 'Revenue routes', value: routedModels.value.length, icon: 'account_balance' },
-  { label: 'Contribution packs', value: contributionLedger.value.length, icon: 'dataset' },
-  { label: 'Data owners', value: dataOwnerWallets.value.length, icon: 'groups' },
+import { ownershipAssets, filterOwnershipAssets, safeOwnershipLink } from '../services/ownershipAssets.js'
+const i18n = useI18n(), network = CONFIG.networks[ECONOMY_NETWORK_KEY]
+const API_BASE = import.meta.env.VITE_API_BASE || window.electronAPI?.env?.API_BASE || 'http://127.0.0.1:65000'
+const { walletAddress, connect } = useBonzaiWeb3()
+const models = ref([]), packs = ref([]), memory = ref(null), loading = ref(true), errors = ref([]), refreshedAt = ref(null)
+const category = ref('all'), query = ref(''), filter = ref('all'), sort = ref('recent'), selectedId = ref(''), page = ref(0), inspector = ref(null), failedImages = ref(new Set())
+const categories = [{ id: 'all', label: 'All assets' }, { id: 'creation', label: 'Creations' }, { id: 'model', label: 'Models' }, { id: 'dataset', label: 'Datasets' }]
+const pageSize = 9, stakingState = bonzaiStakingService.state, stakingConfigured = bonzaiStakingService.isConfigured
+let disposed = false, controller
+const assets = computed(() => ownershipAssets(allInferences.value, models.value, packs.value))
+const filtered = computed(() => filterOwnershipAssets(assets.value, { kind: category.value, query: query.value, state: filter.value, sort: sort.value }))
+const pageAssets = computed(() => filtered.value.slice(page.value * pageSize, (page.value + 1) * pageSize))
+const selected = computed(() => assets.value.find(asset => asset.id === selectedId.value))
+const marketLink = computed(() => safeOwnershipLink(selected.value?.nft?.marketplaceUrl))
+const metrics = computed(() => [
+  { label: 'Creations', value: assets.value.filter(asset => asset.kind === 'creation').length, note: 'With local mint records' },
+  { label: 'Trained models', value: models.value.length, note: 'Your original intelligence' },
+  { label: 'Contribution packs', value: packs.value.length, note: 'The data behind the work' },
+  { label: 'Contributors', value: new Set(assets.value.flatMap(asset => asset.owners.map(owner => String(owner).toLowerCase()))).size, note: 'Wallets attributed in records' },
 ])
-
+const memorySummary = computed(() => memory.value ? `${number(memory.value.rawSources?.length || 0)} sources · ${number(memory.value.atomicNotes?.length || 0)} notes` : 'Memory not loaded')
+const number = value => i18n.number(Number(value) || 0, { maximumFractionDigits: 2 })
+const short = value => String(value).length > 20 ? `${String(value).slice(0, 8)}…${String(value).slice(-6)}` : value
+const date = value => value && Number.isFinite(new Date(value).getTime()) ? i18n.date(value, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Saved on this device'
+const time = value => i18n.date(value, { hour: '2-digit', minute: '2-digit' })
+const icon = asset => asset.kind === 'dataset' ? 'dataset' : asset.kind === 'model' ? 'neurology' : ({ image: 'image', video: 'movie', audio: 'headphones', object: 'deployed_code' }[asset.type] || 'article')
+function navigate(mode) { window.dispatchEvent(new CustomEvent('bonzai:set-mode', { detail: mode })) }
+function openRewards() { window.dispatchEvent(new CustomEvent('bonzai:open-rewards')) }
+function resetFilters() { category.value = 'all'; query.value = ''; filter.value = 'all' }
+async function selectAsset(asset) { selectedId.value = asset.id; await nextTick(); if (window.innerWidth < 1050) inspector.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
+function tabKey(event, id) { const index = categories.findIndex(item => item.id === id); const next = event.key === 'ArrowRight' ? (index + 1) % categories.length : event.key === 'ArrowLeft' ? (index + categories.length - 1) % categories.length : event.key === 'Home' ? 0 : event.key === 'End' ? categories.length - 1 : null; if (next === null) return; event.preventDefault(); category.value = categories[next].id; nextTick(() => document.getElementById(`ownership-tab-${category.value}`)?.focus()) }
 async function refreshDashboard() {
-  await initializeStore()
-  contributionLedger.value = loadContributionLedger()
-  userMemory.value = await memoryService.getUserMemory()
-  await bonzaiStakingService.fetchPosition()
-  try {
-    const resp = await axios.get(`${API_BASE}/training/models`)
-    trainedModels.value = (resp.data?.models || []).map(model => ({
-      ...model,
-      ...(model.economy || {}),
-    }))
-  } catch {
-    trainedModels.value = []
-  }
+  controller?.abort(); const request = new AbortController(); controller = request
+  loading.value = true; errors.value = []
+  const timeout = promise => { let timer; return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 12000) })]).finally(() => clearTimeout(timer)) }
+  const results = await Promise.allSettled([
+    timeout(initializeStore()), Promise.resolve().then(() => loadContributionLedger()), timeout(memoryService.getUserMemory()),
+    axios.get(`${API_BASE}/training/models`, { timeout: 10000, signal: request.signal }),
+    walletAddress.value && stakingConfigured.value ? timeout(bonzaiStakingService.fetchPosition()) : Promise.resolve(),
+  ])
+  if (disposed || controller !== request) return
+  const notices = []
+  if (results[0].status === 'rejected') notices.push('Creation history could not be loaded. Previously loaded records remain visible.')
+  if (results[1].status === 'fulfilled') packs.value = results[1].value || []; else notices.push('Contribution packs could not be loaded.')
+  if (results[2].status === 'fulfilled') memory.value = results[2].value; else notices.push('Local memory is unavailable.')
+  if (results[3].status === 'fulfilled') models.value = (results[3].value.data?.models || []).map(model => ({ ...model, ...model.economy })); else notices.push('Trained models are unavailable. Check the local server, then retry.')
+  if (results[4].status === 'rejected') notices.push('The staking position could not be refreshed.')
+  errors.value = notices; loading.value = false; refreshedAt.value = Date.now()
 }
-
-async function stakeBonzai() {
-  const result = await bonzaiStakingService.stake(stakeForm.value.amount, stakeForm.value.lockSeconds)
-  if (result.success) {
-    stakeForm.value.amount = ''
-  }
-}
-
-async function unstakeBonzai() {
-  const result = await bonzaiStakingService.unstake(stakeForm.value.amount || stakePosition.value.amount)
-  if (result.success) {
-    stakeForm.value.amount = ''
-  }
-}
-
-async function extendStakeLock() {
-  await bonzaiStakingService.extendLock(stakeForm.value.lockSeconds)
-}
-
-function shortWallet(wallet) {
-  const value = String(wallet || '')
-  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value
-}
-
-function formatDate(value) {
-  if (!value) return 'unknown'
-  return i18n.date(value, { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function formatNumber(value) {
-  const number = Number(value || 0)
-  return i18n.number(number, { maximumFractionDigits: number >= 100 ? 0 : 2 })
-}
-
-function iconForType(type) {
-  if (type === 'image') return 'image'
-  if (type === 'video') return 'movie'
-  if (type === 'audio') return 'headphones'
-  if (type === 'object') return 'deployed_code'
-  return 'article'
-}
-
-function modelTypeLabel(type) {
-  if (type?.includes('llm')) return 'Text'
-  if (type?.includes('sdxl') || type?.includes('image')) return 'Image'
-  if (type?.includes('audio')) return 'Audio'
-  if (type?.includes('video')) return 'Video'
-  if (type?.includes('ablit')) return 'Ablit'
-  return type || 'Model'
-}
-
-function goToTraining() {
-  window.dispatchEvent(new CustomEvent('bonzai:set-mode', { detail: 'tune' }))
-}
-
+watch([category, query, filter, sort], () => { page.value = 0 })
+watch(walletAddress, refreshDashboard)
 onMounted(refreshDashboard)
-watch(walletAddress, () => { void refreshDashboard() })
+onBeforeUnmount(() => { disposed = true; controller?.abort() })
 </script>
 
 <style scoped>
-.bz-economy {
-  display: flex;
-  flex-direction: column;
-  gap: var(--bz-space-5);
-  height: 100%;
-  min-height: 0;
-  overflow: auto;
-  padding: var(--bz-space-6);
-  background: var(--bz-canvas);
-}
-
-.bz-economy__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--bz-space-4);
-  flex: 0 0 auto;
-  margin: 0;
-}
-
-.bz-economy__identity,
-.bz-economy__stats,
-.bz-economy__grid {
-  display: grid;
-  gap: var(--bz-space-3);
-}
-
-.bz-economy__identity {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.bz-economy__identity-card,
-.bz-economy__stat,
-.bz-economy__panel,
-.bz-economy__mint {
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-radius-md);
-  background: var(--bz-card);
-}
-
-.bz-economy__identity-card {
-  display: flex;
-  gap: var(--bz-space-3);
-  padding: var(--bz-space-4);
-}
-
-.bz-economy__identity-card > .material-symbols-outlined {
-  color: var(--bz-purple-300);
-  font-size: 28px;
-}
-
-.bz-economy__identity-card strong,
-.bz-economy__row strong,
-.bz-economy__mint strong {
-  display: block;
-  color: var(--bz-fg);
-}
-
-.bz-economy__identity-card small,
-.bz-economy__row small,
-.bz-economy__mint small {
-  display: block;
-  margin-top: 4px;
-  color: var(--bz-fg-low);
-}
-
-.bz-economy__stats {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.bz-economy__stat {
-  min-height: 96px;
-  display: grid;
-  align-content: center;
-  gap: 6px;
-  padding: var(--bz-space-3);
-}
-
-.bz-economy__stat .material-symbols-outlined {
-  color: var(--bz-fg-low);
-}
-
-.bz-economy__stat small {
-  color: var(--bz-fg-low);
-  font-size: var(--bz-size-caption);
-}
-
-.bz-economy__stat .bz-shout {
-  font-size: 30px;
-  line-height: 0.95;
-}
-
-.bz-economy__grid {
-  grid-template-columns: 1.2fr 0.8fr;
-}
-
-.bz-economy__panel {
-  padding: var(--bz-space-4);
-}
-
-.bz-economy__staking {
-  display: flex;
-  flex-direction: column;
-  gap: var(--bz-space-4);
-  padding: var(--bz-space-5);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r);
-  background: var(--bz-card);
-}
-
-.bz-economy__stake-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 190px;
-  align-items: center;
-  gap: var(--bz-space-5);
-}
-
-.bz-economy__stake-titleblock {
-  max-width: 760px;
-}
-
-.bz-economy__stake-title {
-  max-width: 760px;
-  margin: 0;
-  color: var(--bz-fg);
-  font-size: var(--bz-size-h1);
-  line-height: var(--bz-line-tight);
-}
-
-.bz-economy__stake-titleblock p:not(.bz-eyebrow) {
-  margin: var(--bz-space-3) 0 0;
-  max-width: 68ch;
-  color: var(--bz-fg-muted);
-  font-size: var(--bz-size-body);
-  line-height: var(--bz-line-body);
-}
-
-.bz-economy__stake-orb {
-  aspect-ratio: 1;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 4px;
-  border: 1px solid color-mix(in srgb, var(--bz-purple-300) 44%, var(--bz-border));
-  border-radius: var(--bz-r);
-  background: var(--bz-panel);
-}
-
-.bz-economy__stake-orb.is-live {
-  border-color: var(--bz-border-brand);
-}
-
-.bz-economy__stake-orb-label,
-.bz-economy__stake-orb small {
-  color: var(--bz-fg-low);
-  font-size: var(--bz-size-micro);
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.bz-economy__stake-orb strong {
-  color: var(--bz-fg);
-  font-family: var(--bz-font-mono);
-  font-size: 30px;
-  font-style: normal;
-  line-height: 0.9;
-}
-
-.bz-economy__stake-progress {
-  display: grid;
-  gap: var(--bz-space-2);
-}
-
-.bz-economy__stake-progress div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--bz-space-3);
-  color: var(--bz-fg-muted);
-  font-size: var(--bz-size-caption);
-}
-
-.bz-economy__stake-progress strong {
-  color: var(--bz-fg);
-}
-
-.bz-economy__stake-track {
-  height: 9px;
-  overflow: hidden;
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-radius-pill);
-  background: var(--bz-canvas);
-}
-
-.bz-economy__stake-track i {
-  display: block;
-  height: 100%;
-  min-width: 0;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--bz-purple-300), color-mix(in srgb, var(--bz-purple-300) 58%, var(--bz-fg)));
-  transition: width 260ms var(--bz-ease-out);
-}
-
-.bz-economy__stake-grid,
-.bz-economy__stake-form {
-  display: grid;
-  gap: var(--bz-space-2);
-}
-
-.bz-economy__stake-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.bz-economy__stake-stat {
-  min-height: 84px;
-  display: grid;
-  align-content: center;
-  gap: 4px;
-  padding: var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-radius-md);
-  background: color-mix(in srgb, var(--bz-panel) 82%, transparent);
-}
-
-.bz-economy__stake-stat small,
-.bz-economy__stake-copy {
-  color: var(--bz-fg-low);
-}
-
-.bz-economy__stake-stat strong {
-  color: var(--bz-fg);
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-size: 22px;
-  font-style: italic;
-  font-weight: 900;
-}
-
-.bz-economy__stake-form {
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.5fr) auto auto;
-  align-items: center;
-  padding-top: var(--bz-space-1);
-}
-
-.bz-economy__input {
-  width: 100%;
-  min-height: 40px;
-  padding: 0 var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-radius-md);
-  color: var(--bz-fg);
-  background: var(--bz-canvas);
-}
-
-.bz-economy__stake-error {
-  margin: 0;
-  color: var(--bz-danger);
-  font-size: var(--bz-size-small);
-}
-
-.bz-economy__stake-copy {
-  margin: 0;
-  font-size: var(--bz-size-small);
-}
-
-.bz-economy__panel-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--bz-space-3);
-  margin-bottom: var(--bz-space-3);
-}
-
-.bz-economy__title {
-  margin: 0;
-  color: var(--bz-fg);
-  font-family: "Fira Sans Condensed", sans-serif;
-  font-size: 26px;
-  font-style: italic;
-  font-weight: 900;
-  line-height: 1;
-}
-
-.bz-economy__empty {
-  padding: var(--bz-space-4);
-  border: 1px dashed var(--bz-border);
-  border-radius: var(--bz-radius-md);
-  color: var(--bz-fg-low);
-  background: var(--bz-canvas);
-}
-
-.bz-economy__list,
-.bz-economy__model-list,
-.bz-economy__mint-list,
-.bz-economy__wallets {
-  display: grid;
-  gap: var(--bz-space-2);
-}
-
-.bz-economy__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--bz-space-3);
-  padding: var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-radius-md);
-  background: var(--bz-canvas);
-}
-
-.bz-economy__model {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--bz-space-3);
-  padding: var(--bz-space-3);
-  border: 1px solid var(--bz-border);
-  border-radius: var(--bz-radius-md);
-  background: var(--bz-canvas);
-}
-
-.bz-economy__model strong {
-  display: block;
-  overflow: hidden;
-  color: var(--bz-fg);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bz-economy__model small {
-  display: block;
-  margin-top: 4px;
-  color: var(--bz-fg-low);
-}
-
-.bz-economy__wallets {
-  grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
-}
-
-.bz-economy__wallet {
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--bz-space-2);
-  border: 1px solid var(--bz-border);
-  border-radius: 999px;
-  color: var(--bz-fg);
-  background: var(--bz-canvas);
-  font-size: var(--bz-size-micro);
-}
-
-.bz-economy__filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--bz-space-2);
-  justify-content: flex-end;
-}
-
-.bz-economy__filters .is-active {
-  border-color: var(--bz-purple-300);
-  background: var(--bz-purple-soft);
-}
-
-.bz-economy__mint {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--bz-space-3);
-  padding: var(--bz-space-3);
-}
-
-.bz-economy__mint-main {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--bz-space-3);
-}
-
-.bz-economy__mint-main .material-symbols-outlined {
-  color: var(--bz-purple-300);
-}
-
-.bz-economy__mint-main strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bz-economy__mint-tags,
-.bz-economy__mint-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--bz-space-2);
-}
-
-@media (max-width: 1100px) {
-  .bz-economy__identity,
-  .bz-economy__grid,
-  .bz-economy__stake-hero {
-    grid-template-columns: 1fr;
-  }
-
-  .bz-economy__stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .bz-economy__stake-grid,
-  .bz-economy__stake-form {
-    grid-template-columns: 1fr;
-  }
-
-  .bz-economy__stake-orb {
-    width: 180px;
-  }
-
-  .bz-economy__mint {
-    grid-template-columns: 1fr;
-  }
-
-  .bz-economy__model {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .bz-economy {
-    padding: var(--bz-space-4);
-  }
-
-  .bz-economy__header {
-    flex-direction: column;
-  }
-
-  .bz-economy__stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
+.ownership { height: 100%; min-height: 0; overflow: auto; background: var(--bz-canvas); color: var(--bz-fg); }
+.ownership__workspace { max-width: 1800px; margin: 0 auto; padding: clamp(20px, 2.5vw, 32px); }
+.ownership__header, .ownership__header-actions, .ownership__section-head, .ownership__library-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.ownership__header { align-items: flex-start; }
+.ownership p, .ownership h1, .ownership h2, .ownership h3 { margin: 0; color: inherit; }
+.ownership .bz-eyebrow { color: var(--bz-fg-mid); margin-bottom: 7px; }
+.ownership h2 { font-size: 24px; line-height: 1.2; font-family: var(--bz-font-metric); font-weight: 900; font-style: italic; }
+.ownership__intro { color: var(--bz-fg-mid) !important; margin-top: 10px !important; max-width: 520px; }
+.ownership__network { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--bz-fg-mid); white-space: nowrap; }
+.ownership__overview { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid var(--bz-border); margin: 32px 0; padding: 24px 0; gap: 24px; }
+.ownership__overview > div { display: grid; gap: 5px; }
+.ownership__overview > div + div { border-left: 1px solid var(--bz-border); padding-left: 24px; }
+.ownership__overview span, .ownership__overview small { font-size: 12px; color: var(--bz-fg-mid); }
+.ownership__overview strong { font-size: 38px; line-height: 1.2; }
+.ownership__layout { display: grid; grid-template-columns: minmax(0, 1fr) 296px; gap: 32px; align-items: start; }
+.ownership__library, .ownership__rail { min-width: 0; }
+.ownership__tabs { display: flex; overflow-x: auto; gap: 24px; border-bottom: 1px solid var(--bz-border); margin-top: 24px; }
+.ownership__tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 12px 0; color: var(--bz-fg-mid); white-space: nowrap; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.ownership__tabs button[aria-selected="true"] { color: var(--bz-fg); border-bottom-color: var(--bz-purple-100); }
+.ownership__tabs .bz-metric { background: var(--bz-panel); padding: 2px 6px; border-radius: 5px; font-size: 12px; }
+.ownership__toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+.ownership__search { display: flex; flex: 1 1 220px; align-items: center; gap: 8px; border: 1px solid var(--bz-border); background: var(--bz-panel); border-radius: 8px; padding: 9px 12px; color: var(--bz-fg-mid); }
+.ownership__search input { min-width: 0; width: 100%; border: 0; outline: 0; color: var(--bz-fg); background: transparent; font: inherit; font-size: 13px; }
+.ownership__search:focus-within { outline: 2px solid var(--bz-purple-100); outline-offset: 2px; }
+.ownership select { background: var(--bz-panel); color: var(--bz-fg); border: 1px solid var(--bz-border); border-radius: 8px; padding: 8px; font: inherit; font-size: 12px; max-width: 100%; }
+.ownership__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.ownership__asset { border: 1px solid var(--bz-border); border-radius: 12px; overflow: hidden; background: var(--bz-panel); color: var(--bz-fg); padding: 0; text-align: left; min-width: 0; cursor: pointer; transition: border-color .15s, transform .15s; }
+.ownership__asset:hover { border-color: var(--bz-purple-100); transform: translateY(-2px); }
+.ownership__asset.is-selected { outline: 2px solid var(--bz-purple-100); outline-offset: 2px; }
+.ownership__preview { aspect-ratio: 1.35; background: var(--bz-raised); position: relative; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; overflow: hidden; }
+.ownership__preview img { width: 100%; height: 100%; object-fit: cover; }
+.ownership__asset-glyph { font-size: 52px; color: var(--bz-purple-100); font-variation-settings: 'wght' 200; }
+.ownership__preview-label { color: var(--bz-fg-mid); font-size: 12px; }
+.ownership__preview strong { font-size: 22px; }
+.ownership__preview strong small { font: 12px var(--bz-font-body); }
+.ownership__type { position: absolute; top: 10px; left: 10px; padding: 3px 8px; border: 1px solid var(--bz-border); background: var(--bz-panel); border-radius: 4px; font-size: 10px; text-transform: capitalize; }
+.ownership__asset-body { padding: 16px; }
+.ownership__asset-body h3 { font: 600 15px/1.4 var(--bz-font-body); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 42px; overflow-wrap: anywhere; }
+.ownership__asset-body > p { font-size: 12px; color: var(--bz-fg-mid); margin-top: 7px; }
+.ownership__asset-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 20px; gap: 8px; }
+.ownership__asset-foot > .material-symbols-outlined { font-size: 18px; color: var(--bz-fg-mid); }
+.ownership__status { font-size: 11px; display: inline-flex; align-items: center; gap: 6px; color: var(--bz-fg-mid); }
+.ownership__status > span { width: 5px; height: 5px; border-radius: 50%; background: var(--bz-purple-100); }
+.ownership__status.is-restricted { color: var(--bz-warning); }
+.ownership__rail { border-left: 1px solid var(--bz-border); padding-left: 28px; }
+.ownership__identity-mark { color: var(--bz-purple-100); margin: 0 0 24px; }
+.ownership__identity-mark span { font-size: 64px; font-variation-settings: 'wght' 200; }
+.ownership__identity h2, .ownership__membership h2 { font-size: 27px; }
+.ownership__identity > p:not(.bz-eyebrow), .ownership__membership > p:not(.bz-eyebrow) { margin: 14px 0 20px; color: var(--bz-fg-mid); font-size: 13px; line-height: 1.65; }
+.ownership__identity > button, .ownership__membership > button { width: 100%; justify-content: space-between; }
+.ownership__wallet { border: 1px solid var(--bz-border); border-radius: 6px; padding: 12px; font-size: 13px; }
+.ownership__memory { display: flex; gap: 10px; align-items: center; margin-top: 24px; color: var(--bz-fg-mid); font-size: 12px; }
+.ownership__memory strong { display: block; font: 14px var(--bz-font-metric); color: var(--bz-fg); margin-top: 4px; }
+.ownership__membership { border-top: 1px solid var(--bz-border); margin-top: 28px; padding-top: 28px; }
+.ownership__membership > .material-symbols-outlined { font-size: 32px; color: var(--bz-purple-100); margin-bottom: 20px; }
+.ownership__stake { display: flex; align-items: baseline; gap: 8px; margin-bottom: 16px; }
+.ownership__stake strong { font-size: 28px; }.ownership__stake span { font-size: 12px; color: var(--bz-fg-mid); }
+.ownership__inspector h2 { overflow-wrap: anywhere; font-size: 23px; margin-top: 12px; }
+.ownership__detail-kind { display: block; color: var(--bz-fg-mid); font-size: 12px; margin-top: 10px; text-transform: capitalize; }
+.ownership__facts { margin: 24px 0; }.ownership__facts div { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--bz-border); font-size: 12px; }.ownership__facts dt { color: var(--bz-fg-mid); }.ownership__facts dd { text-align: right; overflow-wrap: anywhere; margin: 0; }
+.ownership__contributors { display: flex; flex-wrap: wrap; gap: 6px; margin: 20px 0; }.ownership__contributors p { width: 100%; }.ownership__contributors span { font-size: 11px; padding: 5px; background: var(--bz-panel); border-radius: 4px; }
+.ownership__detail-actions { display: grid; gap: 8px; }.ownership__detail-actions > * { white-space: normal; justify-content: space-between; }
+.ownership__empty { padding: 48px 20px 60px; text-align: center; }.ownership__empty-art { margin: 0 auto 24px; width: 90px; height: 110px; display: grid; place-items: center; border: 1px solid var(--bz-border-strong); border-radius: 14px; background: var(--bz-panel); transform: rotate(-6deg); }.ownership__empty-art span { font-size: 48px; color: var(--bz-purple-100); }.ownership__empty h3 { font-family: var(--bz-font-metric); font-size: 28px; font-weight: 900; font-style: italic; }.ownership__empty p { color: var(--bz-fg-mid); max-width: 380px; font-size: 14px; line-height: 1.6; margin: 12px auto 24px; }.ownership__empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.ownership__notice { display: flex; align-items: flex-start; gap: 10px; padding: 14px; margin: 16px 0; border-left: 3px solid var(--bz-warning); background: var(--bz-panel); color: var(--bz-fg-mid); font-size: 13px; line-height: 1.5; }.ownership__notice .bz-btn { margin-top: 6px; }
+.ownership__loading { display: flex; align-items: center; justify-content: center; padding: 70px 10px; gap: 12px; color: var(--bz-fg-mid); }
+.ownership__pagination { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; font-size: 12px; color: var(--bz-fg-mid); }.ownership__pagination > div { display: flex; gap: 8px; }
+.ownership__footer { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--bz-border); padding-top: 20px; margin-top: 32px; color: var(--bz-fg-mid); font-size: 11px; }.ownership__footer p { max-width: 680px; }.ownership__footer > span:last-child:not(.material-symbols-outlined) { margin-left: auto; white-space: nowrap; }
+.ownership :is(button, a, select):focus-visible { outline: 2px solid var(--bz-purple-100); outline-offset: 3px; }
+.rotating { animation: ownership-spin 1.5s linear infinite; } @keyframes ownership-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1200px) { .ownership__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.ownership__layout { grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; }.ownership__rail { padding-left: 24px; } }
+@media (max-width: 1049px) { .ownership__layout { grid-template-columns: 1fr; }.ownership__rail { border: 0; border-top: 1px solid var(--bz-border); padding: 24px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }.ownership__membership { margin: 0; padding: 0 0 0 28px; border-top: 0; border-left: 1px solid var(--bz-border); } }
+@media (max-width: 620px) { .ownership__header { flex-wrap: wrap; }.ownership__overview { grid-template-columns: repeat(2, 1fr); gap: 20px; }.ownership__overview > div + div { padding-left: 0; border: 0; }.ownership__overview strong { font-size: 32px; }.ownership__tabs { gap: 18px; }.ownership__grid { gap: 12px; }.ownership__asset-body { padding: 12px; }.ownership__rail { grid-template-columns: 1fr; }.ownership__membership { border-left: 0; border-top: 1px solid var(--bz-border); padding: 24px 0 0; }.ownership__footer { flex-wrap: wrap; }.ownership__footer p { flex: 1; }.ownership__footer > span:last-child { margin-left: 0; }.ownership__preview-label { display: none; } }
+@media (max-width: 390px) { .ownership__grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .rotating { animation: none; }.ownership__asset { transition: none; } }
+
+.ownership__header, .ownership__layout { gap: 28px; }
+.ownership__identity h2, .ownership__membership h2 { font: 900 italic 26px/1.2 var(--bz-font-metric); margin-top: 8px; }
+.ownership__empty { padding: 36px 24px 44px; }
+.ownership__toolbar select { padding-inline: 12px 32px; }
 </style>

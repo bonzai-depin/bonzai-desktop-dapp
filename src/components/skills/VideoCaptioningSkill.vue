@@ -9,6 +9,8 @@
       </div>
     </div>
 
+    <p v-if="analysisError" role="alert" class="bz-notice bz-notice--danger">{{ analysisError }}</p>
+
     <!-- Video Source Selector + Reset -->
     <section v-if="!isFullscreen && !videoLoaded" class="caption-source-lab skill-panel source-panel">
       <span class="category-selector">
@@ -101,7 +103,6 @@
           ref="videoPlayer"
           class="caption-video"
           :src="videoSrc"
-          loop
           @loadedmetadata="onVideoLoaded"
           @timeupdate="onTimeUpdate"
           @ended="onVideoEnded"
@@ -261,7 +262,7 @@
     >
       <h3 class="bz-h2 skill-section-title">
         <span class="material-symbols-outlined">description</span>
-        Transcript <span class="bz-meta bz-mono">{{ transcript.length }} entries</span>
+        {{ $ui("Visual captions") }} <span class="bz-meta bz-mono">{{ transcript.length }} entries</span>
       </h3>
       <div class="transcript-entries" ref="transcriptContainer">
         <div
@@ -345,10 +346,8 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import BonzaiPulse from "../BonzaiPulse.vue";
 import { getAuthHeaders } from "../../services/auth.service.js";
-import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 
 const STORAGE_KEY = "video-captioning-sessions";
-const SKILL_ID = "video-captioning-v1.0.0";
 const MAX_FRAME_WIDTH = 960;
 const JPEG_QUALITY = 0.88;
 const SIMILARITY_THRESHOLD = 0.7;
@@ -413,6 +412,7 @@ export default {
     const videoEnded = ref(false);
     const isGenerating = ref(false);
     const isAnalyzing = ref(false);
+    const analysisError = ref("");
     const generationStatus = ref("");
     const generationProgress = ref(0);
     const showOverlayIcon = ref(false);
@@ -430,6 +430,7 @@ export default {
 
     let captureTimer = null;
     let captureInFlight = false;
+    let sourceRevision = 0;
     let overlayTimeout = null;
 
     // ─── Active Cue Tracking ─────────────────────────────────────────
@@ -481,33 +482,13 @@ export default {
       return (currentTime.value / totalDuration.value) * 100;
     });
 
-    // ─── Model Auto-Loading ──────────────────────────────────────────
-    const ensureModelLoaded = async () => {
-      if (modelReady.value || modelLoading.value) return;
-      modelLoading.value = true;
-      try {
-        // Trigger prefetch which downloads the model if needed
-        const res = await fetch(`${API_BASE}/pipelines/prefetch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ pipeline: "vision_caption" }),
-        });
-        if (res.ok) {
-          modelReady.value = true;
-        }
-      } catch (e) {
-        console.warn("[VideoCaptioning] Model prefetch failed:", e);
-      } finally {
-        modelLoading.value = false;
-      }
-    };
-
     // ─── Video Loading ───────────────────────────────────────────────
     const selectVideoFile = async () => {
       try {
         const filePath = await window.electronAPI?.selectVideoFile?.();
         if (filePath) {
-          videoFilename.value = filePath.split("/").pop() || "video";
+          sourceRevision++;
+          videoFilename.value = filePath.split(/[\\/]/).pop() || "video";
           videoSrc.value = `local-video://${filePath}`;
           return;
         }
@@ -523,6 +504,7 @@ export default {
       input.onchange = (event) => {
         const file = event.target.files[0];
         if (file) {
+          sourceRevision++;
           videoFilename.value = file.name;
           videoSrc.value = URL.createObjectURL(file);
         }
@@ -577,6 +559,7 @@ export default {
       try {
         const tempPath = await window.electronAPI?.downloadVideoToTemp?.(url);
         if (tempPath) {
+          sourceRevision++;
           videoSrc.value = `local-video://${tempPath}`;
           generationProgress.value = 100;
         } else {
@@ -610,11 +593,9 @@ export default {
     // ─── Vision Analysis ─────────────────────────────────────────────
     const analyzeFrame = async (imageDataUrl, frameTime) => {
       if (isAnalyzing.value || !captioningActive.value) return null;
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        console.warn("[VideoCaptioning] Skill not purchased — execution blocked.");
-        return null;
-      }
       isAnalyzing.value = true;
+      modelLoading.value = !modelReady.value;
+      analysisError.value = "";
 
       try {
         const base64Data = imageDataUrl.includes(",")
@@ -630,17 +611,15 @@ export default {
             image_base64: base64Data,
             prompt,
             max_tokens: 200,
-            auto_download: true,
+            auto_download: false,
           }),
         });
 
-        if (!response.ok) {
-          console.warn("[VideoCaptioning] Vision API error:", response.status);
-          return null;
-        }
-
         const data = await response.json();
-        if (!data.success || !data.response) return null;
+        if (!response.ok || response.status === 202 || data.success === false || !data.response) {
+          throw new Error(data.error || "The vision model could not describe this frame. Check the required models and retry playback.");
+        }
+        modelReady.value = true;
         const text = data.response.trim();
 
         // Client-side deduplication: skip if too similar to last caption
@@ -657,9 +636,13 @@ export default {
         return text;
       } catch (e) {
         console.error("[VideoCaptioning] Frame analysis error:", e);
+        analysisError.value = e.message || "Frame analysis failed. Retry playback.";
+        videoPlayer.value?.pause();
+        stopCaptionLoop();
         return null;
       } finally {
         isAnalyzing.value = false;
+        modelLoading.value = false;
       }
     };
 
@@ -670,6 +653,7 @@ export default {
         if (captureInFlight || !isPlaying.value || !captioningActive.value)
           return;
         captureInFlight = true;
+        const revision = sourceRevision;
 
         try {
           const frame = captureFrame();
@@ -678,12 +662,16 @@ export default {
           const frameTime = videoPlayer.value?.currentTime || 0;
           const caption = await analyzeFrame(frame, frameTime);
 
-          if (caption) {
+          if (caption && revision === sourceRevision) {
             currentCaption.value = caption;
             transcript.value.push({
               timestamp: frameTime,
               text: caption,
             });
+            transcript.value.sort((a, b) => a.timestamp - b.timestamp);
+            // The final inference can finish after playback has ended/paused.
+            // Save that last cue too; it is part of the requested result.
+            if (!isPlaying.value) saveSession();
           }
         } finally {
           captureInFlight = false;
@@ -792,6 +780,7 @@ export default {
     const onVideoPause = () => {
       isPlaying.value = false;
       stopCaptionLoop();
+      saveSession();
     };
 
     // ─── Fullscreen ──────────────────────────────────────────────────
@@ -822,7 +811,7 @@ export default {
 
     const handleKeydown = (e) => {
       if (e.key === "Escape" && isFullscreen.value) exitFullscreen();
-      if (e.key === " " && videoLoaded.value && e.target.tagName !== "INPUT") {
+      if (e.key === " " && videoLoaded.value && !e.target.closest('input, textarea, select, button, [contenteditable="true"]')) {
         e.preventDefault();
         togglePlayPause();
       }
@@ -831,13 +820,14 @@ export default {
     // ─── Transcript Export ───────────────────────────────────────────
     const exportTranscript = () => {
       if (transcript.value.length === 0) return;
+      saveSession();
 
       let srt = "";
       transcript.value.forEach((entry, i) => {
         const startTime = formatSRT(entry.timestamp);
         const endSec =
-          transcript.value[i + 1]?.timestamp ||
-          entry.timestamp + captureInterval.value;
+          transcript.value[i + 1]?.timestamp ??
+          Math.min(totalDuration.value || Infinity, entry.timestamp + captureInterval.value);
         const endTime = formatSRT(endSec);
         srt += `${i + 1}\n${startTime} --> ${endTime}\n${entry.text}\n\n`;
       });
@@ -852,10 +842,11 @@ export default {
     };
 
     const formatSRT = (seconds) => {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const ms = Math.round((seconds % 1) * 1000);
+      const total = Math.max(0, Math.round(Number(seconds || 0) * 1000));
+      const h = Math.floor(total / 3600000);
+      const m = Math.floor(total / 60000) % 60;
+      const s = Math.floor(total / 1000) % 60;
+      const ms = total % 1000;
       return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
     };
 
@@ -888,6 +879,7 @@ export default {
     };
 
     // ─── Session Persistence ─────────────────────────────────────────
+    let lastSavedSession = "";
     const saveSession = () => {
       if (transcript.value.length === 0) return;
 
@@ -895,12 +887,17 @@ export default {
         filename: videoFilename.value,
         entryCount: transcript.value.length,
         duration: totalDuration.value,
+        captureInterval: captureInterval.value,
+        captionType: "visual-descriptions",
         transcript: transcript.value.map((e) => ({
           timestamp: e.timestamp,
           text: e.text,
         })),
         createdAt: new Date().toISOString(),
       };
+      const signature = JSON.stringify({ ...session, createdAt: undefined });
+      if (signature === lastSavedSession) return;
+      lastSavedSession = signature;
 
       sessionHistory.value.unshift(session);
       if (sessionHistory.value.length > 10) {
@@ -916,6 +913,8 @@ export default {
         text: e.text,
       }));
       videoFilename.value = session.filename || "video";
+      totalDuration.value = Number(session.duration) || 0;
+      captureInterval.value = Number(session.captureInterval) || 3;
       currentCaption.value =
         transcript.value.length > 0
           ? transcript.value[transcript.value.length - 1].text
@@ -934,8 +933,10 @@ export default {
             filename: String(s.filename || ""),
             entryCount: Number(s.entryCount || 0),
             duration: Number(s.duration || 0),
+            captureInterval: Number(s.captureInterval || 3),
+            captionType: s.captionType || "visual-descriptions",
             createdAt: String(s.createdAt || ""),
-            transcript: (s.transcript || []).slice(0, 50).map((e) => ({
+            transcript: (s.transcript || []).map((e) => ({
               timestamp: Number(e.timestamp || 0),
               text: String(e.text || ""),
             })),
@@ -963,6 +964,7 @@ export default {
 
     // ─── Reset ───────────────────────────────────────────────────────
     const resetAll = () => {
+      sourceRevision++;
       stopCaptionLoop();
       if (videoPlayer.value) {
         videoPlayer.value.pause();
@@ -981,6 +983,7 @@ export default {
       transcript.value = [];
       currentTime.value = 0;
       totalDuration.value = 0;
+      lastSavedSession = "";
     };
 
     // ─── Watchers ────────────────────────────────────────────────────
@@ -999,8 +1002,6 @@ export default {
       );
       document.addEventListener("keydown", handleKeydown);
       loadSessionHistory();
-      // Auto-load vision model on mount
-      ensureModelLoaded();
     });
 
     onUnmounted(() => {
@@ -1034,6 +1035,7 @@ export default {
       videoEnded,
       isGenerating,
       isAnalyzing,
+      analysisError,
       generationStatus,
       generationProgress,
       showOverlayIcon,

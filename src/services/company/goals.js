@@ -8,8 +8,7 @@
  * events even though the row write is now SQL.
  *
  * Same shape as the legacy module so consumers (dispatcher, store,
- * UI) don't change. Graceful degradation when the data layer isn't
- * up — every call resolves with a safe default + a one-time warning.
+ * UI) don't change. Reads may degrade gracefully; mutations fail explicitly if persistence is unavailable.
  */
 
 import { append, _notify } from "./auditLog.js";
@@ -22,7 +21,7 @@ function _warnOnce(err) {
   if (_warned) return;
   _warned = true;
   console.warn(
-    "[goals] data layer not reachable — goal writes will be dropped " +
+    "[goals] data layer not reachable — goal data is unavailable " +
     "until the DB is open. Run `npm install` and restart. Underlying error: " +
     (err?.message || err || "no IPC handler"),
   );
@@ -34,12 +33,27 @@ async function _safe(fn, fallback) {
   catch (err) { _warnOnce(err); return fallback; }
 }
 
+async function _write(fn) {
+  const api = _api();
+  if (!api) throw new Error('Company storage is unavailable. Restart the app before changing goals.');
+  return fn(api);
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────
 
+export async function createWithTasks(companyId, input, tasks) {
+  const goal = await _write(api => {
+    if (!api.createWithTasks) throw new Error('Restart BonzAI to enable atomic goal creation.');
+    return api.createWithTasks(companyId, input, tasks);
+  });
+  await append(companyId, { kind: 'system', action: 'createGoal', status: 'executed', note: goal.title, goalId: goal.id });
+  _notify(); return goal;
+}
+
 export async function create(companyId, input) {
-  const goal = await _safe((api) => api.create(companyId, input), null);
+  const goal = await _write((api) => api.create(companyId, input), null);
   if (goal) {
     await append(companyId, {
       kind: "system",
@@ -63,13 +77,13 @@ export async function get(companyId, goalId) {
 }
 
 export async function update(companyId, goalId, patch) {
-  const goal = await _safe((api) => api.update(companyId, goalId, patch), null);
+  const goal = await _write((api) => api.update(companyId, goalId, patch), null);
   if (goal) _notify();
   return goal;
 }
 
 export async function cancel(companyId, goalId, reason) {
-  const goal = await _safe((api) => api.cancel(companyId, goalId, reason), null);
+  const goal = await _write((api) => api.cancel(companyId, goalId, reason), null);
   if (goal) {
     await append(companyId, {
       kind: "system", action: "cancelGoal", status: "executed",
@@ -81,7 +95,7 @@ export async function cancel(companyId, goalId, reason) {
 }
 
 export async function complete(companyId, goalId) {
-  const goal = await _safe((api) => api.complete(companyId, goalId), null);
+  const goal = await _write((api) => api.complete(companyId, goalId), null);
   if (goal) {
     await append(companyId, {
       kind: "system", action: "completeGoal", status: "executed",
@@ -98,7 +112,7 @@ export async function complete(companyId, goalId) {
  */
 export async function maybeComplete(companyId, goalId, allIssuesForGoal) {
   if (!goalId) return null;
-  const goal = await _safe(
+  const goal = await _write(
     (api) => api.maybeComplete(companyId, goalId, allIssuesForGoal),
     null,
   );
@@ -120,5 +134,5 @@ export async function counts(companyId) {
 }
 
 export async function clear(companyId) {
-  await _safe((api) => api.clear(companyId), null);
+  await _write((api) => api.clear(companyId), null);
 }

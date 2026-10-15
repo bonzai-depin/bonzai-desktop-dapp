@@ -1,6 +1,36 @@
+import { wavDuration, meditationExportTiming, meditationCaptionCues, meditationVideoArgs } from './main/media/meditationExport.js';
+import { createCompanyOAuth } from './main/connectors/companyOAuth.js';
+import { COMPANY_OAUTH_PROVIDERS } from './shared/companyOAuth.js';
+import * as companyConnectorsRepo from './main/db/repos/connectors.js';
+import { refreshMailToken } from './main/connectors/mailOAuth.js';
+import { assertMailReadRequest } from './shared/mailIntake.js';
+import { createAgentWorkerHost } from './main/agentWorkerHost.js';
+import { exportWorker3D } from './main/worker3dExport.js';
+import { createWorkerJournal } from './main/workerJournal.js';
+import { createWorkerTransfers } from './main/workerTransfers.js';
+import { get as getWorkerDatabase } from './main/db/connection.js';
+import { createWorkerMedia } from './main/agentWorkerMedia.js';
+import { BLOB_MEDIA_SCHEME, createBlobProtocolHandler } from './main/localMediaProtocol.js';
+import * as workerBlobs from './main/db/blobs.js';
+import { parallelDownload } from './main/parallelDownload.js';
+import { createAgentJobMailbox } from './main/agentJobMailbox.js';
+import { parseJobPacket } from './services/smartAgentHandoff.js';
+import { createCompanyRuntime } from './main/companyRuntime.js';
+import { interruptExecutor, recoverStoppedExecutors } from './main/db/repos/automation.js';
+import { recoverStale as recoverInterruptedCompanyTasks } from './main/db/repos/issues.js';
+import { VISUAL_REVIEW_FORMAT } from './components/gen3d/visualQuality.js';
+import { connectorFetch } from "./main/connectors/http.js";
+import { financeAuthHeaders } from "./main/connectors/financeAuth.js";
+import { assertBraveSearchRequest, braveSearchHeaders, braveValidationRequest } from "./main/connectors/braveSearch.js";
+import { qwen38ContextPlan, completionBudget, isQwen38LowMtp, LOW_MTP_CONTEXT } from './main/modelContext.js';
+import { socialCredentialVault, credentialStatus } from './main/social/credentials.js';
+import { createChorusClient } from './main/connectors/chorus.js';
+import { registerXChannel, createXTransport } from './main/social/xChannel.js';
+import { pause as pausePublicSession } from './main/db/repos/publicSessions.js';
 // main.js
 import {
   BrowserWindow,
+  powerSaveBlocker,
   app,
   ipcMain,
   protocol,
@@ -13,11 +43,15 @@ import {
   safeStorage,
 } from "electron";
 import Store from "electron-store";
+import { createWalletCredentialStore, assertPublicStoreKey } from "./main/security/walletCredentials.js";
+import { resolveDevelopmentPython } from "./main/pythonRuntime.js";
+import { waitForServer } from "./main/serverReadiness.js";
 import os from "os";
 import fs from "fs";
 import si from "systeminformation";
 import psTree from "ps-tree";
 import * as llamaServer from "./services/llamaServer.manager.js";
+import { readLocalExecutionStatus } from "./services/localExecutionStatus.js";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { download, CancelError } from "electron-dl";
@@ -81,6 +115,10 @@ const isDev = !app.isPackaged;
 const VITE_DEV_SERVER_URL = isDev ? "http://localhost:5173" : null;
 
 let subpy = null;
+let pythonStartup = null;
+let pythonRun = null;
+let pythonStopVersion = 0;
+let serverRestartTimer = null;
 const PY_SERVER_PORT = 65000;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,6 +132,7 @@ const RESTART_COOLDOWN_MS = 60000; // Reset counter after 1 minute of stability
 const MAX_BACKOFF_MS = 30000; // Max 30 seconds between restarts
 let isIntentionalShutdown = false; // Track if shutdown was intentional
 let mainWindow = null; // Reference to main window for IPC
+let gmaoMonitorTimer = null;
 
 const PLATFORM_KEY =
   process.platform === "darwin"
@@ -105,7 +144,7 @@ const ARCH_KEY = process.arch === "arm64" ? "arm64" : "x64";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Python server launcher
-// - dev: run system python on src/server/diffuser.py
+// - dev: use the configured/activated/project Python environment
 // - packaged (onedir): resources/server/python-runtime/<platform>-<arch>/diffuser(.exe)
 //   PyInstaller onedir mode - executable + _internal/ folder with shared libraries
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,9 +161,12 @@ function resolvePythonLaunch(port = PY_SERVER_PORT) {
       throw new Error(
         `dev diffuser.py not found. Searched:\n${candidates.join("\n")}`
       );
+    const python = resolveDevelopmentPython({
+      projectRoot: path.resolve(path.dirname(script), "../.."),
+    });
     return {
       mode: "dev",
-      cmd: process.platform === "win32" ? "python" : "python3",
+      cmd: python.cmd,
       args: [script, `--port=${port}`],
       cwd: path.dirname(script),
     };
@@ -169,7 +211,9 @@ function resolvePythonLaunch(port = PY_SERVER_PORT) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Server status notifications to renderer
 // ─────────────────────────────────────────────────────────────────────────────
+let latestServerStatus = { status: "starting", message: "Starting local AI" };
 const notifyServerStatus = (status, details = {}) => {
+  latestServerStatus = { status, ...details };
   const windows = BrowserWindow.getAllWindows();
   windows.forEach((win) => {
     if (!win.isDestroyed()) {
@@ -180,6 +224,7 @@ const notifyServerStatus = (status, details = {}) => {
 };
 
 const scheduleServerRestart = () => {
+  if (isIntentionalShutdown || serverRestartTimer) return;
   const now = Date.now();
 
   // Reset counter if server was stable for a while
@@ -212,13 +257,16 @@ const scheduleServerRestart = () => {
     backoffMs: restartBackoffMs,
   });
 
-  setTimeout(async () => {
+  serverRestartTimer = setTimeout(async () => {
+    serverRestartTimer = null;
+    if (isIntentionalShutdown) return;
     console.log(`[Self-Healing] Attempting restart...`);
     await startPythonSubprocess();
     // Wait for server to be ready and send "ready" notification
     try {
-      await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`);
-      console.log(`[Self-Healing] Server recovered successfully`);
+      if (await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`)) {
+        console.log(`[Self-Healing] Server recovered successfully`);
+      }
     } catch (e) {
       console.error(`[Self-Healing] Server failed to recover: ${e.message}`);
       // The crash handler will be triggered again if the process exits
@@ -288,7 +336,27 @@ const waitForPortFree = async (port, timeoutMs = 3000) => {
   console.warn(`[killPort] Port ${port} still occupied after ${timeoutMs}ms`);
 };
 
-const startPythonSubprocess = async () => {
+const startPythonSubprocess = () => {
+  // Dock activation, retry and startup can request a launch concurrently.
+  if (pythonStartup) {
+    if (!pythonRun?.controller.signal.aborted) return pythonStartup;
+    const stopVersion = pythonStopVersion;
+    return pythonStartup.then(() => {
+      if (stopVersion === pythonStopVersion) return startPythonSubprocess();
+    });
+  }
+  if (subpy && !pythonRun?.controller.signal.aborted) return Promise.resolve();
+  pythonStartup = launchPythonSubprocess().finally(() => { pythonStartup = null; });
+  return pythonStartup;
+};
+
+const launchPythonSubprocess = async () => {
+  clearTimeout(serverRestartTimer);
+  serverRestartTimer = null;
+  pythonRun?.controller.abort();
+  const run = { controller: new AbortController(), readiness: null };
+  pythonRun = run;
+  isIntentionalShutdown = false;
   // Detach old process handlers BEFORE killing port to prevent its close
   // handler from triggering a self-healing restart that races with this spawn
   if (subpy) {
@@ -298,14 +366,15 @@ const startPythonSubprocess = async () => {
     oldProc.removeAllListeners("error");
   }
   await killPort(PY_SERVER_PORT);
-  isIntentionalShutdown = false; // Reset flag on new start
+  if (run.controller.signal.aborted) return;
 
   let launch;
   try {
     launch = resolvePythonLaunch(PY_SERVER_PORT);
   } catch (e) {
     console.error(e.message);
-    notifyServerStatus("error", { message: e.message });
+    run.controller.abort();
+    notifyServerStatus("error", { message: e.message, canRetry: true });
     return;
   }
 
@@ -411,13 +480,14 @@ const startPythonSubprocess = async () => {
     }
   }
 
-  subpy = child_process.spawn(launch.cmd, launch.args, {
+  const proc = child_process.spawn(launch.cmd, launch.args, {
     cwd: launch.cwd,
     env,
     stdio: ["pipe", "pipe", "pipe"],
     shell: false,
     detached: false,
   });
+  subpy = proc;
 
   // Close stdin immediately - server doesn't need input
   if (subpy.stdin) {
@@ -436,12 +506,7 @@ const startPythonSubprocess = async () => {
     }
   }, 30000);
 
-  // Check if spawn failed immediately
-  if (!subpy.pid) {
-    console.error("[Spawn] ERROR: Process failed to start - no PID assigned");
-    notifyServerStatus("error", { message: "Failed to start server process" });
-    return;
-  }
+  // Always attach the error handler, including ENOENT failures with no PID.
 
   // Track if we've seen any output from the server
   let hasReceivedOutput = false;
@@ -488,10 +553,14 @@ const startPythonSubprocess = async () => {
     forwardLog(d, "error");
   });
 
-  subpy.on("close", (code) => {
+  proc.on("close", (code) => {
     clearTimeout(hangTimeout); // Clear hang detection
+    clearTimeout(_logFlushTimer);
+    flushLogs();
+    run.controller.abort();
+    if (pythonRun !== run) return;
     console.log(`Python subprocess exited with code ${code}`);
-    const wasRunning = subpy !== null;
+    const wasRunning = subpy === proc;
     subpy = null;
 
     // Don't restart if it was intentional (user/app triggered)
@@ -512,15 +581,22 @@ const startPythonSubprocess = async () => {
     }
   });
 
-  subpy.on("error", (err) => {
+  proc.on("error", (err) => {
+    clearTimeout(hangTimeout);
+    run.controller.abort();
+    if (pythonRun !== run) return;
     console.error(`Failed to start Python subprocess: ${err}`);
-    notifyServerStatus("error", { message: err.message });
+    notifyServerStatus("error", { message: err.message, canRetry: true });
   });
 };
 
 const killPythonSubprocess = () => {
   console.log("Killing diffuser...");
+  pythonStopVersion++;
   isIntentionalShutdown = true; // Mark as intentional to prevent auto-restart
+  clearTimeout(serverRestartTimer);
+  serverRestartTimer = null;
+  pythonRun?.controller.abort();
   return new Promise((resolve) => {
     if (!subpy || !subpy.pid) return resolve();
     const pid = subpy.pid;
@@ -539,50 +615,31 @@ const killPythonSubprocess = () => {
   });
 };
 
-const checkPythonServer = async (url, silent = false) => {
-  // Production builds with PyInstaller need longer startup time
-  // (extracting bundled libraries, loading ML models, etc.)
-  const timeoutMs = app.isPackaged ? 180000 : 30000; // 3 min for prod, 30s for dev
-  const startTime = Date.now();
-  const deadlineMs = startTime + timeoutMs;
-  let lastLogTime = 0;
-
-  while (Date.now() < deadlineMs) {
-    try {
-      const controller = new AbortController();
-      const fetchTimeout = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(fetchTimeout);
-      if (res.ok) {
-        const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`Python server ready after ${elapsedSec}s`);
-        // Server is ready - reset restart counter (stability achieved)
-        serverRestartCount = 0;
-        restartBackoffMs = 2000;
-        notifyServerStatus("ready", { message: "Server is ready." });
-        return true;
-      }
-    } catch {}
-
-    const elapsed = Date.now() - startTime;
-    const elapsedSec = Math.floor(elapsed / 1000);
-
-    // Log progress every 5 seconds
-    if (!silent && elapsed - lastLogTime >= 5000) {
-      const remaining = Math.ceil((deadlineMs - Date.now()) / 1000);
-      console.log(`Waiting for Python server… (${elapsedSec}s elapsed, ${remaining}s remaining)`);
+const checkPythonServer = (url, silent = false) => {
+  const run = pythonRun;
+  if (!subpy || !run || run.controller.signal.aborted) return Promise.resolve(false);
+  if (run.readiness) return run.readiness;
+  const startedAt = Date.now();
+  run.readiness = waitForServer(url, {
+    signal: run.controller.signal,
+    timeoutMs: app.isPackaged ? 180000 : 30000,
+    onProgress: silent ? undefined : (elapsedSec) => {
       notifyServerStatus("starting", {
         message: `Starting server... (${elapsedSec}s)`,
         elapsed: elapsedSec,
       });
-      lastLogTime = elapsed;
-    }
-
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-
-  const totalWait = Math.floor((Date.now() - startTime) / 1000);
-  throw new Error(`The server did not start within ${totalWait}s.`);
+    },
+  }).then(() => {
+    if (run.controller.signal.aborted || pythonRun !== run) return false;
+    console.log(`Python server ready after ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+    notifyServerStatus("ready", { message: "Server is ready." });
+    return true;
+  }).catch((error) => {
+    // Process exit/replacement owns its status; an old poll must not overwrite it.
+    if (run.controller.signal.aborted || pythonRun !== run) return false;
+    throw error;
+  });
+  return run.readiness;
 };
 
 // Manual restart handler (can be called from renderer when max restarts exceeded)
@@ -594,12 +651,10 @@ const restartServerManually = async () => {
   await killPythonSubprocess();
   // Wait for port to be fully released before starting new process
   await new Promise((r) => setTimeout(r, 1000));
-  startPythonSubprocess();
-  // Only clear intentional flag after the new process has started
-  isIntentionalShutdown = false;
+  await startPythonSubprocess();
   try {
-    await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`, true);
-    return { success: true };
+    const ready = await checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`, true);
+    return ready ? { success: true } : { success: false, error: "Server startup was interrupted. Check the server logs." };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -616,7 +671,7 @@ protocol.registerSchemesAsPrivileged([
   // blob-stored media synchronously without IPC round-trips. Critical
   // for the migrated roleplay sessions which now hold blob refs in
   // place of inline base64 payloads.
-  { scheme: "bonzai-blob", privileges: { bypassCSP: true, stream: true, supportFetchAPI: true, corsEnabled: true, secure: true } },
+  BLOB_MEDIA_SCHEME,
 ]);
 
 // Register bonzai:// protocol for OAuth callbacks
@@ -676,33 +731,7 @@ app.whenReady().then(() => {
    * directing the protocol at arbitrary file paths). The ext is
    * checked against a whitelist of media types the renderer reads.
    */
-  protocol.handle("bonzai-blob", (req) => {
-    try {
-      const u = new URL(req.url);
-      // Some renderers normalize host into the URL.host slot, others
-      // put it in pathname. Cover both shapes: bonzai-blob://abc.png OR
-      // bonzai-blob:///abc.png
-      const target = u.host
-        ? `${u.host}${u.pathname}`
-        : u.pathname.replace(/^\/+/, "");
-      const m = target.match(/^([a-f0-9]{64})\.([a-z0-9]{1,8})$/i);
-      if (!m) return new Response("Bad request", { status: 400 });
-      const id = m[1].toLowerCase();
-      const ext = m[2].toLowerCase();
-      const allowed = ["png", "jpg", "jpeg", "webp", "gif",
-                       "mp3", "wav", "ogg", "m4a", "flac",
-                       "mp4", "webm", "mov", "m4v",
-                       "gltf", "glb"];
-      if (!allowed.includes(ext)) return new Response("Forbidden", { status: 403 });
-      const userData = app.getPath("userData");
-      const filePath = path.join(userData, "blobs", id.slice(0, 2), `${id}.${ext}`);
-      if (!fs.existsSync(filePath)) return new Response("Not found", { status: 404 });
-      return net.fetch(pathToFileURL(filePath).toString());
-    } catch (err) {
-      console.warn("[bonzai-blob] handler error:", err?.message);
-      return new Response("Internal error", { status: 500 });
-    }
-  });
+  protocol.handle("bonzai-blob", createBlobProtocolHandler(path.join(app.getPath("userData"), "blobs")));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -724,6 +753,38 @@ if (process.platform === "win32") {
 // Store helpers
 // ─────────────────────────────────────────────────────────────────────────────
 const store = new Store();
+let companyRuntime;
+const workerRuntimeCommand = (name, args) => {
+  if (!companyRuntime) throw new Error('Local worker runtime is starting.');
+  return companyRuntime.command(name, args);
+};
+const agentWorkerHost = createAgentWorkerHost({
+  journal: createWorkerJournal(() => getWorkerDatabase().db, store),
+  store, peerId: () => getP2PNode().getPeerId(), mode: () => store.get('p2p.networkMode', 'local'),
+  resolveIdentity: ref => workerRuntimeCommand('workerIdentity', [ref]),
+  verifySignature: payload => workerRuntimeCommand('workerSignature', [payload]),
+  verifyJob: (packet, context) => workerRuntimeCommand('workerVerifyJob', [packet, context]),
+  run: async (binding, call) => {
+    const output = await workerRuntimeCommand('workerExecute', [binding, call]);
+    if (output?.pipeline !== '3d') return output;
+    const glb = await exportWorker3D(output.payload, { BrowserWindow,
+      url: VITE_DEV_SERVER_URL ? new URL('worker-3d-runtime.html', VITE_DEV_SERVER_URL).href : null,
+      file: path.join(__dirname, '../renderer/main_window/worker-3d-runtime.html') });
+    return { text: output.payload, artifacts: [{ pipeline: '3d', payload: `data:model/gltf-binary;base64,${glb}`, meta: { payloadEncoding: 'base64' } }] };
+  },
+  media: createWorkerMedia({ blobs: workerBlobs, roots: () => [path.join(MODEL_DIR, 'files'), app.getPath('temp')], trainedRoot: () => path.join(MODEL_DIR, 'trained') }),
+});
+const walletCredentialStore = createWalletCredentialStore({ store, safeStorage });
+ipcMain.handle("wallet-credentials:available", () => walletCredentialStore.ensureAvailable());
+ipcMain.handle("ows:credential-ensure-passphrase", (_event, companionId) => walletCredentialStore.ensureOWSPassphrase(companionId));
+ipcMain.handle("skill-attestation:credential-get", () => walletCredentialStore.readAttestationKey());
+ipcMain.handle("skill-attestation:credential-set", (_event, secret) => walletCredentialStore.writeAttestationKey(secret));
+ipcMain.handle("ows:credential-get", (_event, { companionId, kind }) => walletCredentialStore.readOWS(companionId, kind));
+ipcMain.handle("ows:credential-set", (_event, { companionId, kind, secret }) => walletCredentialStore.writeOWS(companionId, kind, secret));
+ipcMain.handle("agent-wallet:credential-get", (_event, companionId) => walletCredentialStore.readLegacyWallet(companionId));
+ipcMain.handle("agent-wallet:credential-set", (_event, { companionId, wallet }) => walletCredentialStore.writeLegacyWallet(companionId, wallet));
+ipcMain.handle("agent-wallet:credential-delete", (_event, companionId) => walletCredentialStore.deleteLegacyWallet(companionId));
+ipcMain.handle("agent-wallet:master-secret", (_event, create) => walletCredentialStore.getMasterSecret(create === true));
 const robinhoodMcp = new RobinhoodMcpManager({
   store,
   safeStorage,
@@ -739,7 +800,11 @@ ipcMain.handle("robinhood-mcp:disconnect", () => robinhoodMcp.disconnect());
 const connectorSecretKey = (companyId, connectorId) => `company-connector:${companyId}:${connectorId}`;
 
 const CONNECTOR_HOSTS = Object.freeze({
+  gmail: ["gmail.googleapis.com"],
+  outlook_mail: ["graph.microsoft.com"],
+  brave_search: ["api.search.brave.com"],
   stripe: ["api.stripe.com"],
+  qonto: ["thirdparty.qonto.com"],
   hubspot: ["api.hubapi.com"],
   quickbooks: ["quickbooks.api.intuit.com", "sandbox-quickbooks.api.intuit.com"],
   sage_accounting: ["api.accounting.sage.com"],
@@ -770,28 +835,51 @@ function readConnectorCredential(companyId, connectorId) {
   const bytes = Buffer.from(stored.encrypted, "base64");
   const raw = stored.protected ? safeStorage.decryptString(bytes) : bytes.toString("utf8");
   let credential;
-  try { credential = JSON.parse(raw); } catch { credential = { accessToken: raw, apiKey: raw, token: raw }; }
+  try { credential = JSON.parse(raw); } catch { credential = { apiKey: raw, token: raw }; }
   return { stored, credential };
 }
 
-async function performConnectorRequest(request) {
+const mailboxRefreshes = new Map();
+async function refreshStoredMailbox(companyId,connectorId,stored,credential) {
+  const key=connectorSecretKey(companyId,connectorId);
+  if(!mailboxRefreshes.has(key)) mailboxRefreshes.set(key,(async()=>{
+    const next=await refreshMailToken(stored.kind,credential);
+    if(store.get(key)?.encrypted!==stored.encrypted) throw new Error("Mailbox authorization changed. Retry using the current connection.");
+    if(!safeStorage.isEncryptionAvailable())throw new Error("Secure credential storage unavailable.");
+    store.set(key,{...stored,encrypted:safeStorage.encryptString(JSON.stringify(next)).toString("base64"),protected:true,updatedAt:Date.now()});
+  })().finally(()=>mailboxRefreshes.delete(key)));
+  await mailboxRefreshes.get(key);
+}
+
+async function performConnectorRequest(request, refreshed = false) {
+  (await import("./main/workspace/ipc.js")).workspaceLicense().assert();
   const { companyId, connectorId, connectorKind, accountIdentifier: requestAccount, url, method = "GET", headers = {}, body, idempotencyKey } = request || {};
   const { stored, credential } = readConnectorCredential(companyId, connectorId);
   const kind = stored.kind || connectorKind;
-  const accountIdentifier = stored.accountIdentifier || requestAccount;
+  const accountIdentifier = stored.accountIdentifier || "";
   if (!kind) throw new Error("Connector kind is unavailable; reconnect this integration");
   const target = new URL(url);
   if (target.protocol !== "https:" || !connectorHostAllowed(kind, target.hostname, accountIdentifier)) {
     throw new Error(`Connector host is not allowed for ${kind}: ${target.hostname}`);
   }
 
+  if (["gmail","outlook_mail"].includes(kind)) assertMailReadRequest(kind,target.href,method,body);
+  if (kind === "brave_search") assertBraveSearchRequest(target, method, body);
+  if (COMPANY_OAUTH_PROVIDERS[kind] && !refreshed && credential.refreshToken && credential.expiresAt && credential.expiresAt<Date.now()+30000) {
+    await refreshStoredMailbox(companyId,connectorId,stored,credential);
+    return performConnectorRequest(request,true);
+  }
   const token = credential.accessToken || credential.apiKey || credential.token;
   if (!token) throw new Error("Connector credential does not contain an access token or API key");
   const safeHeaders = { ...headers };
   for (const name of Object.keys(safeHeaders)) {
-    if (["authorization", "host", "x-shopify-access-token"].includes(name.toLowerCase())) delete safeHeaders[name];
+    if (["authorization", "host", "x-shopify-access-token", "x-subscription-token", "stripe-account", "idempotency-key"].includes(name.toLowerCase())) delete safeHeaders[name];
   }
-  const authHeaders = kind === "shopify"
+  const authHeaders = ["qonto", "stripe"].includes(kind)
+    ? financeAuthHeaders(kind, credential, accountIdentifier)
+    : kind === "brave_search"
+    ? braveSearchHeaders(credential)
+    : kind === "shopify"
     ? { "X-Shopify-Access-Token": token }
     : kind === "twilio"
       ? { Authorization: `Basic ${Buffer.from(`${accountIdentifier}:${token}`).toString("base64")}` }
@@ -799,30 +887,44 @@ async function performConnectorRequest(request) {
         ? { Authorization: `Basic ${Buffer.from(`${token}:`).toString("base64")}` }
         : { Authorization: `Bearer ${token}` };
 
-  const response = await fetch(target, {
+  const response = await connectorFetch(target, {
     method,
     headers: {
       Accept: "application/json",
       ...safeHeaders,
-      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      ...(idempotencyKey && kind !== "brave_search" ? { "Idempotency-Key": idempotencyKey } : {}),
       ...authHeaders,
     },
     body: body == null ? undefined : body,
   });
+  if(response.status===401 && COMPANY_OAUTH_PROVIDERS[kind] && !refreshed && credential.refreshToken) {
+    await response.body?.cancel();
+    await refreshStoredMailbox(companyId,connectorId,stored,credential);
+    return performConnectorRequest(request,true);
+  }
   const responseText = await response.text();
   let data;
   try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { text: responseText }; }
   if (!response.ok) {
-    const error = new Error(data?.error?.message || data?.Fault?.Error?.[0]?.Message || data?.message || `Connector request failed (${response.status})`);
+    if (kind === "brave_search") throw new Error(`Brave Search request failed (HTTP ${response.status}). Check the key, Search plan and request limits.`);
+    const error = new Error(data?.errors?.[0]?.detail || data?.error?.message || data?.Fault?.Error?.[0]?.Message || data?.message || `Connector request failed (${response.status})`);
+    error.message = `HTTP ${response.status}: ${error.message}`;
     error.status = response.status;
     throw error;
   }
-  return { ok: true, status: response.status, data };
+  return { ok: true, status: response.status, data, headers: {
+    'x-message-id': response.headers.get('x-message-id'),
+    'x-request-id': response.headers.get('x-request-id') || response.headers.get('request-id'),
+  } };
 }
 
 function connectorValidationRequest(companyId, connectorId, stored) {
   const base = { companyId, connectorId, method: "GET" };
   switch (stored.kind) {
+    case "gmail": return {...base,url:"https://gmail.googleapis.com/gmail/v1/users/me/profile"};
+    case "outlook_mail": return {...base,url:"https://graph.microsoft.com/v1.0/me?$select=id,mail"};
+    case "brave_search": return { ...base, ...braveValidationRequest() };
+    case "qonto": return { ...base, url: "https://thirdparty.qonto.com/v2/organization" };
     case "stripe": return { ...base, url: "https://api.stripe.com/v1/account" };
     case "hubspot": return { ...base, url: "https://api.hubapi.com/crm/v3/objects/contacts?limit=1" };
     case "quickbooks": {
@@ -843,6 +945,31 @@ function connectorValidationRequest(companyId, connectorId, stored) {
   }
 }
 
+const companyOAuth = createCompanyOAuth({
+  store, secureStorage: safeStorage, repository: companyConnectorsRepo,
+  openExternal: url => shell.openExternal(url),
+  registered: typeof __BONZAI_COMPANY_OAUTH_CLIENTS__ === 'undefined' ? {} : __BONZAI_COMPANY_OAUTH_CLIENTS__,
+  changed: companyId => { for (const win of BrowserWindow.getAllWindows()) win.webContents.send('db:connectors:changed', { companyId }); },
+});
+for (const [channel, handler] of Object.entries({
+  'oauth-status': input => companyOAuth.status(input.kind),
+  'configure-oauth': input => companyOAuth.configure(input),
+  'authorize-oauth': input => companyOAuth.connect(input),
+  'cancel-oauth': input => companyOAuth.cancel(input),
+  // Compatibility with an older renderer during an application update.
+  'authorize-mail': input => {
+    if (input.clientId) {
+      const row = companyConnectorsRepo.getById(input.companyId, input.connectorId);
+      if (!row) throw new Error('Connection not found in this team.');
+      companyOAuth.configure({ ...input, kind: row.kind });
+    }
+    return companyOAuth.connect(input);
+  },
+  'cancel-mail': input => companyOAuth.cancel(input),
+})) ipcMain.handle(`company-connector:${channel}`, (event, input) => {
+  if (event.sender !== mainWindow?.webContents) throw new Error('Connect a tool from the workspace.');
+  return handler(input || {});
+});
 ipcMain.handle("company-connector:set-secret", (_event, { companyId, connectorId, secret, kind, accountIdentifier }) => {
   if (!companyId || !connectorId || !secret) throw new Error("Connector identity and secret are required");
   if (!kind) throw new Error("Connector kind is required");
@@ -866,7 +993,8 @@ ipcMain.handle("company-connector:request", async (_event, request) => {
   return performConnectorRequest(request);
 });
 ipcMain.handle("company-connector:validate", async (_event, { companyId, connectorId }) => {
-  const { stored } = readConnectorCredential(companyId, connectorId);
+  const { stored, credential } = readConnectorCredential(companyId, connectorId);
+  if (stored.kind === 'chorus') return createChorusClient({credential,environment:stored.accountIdentifier}).validateConnection();
   const result = await performConnectorRequest(connectorValidationRequest(companyId, connectorId, stored));
   if (stored.kind === "slack" && result.data?.ok === false) throw new Error(result.data.error || "Slack rejected the token");
   return { ok: true, status: result.status };
@@ -1107,21 +1235,7 @@ ipcMain.handle("wallet:close", async () => {
 
 // Generate or load session signer keypair (Ed25519 for Privy authorization signatures)
 function _ensureSessionSignerKey() {
-  let signerKey = store.get("privy-session-signer-private-key", null);
-  let signerPublicKey = store.get("privy-session-signer-public-key", null);
-
-  if (!signerKey || !signerPublicKey) {
-    // Generate a new keypair using Node.js crypto
-    const crypto = require("crypto");
-    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
-    signerKey = privateKey.export({ type: "pkcs8", format: "pem" });
-    signerPublicKey = publicKey.export({ type: "spki", format: "der" }).toString("hex");
-    store.set("privy-session-signer-private-key", signerKey);
-    store.set("privy-session-signer-public-key", signerPublicKey);
-    console.log("[Privy] Generated new session signer keypair");
-  }
-
-  return { privateKey: signerKey, publicKey: signerPublicKey };
+  return walletCredentialStore.ensurePrivySessionSigner();
 }
 
 // Get the session signer public key (for registering on bonzai.sh/wallet)
@@ -1390,13 +1504,15 @@ ipcMain.handle("ows:import-private-key", async (_event, { name, hexKey, passphra
   }
 });
 
-ipcMain.handle("store-get", (_event, key, def) => store.get(key, def));
-ipcMain.handle("store-has", (_event, key) => store.has(key));
+ipcMain.handle("store-get", (_event, key, def) => { assertPublicStoreKey(key); return store.get(key, def); });
+ipcMain.handle("store-has", (_event, key) => { assertPublicStoreKey(key); return store.has(key); });
 ipcMain.handle("store-set", (_event, key, value) => {
+  assertPublicStoreKey(key);
   store.set(key, value);
   return true;
 });
 ipcMain.handle("store-delete", (_event, key) => {
+  assertPublicStoreKey(key);
   store.delete(key);
   return true;
 });
@@ -1454,6 +1570,8 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
     const startedNode = getP2PNode();
     const localPeerId = startedNode.getPeerId();
 
+    await startedNode.onAgentJob((packet, remotePeer) => createAgentJobMailbox(store).receive(packet, remotePeer, store.get('p2p.networkMode', 'local')));
+
     await startedNode.onInferenceRequest(async (request, remotePeer) => {
       // Discovery is always available, but serving compute is an explicit
       // provider capability. Local and consumer modes never execute inbound
@@ -1463,6 +1581,11 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
         return { ok: false, error: "provider_disabled", detail: "This peer is present but is not serving inference." };
       }
 
+      if (request?.kind === 'bonzai-worker') {
+        if (_providerBusy && request.call?.action === 'execute') return { ok: false, error: 'Provider is busy.' };
+        try { return await agentWorkerHost.handle(request); }
+        catch (error) { return { ok: false, error: error.message }; }
+      }
       console.log(`[P2P] Inference request from ${remotePeer}:`, request.pipeline);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("mesh-activity", {
@@ -1472,7 +1595,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       }
 
       // Concurrency guard — one consumer at a time
-      if (_providerBusy) {
+      if (_providerBusy || agentWorkerHost.busy) {
         console.log(`[P2P] Provider busy, rejecting ${remotePeer.slice(0, 12)}`);
         return { ok: false, error: "provider_busy", detail: "Provider is currently serving another consumer. Try again shortly." };
       }
@@ -1539,6 +1662,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
 
     // Register health handler
     await startedNode.onHealthRequest(async (request, remotePeer) => {
+      if (store.get('p2p.networkMode', 'local') !== 'provider') return { ok: true, peerId: node.getPeerId(), pipelines: [], readyPipelines: [], workers: [], version: app.getVersion() };
       const pipelines = store.get("p2p.pipelines", []);
       const pricingCurrency = "FREE";
       const FLASK_PORT = process.env.BONZAI_SERVER_PORT || 65000;
@@ -1554,7 +1678,7 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
 
       // Check which Flask pipelines are ready (models downloaded)
       const readyPipelines = [];
-      const flaskPipelines = ['image_turbo', 'image_quality', 'image_standard', 'audio_turbo', 'audio_quality', 'music', 'video_fast', 'vision'];
+      const flaskPipelines = ['image_turbo', 'image_quality', 'image_standard', 'audio_turbo', 'audio_quality', 'music', 'video_fast', 'video_sota', 'video_quality', 'vision'];
       try {
         const checks = await Promise.all(flaskPipelines.map(async (p) => {
           try {
@@ -1583,12 +1707,13 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
         pipelines,
         readyPipelines,
         pricingCurrency,
+        workers: await agentWorkerHost.discover(),
         free: pricingCurrency === "FREE",
         version: app.getVersion(),
         uptime: process.uptime(),
         availableModels,
         currentModel: currentLoadedModel?.filename || null,
-        busy: _providerBusy,
+        busy: _providerBusy || agentWorkerHost.busy,
       };
     });
 
@@ -1722,6 +1847,7 @@ ipcMain.handle("p2p-dial", async (_event, peerIdOrAddr) => {
  */
 ipcMain.handle("p2p-inference", async (_event, { peerId, request }) => {
   try {
+    if (request?.kind === 'bonzai-worker' && !['consumer', 'provider'].includes(store.get('p2p.networkMode', 'local'))) throw new Error('Enable Consumer or Provider mode before sharing worker inputs.');
     const node = getP2PNode();
     if (!node.isStarted) {
       return { ok: false, error: "Node not started" };
@@ -1732,6 +1858,71 @@ ipcMain.handle("p2p-inference", async (_event, { peerId, request }) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+});
+
+ipcMain.handle('agent-worker-publish', async (event, descriptor, binding) => {
+  if (event.sender !== mainWindow?.webContents) throw new Error('Publish from the agent workspace.');
+  await workerRuntimeCommand('workerValidate', [binding, descriptor.grant]);
+  return agentWorkerHost.publish(descriptor, binding);
+});
+ipcMain.handle('agent-worker-unpublish', (event, key) => {
+  if (event.sender !== mainWindow?.webContents) throw new Error('Manage workers from the agent workspace.');
+  return agentWorkerHost.unpublish(key);
+});
+ipcMain.handle('agent-worker-runs', event => {
+  if (event.sender !== mainWindow?.webContents) throw new Error('View executions from the workspace.');
+  return agentWorkerHost.list();
+});
+ipcMain.handle('agent-worker-peers', () => {
+  const node = getP2PNode();
+  return node?.isStarted ? [...new Set([...node.node.getConnections().map(c => c.remotePeer.toString()), ...node.getLANPeers().map(p => p.peerId)])] : [];
+});
+const workerTransfers = createWorkerTransfers({ directory: () => path.join(app.getPath('temp'), 'bonzai-worker-transfers'), save: workerBlobs.writeFromPathStream });
+ipcMain.handle('agent-worker-transfer-start', (event, artifact) => workerTransfers.start(event.sender.id, artifact));
+ipcMain.handle('agent-worker-transfer-chunk', (event, id, offset, data) => workerTransfers.chunk(event.sender.id, id, offset, data));
+ipcMain.handle('agent-worker-transfer-finish', (event, id) => workerTransfers.finish(event.sender.id, id));
+ipcMain.handle('agent-worker-transfer-abort', (event, id) => workerTransfers.abort(event.sender.id, id));
+ipcMain.handle('agent-worker-export-media', async (event, artifact) => {
+  if (event.sender !== mainWindow?.webContents || !/^[a-f0-9]{64}$/.test(artifact?.id) || !/^[a-z0-9]{1,12}$/.test(artifact.ext)) throw new Error('Export a saved delivery from the workspace.');
+  const source = workerBlobs.blobPath(artifact.id, artifact.ext);
+  if (!fs.existsSync(source)) throw new Error('Download this artifact first.');
+  const result = await dialog.showSaveDialog(mainWindow, { defaultPath: path.basename(artifact.name || `delivery.${artifact.ext}`) });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  await fs.promises.copyFile(source, result.filePath);
+  return { saved: true };
+});
+ipcMain.handle('agent-worker-store-media', async (_event, artifact, base64) => {
+  if (!/^[a-f0-9]{64}$/.test(artifact?.id) || !/^(png|jpg|webp|wav|mp3|ogg|mp4|glb|bin)$/.test(artifact?.ext)) throw new Error('Invalid media manifest.');
+  if (typeof base64 !== 'string' || base64.length > 180000000) throw new Error('Media exceeds transfer limit.');
+  const bytes = Buffer.from(base64, 'base64');
+  const { mediaHash } = await import('./main/agentWorkerHost.js');
+  if (bytes.length !== artifact.size || mediaHash(bytes) !== artifact.id || artifact.sha256 !== artifact.id) throw new Error('Media integrity check failed.');
+  const saved = workerBlobs.write(bytes, artifact.ext, { source: 'peer-worker', mimeType: artifact.mimeType });
+  return { id: saved.id, uri: `bonzai-blob://${saved.id}.${artifact.ext}` };
+});
+ipcMain.handle('agent-jobs-inbox' , () => createAgentJobMailbox(store).list());
+function agentJobJournalKey(scope) {
+  if (!/^\d+:0x[0-9a-fA-F]{40}$/.test(scope || '')) throw new Error('Invalid job journal scope.');
+  return `smartAgentJobJournal.${scope.toLowerCase()}`;
+}
+ipcMain.handle('agent-jobs-list', (_event, scope) => store.get(agentJobJournalKey(scope), []));
+ipcMain.handle('agent-jobs-save', (_event, scope, record) => {
+  const key = agentJobJournalKey(scope);
+  const packet = parseJobPacket({ version: 1, kind: 'bonzai-agent-job', jobId: record?.jobId, terms: record?.terms });
+  if (`${packet.terms.chainId}:${packet.terms.escrow}`.toLowerCase() !== scope.toLowerCase()) throw new Error('Job journal network mismatch.');
+  if (JSON.stringify(record).length > 131072) throw new Error('Job record is too large.');
+  const entries = store.get(key, []);
+  const previous = entries.find(entry => entry.jobId === record.jobId && entry.companyId === record.companyId);
+  store.set(key, [{ ...previous, ...record }, ...entries.filter(entry => entry.jobId !== record.jobId || entry.companyId !== record.companyId)]);
+  return true;
+});
+ipcMain.handle('agent-jobs-dismiss', (_event, id) => createAgentJobMailbox(store).dismiss(id));
+ipcMain.handle('agent-jobs-send', async (_event, { peerId, packet }) => {
+  if (!['consumer', 'provider'].includes(store.get('p2p.networkMode', 'local'))) throw new Error('Enable Consumer or Provider mode before sending work to a peer.');
+  const node = getP2PNode();
+  if (!node?.isStarted) throw new Error('Start the peer network before sending work.');
+  if (typeof peerId !== 'string' || !peerId.trim() || peerId.length > 2048) throw new Error('Choose a worker peer.');
+  return node.sendAgentJob(peerId, parseJobPacket(packet));
 });
 
 /**
@@ -2032,6 +2223,8 @@ ipcMain.handle("service-time:truncate-ledger", async (_event, beforeTs) => {
 
 // Kill rpc-server on app quit
 app.on("before-quit", () => {
+  if (gmaoMonitorTimer) clearInterval(gmaoMonitorTimer);
+  gmaoMonitorTimer = null;
   if (rpcServerProcess && !rpcServerProcess.killed) {
     rpcServerProcess.kill("SIGTERM");
   }
@@ -2085,6 +2278,15 @@ ipcMain.handle("broadcast-model-state", () => {
   });
   return true;
 });
+
+ipcMain.handle("model-completion-budget", async (_event, { prompt, maxTokens }) => {
+  const spec = llamaServer.getActiveSpec();
+  if (!llamaServer.isRunning() || !spec?.ctxSize) throw new Error('Load the model before checking its context.');
+  const promptTokens = await llamaServer.countPromptTokens([{ role: 'user', content: String(prompt) }]);
+  return completionBudget(spec.ctxSize / (spec.parallelSlots || 1), promptTokens, Number(maxTokens) || 2048);
+});
+
+ipcMain.handle("local-execution-status", async () => readLocalExecutionStatus(llamaServer, await _getPool()));
 
 ipcMain.handle("llama-runtime-status", async () => {
   const running = llamaServer.isRunning();
@@ -2170,6 +2372,10 @@ async function routeInferenceRequest(request) {
       // Video pipeline (LTX-2)
       case "video_fast":
         endpoint = "/video";
+        break;
+
+      case "video_sota":
+        endpoint = "/video/sota";
         break;
 
       // Video quality pipeline (Wan 2.2 i2v) — no dedicated category in
@@ -3184,6 +3390,12 @@ ipcMain.handle("save-base64-to-file", async (_event, filePath, base64Data) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const OPENCLAW_MODELS_PATH = path.join(os.homedir(), ".openclaw", "agents", "main", "agent", "models.json");
 const OPENCLAW_CONFIG_PATH = path.join(os.homedir(), ".openclaw", "openclaw.json");
+const OPENCLAW_SKILL_DIR = path.join(os.homedir(), ".openclaw", "skills", "bonzai");
+const HERMES_SKILLS_DIR = path.join(os.homedir(), ".hermes", "skills");
+const HERMES_ENV_PATH = path.join(os.homedir(), ".hermes", ".env");
+const HERMES_BONZAI_SKILL_DIR = path.join(HERMES_SKILLS_DIR, "ai", "bonzai");
+const BONZAI_HARNESS_VERSION = "4.0.0-rc.1";
+const BONZAI_PROVIDER_ID = "bonzai/bonzai-sovereign";
 
 /**
  * Resolve the SKILL.md manifest path for an agent harness.
@@ -3203,195 +3415,185 @@ function resolveBundledSkillManifest(name) {
   return null;
 }
 
-ipcMain.handle("openclaw-get-enabled", async () => {
+function readHarnessJson(filePath, fallback) {
+  if (!fs.existsSync(filePath)) return structuredClone(fallback);
   try {
-    if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
-      const content = fs.readFileSync(OPENCLAW_CONFIG_PATH, "utf8");
-      const config = JSON.parse(content);
-      // Check if bonzai provider exists
-      return !!config.models?.providers?.bonzai;
-    }
-    return false;
-  } catch {
-    return false;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    throw new Error(`Cannot update ${filePath}: ${error.message}`);
   }
-});
+}
 
-ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => {
-  try {
-    // 1. Update models.json with provider definition (where OpenClaw reads providers)
-    const modelsDir = path.dirname(OPENCLAW_MODELS_PATH);
-    if (!fs.existsSync(modelsDir)) {
-      fs.mkdirSync(modelsDir, { recursive: true });
-    }
+function writeHarnessText(filePath, contents) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, contents, { encoding: "utf8", mode: 0o600 });
+}
 
-    let modelsConfig = { providers: {} };
-    if (fs.existsSync(OPENCLAW_MODELS_PATH)) {
-      try {
-        const content = fs.readFileSync(OPENCLAW_MODELS_PATH, "utf8");
-        modelsConfig = JSON.parse(content);
-        if (!modelsConfig.providers) modelsConfig.providers = {};
-      } catch {
-        modelsConfig = { providers: {} };
-      }
-    }
+function writeHarnessJson(filePath, value) {
+  writeHarnessText(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
 
-    if (enabled) {
-      // Add bonzai provider with full model configuration
-      modelsConfig.providers.bonzai = {
-        baseUrl: `http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
-        apiKey: "bonzai-local",
-        api: "openai-completions",
-        models: [
-          {
-            id: "bonzai-sovereign",
-            name: "Decentralized AI by BonzAI",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 32768,
-            maxTokens: 4096
-          }
-        ]
+function installHarnessSkill(name, destination) {
+  const source = resolveBundledSkillManifest(name);
+  if (!source) throw new Error(`Bundled ${name} SKILL.md is missing`);
+  fs.mkdirSync(destination, { recursive: true });
+  fs.copyFileSync(source, path.join(destination, "SKILL.md"));
+}
+
+function disableHarnessSkill(destination) {
+  const active = path.join(destination, "SKILL.md");
+  if (!fs.existsSync(active)) return;
+  fs.copyFileSync(active, path.join(destination, "SKILL.md.disabled"));
+  fs.unlinkSync(active);
+}
+
+function setHarnessEnv(enabled) {
+  const marker = "# BonzAI v4 local inference endpoint";
+  const managedKeys = /^(BONZAI_BASE_URL|BONZAI_API_KEY)=/;
+  const existing = fs.existsSync(HERMES_ENV_PATH)
+    ? fs.readFileSync(HERMES_ENV_PATH, "utf8").split(/\r?\n/)
+    : [];
+  const lines = existing.filter((line) => line !== marker && !managedKeys.test(line));
+  while (lines.at(-1) === "") lines.pop();
+  if (enabled) {
+    if (lines.length) lines.push("");
+    lines.push(
+      marker,
+      `BONZAI_BASE_URL=http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
+      "BONZAI_API_KEY=bonzai-local",
+    );
+  }
+  if (lines.length || fs.existsSync(HERMES_ENV_PATH)) {
+    writeHarnessText(HERMES_ENV_PATH, lines.length ? `${lines.join("\n")}\n` : "");
+  }
+}
+
+function configureOpenClaw(enabled) {
+  const modelsConfig = readHarnessJson(OPENCLAW_MODELS_PATH, { providers: {} });
+  modelsConfig.providers ||= {};
+  const mainConfig = readHarnessJson(OPENCLAW_CONFIG_PATH, {});
+
+  if (enabled) {
+    modelsConfig.providers.bonzai = {
+      baseUrl: `http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
+      apiKey: "bonzai-local",
+      api: "openai-completions",
+      models: [{
+        id: "bonzai-sovereign",
+        name: "BonzAI local inference mesh",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 32768,
+        maxTokens: 4096,
+      }],
+    };
+    mainConfig.agents ||= {};
+    mainConfig.agents.defaults ||= {};
+    if (mainConfig.agents.defaults.model?.primary !== BONZAI_PROVIDER_ID) {
+      mainConfig.bonzaiIntegration = {
+        version: BONZAI_HARNESS_VERSION,
+        previousModel: structuredClone(mainConfig.agents.defaults.model ?? null),
       };
-    } else {
-      delete modelsConfig.providers.bonzai;
     }
-    fs.writeFileSync(OPENCLAW_MODELS_PATH, JSON.stringify(modelsConfig, null, 2));
-
-    // 2. Update openclaw.json with default model setting
-    let mainConfig = {};
-    if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
-      try {
-        const content = fs.readFileSync(OPENCLAW_CONFIG_PATH, "utf8");
-        mainConfig = JSON.parse(content);
-      } catch {
-        mainConfig = {};
-      }
+    mainConfig.agents.defaults.model = {
+      ...(mainConfig.agents.defaults.model || {}),
+      primary: BONZAI_PROVIDER_ID,
+    };
+    installHarnessSkill("openclaw", OPENCLAW_SKILL_DIR);
+  } else {
+    delete modelsConfig.providers.bonzai;
+    if (mainConfig.agents?.defaults?.model?.primary === BONZAI_PROVIDER_ID) {
+      const previous = mainConfig.bonzaiIntegration?.previousModel;
+      if (previous) mainConfig.agents.defaults.model = previous;
+      else delete mainConfig.agents.defaults.model.primary;
     }
-
-    if (enabled) {
-      // Ensure nested structures exist
-      if (!mainConfig.agents) mainConfig.agents = {};
-      if (!mainConfig.agents.defaults) mainConfig.agents.defaults = {};
-      if (!mainConfig.agents.defaults.model) mainConfig.agents.defaults.model = {};
-
-      // Set BonzAI as primary model with Claude as fallback
-      mainConfig.agents.defaults.model.primary = "bonzai/bonzai-sovereign";
-      mainConfig.agents.defaults.model.fallbacks = ["anthropic/claude-sonnet-4-5"];
-    } else {
-      // Restore default to Claude if bonzai was primary
-      if (mainConfig.agents?.defaults?.model?.primary === "bonzai/bonzai-sovereign") {
-        mainConfig.agents.defaults.model.primary = "anthropic/claude-sonnet-4-5";
-        delete mainConfig.agents.defaults.model.fallbacks;
-      }
-    }
-    fs.writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(mainConfig, null, 2));
-
-    console.log(`[OpenClaw] Integration ${enabled ? "enabled" : "disabled"}`);
-    return { success: true };
-  } catch (error) {
-    console.error("[OpenClaw] Failed to update config:", error);
-    return { success: false, error: error.message };
+    delete mainConfig.bonzaiIntegration;
+    disableHarnessSkill(OPENCLAW_SKILL_DIR);
   }
-});
 
-ipcMain.handle("openclaw-is-installed", async () => {
-  // Check if OpenClaw is installed by looking for the config directory
-  const openclawDir = path.join(os.homedir(), ".openclaw");
-  return fs.existsSync(openclawDir);
-});
+  writeHarnessJson(OPENCLAW_MODELS_PATH, modelsConfig);
+  writeHarnessJson(OPENCLAW_CONFIG_PATH, mainConfig);
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Hermes Agent Integration Config
-// ─────────────────────────────────────────────────────────────────────────────
-const HERMES_CONFIG_PATH = path.join(os.homedir(), ".hermes", "config.yaml");
-const HERMES_SKILLS_DIR = path.join(os.homedir(), ".hermes", "skills");
-const HERMES_ENV_PATH = path.join(os.homedir(), ".hermes", ".env");
-const HERMES_BONZAI_SKILL_DIR = path.join(HERMES_SKILLS_DIR, "ai", "bonzai");
+function configureHermes(enabled) {
+  if (enabled) {
+    installHarnessSkill("hermes", HERMES_BONZAI_SKILL_DIR);
+    setHarnessEnv(true);
+  } else {
+    disableHarnessSkill(HERMES_BONZAI_SKILL_DIR);
+    setHarnessEnv(false);
+  }
+}
 
-ipcMain.handle("hermes-is-installed", async () => {
-  const hermesDir = path.join(os.homedir(), ".hermes");
-  return fs.existsSync(hermesDir);
-});
+function harnessStatus() {
+  let openclawModels = {};
+  let openclawConfig = {};
+  try { openclawModels = readHarnessJson(OPENCLAW_MODELS_PATH, {}); } catch {}
+  try { openclawConfig = readHarnessJson(OPENCLAW_CONFIG_PATH, {}); } catch {}
+  const openclawEnabled = !!openclawModels.providers?.bonzai;
+  const hermesSkill = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
+  const hermesEnv = fs.existsSync(HERMES_ENV_PATH) ? fs.readFileSync(HERMES_ENV_PATH, "utf8") : "";
+  const hermesEnabled = fs.existsSync(hermesSkill) && /^BONZAI_BASE_URL=/m.test(hermesEnv);
+  return {
+    version: BONZAI_HARNESS_VERSION,
+    gateway: {
+      listening: !!openclawServer,
+      baseUrl: `http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
+      webhookUrl: `http://127.0.0.1:${OPENCLAW_API_PORT}/webhook`,
+      exposure: "loopback",
+    },
+    integrations: {
+      openclaw: {
+        installed: fs.existsSync(path.join(os.homedir(), ".openclaw")),
+        enabled: openclawEnabled,
+        configured: openclawEnabled
+          && openclawConfig.agents?.defaults?.model?.primary === BONZAI_PROVIDER_ID
+          && fs.existsSync(path.join(OPENCLAW_SKILL_DIR, "SKILL.md")),
+      },
+      hermes: {
+        installed: fs.existsSync(path.join(os.homedir(), ".hermes")),
+        enabled: hermesEnabled,
+        configured: hermesEnabled,
+      },
+    },
+  };
+}
 
-ipcMain.handle("hermes-get-enabled", async () => {
+async function setHarnessEnabled(id, enabled) {
   try {
-    // Check if bonzai skill is installed in Hermes skills directory
-    const skillPath = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
-    return fs.existsSync(skillPath);
-  } catch {
-    return false;
-  }
-});
-
-ipcMain.handle("hermes-set-enabled", async (_event, enabled) => {
-  try {
-    if (enabled) {
-      // 1. Install BonzAI skill into Hermes skills directory
-      if (!fs.existsSync(HERMES_BONZAI_SKILL_DIR)) {
-        fs.mkdirSync(HERMES_BONZAI_SKILL_DIR, { recursive: true });
-      }
-
-      // Copy SKILL.md from our bundled hermes/ dir. Always overwrite — when
-      // the user upgrades BonzAI, their Hermes install should pick up the
-      // refreshed manifest automatically on next toggle-on.
-      const sourceSkill = resolveBundledSkillManifest("hermes");
-      const destSkill = path.join(HERMES_BONZAI_SKILL_DIR, "SKILL.md");
-      if (sourceSkill && fs.existsSync(sourceSkill)) {
-        fs.copyFileSync(sourceSkill, destSkill);
-      } else {
-        console.warn("[Hermes] SKILL.md not found in bundled resources — toggle proceeding but skill file not installed");
-      }
-
-      // 2. Add BonzAI as custom OpenAI-compatible endpoint in .env
-      let envContent = "";
-      if (fs.existsSync(HERMES_ENV_PATH)) {
-        envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
-      }
-
-      // Add/update BONZAI endpoint variables if not present
-      if (!envContent.includes("BONZAI_BASE_URL")) {
-        const bonzaiEnv = [
-          "",
-          "# BonzAI Decentralized AI - Local inference endpoint",
-          `BONZAI_BASE_URL=http://127.0.0.1:${OPENCLAW_API_PORT}/v1`,
-          "BONZAI_API_KEY=bonzai-local",
-        ].join("\n");
-        envContent += bonzaiEnv + "\n";
-        fs.writeFileSync(HERMES_ENV_PATH, envContent);
-      }
-
-      console.log("[Hermes] Integration enabled — skill installed and env configured");
-    } else {
-      // Remove bonzai skill directory
-      if (fs.existsSync(HERMES_BONZAI_SKILL_DIR)) {
-        fs.rmSync(HERMES_BONZAI_SKILL_DIR, { recursive: true });
-      }
-
-      // Remove BonzAI env vars from .env
-      if (fs.existsSync(HERMES_ENV_PATH)) {
-        let envContent = fs.readFileSync(HERMES_ENV_PATH, "utf8");
-        envContent = envContent
-          .split("\n")
-          .filter(line =>
-            !line.includes("BONZAI_BASE_URL") &&
-            !line.includes("BONZAI_API_KEY") &&
-            !line.includes("# BonzAI Decentralized AI")
-          )
-          .join("\n");
-        fs.writeFileSync(HERMES_ENV_PATH, envContent);
-      }
-
-      console.log("[Hermes] Integration disabled — skill removed");
-    }
-
-    return { success: true };
+    if (id === "openclaw") configureOpenClaw(enabled);
+    else if (id === "hermes") configureHermes(enabled);
+    else throw new Error(`Unknown harness integration: ${id}`);
+    console.log(`[Harness] ${id} ${enabled ? "enabled" : "disabled"}`);
+    return { success: true, status: harnessStatus() };
   } catch (error) {
-    console.error("[Hermes] Failed to update config:", error);
-    return { success: false, error: error.message };
+    console.error(`[Harness] Failed to update ${id}:`, error);
+    return { success: false, error: error.message, status: harnessStatus() };
   }
+}
+
+ipcMain.handle("harness-get-status", async () => harnessStatus());
+ipcMain.handle("harness-set-enabled", async (_event, { id, enabled }) => setHarnessEnabled(id, !!enabled));
+ipcMain.handle("harness-sync", async (_event, id) => {
+  const status = harnessStatus();
+  const ids = id ? [id] : ["openclaw", "hermes"];
+  for (const integrationId of ids) {
+    if (status.integrations[integrationId]?.enabled) {
+      const result = await setHarnessEnabled(integrationId, true);
+      if (!result.success) return result;
+    }
+  }
+  return { success: true, status: harnessStatus() };
 });
+
+// Compatibility handlers for older renderer builds and saved navigation state.
+ipcMain.handle("openclaw-get-enabled", async () => harnessStatus().integrations.openclaw.enabled);
+ipcMain.handle("openclaw-set-enabled", async (_event, enabled) => setHarnessEnabled("openclaw", !!enabled));
+ipcMain.handle("openclaw-is-installed", async () => harnessStatus().integrations.openclaw.installed);
+ipcMain.handle("hermes-get-enabled", async () => harnessStatus().integrations.hermes.enabled);
+ipcMain.handle("hermes-set-enabled", async (_event, enabled) => setHarnessEnabled("hermes", !!enabled));
+ipcMain.handle("hermes-is-installed", async () => harnessStatus().integrations.hermes.installed);
 
 // Open URL in default browser
 ipcMain.handle("open-external", async (_event, url) => {
@@ -3531,42 +3733,9 @@ function escapeAssText(value) {
     .trim();
 }
 
-function splitCaptionLines(script) {
-  const words = String(script || "")
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .split(/\s+/)
-    .map((word) => word.trim())
-    .filter(Boolean);
-  const lines = [];
-  let line = [];
-  for (const word of words) {
-    line.push(word);
-    const endsPhrase = /[.!?;:]$/.test(word);
-    if (line.length >= 4 || (line.length >= 2 && endsPhrase)) {
-      lines.push(line);
-      line = [];
-    }
-  }
-  if (line.length) lines.push(line);
-  return lines;
-}
-
-function buildKaraokeAss(script, durationSeconds, watermark = "BonzAI") {
-  const lines = splitCaptionLines(script);
-  const totalWords = Math.max(1, lines.reduce((sum, line) => sum + line.length, 0));
-  const totalCentis = Math.max(100, Math.round(Math.max(1, durationSeconds) * 100));
-  const leadSeconds = 0.28;
-  let cursor = 0;
-  const events = lines.map((line) => {
-    const lineCentis = Math.max(80, Math.round((line.length / totalWords) * totalCentis));
-    const start = Math.max(0, (cursor / 100) - leadSeconds);
-    const end = Math.min(durationSeconds, ((cursor + lineCentis + 12) / 100) - leadSeconds);
-    const perWord = Math.max(12, Math.round(lineCentis / Math.max(1, line.length)));
-    cursor += lineCentis;
-    const text = line.map((word) => `{\\k${perWord}}${escapeAssText(word)}`).join(" ");
-    return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Karaoke,,0,0,0,,{\\an2\\pos(540,1450)\\fad(60,90)}${text}`;
-  });
+function buildKaraokeAss(script, durationSeconds, watermark = "BonzAI", audioSeconds = durationSeconds, segments = []) {
+  const events = meditationCaptionCues(script, audioSeconds, segments).map(({ text, start, end }) =>
+    `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Karaoke,,0,0,0,,{\\an2\\pos(540,1450)\\fad(60,90)}${escapeAssText(text)}`);
 
   return `[Script Info]
 ScriptType: v4.00+
@@ -3628,13 +3797,13 @@ ipcMain.handle("meditation-export-video", async (_event, payload = {}) => {
     const assPath = path.join(tmpDir, "karaoke.ass");
 
     await fs.promises.writeFile(imagePath, await readMediaSource(payload.imageSource));
-    await fs.promises.writeFile(audioPath, await readMediaSource(payload.audioSource));
-
-    const durationSeconds = Math.max(1, Math.round(Number(payload.durationSeconds) || 30));
-    await fs.promises.writeFile(assPath, buildKaraokeAss(payload.script || "", durationSeconds, payload.watermark || "BonzAI"), "utf8");
+    const audioBytes = await readMediaSource(payload.audioSource);
+    await fs.promises.writeFile(audioPath, audioBytes);
+    const { audioSeconds, durationSeconds } = meditationExportTiming(wavDuration(audioBytes), payload.requestedDurationSeconds || payload.durationSeconds);
+    await fs.promises.writeFile(assPath, buildKaraokeAss(payload.script || "", durationSeconds, payload.watermark || "BonzAI", audioSeconds, payload.captionSegments || []), "utf8");
 
     const ass = escapeFilterPath(assPath);
-    const frameCount = Math.max(30, durationSeconds * 30);
+    const frameCount = Math.max(30, Math.ceil(durationSeconds * 30));
     const filter = [
       "scale=1080:1920:force_original_aspect_ratio=increase",
       "crop=1080:1920",
@@ -3643,33 +3812,9 @@ ipcMain.handle("meditation-export-video", async (_event, payload = {}) => {
       `subtitles='${ass}'`,
     ].join(",");
 
-    await runFfmpeg([
-      "-y",
-      "-loop", "1",
-      "-framerate", "30",
-      "-t", String(durationSeconds),
-      "-i", imagePath,
-      "-i", audioPath,
-      "-vf", filter,
-      "-map", "0:v:0",
-      "-map", "1:a:0",
-      "-c:v", "libx264",
-      "-profile:v", "baseline",
-      "-level", "4.0",
-      "-pix_fmt", "yuv420p",
-      "-preset", "veryfast",
-      "-crf", "19",
-      "-c:a", "aac",
-      "-b:a", "192k",
-      "-ar", "48000",
-      "-ac", "2",
-      "-shortest",
-      "-movflags", "+faststart",
-      "-brand", "mp42",
-      filePath,
-    ]);
+    await runFfmpeg(meditationVideoArgs({ imagePath, audioPath, videoFilter: filter, durationSeconds, outputPath: filePath }));
 
-    return { success: true, path: filePath };
+    return { success: true, path: filePath, durationSeconds, narrationDurationSeconds: audioSeconds };
   } catch (e) {
     console.error("[meditation-export-video] Error:", e);
     return { success: false, error: e.message };
@@ -3808,30 +3953,18 @@ const SOCIAL_OAUTH_CONFIG = {
     scopes: ['user.info.basic', 'video.publish', 'video.upload'],
   },
   x: {
-    authUrl: 'https://twitter.com/i/oauth2/authorize',
-    tokenUrl: 'https://api.twitter.com/2/oauth2/token',
+    authUrl: 'https://x.com/i/oauth2/authorize',
+    tokenUrl: 'https://api.x.com/2/oauth2/token',
     redirectUri: 'bonzai://social/callback/x',
     scopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access', 'media.write'],
     usePKCE: true,
   },
 };
 
-// In-memory credential store (persisted via Electron Store)
 const SOCIAL_CREDS_KEY = 'bonzai-social-credentials';
-
-function getSocialCredentials(platform, companionId) {
-  const all = store.get(SOCIAL_CREDS_KEY, {});
-  return all[`${platform}:${companionId}`] || null;
-}
-
-function setSocialCredentials(platform, companionId, tokens) {
-  const all = store.get(SOCIAL_CREDS_KEY, {});
-  all[`${platform}:${companionId}`] = {
-    ...tokens,
-    updatedAt: Date.now(),
-  };
-  store.set(SOCIAL_CREDS_KEY, all);
-}
+const socialVault = socialCredentialVault(store, safeStorage);
+const getSocialCredentials = (platform, companionId) => socialVault.read(platform, companionId);
+const setSocialCredentials = (platform, companionId, tokens) => socialVault.write(platform, companionId, tokens);
 
 /**
  * Start OAuth flow for a social platform.
@@ -3885,11 +4018,14 @@ ipcMain.handle("social:oauth-start", async (_event, { platform, companionId }) =
 
     authWindow.loadURL(authUrl);
 
-    // Listen for redirect
+    // Consume the OAuth code once, even when Electron emits both redirect events.
+    let exchanging = false;
     const handleRedirect = async (redirectUrl) => {
       try {
         const url = new URL(redirectUrl);
-        if (!redirectUrl.startsWith(config.redirectUri)) return;
+        const expected = new URL(config.redirectUri);
+        if (url.protocol !== expected.protocol || url.host !== expected.host || url.pathname !== expected.pathname || exchanging) return;
+        exchanging = true;
 
         const code = url.searchParams.get('code');
         const returnedState = url.searchParams.get('state');
@@ -3927,7 +4063,7 @@ ipcMain.handle("social:oauth-start", async (_event, { platform, companionId }) =
 
         const tokens = await tokenRes.json();
 
-        if (tokens.error) {
+        if (!tokenRes.ok || !tokens.access_token || tokens.error) {
           resolve({ success: false, error: tokens.error_description || tokens.error });
           authWindow.close();
           return;
@@ -3940,7 +4076,7 @@ ipcMain.handle("social:oauth-start", async (_event, { platform, companionId }) =
         // Store credentials
         setSocialCredentials(platform, companionId, tokens);
 
-        resolve({ success: true, tokens });
+        resolve({ success: true, ...(platform === 'x' ? { account: credentialStatus(tokens) } : { tokens }) });
         authWindow.close();
       } catch (e) {
         resolve({ success: false, error: e.message });
@@ -3967,13 +4103,14 @@ ipcMain.handle("social:oauth-start", async (_event, { platform, companionId }) =
  * Get stored social credentials for a platform/companion.
  */
 ipcMain.handle("social:get-credentials", async (_event, { platform, companionId }) => {
-  return getSocialCredentials(platform, companionId);
+  const credentials = getSocialCredentials(platform, companionId);
+  return platform === 'x' ? credentialStatus(credentials) : credentials;
 });
 
 /**
  * Refresh OAuth token for a platform.
  */
-ipcMain.handle("social:refresh-token", async (_event, { platform, companionId }) => {
+async function refreshSocialToken(platform, companionId) {
   const config = SOCIAL_OAUTH_CONFIG[platform];
   const creds = getSocialCredentials(platform, companionId);
 
@@ -4009,11 +4146,20 @@ ipcMain.handle("social:refresh-token", async (_event, { platform, companionId })
     if (!tokens.refresh_token) tokens.refresh_token = creds.refresh_token;
 
     setSocialCredentials(platform, companionId, tokens);
-    return { success: true, tokens };
+    return { success: true, ...(platform === 'x' ? { account: credentialStatus(tokens) } : { tokens }) };
   } catch (e) {
     return { success: false, error: e.message };
   }
+ }
+ipcMain.handle("social:refresh-token", (_event, { platform, companionId }) => refreshSocialToken(platform, companionId));
+const xTransport = createXTransport({
+  credentials: agentId => getSocialCredentials('x', agentId),
+  refresh: async agentId => {
+    const result = await refreshSocialToken('x', agentId);
+    if (!result.success) throw new Error(result.error);
+  },
 });
+registerXChannel({ ipcMain, store, transport: xTransport, ffmpegPath: resolveFfmpegPath });
 
 /**
  * Generic social API call through main process (CORS bypass).
@@ -4116,9 +4262,8 @@ ipcMain.handle("social:media-upload", async (_event, { platform, url, accessToke
  * Disconnect a social platform for a companion.
  */
 ipcMain.handle("social:disconnect", async (_event, { platform, companionId }) => {
-  const all = store.get(SOCIAL_CREDS_KEY, {});
-  delete all[`${platform}:${companionId}`];
-  store.set(SOCIAL_CREDS_KEY, all);
+  if (platform === 'x') pausePublicSession(companionId);
+  socialVault.remove(platform, companionId);
   return { success: true };
 });
 
@@ -4129,7 +4274,7 @@ ipcMain.handle("social:get-connected", async (_event, { companionId }) => {
   const all = store.get(SOCIAL_CREDS_KEY, {});
   const connected = {};
   for (const platform of ['instagram', 'tiktok', 'x']) {
-    const creds = all[`${platform}:${companionId}`];
+    const creds = getSocialCredentials(platform, companionId);
     if (creds?.access_token) {
       connected[platform] = {
         connected: true,
@@ -4245,12 +4390,7 @@ ipcMain.handle("zhc-chat-stream", chatStreamStateless);
 ipcMain.handle("usage:get-lifetime-tokens", getLifetimeTokenUsage);
 ipcMain.handle("model-abort-chat-stream", (event) => {
   const aborted = _abortChat(event.sender.id);
-  if (!aborted) {
-    // Fallback: if no tracked controller, try to stop the llama-server
-    // subprocess directly (covers edge cases where stream tracking
-    // desynchronised).
-    try { llamaServer.stopModel({ force: false }); } catch { /* best-effort abort fallback */ }
-  }
+  // Cancellation is scoped to this renderer. Never kill another caller’s model.
   return aborted;
 });
 ipcMain.handle("model-chat-vision", chatWithVision);
@@ -4296,7 +4436,7 @@ const BONZAI_VISION_MODEL = Object.freeze({
   mmproj: "meetara-vl-qwen3.5-0.8b.gguf",
 });
 
-async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens } = {}) {
+async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens, review } = {}) {
   const encoded = image_base64 || image;
   if (!encoded) throw new Error("image_base64 is required");
   const modelPath = path.join(MODEL_DIR, BONZAI_VISION_MODEL.filename);
@@ -4319,6 +4459,7 @@ async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens 
     : `data:image/jpeg;base64,${encoded}`;
   const text = await pool.chat({
     modelKey: BONZAI_VISION_MODEL.key,
+    ...(review === true ? { responseFormat: VISUAL_REVIEW_FORMAT, enableThinking: false } : {}),
     maxTokens: Number(max_tokens) || 512,
     temperature: 0.1,
     messages: [{
@@ -4335,6 +4476,8 @@ async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens 
   });
   return String(text).replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
+
+ipcMain.handle("vision-analyze-local", (_event, payload) => runCrossPlatformVision(payload));
 
 ipcMain.handle("pool-configure", async (_event, opts) => {
   const pool = await _getPool();
@@ -4451,6 +4594,8 @@ const createWindow = async () => {
   mainWindow = new BrowserWindow({
     width,
     height,
+    minWidth: 800,
+    minHeight: 600,
     x: 0,
     y: 0,
     show: false, // Don't show until ready to prevent resize flicker
@@ -4481,6 +4626,7 @@ const createWindow = async () => {
   // Clear reference when window is closed (important for macOS dock click handling)
   mainWindow.on("closed", () => {
     mainWindow = null;
+    if (process.platform !== 'darwin') app.quit();
   });
 
   if (VITE_DEV_SERVER_URL) {
@@ -4518,7 +4664,7 @@ function configureRendererPermissions() {
       mediaTypes.length === 0 ||
       mediaTypes.includes("audio") ||
       mediaTypes.includes("video");
-    callback(isTrustedRendererUrl(requestingUrl) && isMediaPermission && isAppMediaRequest);
+    callback(isTrustedRendererUrl(requestingUrl) && (permission === "fullscreen" || (isMediaPermission && isAppMediaRequest)));
   });
 
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details = {}) => {
@@ -4532,7 +4678,7 @@ function configureRendererPermissions() {
       mediaTypes.length === 0 ||
       mediaTypes.includes("audio") ||
       mediaTypes.includes("video");
-    return isTrustedRendererUrl(requestingUrl) && isMediaPermission && isAppMediaRequest;
+    return isTrustedRendererUrl(requestingUrl) && (permission === "fullscreen" || (isMediaPermission && isAppMediaRequest));
   });
 }
 
@@ -4567,12 +4713,42 @@ app.on("ready", async () => {
     const dbIpc = await import("./main/ipc/db.js");
     const dbStoreImport = await import("./main/db/import-from-store.js");
     const { dbPath } = dbConn.open();
+    agentWorkerHost.recover();
     console.log(`[Startup] DB open at ${dbPath}`);
     try { dbSnap.takeBootSnapshot(); } catch (err) { console.warn("[Startup] snapshot failed:", err?.message); }
     const result = dbMigrate.runMigrations();
     if (result.applied.length) console.log(`[Startup] applied ${result.applied.length} migrations`);
     if (result.skipped.length) console.log(`[Startup] ${result.skipped.length} migrations already applied`);
-    dbIpc.registerDbIpc();
+    const { clearBusinessDemos } = await import("./main/workspace/cleanup.js");
+    clearBusinessDemos();
+    dbIpc.registerDbIpc({ connectorRequest: performConnectorRequest, readConnectorCredential });
+    for (const id of recoverStoppedExecutors()) recoverInterruptedCompanyTasks(id, Date.now()+1);
+    // Contractual HVAC monitoring stays in the main process: it keeps
+    // evaluating P0-P3 deadlines and generating due preventive work even
+    // when the renderer window is closed (while the desktop app is running).
+    const gmaoRepo = await import("./main/db/repos/gmao.js");
+    const { workspaceLicense } = await import("./main/workspace/ipc.js");
+    const runGmaoMonitor = () => {
+      if (!workspaceLicense().status().unlocked) return;
+      try {
+        const { db } = dbConn.get();
+        const companies = db.prepare("SELECT company_id AS companyId FROM gmao_contracts WHERE status = 'active'").all();
+        for (const { companyId } of companies) {
+          const preventive = gmaoRepo.generatePreventive(companyId, Date.now());
+          const automation = gmaoRepo.runAutomation(companyId, Date.now());
+          if (preventive.generated || automation.actions?.length) {
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (!win.isDestroyed()) win.webContents.send("db:gmao:changed", { companyId });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[GMAO] background monitor warning:", err?.message);
+      }
+    };
+    if (gmaoMonitorTimer) clearInterval(gmaoMonitorTimer);
+    gmaoMonitorTimer = setInterval(runGmaoMonitor, 5 * 60 * 1000);
+    setTimeout(runGmaoMonitor, 10_000);
     // First-boot one-shot: copy each domain's data from electron-store
     // into SQLite. Idempotent — flagged per-table in store.
     try { await dbStoreImport.runFirstBootImport(store); }
@@ -4730,14 +4906,23 @@ app.on("ready", async () => {
 
   // Create window immediately to prevent crash when clicking dock icon
   // The Vue app will show loading state while server starts
+  companyRuntime = createCompanyRuntime({ BrowserWindow, ipcMain, app, powerSaveBlocker,
+    preload: path.join(__dirname, 'preload.js'),
+    url: VITE_DEV_SERVER_URL ? new URL('company-runtime.html', VITE_DEV_SERVER_URL).href : null,
+    file: path.join(__dirname, '../renderer/main_window/company-runtime.html'),
+    getUI: () => mainWindow,
+    onInterrupted: webContentsId => {
+      for (const id of interruptExecutor(`${process.pid}:${webContentsId}`)) recoverInterruptedCompanyTasks(id, Date.now()+1);
+    },
+  });
   await createWindow();
+  void companyRuntime.start().catch(error => console.error('[company-runtime]', error.message));
 
   // Start Python server in background (Vue app handles loading UI)
   await startPythonSubprocess();
 
   try {
-    await checkPythonServer(flaskURL);
-    console.log("Python server is running!");
+    if (await checkPythonServer(flaskURL)) console.log("Python server is running!");
   } catch (error) {
     console.error("Failed to start Python server:", error);
     // Don't quit - notify user and allow retry
@@ -4748,7 +4933,11 @@ app.on("ready", async () => {
   }
 });
 
-ipcMain.handle("start-server", startPythonSubprocess);
+ipcMain.handle("get-server-status", () => latestServerStatus);
+ipcMain.handle("start-server", async () => {
+  await startPythonSubprocess();
+  return checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`);
+});
 ipcMain.handle("stop-server", killPythonSubprocess);
 ipcMain.handle("restart-server", restartServerManually);
 ipcMain.handle("system-information", systemInformation);
@@ -5071,6 +5260,11 @@ ipcMain.handle("synth-export", async (_event, { name }) => {
 
 // Kill the Python server before the app exits (prevents orphaned processes on port 65000)
 app.on("before-quit", async (e) => {
+  pythonStopVersion++;
+  isIntentionalShutdown = true;
+  clearTimeout(serverRestartTimer);
+  serverRestartTimer = null;
+  pythonRun?.controller.abort();
   if (subpy && subpy.pid) {
     e.preventDefault();
     console.log("[before-quit] Killing Python server before exit...");
@@ -5087,12 +5281,16 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (subpy == null) startPythonSubprocess();
+  if (subpy == null) {
+    startPythonSubprocess().then(() => checkPythonServer(`http://127.0.0.1:${PY_SERVER_PORT}`)).catch((error) => {
+      notifyServerStatus("error", { message: error.message, canRetry: true });
+    });
+  }
   // Show existing window or create new one if none exists
   // Check both that mainWindow exists AND is not destroyed (belt and suspenders)
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
-  } else if (BrowserWindow.getAllWindows().length === 0) {
+  } else {
     createWindow();
   }
 });
@@ -5128,6 +5326,7 @@ async function systemInformation() {
     ram: totalMem,
     ramAvailable: freeMem,
     memBudget,
+    platform: process.platform,
     gpu: "Unknown",
     vram: 0,
     ip,
@@ -5420,11 +5619,31 @@ async function downloadModel(_event, url, filename) {
   // Single file download
   const normalizedFilename = normalizeModelFilename(filename);
 
+  if (activeDownloads.has(normalizedFilename)) return { error: "This model is already downloading" };
+
   // Track active download
   activeDownloads.set(normalizedFilename, { url, percent: 0, status: "downloading" });
   activeDownloadItems.delete(normalizedFilename);
 
   try {
+    const controller = new AbortController();
+    activeDownloadItems.set(normalizedFilename, { cancel: () => controller.abort() });
+    const accelerated = await parallelDownload(url, path.join(MODEL_DIR, normalizedFilename), {
+      signal: controller.signal,
+      onProgress: percent => {
+        win.setProgressBar(percent);
+        win.webContents.send("download-progress", { filename: normalizedFilename, percent });
+        activeDownloads.set(normalizedFilename, { url, percent, status: "downloading" });
+      },
+    });
+    controller.signal.throwIfAborted();
+    if (accelerated) {
+      win.setProgressBar(-1);
+      activeDownloads.delete(normalizedFilename);
+      activeDownloadItems.delete(normalizedFilename);
+      win.webContents.send("download-progress", { filename: normalizedFilename, percent: 1, status: "completed" });
+      return { savedPath: accelerated };
+    }
     const dl = await download(win, url, {
       filename: normalizedFilename,
       directory: MODEL_DIR,
@@ -5451,6 +5670,7 @@ async function downloadModel(_event, url, filename) {
     // Remove from tracking on completion
     activeDownloads.delete(normalizedFilename);
     activeDownloadItems.delete(normalizedFilename);
+    win.webContents.send("download-progress", { filename: normalizedFilename, percent: 1, status: "completed" });
     return { savedPath: dl.getSavePath() };
   } catch (error) {
     console.error("Download failed:", error);
@@ -5458,9 +5678,11 @@ async function downloadModel(_event, url, filename) {
     // Remove from tracking on failure
     activeDownloads.delete(normalizedFilename);
     activeDownloadItems.delete(normalizedFilename);
-    if (error instanceof CancelError) {
+    if (error instanceof CancelError || error.name === "AbortError") {
+      win.webContents.send("download-progress", { filename: normalizedFilename, percent: 0, status: "canceled" });
       return { canceled: true };
     }
+    win.webContents.send("download-progress", { filename: normalizedFilename, status: "failed", error: error.message || "Download failed" });
     return { error: error.message || "Download failed" };
   }
 }
@@ -5644,6 +5866,7 @@ async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
     activeDownloads.delete(mergedFilename);
     activeDownloadItems.delete(mergedFilename);
     console.log(`[Multi-Part Download] Complete: ${mergedFilename}`);
+    win.webContents.send("download-progress", { filename: mergedFilename, percent: 1, status: "completed" });
 
     return {
       savedPath: mergedPath,
@@ -5659,6 +5882,7 @@ async function downloadMultiPartModel(win, baseUrl, filename, multiPart) {
     if (error instanceof CancelError) {
       return { canceled: true, isMultiPart: true };
     }
+    win.webContents.send("download-progress", { filename: mergedFilename, status: "failed", error: error.message || "Multi-part download failed" });
     return { error: error.message || "Multi-part download failed" };
   }
 }
@@ -5719,6 +5943,8 @@ function deleteModel(_event, modelname) {
 }
 
 function computeMaxContextForModel(currentModel, sysInfo) {
+  const hybrid = qwen38ContextPlan(currentModel, sysInfo);
+  if (hybrid) { console.log('[CTX] Qwen3.8 hybrid attention', hybrid); return hybrid.context; }
   // For MoE models, activeParameters drives KV-cache sizing (only active params
   // contribute to attention). Total parameters drives weight-memory estimation
   // (all expert weights are loaded).
@@ -5859,6 +6085,7 @@ const MODEL_SPECS = {
   "qwen3.5-9b":                     { parameters: 9e9, context: 262144 },
   "qwen3.5-27b":                    { parameters: 27e9, activeParameters: 8e9, context: 262144 },
   "qwen3.6-27b":                    { parameters: 27e9, context: 262144 },
+  "qwen3.8-27b":                    { parameters: 27e9, context: 262144 },
   "qwen3.5-35b-a3b":                { parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144 },
   "qwen3.6-35b-a3b":                { parameters: 35e9, activeParameters: 3e9, isMoE: true, context: 262144 },
   "qwen3.5-122b-a10b":              { parameters: 122e9, activeParameters: 10e9, isMoE: true, context: 262144 },
@@ -5887,6 +6114,8 @@ const MODEL_SPECS = {
 
 // Display name lookup — filename substring → human-readable model name
 const MODEL_NAMES = {
+  "qwen3.8-27b-turbofcfusion-735-882-here-uncen-neo-coder-max-low": "Qwen 3.8 27B LOW MTP",
+  "qwen3.8-27b-turbofcfusion": "Qwen 3.8 27B Turbo Fable MTP",
   "gemma-3-1b-it":                  "Gemma 3 1B",
   "gemma-3-12b-it":                 "Gemma 3 12B",
   "gpt-oss-20b":                    "GPT-OSS 20B",
@@ -5908,6 +6137,9 @@ const MODEL_NAMES = {
   "qwen3.6-27b-ud-q2":             "Qwen 3.6 27B MTP Q2",
   "qwen3.6-27b-ud-q4":             "Qwen 3.6 27B MTP Q4",
   "qwen3.6-27b-ud-q8":             "Qwen 3.6 27B MTP Q8",
+  "qwen3.8-27b-ud-q2":             "Qwen 3.8 27B Q2 K XL",
+  "qwen3.8-27b-ud-q4":             "Qwen 3.8 27B Q4 K XL",
+  "qwen3.8-27b-ud-q8":             "Qwen 3.8 27B Q8 K XL",
   "qwen3.5-9b-deepseek-v4-flash":  "Qwen 3.5 9B DeepSeek V4 Flash",
   "qwen3.5-9b":                    "Qwen 3.5 9B MTP",
   "qwen3.5-0.8b":                  "Qwen 3.5 0.8B MTP",
@@ -6093,7 +6325,12 @@ async function loadModel(_event, currentModel) {
   }
 
   const incomingFilename = (currentModel.filename || "").toLowerCase();
+  if (isQwen38LowMtp(incomingFilename)) {
+    currentModel = { ...currentModel, context: Math.min(currentModel.context || LOW_MTP_CONTEXT, LOW_MTP_CONTEXT), kvCacheTypeK: currentModel.kvCacheTypeK || "q8_0", kvCacheTypeV: currentModel.kvCacheTypeV || "q8_0" };
+  }
   const isQwenMtpGguf = (
+    isQwen38LowMtp(incomingFilename) ||
+    /^qwen3\.8-27b-turbofcfusion-735-882-here-uncen-neo-coder-max-mtp-(?:iq[23]_m|q[45]_k_m|q6_k|q8_0)\.gguf$/.test(incomingFilename) ||
     /^qwen3\.5-(?:0\.8b|2b|4b|9b|27b)-ud-q[248]_k_xl\.gguf$/.test(incomingFilename) ||
     /^qwen3\.5-(?:35b-a3b|122b-a10b|397b-a17b)-ud-q[248]_k_xl(?:-\d{5}-of-\d{5})?\.gguf$/.test(incomingFilename) ||
     /^qwen3\.6-27b-ud-q[248]_k_xl\.gguf$/.test(incomingFilename) ||
@@ -6148,6 +6385,8 @@ async function loadModel(_event, currentModel) {
       }
     }
   }
+
+  assertModelIdle();
 
   // Stop any existing subprocess before loading a new one (frees GPU memory).
   // Clear chatHistory, system prompt, and currentLoadedModel at this point —
@@ -6220,6 +6459,8 @@ async function loadModel(_event, currentModel) {
     }
   }
 
+  // Use the actual quantized file size, not a catalog approximation.
+  currentModel.filesizeBytes = fs.statSync(modelPath).size;
   // Decide on a memory-safe context size via the existing heuristic.
   const sysInfo = await systemInformation();
   const heuristicCtx = computeMaxContextForModel(currentModel, sysInfo);
@@ -6234,6 +6475,8 @@ async function loadModel(_event, currentModel) {
     mmprojPath,
     draftPath,
     ctxSize,
+    kvCacheTypeK: currentModel.kvCacheTypeK,
+    kvCacheTypeV: currentModel.kvCacheTypeV,
     ngl: 99,
     flashAttention: currentModel.flashAttention !== false,
     parallelSlots: currentModel.parallelSlots || 1,
@@ -6245,6 +6488,8 @@ async function loadModel(_event, currentModel) {
 
   currentLoadedModel = {
     ...currentModel,
+    context: ctxSize,
+    requestedContext: currentModel.context,
     isMultimodal: !!mmprojPath,
     port,
   };
@@ -6260,6 +6505,9 @@ async function loadModel(_event, currentModel) {
     activeParameters: currentModel.activeParameters,
     isMoE: currentModel.isMoE,
     context: currentModel.context,
+    ctxSize,
+    kvCacheTypeK: currentModel.kvCacheTypeK,
+    kvCacheTypeV: currentModel.kvCacheTypeV,
     mmproj: currentModel.mmproj,
     draftModel: currentModel.draftModel,
     specType: currentModel.specType,
@@ -6288,7 +6536,7 @@ async function loadModel(_event, currentModel) {
       filename: currentModel.filename,
       modelname: currentModel.modelname || resolveModelName(currentModel.filename),
       parameters: currentModel.parameters,
-      context: currentModel.context,
+      context: ctxSize,
       isMultimodal: !!mmprojPath,
       model_provenance: currentModel.model_provenance || currentModel.provenance || null,
       provenance: currentModel.provenance || currentModel.model_provenance || null,
@@ -6414,7 +6662,7 @@ function recordLifetimeTokenUsage({ messages = [], output = "", usage = null } =
  * "request exceeds the available context size" once history grows.
  */
 function _buildMessages(userMessage, opts = {}) {
-  const ctxSize = currentLoadedModel?.context || lastLoadedSpec?.ctxSize || 4096;
+  const ctxSize = llamaServer.getActiveSpec()?.ctxSize || currentLoadedModel?.context || lastLoadedSpec?.ctxSize || 4096;
   const maxTokens = opts.maxTokens || 2048;
   const systemTokens = _estTokens(currentSystemPrompt || "");
   const userTokens = _estTokens(userMessage || "");
@@ -6462,7 +6710,7 @@ async function chat(_event, input) {
   const returnMetadata = typeof input === "object" && input.returnMetadata;
 
   const startTime = Date.now();
-  const messages = _buildMessages(userMessage, { maxTokens });
+  const messages = input?.isolated ? [{ role: "user", content: userMessage }] : _buildMessages(userMessage, { maxTokens });
   const result = await llamaServer.chat({
     messages,
     temperature,
@@ -6472,8 +6720,10 @@ async function chat(_event, input) {
 
   const assistantMessage = result.choices?.[0]?.message?.content ?? "";
   recordLifetimeTokenUsage({ messages, output: assistantMessage, usage: result.usage });
-  chatHistory.push({ role: "user", content: userMessage });
-  chatHistory.push({ role: "assistant", content: assistantMessage });
+  if (!input?.isolated) {
+    chatHistory.push({ role: "user", content: userMessage });
+    chatHistory.push({ role: "assistant", content: assistantMessage });
+  }
 
   if (returnMetadata) {
     const usage = result.usage || {};
@@ -6539,7 +6789,7 @@ async function chatStreamStateless(event, input) {
 
   const win = BrowserWindow.fromWebContents(event.sender);
   const messages = [];
-  if (currentSystemPrompt) messages.push({ role: "system", content: currentSystemPrompt });
+  if (!input?.isolated && currentSystemPrompt) messages.push({ role: "system", content: currentSystemPrompt });
   messages.push({ role: "user", content: userMessage });
 
   const ctrl = new AbortController();
@@ -6603,7 +6853,7 @@ async function chatStream(event, input) {
   _setChatAbort(key, ctrl);
 
   try {
-    const messages = _buildMessages(userMessage, { maxTokens });
+    const messages = input?.isolated ? [{ role: "user", content: userMessage }] : _buildMessages(userMessage, { maxTokens });
     const assistantMessage = await llamaServer.chatStream(
       {
         messages,
@@ -6621,8 +6871,10 @@ async function chatStream(event, input) {
     );
 
     recordLifetimeTokenUsage({ messages, output: assistantMessage });
-    chatHistory.push({ role: "user", content: userMessage });
-    chatHistory.push({ role: "assistant", content: assistantMessage });
+    if (!input?.isolated) {
+      chatHistory.push({ role: "user", content: userMessage });
+      chatHistory.push({ role: "assistant", content: assistantMessage });
+    }
     return assistantMessage;
   } catch (err) {
     if (err.name === "AbortError" || ctrl.signal.aborted) {
@@ -6638,7 +6890,14 @@ async function chatStream(event, input) {
   }
 }
 
+function assertModelIdle() {
+  if (llamaServer.isRunning() && llamaServer.inFlightCount?.() > 0) {
+    throw new Error('A model is working on an active request. Wait for it to finish before changing or unloading it.');
+  }
+}
+
 async function unloadModel(_event, { force } = {}) {
+  assertModelIdle();
   // "Always loaded" guard: skip unload unless forced (hot-swap) or user-initiated
   if (!force && alwaysLoadedEnabled && llamaServer.isRunning()) {
     console.log("[LLM] Skipping unload — always-loaded is enabled. Use force=true to hot-swap.");
@@ -7243,8 +7502,8 @@ function startOpenClawAPIServer() {
   openclawServer.keepAliveTimeout = 0; // No keep-alive timeout
   openclawServer.headersTimeout = 0; // No headers timeout
 
-  openclawServer.listen(OPENCLAW_API_PORT, () => {
-    console.log(`[OpenClaw API] Server running on http://localhost:${OPENCLAW_API_PORT}`);
+  openclawServer.listen(OPENCLAW_API_PORT, "127.0.0.1", () => {
+    console.log(`[Harness API] Local-only server running on http://127.0.0.1:${OPENCLAW_API_PORT}`);
     console.log(`[OpenClaw API] Timeouts disabled for long-running generation requests`);
     console.log(`[OpenClaw API] Endpoints:`);
     console.log(`  GET  /v1/models            - List models (OpenAI-compatible)`);

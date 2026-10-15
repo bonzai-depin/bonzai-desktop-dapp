@@ -71,6 +71,12 @@ export const issues = sqliteTable(
     assigneeCompanion: text("assignee_companion"),
     labels: text("labels", { mode: "json" }),
     createdBy: text("created_by"),               // ceo | user | …
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    nextAttemptAt: integer("next_attempt_at"),
+    lastError: text("last_error"),
+    execution: text("execution", { mode: "json" }),
+    executionRevision: integer("execution_revision").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -79,6 +85,7 @@ export const issues = sqliteTable(
     byGoal: index("idx_issues_goal").on(t.goalId),
     byRole: index("idx_issues_role").on(t.assigneeRole, t.status),
     byPriority: index("idx_issues_priority").on(t.companyId, t.status, t.priority),
+    byReady: index("idx_issues_ready").on(t.companyId, t.status, t.assigneeRole, t.nextAttemptAt, t.priority, t.createdAt),
   }),
 );
 
@@ -140,6 +147,8 @@ export const pendingApprovals = sqliteTable(
   {
     id: text("id").primaryKey(),
     companyId: text("company_id").notNull(),
+    issueId: text("issue_id"),
+    stepId: text("step_id"),
     cls: text("cls").notNull(),                   // action class: spend.over.250 | hire | broadcastChannel | …
     action: text("action", { mode: "json" }).notNull(),  // full action JSON
     role: text("role"),

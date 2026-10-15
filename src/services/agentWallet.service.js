@@ -7,7 +7,7 @@
  * Security:
  * - Master secret is generated once and stored encrypted locally
  * - Agent wallets are derived deterministically from master secret + companion ID
- * - Private keys are encrypted with user password before storage
+ * - Private keys and derivation secrets use OS-protected local credential storage
  *
  * Payment Flow:
  * - Uses native ETH transfers (no USDC, no ERC-3009)
@@ -16,13 +16,12 @@
 
 import { ethers } from 'ethers';
 import { CONFIG } from '../config/web3.config.js';
+import { walletCredentials } from './walletCredentials.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MASTER_SECRET_KEY = 'bonzai-agent-master-secret';
-const AGENT_WALLET_PREFIX = 'agent-wallet-';
 const DERIVATION_PATH_BASE = "m/44'/60'/0'/0/";
 
 // Spending limit defaults (read from config, fallback to hardcoded)
@@ -81,28 +80,9 @@ const SUPPORTED_CHAINS = {
  * @returns {Promise<Uint8Array>} 32-byte master secret
  */
 async function getMasterSecret() {
-  console.warn('[AgentWallet] getMasterSecret() is deprecated. Use OWS wallets via walletProviderService.');
-  try {
-    // Try to get existing master secret from Electron store
-    const stored = await window.electronAPI?.store?.get(MASTER_SECRET_KEY);
-
-    if (stored) {
-      return ethers.getBytes(stored);
-    }
-
-    // Generate new master secret
-    const masterSecret = ethers.randomBytes(32);
-    const hexSecret = ethers.hexlify(masterSecret);
-
-    // Store it (should be encrypted by Electron store)
-    await window.electronAPI?.store?.set(MASTER_SECRET_KEY, hexSecret);
-
-    console.log('[AgentWallet] Generated new master secret');
-    return masterSecret;
-  } catch (error) {
-    console.error('[AgentWallet] Failed to get master secret:', error);
-    throw new Error('Failed to initialize agent wallet system');
-  }
+  // Generation and legacy migration happen atomically in the protected main process.
+  const stored = await walletCredentials.getMasterSecret(true);
+  return ethers.getBytes(stored);
 }
 
 /**
@@ -110,12 +90,7 @@ async function getMasterSecret() {
  * @returns {Promise<boolean>}
  */
 async function hasMasterSecret() {
-  try {
-    const stored = await window.electronAPI?.store?.get(MASTER_SECRET_KEY);
-    return !!stored;
-  } catch {
-    return false;
-  }
+  return Boolean(await walletCredentials.getMasterSecret(false));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -185,17 +160,11 @@ export async function generateAgentWalletHD(index) {
  * @param {{address: string, privateKey: string}} wallet - The wallet to store
  */
 export async function storeAgentWalletCredentials(companionId, wallet) {
-  const key = `${AGENT_WALLET_PREFIX}${companionId}`;
-
-  // Store wallet info - private key is stored but should be encrypted by Electron store
-  // In production, consider additional encryption with user password
-  await window.electronAPI?.store?.set(key, {
+  await walletCredentials.setLegacyWallet(companionId, {
     address: wallet.address,
     privateKey: wallet.privateKey,
     createdAt: Date.now(),
   });
-
-  console.log('[AgentWallet] Stored credentials for companion', companionId);
 }
 
 /**
@@ -205,9 +174,7 @@ export async function storeAgentWalletCredentials(companionId, wallet) {
  * @returns {Promise<{address: string, privateKey: string, createdAt: number}|null>}
  */
 export async function getAgentWalletCredentials(companionId) {
-  const key = `${AGENT_WALLET_PREFIX}${companionId}`;
-  const stored = await window.electronAPI?.store?.get(key);
-  return stored || null;
+  return walletCredentials.getLegacyWallet(companionId);
 }
 
 /**
@@ -227,9 +194,7 @@ export async function hasAgentWallet(companionId) {
  * @param {string|number} companionId - The companion's unique identifier
  */
 export async function deleteAgentWalletCredentials(companionId) {
-  const key = `${AGENT_WALLET_PREFIX}${companionId}`;
-  await window.electronAPI?.store?.delete(key);
-  console.log('[AgentWallet] Deleted credentials for companion', companionId);
+  return walletCredentials.deleteLegacyWallet(companionId);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -244,6 +209,9 @@ export async function deleteAgentWalletCredentials(companionId) {
  * @returns {Promise<ethers.Wallet>}
  */
 export async function getAgentWalletSigner(companionId, provider = null) {
+  if (!CONFIG.agentWallet.enabledOperations?.includes('pay')) {
+    throw new Error('Companion wallets are receive-only in this release.');
+  }
   const credentials = await getAgentWalletCredentials(companionId);
 
   if (!credentials) {
@@ -267,6 +235,9 @@ export async function getAgentWalletSigner(companionId, provider = null) {
  * @returns {Promise<ethers.Wallet>}
  */
 export async function getAgentWalletSignerForChain(companionId, chainId) {
+  if (!CONFIG.agentWallet.enabledOperations?.includes('pay')) {
+    throw new Error('Companion wallets are receive-only in this release.');
+  }
   const chainConfig = SUPPORTED_CHAINS[chainId];
   if (!chainConfig) {
     throw new Error(`Chain ${chainId} not supported`);
@@ -287,7 +258,8 @@ export async function getAgentWalletSignerForChain(companionId, chainId) {
  * @returns {Object|null}
  */
 export function getChainConfig(chainId) {
-  return SUPPORTED_CHAINS[chainId] || null;
+  const configured = Object.values(CONFIG.networks || {}).find(network => Number(network.chainId) === Number(chainId));
+  return configured || SUPPORTED_CHAINS[chainId] || null;
 }
 
 /**
@@ -576,7 +548,10 @@ export function resetTxFailures(companionId) {
  * @param {number} chainId - The chain ID (default: Base 8453)
  * @returns {Promise<Object>} Transaction result
  */
-export async function sendEthFromAgentWallet(companionId, to, amountEth, chainId = 8453, options = {}) {
+export async function sendEthFromAgentWallet(companionId, to, amountEth, chainId = CONFIG.agentWallet.defaultChainId, options = {}) {
+  if (!CONFIG.agentWallet.enabledOperations?.includes('pay')) {
+    return { success: false, error: 'Companion wallets are receive-only in this release.' };
+  }
   const { companionName, context } = options;
   const amountWei = ethers.parseEther(amountEth);
 

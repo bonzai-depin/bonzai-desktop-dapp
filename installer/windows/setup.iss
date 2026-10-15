@@ -29,6 +29,9 @@ DisableProgramGroupPage=yes
 OutputDir={#MyOutputDir}
 Compression=lzma2
 SolidCompression=yes
+; Keep setup payload slices below GitHub's per-asset limit.
+DiskSpanning=yes
+DiskSliceSize=1900000000
 SetupIconFile={#MyIconFile}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64compatible

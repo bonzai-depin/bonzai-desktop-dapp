@@ -1,6 +1,7 @@
 ---
 name: bonzai
 description: Local-first AI generation, companions, skills, and peer inference through BonzAI Desktop
+version: 4.0.0-rc.1
 homepage: https://bonzai.sh
 user-invocable: true
 metadata:
@@ -18,16 +19,16 @@ Use BonzAI Desktop for local language and multimodal inference, companion conver
 
 ## Availability
 
-BonzAI Desktop must be running for the local gateway:
+BonzAI Desktop must be running for the gateway. It binds only to the local loopback interface and is not reachable from another device:
 
 ```http
-GET http://localhost:3002/health
+GET http://127.0.0.1:3002/health
 ```
 
 The main synchronous interface is:
 
 ```http
-POST http://localhost:3002/webhook
+POST http://127.0.0.1:3002/webhook
 Content-Type: application/json
 
 {
@@ -40,6 +41,8 @@ Content-Type: application/json
 ```
 
 Retain a stable `channelId` to preserve the corresponding BonzAI session. Wait for the complete response; image, music, and video generation can take several minutes, especially during a first model download.
+
+The current capability manifest is available from `GET http://127.0.0.1:3002/manifest?agent=openclaw`.
 
 ## Commands
 
@@ -100,7 +103,7 @@ Minting is optional and requires a configured wallet, economy network, deployed 
 BonzAI exposes the currently loaded language model through an OpenAI-compatible endpoint:
 
 ```text
-Base URL: http://localhost:3002/v1
+Base URL: http://127.0.0.1:3002/v1
 Endpoint:  /chat/completions
 ```
 

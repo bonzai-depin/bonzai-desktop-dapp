@@ -1,0 +1,3 @@
+[submodule "src/obliteratus"]
+	path = src/obliteratus
+	url = https://github.com/elder-plinius/OBLITERATUS.git

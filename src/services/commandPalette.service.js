@@ -13,6 +13,7 @@
 
 import { reactive, readonly, computed } from "vue";
 import { modelPicker } from "./modelPicker.service.js";
+import { i18n } from "../i18n/index.js";
 
 const _state = reactive({
   open: false,
@@ -32,31 +33,45 @@ const _commands = reactive([
   // ─── Create ──────────────────────────────────────────────────────
   { id: "tab.chat",      label: "Create: Chat",        group: "Create",  keywords: "llm text generate",         action: () => _setMode("chat") },
   { id: "tab.image",     label: "Create: Image",       group: "Create",  keywords: "flux sdxl z-image picture", action: () => _setMode("image") },
-  { id: "tab.audio",     label: "Create: Audio",       group: "Create",  keywords: "music tts kokoro qwen acestep", action: () => _setMode("music") },
+  { id: "tab.audio",     label: "Create: Audio",       group: "Create",  keywords: "music tts kokoro chatterbox ace-step", action: () => _setMode("music") },
   { id: "tab.video",     label: "Create: Video",       group: "Create",  keywords: "ltx wan generation",        action: () => _setMode("video") },
-  { id: "tab.game",      label: "Create: Game",        group: "Create",  keywords: "three dimensional 3d game",  action: () => _setMode("game") },
+  { id: "tab.game",      label: "Create: 3D",        group: "Create",  keywords: "three dimensional 3d game",  action: () => _setMode("game") },
 
   // ─── Earn ────────────────────────────────────────────────────────
-  { id: "modal.rewards",      label: "Earn: Rewards",       group: "Earn",   keywords: "mintpool epoch claim bonzai", action: () => _dispatch("bonzai:open-rewards") },
+  { id: "tab.economy", label: "Protocol: Ownership", group: "Protocol", keywords: "stake contribution provenance", action: () => _setMode("economy") },
+  { id: "tab.markets", label: "Protocol: Markets", group: "Protocol", keywords: "tokens pools uniswap", action: () => _setMode("markets") },
+  { id: "modal.rewards", label: "Protocol: Rewards", group: "Protocol", keywords: "mintpool epoch claim bonzai", action: () => _dispatch("bonzai:open-rewards") },
 
   // ─── Automate ────────────────────────────────────────────────────
-  { id: "tab.agent",     label: "Automate: Agents",    group: "Automate", keywords: "skill smart companion",     action: () => _setMode("agent") },
-  { id: "tab.company",   label: "Automate: Company",   group: "Automate", keywords: "zero human dao company",    action: () => _setMode("company") },
+  { id: "tab.agent",     label: "Automate: Smart Agents", group: "Automate", keywords: "agent companion character create roleplay",     action: () => _setMode("agent") },
+  { id: "tab.company",   label: "Automate: Smart Workflows", group: "Automate", keywords: "workflow skill company team automation business",    action: () => _setMode("company") },
 
   // ─── Train ───────────────────────────────────────────────────────
-  { id: "tab.train-chat",  label: "Train: Chat",   group: "Train",   keywords: "llm training text",       action: () => _setMode("robot-train-chat") },
-  { id: "tab.train-image", label: "Train: Image",  group: "Train",   keywords: "sdxl training image",     action: () => _setMode("robot-train-image") },
-  { id: "tab.train-audio", label: "Train: Audio",  group: "Train",   keywords: "audio training tts",     action: () => _setMode("robot-train-audio") },
+  { id: "tab.tune", label: "Train: Tune", group: "Train", keywords: "llm training text adapters", action: () => _setMode("tune") },
+  { id: "tab.uncensor", label: "Train: Uncensor", group: "Train", keywords: "abliteration model", action: () => _setMode("uncensor") },
+  { id: "tab.memory", label: "Train: Memory", group: "Train", keywords: "graph notes local", action: () => _setMode("memory") },
 
   // ─── Help ────────────────────────────────────────────────────────
-  { id: "tab.faq",          label: "Help: FAQ",          group: "Help",   keywords: "faq questions help",        action: () => _setMode("faq") },
-  { id: "help.harness",     label: "Help: Harness",      group: "Help",   keywords: "openclaw hermes orchestration", action: () => _dispatch("bonzai:open-network") },
+  { id: "tab.licenses", label: "Help: Licenses", group: "Help", keywords: "publisher model terms", action: () => _setMode("licenses") },
+  { id: "help.harness", label: "Help: Harness", group: "Help", keywords: "openclaw hermes orchestration", action: () => _setMode("harness") },
 
   // ─── Tools ───────────────────────────────────────────────────────
   { id: "modal.models",  label: "Choose a model…",   group: "Tools",    keywords: "llm picker engine swap",    shortcut: "⌥⏎",       action: () => modelPicker.show() },
   { id: "modal.specs",   label: "Hardware & stats",  group: "Tools",    keywords: "vram ram gpu performance",  action: () => _dispatch("bonzai:open-specs") },
   { id: "modal.network", label: "Network settings",  group: "Tools",    keywords: "p2p providers mode privacy peers", action: () => _dispatch("bonzai:open-network") },
 ]);
+
+const labelKeys = {
+  'tab.chat': 'nav.chat', 'tab.image': 'nav.image', 'tab.audio': 'nav.audio',
+  'tab.video': 'nav.video', 'tab.game': 'nav.game', 'tab.economy': 'nav.ownership',
+  'tab.markets': 'nav.markets', 'modal.rewards': 'nav.rewards',
+  'tab.agent': 'nav.agents', 'tab.company': 'nav.company', 'tab.tune': 'nav.tune',
+  'tab.uncensor': 'nav.uncensor', 'tab.memory': 'nav.memory',
+  'tab.licenses': 'nav.licenses', 'help.harness': 'nav.harness',
+  'modal.models': 'network.browseModels', 'modal.specs': 'rc.palette.hardware',
+  'modal.network': 'rc.palette.network',
+};
+const groupKeys = { Create: 'nav.create', Protocol: 'nav.earn', Automate: 'nav.automate', Train: 'nav.train', Help: 'nav.help', Tools: 'nav.settings' };
 
 function _setMode(mode) {
   _dispatch("bonzai:set-mode", mode);
@@ -70,7 +85,12 @@ function _dispatch(name, detail) {
 
 export const commandPalette = {
   state: readonly(_state),
-  commands: computed(() => _commands),
+  commands: computed(() => _commands.map(command => ({
+    ...command,
+    label: labelKeys[command.id] ? i18n.t(labelKeys[command.id]) : command.label,
+    group: groupKeys[command.group] ? i18n.t(groupKeys[command.group]) : command.group,
+    keywords: `${command.keywords || ''} ${command.label}`,
+  }))),
 
   show() { _state.open = true; _state.query = ""; },
   hide() { _state.open = false; _state.query = ""; },

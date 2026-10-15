@@ -23,8 +23,12 @@
  */
 
 .bz-btn {
-  height: 36px;
-  padding: 0 var(--bz-space-4);
+  min-width: 0;
+  max-width: 100%;
+  min-height: 36px;
+  height: auto;
+  max-width: 100%;
+  padding: 7px var(--bz-space-4);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -40,12 +44,28 @@
   position: relative;
   overflow: hidden;
   text-decoration: none;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
   transition:
     background var(--bz-dur-fast) var(--bz-ease-out),
     border-color var(--bz-dur-fast) var(--bz-ease-out),
     color var(--bz-dur-fast) var(--bz-ease-out),
     filter var(--bz-dur-fast) var(--bz-ease-out);
+}
+
+/* Shared action rows must survive translated labels and constrained widths. */
+.bz-action-row,
+.actions,
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--bz-space-2);
+}
+.bz-action-row > .bz-btn,
+.auth-actions > .bz-btn {
+  flex: 1 1 160px;
 }
 .bz-btn:hover:not(:disabled) {
   background: var(--bz-raised);
@@ -56,6 +76,7 @@
   opacity: 0.55;
 }
 .bz-btn .material-symbols-outlined {
+  flex-shrink: 0;
   font-size: 18px !important;
 }
 .bz-btn.fira-sans-condensed-black-italic {
@@ -83,14 +104,14 @@
 .bz-btn--agent-cta {
   background: var(--bz-purple-500);
   border-color: var(--bz-purple-500);
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
   border-radius: var(--bz-r-sm);
   box-shadow: none;
 }
 .bz-btn--agent-cta:hover:not(:disabled) {
   background: var(--bz-purple-500);
   border-color: var(--bz-purple-300);
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
   filter: brightness(1.06);
   box-shadow: none;
 }
@@ -241,3 +262,21 @@
 .bz-iconbtn .material-symbols-outlined { font-size: 18px !important; }
 .bz-iconbtn--sm { width: 28px; height: 28px; }
 .bz-iconbtn--sm .material-symbols-outlined { font-size: 14px !important; }
+
+/* Keep unavailable actions legible without suggesting they are enabled. */
+.bz-btn:disabled,
+.bz-btn:disabled:hover,
+.bz-iconbtn:disabled,
+.bz-iconbtn:disabled:hover {
+  opacity: 1;
+  color: var(--bz-fg-mid);
+  background: var(--bz-raised);
+  border-color: var(--bz-border-strong);
+  filter: none;
+  cursor: not-allowed;
+}
+.bz-btn:focus-visible,
+.bz-iconbtn:focus-visible {
+  outline: 2px solid var(--bz-fg);
+  outline-offset: -3px;
+}

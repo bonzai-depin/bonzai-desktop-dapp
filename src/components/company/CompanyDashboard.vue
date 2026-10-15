@@ -1,117 +1,135 @@
 <template>
-  <div class="dash" :class="{ 'dash--fullscreen': isFullscreen }">
-    <header class="company-cockpit">
-      <div class="company-cockpit__identity">
-        <p class="command-center__eyebrow">Workflow Team</p>
-        <h1 class="company-cockpit__title fira-sans-condensed-black-italic">
-          {{ companyDisplayName }}
-        </h1>
-        <div class="company-cockpit__chips">
-          <span
-            class="company-pill"
-            :class="charter.status === 'active' ? 'company-pill--success' : 'company-pill--warning'"
-          >
-            <span class="status-dot" :class="`status-${charter.status}`"></span>
-            {{ charter.status }}
-          </span>
-          <span class="company-pill">{{ filledRoles.length }} teammates</span>
-          <span class="company-pill">{{ fmtCount(openIssues.length) }} work items</span>
-          <span class="company-pill" :class="state.approvals.length ? 'company-pill--warning' : 'company-pill--neutral'">
-            {{ fmtCount(state.approvals.length) }} approvals
-          </span>
-          <span class="company-pill">{{ charter.demoMode ? 'Sample data' : 'Connected data' }}</span>
-        </div>
-      </div>
-
-      <div class="company-cockpit__side">
-        <div class="company-cockpit__metrics" aria-label="Company health">
-          <div v-for="metric in operatingMetrics" :key="metric.label" class="command-metric">
-            <span class="command-metric__label">{{ metric.label }}</span>
-            <span class="command-metric__value fira-sans-condensed-black-italic">{{ metric.value }}</span>
-          </div>
-        </div>
-        <div class="company-cockpit__actions">
-          <button
-            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic company-mode-button"
-            @click="toggleDemoMode"
-            :title="charter.demoMode
-              ? 'Stop using example records and work with configured connectors and models.'
-              : 'Use example records and a faster schedule to preview this workflow.'"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">
-              {{ charter.demoMode ? 'database' : 'science' }}
-            </span>
-            {{ charter.demoMode ? 'Use connected data' : 'Use sample data' }}
-          </button>
-          <button
-            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-            @click="toggleExecution"
-            :title="charter.status === 'active'
-              ? 'Pause scheduled company runs. Existing work stays visible.'
-              : 'Resume scheduled company runs.'"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">
-              {{ charter.status === 'active' ? 'pause' : 'play_arrow' }}
-            </span>
-            {{ charter.status === 'active' ? 'Pause' : 'Resume' }}
-          </button>
-          <button
-            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-            @click="isFullscreen = !isFullscreen"
-            :title="isFullscreen ? 'Return to the normal app layout.' : 'Use the full window for this team.'"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">{{ isFullscreen ? 'fullscreen_exit' : 'fullscreen' }}</span>
-            {{ isFullscreen ? 'Exit full screen' : 'Full screen' }}
-          </button>
-        </div>
-      </div>
-    </header>
-
-    <ModeChipBar
-      v-model="active"
-      :items="subtabs"
-      class="company-subtabs"
-      compact
-    />
-
-    <div v-if="missingRoleModels.length && active !== 'command'" class="company-model-alert" role="alert">
-      <span class="material-symbols-outlined" aria-hidden="true">download_for_offline</span>
-      <div>
-        <strong>Required models are missing</strong>
-        <p>{{ missingRoleModels.map((model) => model.label).join(' · ') }}</p>
-      </div>
-      <button class="bz-btn bz-btn--primary" :disabled="missingRoleModelsDownloading" @click="downloadMissingRoleModels">
-        <span class="material-symbols-outlined" aria-hidden="true">download</span>
-        {{ missingRoleModelsDownloading ? 'Downloading...' : 'Download all' }}
-      </button>
+  <div ref="workspaceRoot" class="dash company-workspace company-screen" :class="{ 'dash--fullscreen': isFullscreen }">
+    <div class="company-navigation">
+    <div class="team-command-veil" :class="{ 'is-visible': hoveredCommand }" :style="teamVeilStyle" aria-hidden="true">
+      <span class="team-command-veil__label fira-sans-condensed-black-italic">{{ $ui(hoveredCommand || '') }}</span>
     </div>
 
+    <nav class="company-view-nav" :aria-label="$ui('Team workspace')" data-i18n-skip>
+      <div class="company-view-nav__operations" role="group" :aria-label="$ui('Operations')">
+        <button v-for="view in primaryViews.filter(view => !view.utility)" :key="view.key" type="button" :class="{ 'company-view-nav__settings': view.iconOnly }" :aria-label="view.iconOnly ? $ui(view.label) : undefined" :title="view.iconOnly ? $ui(view.label) : undefined" :aria-current="activeSection === view.section ? 'page' : undefined" @click="openChannel(view)">
+          <span class="material-symbols-outlined" aria-hidden="true">{{ view.icon }}</span><span v-if="!view.iconOnly">{{ $ui(view.label) }}</span><span v-if="view.badge" class="bz-metric">{{ view.badge }}</span>
+        </button>
+      </div>
+      <div class="company-view-nav__team" :style="teamDockStyle" @mouseenter="showCommandLabel('Team')" @mouseleave="hoveredCommand = ''" role="group" :aria-label="$ui('Team views')">
+        <button v-for="view in primaryViews.filter(view => view.utility)" @mouseenter="showCommandLabel(view.label)" :key="view.key" type="button" :class="{ 'company-view-nav__icon': view.iconOnly }" :aria-label="view.iconOnly ? $ui(view.label) : undefined" :aria-current="activeSection === view.section ? 'page' : undefined" @click="hoveredCommand = ''; openChannel(view)">
+          <span class="material-symbols-outlined" aria-hidden="true">{{ view.icon }}</span><span v-if="!view.iconOnly">{{ $ui(view.label) }}</span>
+        </button>
+      </div>
+    </nav>
+    </div>
+
+    <header v-if="active !== 'studio'" class="company-channel-head">
+      <div class="company-channel-head__copy">
+        <span class="company-channel-head__symbol material-symbols-outlined" aria-hidden="true">{{ currentChannel.icon }}</span>
+        <div>
+          <h1 class="fira-sans-condensed-black-italic">{{ $ui(currentChannel.label) }}</h1>
+        </div>
+      </div>
+      <CompanyTeamStatus :health="automationHealth" :members="filledRoles.length" :playing="charter.status === 'active'" :fullscreen="isFullscreen" @toggle-execution="toggleExecution" @toggle-fullscreen="isFullscreen = !isFullscreen">
+        <template v-if="active === 'charter'">
+          <button type="button" class="bz-iconbtn" :title="$ui('Export team')" :aria-label="$ui('Export team')" @click="exportCompany"><span class="material-symbols-outlined" aria-hidden="true">download</span></button>
+          <button type="button" class="bz-iconbtn bz-iconbtn--danger" :title="$ui('Delete team')" :aria-label="$ui('Delete team')" @click="$emit('delete-company')"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button>
+        </template>
+      </CompanyTeamStatus>
+    </header>
+
+
+    <DownloadRequirement
+      v-if="missingRoleModels.length && !['command', 'studio'].includes(active)"
+      class="company-model-requirements"
+      category="language"
+      :items="roleDownloadItems"
+      :active="missingRoleModelsDownloading"
+      :progress="roleDownloadProgress"
+      :error="roleDownloadError"
+      cancellable
+      :cancelling="isCancellingRoleDownloads"
+      :disabled="isCancellingRoleDownloads"
+      @download="downloadMissingRoleModels"
+      @cancel="cancelRoleDownloads"
+    />
+
+    <section v-if="active === 'activity' || active === 'connectors'" class="company-execution-strip" :class="{ 'is-running': !runtime.error && runtime.snapshot?.activeRequests > 0 }" :aria-label="$ui('Local execution')" data-i18n-skip>
+      <span class="material-symbols-outlined" aria-hidden="true">memory</span><strong>{{ $ui('Local execution') }}</strong>
+      <span class="company-execution-strip__scope">{{ $ui('Language models · this device') }}</span>
+      <span v-if="runtime.error" class="company-execution-strip__error" role="status">{{ $ui(runtime.error) }}</span>
+      <template v-else-if="runtime.snapshot">
+        <span><b class="bz-metric">{{ runtime.snapshot.loaded }}</b> {{ $ui(runtime.snapshot.loaded === 1 ? 'model loaded' : 'models loaded') }}</span>
+        <span v-if="runtime.snapshot.loading"><b class="bz-metric">{{ runtime.snapshot.loading }}</b> {{ $ui('loading') }}</span>
+        <span v-if="runtime.snapshot.activityComplete || runtime.snapshot.activeRequests > 0"><b class="bz-metric">{{ runtime.snapshot.activityComplete ? '' : '≥ ' }}{{ runtime.snapshot.activeRequests }}</b> {{ $ui(runtime.snapshot.activeRequests === 1 ? 'active request' : 'active requests') }}</span>
+        <span v-if="!runtime.snapshot.activityComplete" class="company-execution-strip__error">{{ $ui('Activity partially available') }}</span>
+      </template>
+      <span v-else role="status">{{ $ui('Checking local models…') }}</span>
+      <button type="button" class="bz-iconbtn bz-iconbtn--sm" :disabled="runtime.checking" :aria-label="$ui('Refresh local execution')" @click="refreshRuntime"><span class="material-symbols-outlined" aria-hidden="true">refresh</span></button>
+    </section>
+    <div v-if="state.gmaoRefreshError" class="company-record-refresh-error" role="alert" data-i18n-skip>
+      <span>{{ $ui('Operational data could not be refreshed. Saved changes remain on this device.') }} {{ state.gmaoRefreshError }}</span>
+      <button type="button" class="bz-btn bz-btn--ghost" @click="store.refreshActive().catch(() => {})">{{ $ui('Refresh') }}</button>
+    </div>
     <div class="company-dashboard-shell">
       <!-- ════════════ Sub-tab body ════════════ -->
       <section class="dash-body">
+      <CompanySales v-if="active === 'gmao' && gmaoView === 'today'" :key="charter.id + '-handoffs'" :company-id="charter.id" incoming-only :sites="state.gmao?.sites || []" @open-work-order="openOperationalWorkOrder" />
+      <CompanyMission v-show="active === 'mission'" :charter="charter" :goals="state.goals" :store="store" @open-view="openChannelByKey" />
+      <!-- Interactive production owns in-progress inputs, streams and media.
+           Mount it only when opened, then retain it while browsing this team. -->
+      <CompanyWorkflowStudio ref="workflowStudio" class="company-production" v-if="studioOpened" v-show="active === 'studio'" :charter="charter" :state="state" @open-view="openChannelByKey" @refresh="$emit('reload')">
+        <template #controls><CompanyTeamStatus :health="automationHealth" :members="filledRoles.length" :playing="charter.status === 'active'" :fullscreen="isFullscreen" @toggle-execution="toggleExecution" @toggle-fullscreen="isFullscreen = !isFullscreen" /></template>
+        <template #requirements>
+          <DownloadRequirement v-if="missingRoleModels.length" class="company-model-requirements company-model-requirements--studio" category="language" :items="roleDownloadItems" :active="missingRoleModelsDownloading" :progress="roleDownloadProgress" :error="roleDownloadError" cancellable :cancelling="isCancellingRoleDownloads" :disabled="isCancellingRoleDownloads" @download="downloadMissingRoleModels" @cancel="cancelRoleDownloads" />
+        </template>
+      </CompanyWorkflowStudio>
       <!-- ─── Command center ─── -->
       <div v-if="active === 'command'" class="company-command">
-        <CompanyGoalRoom :charter="charter" :state="state" @open-view="active = $event" @open-result="openWorkResult" />
+        <CompanyGoalRoom :charter="charter" :state="state" @open-view="openChannelByKey" @open-maintenance="openChannelByKey" @open-result="openWorkResult" />
       </div>
 
+      <CompanyToday v-else-if="active === 'overview'" :charter="charter" :state="state" :views="primaryViews" @open-view="openChannelByKey" @open-result="openWorkResult" />
+      <CompanyLiveFeed v-else-if="active === 'activity'" :charter="charter" :state="state" @open-view="openChannelByKey" @open-result="openWorkResult" />
+      <CompanyGettingStarted v-else-if="active === 'getting-started'" :key="charter.id" :charter="charter" :views="primaryViews" :state="state" @open-view="openChannelByKey" />
+      <CompanySales v-else-if="active === 'sales'" :key="charter.id" :company-id="charter.id" />
+      <CompanyGrants v-else-if="active === 'grants'" ref="grantsWorkspace" :key="charter.id" :company-id="charter.id" @open-intake="openCompanyIntake" />
+      <CompanyBilling v-else-if="active === 'billing'" ref="billingWorkspace" :key="charter.id" :company-id="charter.id" :gmao-data="state.gmao" @open-work-order="openOperationalWorkOrder" @open-task="openOperationalTask" />
+      <CompanyPurchasing v-else-if="active === 'purchasing'" ref="purchasingWorkspace" :key="charter.id" :company-id="charter.id" @open-chat="openChannelByKey('command')" @open-task="openOperationalTask" />
+      <!-- ─── HVAC GMAO ─── -->
+      <CompanyGmao
+        v-else-if="active === 'gmao' && state.gmao"
+        ref="operationalWorkspace"
+        :gmao="state.gmao"
+        :store="store"
+        :initial-view="gmaoView"
+        embedded integrated
+        :client-filter="gmaoClientId"
+        :pending-approvals="state.approvals.length"
+        @update:client-filter="gmaoClientId = $event"
+        @prepare-invoice="startPartsInvoice"
+        @open-invoice="openOperationalRecord({kind:'invoice',id:$event})"
+        @view-change="gmaoView = $event"
+        @open-review="active = 'approvals'"
+        @open-intake="openCompanyIntake"
+        @open-connectors="active = 'connectors'"
+        @open-task="openOperationalTask"
+      />
+      <div v-else-if="active === 'gmao' && !state.gmaoRefreshError" class="panel empty">{{ $ui("Initialisation du référentiel GMAO…") }}</div>
+
       <!-- ─── Workflow team ─── -->
-      <div v-else-if="active === 'org'" class="panel models__activity--payouts">
+      <div v-else-if="active === 'org'" class="team-members">
         <div class="section-head section-head--stack">
           <div>
-            <h2 class="panel-title fira-sans-condensed-black-italic">
-              <span class="material-symbols-outlined">groups</span>
-              Teammates
-            </h2>
+            <span class="team-section-count"><b class="bz-metric">{{ filledRoles.length }}</b> {{ $ui('Members') }}</span>
           </div>
+          <div class="section-head__actions">
           <button
-            class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--primary"
             @click="openRoleEdit(availableRoleOptions[0]?.key)"
             :disabled="!availableRoleOptions.length"
           >
-            <span class="material-symbols-outlined" aria-hidden="true">person_add</span>
-            Add teammate
-          </button>
+            <span class="material-symbols-outlined" aria-hidden="true">person_add</span>{{ $ui("Add teammate") }}</button>
+          </div>
         </div>
+        <AgentWorkersPanel :company-id="charter.id" @request-agent-action="requestAgentJobAction" />
+        <SmartAgentJobsPanel :company-id="charter.id" :charter="charter" @request-agent-action="requestAgentJobAction" />
         <div v-if="filledRoles.length" class="org-grid">
           <div
             v-for="roleKey in filledRoles"
@@ -135,42 +153,16 @@
                 <span v-else class="material-symbols-outlined" aria-hidden="true">person</span>
               </span>
               <div class="org-card__companion fira-sans-condensed-black-italic">
-                {{ companionName(charter.roles[roleKey].companion) }}
+                {{ companionName(charter.roles[roleKey].companion) }}<small class="org-card__team">{{ charter.name }}</small>
               </div>
             </div>
-            <div class="org-card__llm">
-              <span class="material-symbols-outlined">memory</span>
-              {{ llmLabel(charter.roles[roleKey].llm) }}
-              <button
-                v-if="modelNeedsDownload(charter.roles[roleKey].llm)"
-                class="org-card__model-action"
-                :disabled="modelDownloading[charter.roles[roleKey].llm]"
-                @click="downloadRoleModel(charter.roles[roleKey].llm)"
-              >
-                {{ modelDownloading[charter.roles[roleKey].llm] != null ? `${modelDownloading[charter.roles[roleKey].llm]}%` : 'Download' }}
-              </button>
-              <span v-else-if="charter.roles[roleKey].llm" class="org-card__model-ready" title="Model downloaded">ready</span>
-            </div>
+            <CompanyWorkerModel :model-value="charter.roles[roleKey].llm" :role-key="roleKey" :role-label="roleDisplayName(roleKey)" :worker-id="charter.roles[roleKey].companion" :save="key => saveWorkerModel(roleKey, key)" @saved="refreshModelAvailability" />
             <div
               v-if="roleConnectorCount(roleKey) > 0"
               class="org-card__capability-summary"
             >
               <span class="material-symbols-outlined">cable</span>
               {{ roleConnectorCount(roleKey) }} connector{{ roleConnectorCount(roleKey) === 1 ? '' : 's' }}
-            </div>
-            <div
-              v-if="roleSkillCount(roleKey) > 0"
-              class="org-card__capability-summary"
-            >
-              <span class="material-symbols-outlined">extension</span>
-              {{ roleSkillCount(roleKey) }} agentic skill{{ roleSkillCount(roleKey) === 1 ? '' : 's' }}
-            </div>
-            <div
-              v-if="(charter.roles[roleKey].pipelines?.length || 0) > 0"
-              class="org-card__capability-summary"
-            >
-              <span class="material-symbols-outlined">auto_awesome_motion</span>
-              {{ charter.roles[roleKey].pipelines.length }} media pipeline{{ charter.roles[roleKey].pipelines.length === 1 ? '' : 's' }}
             </div>
             <div
               v-if="charter.roles[roleKey].kind === 'human_supported'"
@@ -205,7 +197,7 @@
                   <span class="material-symbols-outlined">settings</span>
                 </button>
                 <button
-                  class="bz-btn bz-btn--sm bz-btn--warning fira-sans-condensed-black-italic org-card__run-btn"
+                  class="bz-btn bz-btn--sm bz-btn--ghost org-card__run-btn"
                   @click="store.tickRoleNow(roleKey)"
                   title="Run this teammate now: take one queued task, draft work, or request approval"
                   aria-label="Run next task"
@@ -223,27 +215,23 @@
       </div>
 
       <!-- ─── Goals & Issues — work primitives, grouped by goal ─── -->
-      <div v-else-if="active === 'issues'" class="panel models__activity--payouts">
+      <div v-else-if="active === 'issues'" class="team-backlog">
+        <p v-if="currentChannel?.description" class="company-muted work-domain-brief">{{ $ui(currentChannel.description) }}</p>
         <div class="goals-head">
           <div>
-            <h2 class="panel-title fira-sans-condensed-black-italic">
-              <span class="material-symbols-outlined">flag</span>
-              Work
-            </h2>
-            <p class="muted">
-              Every brief becomes assigned work. See what is running, what needs you, and what the team completed.
-            </p>
+            <span class="team-section-count"><b class="bz-metric">{{ workStatusCount('all') }}</b> {{ $ui('Work items') }}</span>
           </div>
           <div class="section-head__actions">
             <button
-              class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-              @click="openNewIssueModal"
+              class="bz-btn bz-btn--primary"
+              @click="newTeamTask"
             >
               <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
               New task
             </button>
             <button
-              class="bz-btn bz-btn--primary fira-sans-condensed-black-italic"
+              v-if="!charter.workspace?.executionWorkflowId"
+              class="bz-btn bz-btn--ghost"
               @click="openNewGoalModal"
             >
               <span class="material-symbols-outlined" aria-hidden="true">add_circle</span>
@@ -252,25 +240,31 @@
           </div>
         </div>
 
-        <hr />
-
+        <label class="company-search work-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input v-model="workQuery" :aria-label="$ui('Search work')" :placeholder="$ui('Search work')" /></label>
         <div class="work-status-tabs" aria-label="Work status filter">
           <button
             v-for="filter in workStatusFilters"
             :key="filter.id"
             class="issue-filter__chip"
             :class="{ 'is-active': workStatusFilter === filter.id }"
+            :aria-pressed="workStatusFilter === filter.id"
             @click="workStatusFilter = filter.id"
           >
             {{ filter.label }}
-            <span>{{ workStatusCount(filter.id) }}</span>
+            <span class="bz-metric">{{ workStatusCount(filter.id) }}</span>
           </button>
         </div>
 
+        <div v-if="earlierPlanningItems.length" class="backlog-planning-note">
+          <button class="bz-btn bz-btn--ghost bz-btn--sm" :aria-expanded="showEarlierPlanning" @click="showEarlierPlanning = !showEarlierPlanning; clearWorkFilters()"><span class="material-symbols-outlined" aria-hidden="true">history</span>{{ $ui(showEarlierPlanning ? 'Back to requested work' : 'Earlier automatic planning') }}<span class="bz-metric">{{ earlierPlanningItems.length }}</span></button>
+          <p v-if="showEarlierPlanning">{{ $ui('These earlier planner-created items are kept for reference. They will not run automatically.') }}</p>
+        </div>
         <div v-if="todoWorkItems.length" class="work-todo-list" aria-label="Team work list">
           <article
             v-for="item in todoWorkItems"
             :key="item.id"
+            :data-issue-id="item.issue?.id"
+            tabindex="-1"
             class="work-todo"
             :class="[`work-todo--${item.column}`, { 'work-todo--goal': item.type === 'goal' }]"
           >
@@ -305,6 +299,10 @@
               <p v-else-if="item.type === 'issue' && item.issue.description" class="work-todo__copy">
                 {{ item.issue.description }}
               </p>
+              <CompanyWorkflowProgress v-if="item.type === 'issue'" :stages="taskProgress(item.issue)" :issue="item.issue" />
+              <CompanyQuestion v-if="item.type === 'issue' && item.issue.execution?.agent?.status === 'waiting_owner'" inline :issue="item.issue" :company-id="charter.id" :team-name="charter.name" @answered="store.refreshActive()" />
+              <p v-if="item.type === 'issue' && item.issue.execution?.agent?.status === 'waiting_team'" class="work-todo__copy">{{ $ui('Waiting for another team') }} · {{ item.issue.execution.agent.wait.reason }} <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="openChannelByKey('team-exchanges')">{{ $ui('Open conversation') }}</button></p>
+              <p v-if="item.type === 'issue' && item.issue.lastError" class="work-todo__copy" role="status">{{ item.issue.lastError }}</p>
               <div v-if="item.type === 'goal'" class="work-todo__progress">
                 <div class="goal-progress-bar">
                   <div class="goal-progress-bar__fill" :style="{ width: goalProgress(item.goal).pct + '%' }"></div>
@@ -313,8 +311,16 @@
               </div>
             </div>
             <div class="work-todo__actions">
+              <select v-if="item.type === 'issue' && domainViews.length" class="company-admin-select" :aria-label="$ui('Workspace')" :value="issueWorkspace(item.issue)" @change="moveIssueWorkspace(item.issue, $event.target.value)">
+                <option value="">{{ $ui('Backlog') }}</option>
+                <option v-for="view in domainViews" :key="view.key" :value="view.key">{{ $ui(view.label) }}</option>
+              </select>
+              <button v-if="item.type==='issue' && item.issue.labels?.includes('record-reminder')" class="bz-btn bz-btn--ghost" @click="openOperationalRecord({kind:item.issue.labels[1],id:item.issue.labels[2]})">{{ $ui('Open record') }}<span class="material-symbols-outlined">arrow_forward</span></button>
+              <button v-if="item.type === 'issue' && interactiveWorkflowStep(item.issue) && !isEarlierPlanningItem(item)" class="bz-btn bz-btn--sm bz-btn--primary" @click="continueWorkflowTask(item.issue)">{{ $ui(interactiveWorkflowStep(item.issue).output?.status === 'ready_for_review' ? 'Review results' : 'Continue') }}</button>
+              <button v-else-if="item.type === 'issue' && !isEarlierPlanningItem(item) && item.issue.status === 'blocked' && item.issue.execution?.steps?.some(step => ['unknown','failed','unsupported','rejected','requires_input','simulated'].includes(step.status))" class="bz-btn bz-btn--sm bz-btn--primary" @click="taskReview = item.issue">Review outcome</button>
+              <button v-if="item.type === 'issue' && !isEarlierPlanningItem(item) && item.issue.status === 'blocked' && !['waiting_owner', 'waiting_team'].includes(item.issue.execution?.agent?.status) && (!item.issue.execution || item.issue.execution.steps.every(step => ['planned','completed','superseded'].includes(step.status)))" class="bz-btn bz-btn--sm bz-btn--ghost" @click="reopenIssue(item.issue.id)">Resume task</button>
               <button
-                v-if="item.type === 'issue' && item.issue.status === 'open'"
+                v-if="item.type === 'issue' && item.issue.status === 'open' && !isEarlierPlanningItem(item)"
                 class="bz-btn bz-btn--sm bz-btn--warning fira-sans-condensed-black-italic"
                 @click="store.tickRoleNow(item.issue.assigneeRole)"
                 title="Run this teammate now to pick up one queued task"
@@ -330,7 +336,7 @@
                 Cancel
               </button>
               <button
-                v-if="item.type === 'issue' && ['done', 'cancelled'].includes(item.issue.status)"
+                v-if="item.type === 'issue' && !isEarlierPlanningItem(item) && ['done', 'cancelled'].includes(item.issue.status)"
                 class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
                 @click="reopenIssue(item.issue.id)"
               >
@@ -362,7 +368,7 @@
             </div>
           </article>
           <button
-            v-if="visibleGoals.length < filteredGoals.length"
+            v-if="todoWorkItems.length < matchedWorkItems.length"
             class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic load-more-btn"
             @click="goalLimit += 20"
           >
@@ -370,35 +376,23 @@
             Load more
           </button>
         </div>
-        <div v-else class="empty">
-          Nothing here yet. Brief the team in Goals and BonzAI will assign and run the work.
+        <div v-else class="team-empty">
+          <span class="material-symbols-outlined" aria-hidden="true">checklist</span>
+          <p>{{ $ui(selectedWorkItems.length ? 'No work matches this filter.' : charter.workspace?.executionWorkflowId ? 'No requested work yet. Start a task in Production.' : 'No work yet. Add a task or brief the team in Chat.') }}</p>
+          <button class="bz-btn bz-btn--ghost" @click="selectedWorkItems.length ? clearWorkFilters() : charter.workspace?.executionWorkflowId ? newTeamTask() : openChannelByKey('command')">{{ $ui(selectedWorkItems.length ? 'Show all work' : charter.workspace?.executionWorkflowId ? 'New task' : 'Open chat') }}</button>
         </div>
       </div>
 
       <!-- ─── Results / catalog ─── -->
-      <div v-else-if="active === 'deliverables'" class="panel models__activity--payouts">
-        <div class="section-head section-head--stack">
-          <div>
-            <h2 class="panel-title fira-sans-condensed-black-italic">
-              <span class="material-symbols-outlined">task_alt</span>
-              Results
-            </h2>
-            <p class="muted">Permanent work records with rationale, execution evidence and every generated artifact.</p>
-          </div>
-          <div class="section-head__actions">
-            <button
-              class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
-              :disabled="visibleCatalogRows.length >= catalogRows.length"
-              @click="catalogLimit += 30"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
-              More
-            </button>
-            <span class="company-pill company-pill--success">Retained locally</span>
-          </div>
+      <div v-else-if="active === 'deliverables'" class="company-deliverables">
+        <nav class="company-modes" :aria-label="$ui('Result type')"><button v-for="section in deliverableSections" :key="section.key" :aria-pressed="deliverableSection===section.key" @click="deliverableSection=section.key"><span class="material-symbols-outlined" aria-hidden="true">{{ section.icon }}</span>{{ $ui(section.label) }}<span v-if="section.key==='work'" class="bz-metric">{{ completedWorkRows.length }}</span><span v-if="section.key==='assets'" class="bz-metric">{{ catalogRows.length }}</span></button></nav>
+        <template v-if="deliverableSection==='work'">
+        <div v-if="completedWorkRows.length" class="section-head section-head--stack">
+          <span class="team-section-count"><b class="bz-metric">{{ completedWorkRows.length }}</b> {{ $ui('Completed work') }}</span>
+
         </div>
         <section v-if="completedWorkRows.length" class="result-work">
-          <h3>Work dossiers</h3>
+          <h3>{{ $ui("Task history") }}</h3>
           <article v-for="row in completedWorkRows" :key="row.id" class="result-work__row" :class="{ 'is-open': expandedWorkResults.has(row.id) }">
             <button type="button" class="result-work__summary" @click="toggleWorkResult(row.id)">
               <span class="result-work__icon material-symbols-outlined" aria-hidden="true">check_circle</span>
@@ -407,13 +401,13 @@
                 <span>{{ row.goalTitle || 'Direct task' }} · {{ roleDisplayName(row.assigneeRole) }} · {{ fmtTime(row.completedAt) }}</span>
                 <span>{{ row.summary }}</span>
               </span>
-              <span class="result-work__open">{{ expandedWorkResults.has(row.id) ? 'Close' : 'Open dossier' }}<span class="material-symbols-outlined">{{ expandedWorkResults.has(row.id) ? 'expand_less' : 'expand_more' }}</span></span>
+              <span class="result-work__open">{{ expandedWorkResults.has(row.id) ? 'Close' : 'View task' }}<span class="material-symbols-outlined">{{ expandedWorkResults.has(row.id) ? 'expand_less' : 'expand_more' }}</span></span>
             </button>
             <section v-if="expandedWorkResults.has(row.id)" class="work-dossier">
               <div class="work-dossier__context">
                 <div><span>Objective</span><p>{{ row.title }}</p></div>
-                <div><span>Why this work</span><p>{{ row.justification }}</p></div>
-                <div><span>Outcome</span><p>{{ row.summary }}</p></div>
+                <div><span>Why this work</span><CompanyMarkdown :source="row.justification" /></div>
+                <div><span>Outcome</span><CompanyMarkdown :source="row.summary" /></div>
               </div>
               <div v-if="row.actions.length" class="work-dossier__actions">
                 <h4>Execution record</h4>
@@ -424,7 +418,7 @@
                 </article>
               </div>
               <div v-if="row.artifacts.length" class="work-dossier__artifacts">
-                <h4>Produced artifacts</h4>
+                <h4>{{ $ui("Saved results") }}</h4>
                 <article v-for="artifact in row.artifacts" :key="artifact.id">
                   <CompanyArtifactPreview :row="artifact" />
                   <div class="work-dossier__artifact-meta"><span class="bz-mono">{{ artifact.id }}</span><button class="bz-btn bz-btn--sm bz-btn--ghost" @click="downloadDeliverable(artifact)"><span class="material-symbols-outlined">download</span>Download</button></div>
@@ -435,116 +429,24 @@
           </article>
         </section>
 
-        <div v-if="state.catalog.length" class="deliverable-board">
-          <h3>Files and generated assets</h3>
-          <article
-            v-for="row in visibleCatalogRows"
-            :key="row.id"
-            class="deliverable-card"
-          >
-            <div class="deliverable-card__meta">
-              <span class="company-pill company-pill--info">{{ row.pipeline }}</span>
-              <span>{{ roleDisplayName(row.role) || "Company" }}</span>
-              <span>{{ fmtTime(row.createdAt) }}</span>
-            </div>
-            <div class="catalog-output catalog-output--full deliverable-markdown">
-              <CompanyArtifactPreview :row="row" />
-            </div>
-            <div v-if="row.prompt" class="deliverable-card__prompt">
-              <span class="material-symbols-outlined">notes</span>
-              <span>{{ row.prompt }}</span>
-            </div>
-            <div class="deliverable-card__footer">
-              <div class="deliverable-card__money">
-                <span>{{ fmtMoney(row.price, row.currency) }} price</span>
-                <span>{{ row.sales || 0 }} sales</span>
-                <span>{{ fmtMoney(row.revenue, row.currency) }} revenue</span>
-              </div>
-              <div class="deliverable-card__actions">
-                <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="copyDeliverable(row)" title="Copy deliverable output">
-                  <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
-                  Copy
-                </button>
-                <button class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic" @click="downloadDeliverable(row)" title="Download deliverable">
-                  <span class="material-symbols-outlined" aria-hidden="true">download</span>
-                  Download
-                </button>
-              </div>
-            </div>
-          </article>
-        </div>
-        <BonzaiEmptyState
-          v-if="!completedWorkRows.length && !state.catalog.length"
-          size="compact"
-          icon="task_alt"
-          title="No results yet"
-          subtitle="Brief the team in Goals. Completed actions and generated files will appear here automatically."
-          :show-orb="false"
-        />
+        <div v-if="!completedWorkRows.length" class="company-empty"><span class="material-symbols-outlined" aria-hidden="true">task_alt</span><h3>{{ $ui('No completed work yet') }}</h3><p>{{ $ui('Completed work and its evidence will appear here.') }}</p><button class="bz-btn" @click="openChannelByKey('issues')">{{ $ui('Backlog') }}</button></div>
+        </template>
+        <CompanyOperationalFiles v-if="deliverableSection==='documents'" :key="charter.id" :company-id="charter.id" @open-record="openOperationalRecord" />
+        <p v-if="deliverableSection==='assets' && state.catalogError" class="result-library-error" role="alert">{{ $ui(state.catalogError) }} <button class="bz-btn bz-btn--ghost" @click="store.refreshActive()">{{ $ui('Retry') }}</button></p>
+        <CompanyDeliverableLibrary v-if="deliverableSection==='assets'" :key="charter.id" :rows="catalogRows" :issues="state.issues" :load-error="state.catalogError" :has-records="deliverableSections.some(section => section.key === 'documents')" @open-records="deliverableSection = 'documents'" :role-name="roleDisplayName" :copy="copyDeliverable" :download="downloadDeliverable" :format-money="fmtMoney" @open-task="openResultTask" @start-task="newTeamTask" />
+
+
       </div>
 
-      <!-- ─── Approvals ─── -->
-      <div v-else-if="active === 'approvals'" class="panel models__activity--payouts">
-        <div class="section-head">
-          <h2 class="panel-title fira-sans-condensed-black-italic">
-            <span class="material-symbols-outlined">rule</span>
-            Pending approvals
-          </h2>
-          <div class="section-head__actions">
-            <button
-              class="bz-btn bz-btn--sm bz-btn--success fira-sans-condensed-black-italic"
-              :disabled="!state.approvals.length"
-              @click="approveAll"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">done_all</span>
-              Approve all
-            </button>
-            <button
-              class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
-              :disabled="!state.approvals.length"
-              @click="rejectAll"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>
-              Reject all
-            </button>
-          </div>
-        </div>
-        <div v-if="!state.approvals.length" class="empty">All clear.</div>
-        <div v-else class="approval-list">
-          <div
-            v-for="item in visibleApprovals"
-            :key="item.id"
-            class="approval-card"
-          >
-            <div class="approval-card__head">
-              <strong class="fira-sans-condensed-black-italic">{{ item.action.type }}</strong>
-              <span class="company-pill">{{ item.cls }}</span>
-              <span class="approval-card__time">{{ fmtTime(item.requestedAt) }}</span>
-            </div>
-            <div class="approval-card__by">
-              by {{ item.role }} · companion {{ item.requestedBy }}
-            </div>
-            <pre class="approval-card__action">{{ JSON.stringify(item.action, null, 2) }}</pre>
-            <div class="approval-card__actions">
-              <button class="bz-btn bz-btn--success fira-sans-condensed-black-italic" @click="approve(item.id)">
-                <span class="material-symbols-outlined" aria-hidden="true">check</span>
-                Approve
-              </button>
-              <button class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic" @click="reject(item.id)">
-                <span class="material-symbols-outlined" aria-hidden="true">close</span>
-                Reject
-              </button>
-            </div>
-          </div>
-          <button
-            v-if="visibleApprovals.length < state.approvals.length"
-            class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic load-more-btn"
-            @click="approvalLimit += 25"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
-            Load more
-          </button>
-        </div>
+      <!-- Review queue uses the same approval and operational actions as the existing forms. -->
+      <div v-else-if="active === 'approvals'" class="company-inbox">
+        <CompanyInbox ref="inboxWorkspace" :key="charter.id" :state="state" :charter="charter" :store="store" :maintenance="hasMaintenance" :role-name="roleDisplayName"
+          @open-operational-record="openOperationalRecord" @open-view="openChannelByKey"
+          @open-workflow-result="task => openChannelByKey({ view: 'studio', issueId: task.id })"
+          @open-tools="active = 'connectors'" @review="item => inboxReview?.openReview(item.kind, item.id)" />
+        <p v-if="hasMaintenance && !state.gmao" role="status">{{ $ui('Initialisation du référentiel GMAO…') }}</p>
+        <CompanyGmao v-if="hasMaintenance && state.gmao" ref="inboxReview" :gmao="state.gmao" :store="store" initial-view="review" embedded review-queue review-dialogs-only
+          @open-connectors="active = 'connectors'" @open-intake="openCompanyIntake" @open-work="gmaoView = 'interventions'; active = 'gmao'" />
       </div>
 
       <!-- ─── Treasury ─── -->
@@ -649,11 +551,10 @@
       </div>
 
       <!-- ─── Connectors ─── -->
-      <CompanyConnectors
-        v-else-if="active === 'connectors'"
-        :charter="charter"
-        :state="state"
-      />
+      <div v-else-if="active === 'connectors'">
+
+        <CompanyConnectors :charter="charter" :state="state" />
+      </div>
 
       <!-- ─── Audit log ─── -->
       <div v-else-if="active === 'audit'" class="panel models__activity--payouts">
@@ -719,28 +620,15 @@
       </div>
 
       <!-- ─── Settings ─── -->
-      <div v-else-if="active === 'charter'" class="panel models__activity--payouts">
-        <div class="section-head section-head--stack">
-          <div>
-            <h2 class="panel-title fira-sans-condensed-black-italic">
-              <span class="material-symbols-outlined">edit_note</span>
-              Settings
-            </h2>
-          </div>
-          <div class="section-head__actions">
-            <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="exportCompany">
-              <span class="material-symbols-outlined" aria-hidden="true">download</span>
-              Export
-            </button>
-            <button class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic" @click="$emit('delete-company')">
-              <span class="material-symbols-outlined" aria-hidden="true">delete</span>
-              Delete
-            </button>
-          </div>
-        </div>
-
+      <div v-else-if="active === 'charter'" class="company-team-settings">
+        <p v-if="exportMessage" role="status">{{ exportMessage }}</p>
+        <div class="company-settings-layout">
+          <nav class="company-settings-nav" :aria-label="$ui('Team settings categories')" data-i18n-skip>
+            <button v-for="section in teamSettingsSections" :key="section.id" type="button" :aria-current="teamSettingsSection === section.id ? 'page' : undefined" @click="teamSettingsSection = section.id"><span class="material-symbols-outlined" aria-hidden="true">{{ section.icon }}</span>{{ $ui(section.label) }}</button>
+          </nav>
+          <div class="company-settings-content">
         <div class="charter-studio">
-          <section class="charter-card charter-card--identity">
+          <section v-show="teamSettingsSection === 'identity'" class="charter-card charter-card--identity">
             <div class="charter-card__head">
               <span class="material-symbols-outlined">badge</span>
               <h3 class="fira-sans-condensed-black-italic">Team identity</h3>
@@ -749,13 +637,10 @@
               <span>Team name</span>
               <input v-model.trim="charterDraft.name" class="input is-medium" />
             </label>
-            <label class="charter-field charter-field--wide">
-              <span>Mission</span>
-              <textarea v-model.trim="charterDraft.mission" class="textarea" rows="6"></textarea>
-            </label>
+            <button class="bz-btn bz-btn--ghost" type="button" @click="openChannelByKey('mission')">{{ $ui('Edit mission') }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button>
           </section>
 
-          <section class="charter-card">
+          <section v-show="teamSettingsSection === 'style'" class="charter-card">
             <div class="charter-card__head">
               <span class="material-symbols-outlined">chat</span>
               <h3 class="fira-sans-condensed-black-italic">Working style</h3>
@@ -763,7 +648,7 @@
             <div class="charter-card__grid">
               <label class="charter-field charter-field--wide">
                 <span>Team voice</span>
-                <select v-model="charterDraft.tone" class="company-admin-select">
+                <select :aria-label="$ui('Team voice')" v-model="charterDraft.tone" class="company-admin-select">
                   <option value="direct">Direct and concise</option>
                   <option value="analytical">Analytical</option>
                   <option value="warm">Warm and collaborative</option>
@@ -772,7 +657,7 @@
               </label>
               <label class="charter-field">
                 <span>Working language</span>
-                <select v-model="charterDraft.language" class="company-admin-select">
+                <select :aria-label="$ui('Working language')" v-model="charterDraft.language" class="company-admin-select">
                   <option value="auto">Match the owner</option>
                   <option value="en">English</option>
                   <option value="fr">French</option>
@@ -780,20 +665,17 @@
               </label>
               <label class="charter-field">
                 <span>Response detail</span>
-                <select v-model="charterDraft.responseDetail" class="company-admin-select">
+                <select :aria-label="$ui('Response detail')" v-model="charterDraft.responseDetail" class="company-admin-select">
                   <option value="brief">Brief</option>
                   <option value="balanced">Balanced</option>
                   <option value="thorough">Thorough</option>
                 </select>
               </label>
-              <label class="charter-field charter-field--wide">
-                <span>Standing instructions</span>
-                <textarea v-model.trim="charterDraft.instructions" class="textarea" rows="4" placeholder="Priorities, terminology, customer promises and constraints for this team."></textarea>
-              </label>
+
             </div>
           </section>
 
-          <section class="charter-card">
+          <section v-show="teamSettingsSection === 'money'" class="charter-card">
             <div class="charter-card__head">
               <span class="material-symbols-outlined">savings</span>
               <h3 class="fira-sans-condensed-black-italic">Money guardrails</h3>
@@ -801,7 +683,7 @@
             <div class="charter-card__grid">
               <label class="charter-field">
                 <span>Currency</span>
-                <select v-model="charterDraft.currency" class="company-admin-select">
+                <select :aria-label="$ui('Currency')" v-model="charterDraft.currency" class="company-admin-select">
                   <option v-for="c in state.currencies" :key="c" :value="c">{{ c }}</option>
                 </select>
               </label>
@@ -816,7 +698,7 @@
             </div>
           </section>
 
-          <section class="charter-card">
+          <section v-show="teamSettingsSection === 'autonomy'" class="charter-card">
             <div class="charter-card__head">
               <span class="material-symbols-outlined">verified_user</span>
               <h3 class="fira-sans-condensed-black-italic">Autonomy and memory</h3>
@@ -824,7 +706,7 @@
             <div class="charter-card__grid">
               <label class="charter-field">
                 <span>Autonomy</span>
-                <select v-model="charterDraft.autonomy" class="company-admin-select">
+                <select :aria-label="$ui('Autonomy')" v-model="charterDraft.autonomy" class="company-admin-select">
                   <option value="guided">Guided</option>
                   <option value="balanced">Balanced</option>
                   <option value="autonomous">Autonomous within guardrails</option>
@@ -832,7 +714,7 @@
               </label>
               <label class="charter-field">
                 <span>Conversation memory</span>
-                <select v-model="charterDraft.memory" class="company-admin-select">
+                <select :aria-label="$ui('Conversation memory')" v-model="charterDraft.memory" class="company-admin-select">
                   <option value="full">Full local history</option>
                   <option value="summarized">Summaries and decisions</option>
                   <option value="session">Current session only</option>
@@ -849,7 +731,7 @@
             </div>
           </section>
 
-          <section class="charter-card">
+          <section v-show="teamSettingsSection === 'cadence'" class="charter-card">
             <div class="charter-card__head">
               <span class="material-symbols-outlined">schedule</span>
               <h3 class="fira-sans-condensed-black-italic">Cadence</h3>
@@ -866,7 +748,7 @@
             </div>
           </section>
 
-          <section class="charter-card charter-card--execution">
+          <section v-show="teamSettingsSection === 'execution'" class="charter-card charter-card--execution">
             <div class="charter-card__head">
               <span class="material-symbols-outlined">memory</span>
               <h3 class="fira-sans-condensed-black-italic">Model execution</h3>
@@ -874,7 +756,7 @@
             <div class="charter-card__grid">
               <label class="charter-field">
                 <span>LLM execution</span>
-                <select v-model="charterDraft.llmMode" class="company-admin-select">
+                <select :aria-label="$ui('LLM execution')" v-model="charterDraft.llmMode" class="company-admin-select">
                   <option value="swap">Sequential, swap models</option>
                   <option value="sequential">Sequential, current model</option>
                   <option value="parallel">Parallel model pool</option>
@@ -894,7 +776,7 @@
               </label>
               <label class="charter-field">
                 <span>Media execution</span>
-                <select v-model="charterDraft.diffusionMode" class="company-admin-select">
+                <select :aria-label="$ui('Media execution')" v-model="charterDraft.diffusionMode" class="company-admin-select">
                   <option value="sequential">Sequential</option>
                   <option value="parallel">Parallel</option>
                 </select>
@@ -917,89 +799,26 @@
 
         <div class="charter-actions">
           <button
-            class="bz-btn bz-btn--success fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--primary"
             :class="{ 'is-loading': charterBusy }"
-            :disabled="charterBusy || !charterDraft.name || !charterDraft.mission"
+            :disabled="charterBusy || !charterDraft.name"
             @click="saveCharter"
           >
             <span class="material-symbols-outlined" aria-hidden="true">save</span>
-            Save charter
+            {{ $ui('Save settings') }}
           </button>
           <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" @click="resetCharterDraft">
             <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
             Reset
           </button>
         </div>
+          <p v-if="charterError" class="company-settings-error" role="alert">{{ charterError }}</p>
+          <p v-else-if="charterSaved" class="company-settings-saved" role="status">{{ $ui('Settings saved') }}</p>
+          </div>
+        </div>
       </div>
       </section>
     </div>
-
-    <section class="company-telemetry-bar" aria-label="Live activity">
-      <section class="rail-panel llm-strip">
-        <div class="rail-panel__head">
-          <div>
-            <p class="command-center__eyebrow">Local execution</p>
-            <h3 class="rail-panel__title fira-sans-condensed-black-italic">Team capacity</h3>
-          </div>
-          <button
-            class="bz-iconbtn bz-iconbtn--sm"
-            @click="refreshPool"
-            title="Refresh team capacity"
-            aria-label="Refresh team capacity"
-          >
-            <span class="material-symbols-outlined">refresh</span>
-          </button>
-        </div>
-
-        <div v-if="pool.err" class="rail-error">
-          <span class="material-symbols-outlined">info</span>
-          <div>
-            <strong>Pool status unavailable</strong>
-            <span>{{ pool.err }}</span>
-          </div>
-        </div>
-        <template v-else>
-          <div class="llm-strip__stats">
-            <div>
-              <span class="llm-rail__value fira-sans-condensed-black-italic">{{ configuredRoleModels.length || pool.instances.length }}</span>
-              <span class="llm-rail__label">models</span>
-            </div>
-            <div>
-              <span class="llm-rail__value fira-sans-condensed-black-italic">{{ capacitySlots }}</span>
-              <span class="llm-rail__label">slots</span>
-            </div>
-            <div>
-              <span class="llm-rail__value fira-sans-condensed-black-italic">{{ poolUsedPct }}%</span>
-              <span class="llm-rail__label">budget</span>
-            </div>
-          </div>
-          <div v-if="pool.instances.length" class="llm-strip__instances">
-            <div v-for="i in pool.instances.slice(0, 3)" :key="i.modelKey" class="llm-instance">
-              <span class="llm-instance__dot" :class="{ 'is-active': i.inFlight > 0 }"></span>
-              <span class="llm-instance__name fira-sans-condensed-black-italic">{{ llmLabel(i.modelKey) }}</span>
-              <span class="llm-instance__meta">{{ fmtBytes(i.sizeBytes) }}</span>
-            </div>
-          </div>
-          <div v-else-if="configuredRoleModels.length" class="llm-strip__instances">
-            <div v-for="model in configuredRoleModels.slice(0, 4)" :key="model.key" class="llm-instance">
-              <span class="llm-instance__dot"></span>
-              <span class="llm-instance__name fira-sans-condensed-black-italic">{{ model.label }}</span>
-              <span class="llm-instance__meta">{{ model.roles.length }} teammate{{ model.roles.length === 1 ? '' : 's' }}</span>
-            </div>
-          </div>
-          <div v-else class="rail-empty">
-            Assign teammate models to show team capacity here.
-          </div>
-        </template>
-      </section>
-
-      <CompanyLiveFeed
-        compact
-        horizontal
-        :charter="charter"
-        :state="state"
-      />
-    </section>
 
     <Transition name="bz-image-toast">
       <div
@@ -1021,17 +840,19 @@
       </div>
     </Transition>
 
+    <SmartAgentHireModal v-if="hireAgent" :agent="hireAgent" :company-id="charter.id" @close="hireAgent = null" />
+
     <!-- ════════════ Role-edit modal ════════════ -->
     <div
       v-if="editingRoleKey"
       class="role-modal-overlay"
       @click.self="closeRoleEdit"
     >
-      <div class="role-modal models__activity--payouts">
+      <div class="role-modal">
         <div class="role-modal__header">
           <h2 class="fira-sans-condensed-black-italic">
             <span class="material-symbols-outlined" aria-hidden="true">settings</span>
-            <span class="role-modal__title">{{ charter.roles[editingRoleKey]?.companion ? roleDisplayName(editingRoleKey) : 'Add teammate' }}</span>
+            <span class="role-modal__title">{{ charter.roles[editingRoleKey]?.companion ? roleDisplayName(editingRoleKey) : 'Add smart agent' }}</span>
           </h2>
           <BzCloseButton size="md" aria-label="Close" @click="closeRoleEdit" />
         </div>
@@ -1048,9 +869,9 @@
         </div>
 
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Companion</label>
+          <label class="label fira-sans-condensed-black-italic">Smart agent</label>
           <div class="select is-fullwidth is-medium">
-            <select v-model="editDraft.companion">
+            <select v-model="editDraft.companion" @change="selectRoleAgent">
               <option :value="null">Unassigned</option>
               <option v-for="comp in companionList" :key="comp.id" :value="comp.id">
                 {{ comp.name }}
@@ -1059,20 +880,19 @@
           </div>
         </div>
 
-        <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Preferred LLM</label>
-          <div class="select is-fullwidth is-medium">
-            <select v-model="editDraft.llm">
-              <option :value="null">Current model</option>
-              <option v-for="llm in llmOptionsList" :key="llm.key" :value="llm.key">
-                {{ llm.label }}
-              </option>
-            </select>
-          </div>
+        <p v-if="!companionList.length" class="muted">Create a smart agent in Agent, then add it to this team.</p>
+        <div v-if="selectedSmartAgent" class="field">
+          <p class="muted">{{ selectedSmartAgent.mission }}</p>
+          <button v-if="selectedAgentCanHire" type="button" class="bz-btn bz-btn--ghost" @click="hireAgent = selectedSmartAgent">Review paid job in ${{ selectedSmartAgent.tokenSymbol }}</button>
+          <p class="muted">Adding to this team configures local work. Paid marketplace jobs require a separate quote and approval.</p>
         </div>
 
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Assigned connectors</label>
+          <CompanyWorkerModel v-model="editDraft.llm" :role-key="editingRoleKey" :role-label="roleDisplayName(editingRoleKey)" :worker-id="editDraft.companion" />
+        </div>
+
+        <div v-if="roleConnectorOptions.length" class="field">
+          <label class="label fira-sans-condensed-black-italic">Existing integrations</label>
           <div class="connector-checks">
             <label
               v-for="connector in roleConnectorOptions"
@@ -1098,35 +918,7 @@
         </div>
 
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Skills</label>
-          <div class="capability-checks capability-checks--skills">
-            <label
-              v-for="skill in roleCapabilityOptions"
-              :key="skill.id"
-              class="capability-check skill-check"
-              :class="{
-                'is-on': editDraft.grantedSkills.includes(skill.id),
-                'needs-connector': skillNeedsConnector(skill),
-              }"
-            >
-              <input
-                type="checkbox"
-                :checked="editDraft.grantedSkills.includes(skill.id)"
-                @change="toggleRoleSkill(skill, $event.target.checked)"
-              />
-              <span class="capability-check__main">
-                <strong>{{ skill.name }}</strong>
-                <small>{{ skill.category }} · {{ skill.actions?.length || 0 }} action{{ (skill.actions?.length || 0) === 1 ? '' : 's' }}</small>
-                <span class="skill-check__requires">
-                  {{ skillConnectorSummary(skill) }}
-                </span>
-              </span>
-            </label>
-          </div>
-        </div>
-
-        <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Media tools</label>
+          <label class="label fira-sans-condensed-black-italic">Create capabilities</label>
           <div class="pipeline-checks">
             <label
               v-for="pipeline in mediaPipelineOptions"
@@ -1138,17 +930,6 @@
               <span class="material-symbols-outlined" aria-hidden="true">{{ pipeline.icon }}</span>
               {{ pipeline.label }}
             </label>
-          </div>
-        </div>
-
-        <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Prompt style</label>
-          <div class="select is-fullwidth is-medium">
-            <select v-model="editDraft.gateway">
-              <option :value="null">Default</option>
-              <option value="openclaw">General</option>
-              <option value="hermes">Structured JSON</option>
-            </select>
           </div>
         </div>
 
@@ -1171,7 +952,7 @@
             v-if="charter.roles[editingRoleKey]?.companion"
             class="bz-btn bz-btn--destructive fira-sans-condensed-black-italic"
             @click="fireRole"
-            title="Unassign the companion. Role becomes inheritable."
+            title="Remove this smart agent from the local role."
           >
             <span class="material-symbols-outlined" aria-hidden="true">person_remove</span>
             Unassign
@@ -1322,6 +1103,13 @@
         ></textarea>
 
         <div class="issue-modal-grid">
+          <label v-if="domainViews.length" class="goal-modal__field">
+            <span class="goal-modal__label">{{ $ui('Workspace') }}</span>
+            <select v-model="issueDraft.workspaceChannel" class="company-admin-select">
+              <option value="">{{ $ui('Backlog') }}</option>
+              <option v-for="view in domainViews" :key="view.key" :value="view.key">{{ $ui(view.label) }}</option>
+            </select>
+          </label>
           <label class="goal-modal__field">
             <span class="goal-modal__label">Assign to teammate</span>
             <select v-model="issueDraft.assigneeRole" class="company-admin-select">
@@ -1372,50 +1160,133 @@
       </div>
     </div>
   </div>
+  <CompanyTaskReview v-if="taskReview" :company-id="charter.id" :issue="taskReview" @close="taskReview = null" @saved="store.refreshActive()" @open-operational-record="openOperationalRecord" />
 </template>
 
 <script>
-import { computed, reactive, ref, watch, onMounted, onUnmounted } from "vue";
+import CompanyWorkflowStudio from "./CompanyWorkflowStudio.vue";
+import CompanyTeamStatus from "./CompanyTeamStatus.vue";
+import { isAutonomousWorkflowTask } from "../../shared/companyAutomation.js";
+import { setCompanyWorkflowHandoff } from "../../services/company/workflowHandoff.js";
+import DownloadRequirement from "../DownloadRequirement.vue";
+import { cancelLocalDownloads } from "../../services/downloadCancellation.js";
+import "./company-design.css";
+import { actionDisplayName } from "../../services/company/actionLabels.js";
+import { computed, reactive, ref, watch, onMounted, onUnmounted, nextTick } from "vue";
 import companyStore from "../../stores/companyStore.js";
 import { DEFAULT_COMPANIONS, listAllLLMs } from "../../skills/flagship.js";
-import { getCompanySkillsForCompanion } from "../../skills/companionSkillRoadmap.js";
 import { SKILL_MANIFESTS } from "../../services/company/skillManifests.js";
 import CompanyConnectors from "./CompanyConnectors.vue";
+import SmartAgentHireModal from "../SmartAgentHireModal.vue";
+import AgentWorkersPanel from "../AgentWorkersPanel.vue";
+import SmartAgentJobsPanel from "../SmartAgentJobsPanel.vue";
+import { requestSmartAgentJobAction } from '../../services/company.service.js';
+import { loadSmartAgents, smartAgentCatalog, SMART_AGENT_CREATE_CAPABILITIES } from "../../services/smartAgentCatalog.js";
+import CompanyTaskReview from './CompanyTaskReview.vue';
+import CompanyWorkflowProgress from "./CompanyWorkflowProgress.vue";
+import { taskProgress } from "../../services/company/workflowProgress.js";
+import CompanyMission from "./CompanyMission.vue";
 import CompanyLiveFeed from "./CompanyLiveFeed.vue";
+import { domainWorkspaceViews, workInDomain, workspaceNavigation, workspaceViews, workspaceSection, maintenanceDestination, resolveWorkspaceDestination } from "../../services/company/workspaceNavigation.js";
+import CompanyQuestion from "./CompanyQuestion.vue";
 import CompanyGoalRoom from "./CompanyGoalRoom.vue";
+import { visibleText as stripReasoningTags, visibleRecord } from "../../shared/visibleText.js";
+import CompanyGmao from "./CompanyGmao.vue";
+import CompanyToday from "./CompanyToday.vue";
+import CompanyWorkerModel from "./CompanyWorkerModel.vue";
+import { canonicalWorkerModelKey } from "../../services/company/workerModels.js";
+import CompanyOperationalFiles from "./CompanyOperationalFiles.vue";
+import CompanyGettingStarted from "./CompanyGettingStarted.vue";
+import CompanyGrants from "./CompanyGrants.vue";
+import CompanyBilling from "./CompanyBilling.vue";
+import CompanySales from './CompanySales.vue';
+import CompanyPurchasing from "./CompanyPurchasing.vue";
 import CompanyArtifactPreview from "./CompanyArtifactPreview.vue";
+import CompanyInbox from "./CompanyInbox.vue";
+import CompanyDeliverableLibrary from "./CompanyDeliverableLibrary.vue";
+import { downloadArtifact, artifactPlainText, resultLibrarySections } from "../../services/company/artifactMedia.js";
+import CompanyMarkdown from "./CompanyMarkdown.vue";
 import BzCloseButton from "../BzCloseButton.vue";
 import BonzaiDataTable from "../BonzaiDataTable.vue";
 import BonzaiEmptyState from "../BonzaiEmptyState.vue";
-import ModeChipBar from "../generative/ModeChipBar.vue";
+import {operationText} from "../../i18n/operations.js";
 import { i18n } from "../../i18n/index.js";
 import { companionAvatar, formatModelLabel, formatRoleTitle } from "../../services/company/presentation.js";
+import { buildWorkspaceBlueprint, hydrateWorkspaceChannels } from "../../services/company/workspaceBlueprints.js";
 
 export default {
   name: "CompanyDashboard",
-  components: {
-    BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyArtifactPreview, CompanyConnectors, CompanyLiveFeed, CompanyGoalRoom, ModeChipBar },
+  components: { CompanyTeamStatus, DownloadRequirement, CompanyWorkflowStudio, CompanyWorkerModel, CompanyToday, CompanyOperationalFiles, CompanySales, CompanyGettingStarted, CompanyGrants, CompanyBilling, CompanyPurchasing, CompanyInbox, CompanyDeliverableLibrary, CompanyMarkdown, CompanyQuestion, CompanyMission,
+    CompanyWorkflowProgress, CompanyTaskReview, AgentWorkersPanel, SmartAgentJobsPanel, SmartAgentHireModal, BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyArtifactPreview, CompanyConnectors, CompanyLiveFeed, CompanyGoalRoom, CompanyGmao },
   props: {
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
-    initialView: { type: String, default: "command" },
+    initialView: { type: String, default: "" },
     initialResultId: { type: String, default: "" },
   },
   emits: ["edit", "reload", "new-company", "delete-company"],
   setup(props) {
+    const workspaceRoot = ref(null);
+    const teamDockStyle = ref({});
+    const teamVeilStyle = ref({});
+    const hoveredCommand = ref('');
+    const showCommandLabel = label => { positionTeamDock(); hoveredCommand.value = label; };
+    let dockObserver;
+    const positionTeamDock = () => {
+      const bounds = workspaceRoot.value?.getBoundingClientRect();
+      if (!bounds) return;
+      const viewport = workspaceRoot.value.closest('.bz-main__workspace')?.getBoundingClientRect();
+      const frame = viewport || {left:bounds.left, top:0, right:bounds.right, bottom:window.innerHeight};
+      const x = Math.max(0, frame.left), y = Math.max(0, frame.top);
+      teamVeilStyle.value = {left:x+'px', top:y+'px',
+        width:Math.max(0, Math.min(window.innerWidth,frame.right)-x)+'px',
+        height:Math.max(0, Math.min(window.innerHeight,frame.bottom)-y)+'px'};
+      const left = Math.max(16, bounds.left);
+      teamDockStyle.value = {left: left + 'px', maxWidth: Math.max(160, Math.min(bounds.width, window.innerWidth - left - 20)) + 'px'};
+    };
+    onMounted(() => {
+      dockObserver = new ResizeObserver(positionTeamDock);
+      dockObserver.observe(workspaceRoot.value);
+      window.addEventListener('resize', positionTeamDock);
+      positionTeamDock();
+    });
+    onUnmounted(() => { dockObserver?.disconnect(); window.removeEventListener('resize', positionTeamDock); });
+
+    const displayState = computed(() => visibleRecord(props.state));
+    const taskReview = ref(null);
     const store = companyStore;
+
     const active = ref("command");
+    const studioOpened = ref(false);
+    const workflowStudio = ref(null);
+    watch(active, view => { if (view === 'studio') studioOpened.value = true; }, { immediate: true });
+    const activeChannel = ref("command");
+    const inboxReview = ref(null);
+    const inboxWorkspace = ref(null);
+    async function openCompanyIntake() {
+      active.value = 'approvals';
+      await nextTick();
+      inboxWorkspace.value?.openIntake();
+    }
+    const operationalWorkspace = ref(null);
+    const billingWorkspace = ref(null), purchasingWorkspace = ref(null);
+    const gmaoView = ref("today");
+    const gmaoClientId = ref("");
     const manual = reactive({ amount: 0, memo: "" });
     const goalLimit = ref(20);
-    const catalogLimit = ref(30);
     const expandedWorkResults = reactive(new Set());
-    watch(() => [props.initialView, props.initialResultId], ([view, resultId]) => {
-      active.value = view || "command";
-      if (resultId) expandedWorkResults.add(resultId);
-    }, { immediate: true });
-    const approvalLimit = ref(25);
     const auditLimit = ref(80);
-    const charterBusy = ref(false);
+    const charterBusy = ref(false), charterError = ref(''), charterSaved = ref(false);
+    const teamSettingsSection = ref('identity');
+    const teamSettingsSections = [
+      { id: 'identity', label: 'Team identity', icon: 'badge' },
+      { id: 'style', label: 'Working style', icon: 'chat' },
+      { id: 'money', label: 'Money guardrails', icon: 'account_balance_wallet' },
+      { id: 'autonomy', label: 'Autonomy and memory', icon: 'verified_user' },
+      { id: 'cadence', label: 'Cadence', icon: 'schedule' },
+      { id: 'execution', label: 'Model execution', icon: 'memory' },
+    ];
+    const exportMessage = ref('');
     const isFullscreen = ref(false);
     const pendingDelete = ref(null);
     const charterDraft = reactive({
@@ -1441,6 +1312,9 @@ export default {
     });
     const modelAvailability = reactive({});
     const modelDownloading = reactive({});
+    const roleDownloadError = ref('');
+    const isCancellingRoleDownloads = ref(false);
+    let roleDownloadRun = 0;
     const companyDisplayName = computed(() =>
       (props.charter.name || "Untitled Company").replace(/\s+\(Draft\)$/i, ""),
     );
@@ -1467,14 +1341,14 @@ export default {
       charterDraft.dailyBrief = props.charter.experience?.dailyBrief !== false;
     }
 
-    watch(() => props.charter?.id, resetCharterDraft, { immediate: true });
+    watch(() => props.charter?.id, () => { resetCharterDraft(); charterError.value = ''; charterSaved.value = false; }, { immediate: true });
+    watch(charterDraft, () => { charterSaved.value = false; });
 
     async function saveCharter() {
-      charterBusy.value = true;
+      charterBusy.value = true; charterError.value = ''; charterSaved.value = false;
       try {
         const next = JSON.parse(JSON.stringify(props.charter));
         next.name = charterDraft.name.trim();
-        next.mission = charterDraft.mission.trim();
         next.rules = {
           ...(next.rules || {}),
           currency: charterDraft.currency,
@@ -1512,15 +1386,15 @@ export default {
           tone: charterDraft.tone,
           language: charterDraft.language,
           responseDetail: charterDraft.responseDetail,
-          instructions: charterDraft.instructions,
+          instructions: props.charter.experience?.instructions || "",
           autonomy: charterDraft.autonomy,
           memory: charterDraft.memory,
           timezone: charterDraft.timezone,
           dailyBrief: charterDraft.dailyBrief,
         };
-        await store.update(next);
+        await store.update(next); charterSaved.value = true;
       } catch (err) {
-        alert("Save failed: " + (err.message || err));
+        charterError.value = err.message || String(err);
       } finally {
         charterBusy.value = false;
       }
@@ -1529,6 +1403,8 @@ export default {
     // ─── Role-edit modal ─────────────────────────────────────────
     const editingRoleKey = ref(null);
     const mediaPipelineOptions = [
+      { key: "text", label: "Text", icon: "chat" },
+      { key: "fineTune", label: "Training · approval required", icon: "model_training" },
       { key: "image", label: "Image", icon: "image" },
       { key: "video", label: "Video", icon: "movie" },
       { key: "audio", label: "Audio", icon: "graphic_eq" },
@@ -1539,9 +1415,38 @@ export default {
     const editDraft = reactive({ companion: null, llm: null, gateway: null, budget: null, pipelines: [], connectors: [], grantedSkills: [] });
     const editBusy = ref(false);
 
-    const companionList = DEFAULT_COMPANIONS.map((c) => ({ id: c.id, name: c.name }));
+    const companionList = computed(() => smartAgentCatalog.agents);
+    const hireAgent = ref(null);
+    async function requestAgentJobAction(action) {
+      try {
+        await requestSmartAgentJobAction(props.charter.id, action);
+        await store.refreshActive();
+        active.value = 'approvals'; activeChannel.value = 'approvals';
+      } catch (error) { alert(error.message); }
+    }
+    const selectedSmartAgent = computed(() => smartAgentCatalog.agents.find(agent => agent.id === editDraft.companion));
+    const selectedAgentCanHire = computed(() => selectedSmartAgent.value?.tokenId != null && selectedSmartAgent.value?.agentWallet && selectedSmartAgent.value?.tokenAddress);
+    function consumeHireRequest() {
+      const id = smartAgentCatalog.pendingHireId;
+      if (!id || !smartAgentCatalog.loaded) return;
+      active.value = 'org'; activeChannel.value = 'org';
+      const role = availableRoleOptions.value[0]?.key;
+      if (!role) return;
+      openRoleEdit(role);
+      editDraft.companion = id;
+      editDraft.pipelines = [...SMART_AGENT_CREATE_CAPABILITIES];
+      smartAgentCatalog.pendingHireId = null;
+    }
+    watch(() => [smartAgentCatalog.pendingHireId, smartAgentCatalog.loaded], consumeHireRequest);
+    function selectRoleAgent() {
+      // A different companion does not inherit the previous role holder's integrations.
+      const previous = props.charter.roles?.[editingRoleKey.value];
+      const sameCompanion = previous?.companion === editDraft.companion;
+      editDraft.grantedSkills = sameCompanion ? [...(previous.grantedSkills || [])] : [];
+      editDraft.connectors = sameCompanion ? [...(previous.connectors || connectorsForSkills(editDraft.grantedSkills))] : [];
+    }
     const availableRoleOptions = computed(() =>
-      Object.keys(props.state.roleLibrary || {})
+      Object.keys(displayState.value.roleLibrary || {})
         .filter((roleKey) => !props.charter.roles?.[roleKey]?.companion)
         .map((roleKey) => ({ key: roleKey, label: roleDisplayName(roleKey) })),
     );
@@ -1568,30 +1473,16 @@ export default {
         }))
         .sort((a, b) => a.params - b.params || a.label.localeCompare(b.label)),
     );
-    const roleCapabilityOptions = computed(() => {
-      const roleKey = editingRoleKey.value;
-      const ownedSkills = new Set(getCompanySkillsForCompanion(editDraft.companion));
-      return Object.values(SKILL_MANIFESTS)
-        .filter((skill) => ownedSkills.has(skill.id))
-        .filter((skill) => !roleKey || !skill.suggestedRoles?.length || skill.suggestedRoles.includes(roleKey))
-        .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
-    });
+    // Existing integration permissions stay editable, but they are not agent skills.
     const roleConnectorOptions = computed(() => {
-      const installed = new Map((props.state.connectors || []).map((conn) => [conn.kind, conn]));
-      const wanted = new Set([
-        ...(props.charter.pendingConnectors || []),
-        ...(props.state.connectors || []).map((conn) => conn.kind),
-        ...roleCapabilityOptions.value.flatMap((skill) => skill.requiredConnectors || []),
-      ]);
-      return [...wanted]
-        .filter(Boolean)
-        .sort()
-        .map((kind) => ({
-          kind,
-          name: connectorLabel(kind),
-          icon: connectorIcon(kind),
-          status: installed.get(kind)?.status || "not_connected",
-        }));
+      const previous = props.charter.roles?.[editingRoleKey.value];
+      if (previous?.companion !== editDraft.companion) return [];
+      const installed = new Map((displayState.value.connectors || []).map((conn) => [conn.kind, conn]));
+      const configured = new Set([...(previous.connectors || []), ...connectorsForSkills(previous.grantedSkills)]);
+      return [...configured].map((kind) => ({
+        kind, name: connectorLabel(kind), icon: connectorIcon(kind),
+        status: installed.get(kind)?.status || "not_connected",
+      }));
     });
 
     function roleConnectorCount(roleKey) {
@@ -1603,9 +1494,6 @@ export default {
         for (const kind of SKILL_MANIFESTS[sid]?.requiredConnectors || []) connectors.add(kind);
       }
       return connectors.size;
-    }
-    function roleSkillCount(roleKey) {
-      return new Set(props.charter.roles?.[roleKey]?.grantedSkills || []).size;
     }
     function connectorsForSkills(skillIds) {
       const out = new Set();
@@ -1645,36 +1533,14 @@ export default {
         linear: "list_alt",
       })[kind] || "cable";
     }
-    function skillConnectorSummary(skill) {
-      const connectors = skill?.requiredConnectors || [];
-      if (!connectors.length) return "Local skill";
-      return `Requires ${connectors.map(connectorLabel).join(", ")}`;
-    }
-    function skillNeedsConnector(skill) {
-      const selected = new Set(editDraft.connectors || []);
-      return (skill?.requiredConnectors || []).some((kind) => !selected.has(kind));
-    }
     function toggleRoleConnector(kind, checked) {
       const next = new Set(editDraft.connectors || []);
       if (checked) next.add(kind);
       else next.delete(kind);
       editDraft.connectors = [...next];
     }
-    function toggleRoleSkill(skill, checked) {
-      const skills = new Set(editDraft.grantedSkills || []);
-      if (checked) {
-        skills.add(skill.id);
-        const connectors = new Set(editDraft.connectors || []);
-        for (const kind of skill.requiredConnectors || []) connectors.add(kind);
-        editDraft.connectors = [...connectors];
-      } else {
-        skills.delete(skill.id);
-      }
-      editDraft.grantedSkills = [...skills];
-    }
-
     function defaultBudgetForRole(roleKey) {
-      const def = props.state.roleLibrary[roleKey];
+      const def = displayState.value.roleLibrary[roleKey];
       if (!def) return 0;
       return ((props.charter.rules?.perHeartbeatSpendCap || 0) * (def.budgetPct || 0)).toFixed(2);
     }
@@ -1686,10 +1552,17 @@ export default {
       editDraft.llm = cur.llm || null;
       editDraft.gateway = cur.gateway || null;
       editDraft.budget = Number.isFinite(cur.budgetPerHeartbeat) ? cur.budgetPerHeartbeat : null;
-      editDraft.pipelines = Array.isArray(cur.pipelines) ? [...cur.pipelines] : [];
+      editDraft.pipelines = Array.isArray(cur.pipelines) ? [...cur.pipelines] : [...SMART_AGENT_CREATE_CAPABILITIES];
       editDraft.grantedSkills = Array.isArray(cur.grantedSkills) ? [...cur.grantedSkills] : [];
       editDraft.connectors = Array.isArray(cur.connectors) ? [...cur.connectors] : connectorsForSkills(editDraft.grantedSkills);
       editingRoleKey.value = roleKey;
+    }
+    async function saveWorkerModel(roleKey, key) {
+      // Read the current prop at apply time, after any download has completed.
+      const next = JSON.parse(JSON.stringify(props.charter));
+      if (!next.roles?.[roleKey]?.companion) throw new Error("This teammate is no longer assigned to this role.");
+      next.roles[roleKey].llm = key;
+      await store.update(next);
     }
     function closeRoleEdit() {
       editingRoleKey.value = null;
@@ -1706,7 +1579,7 @@ export default {
         next.roles = next.roles || {};
         if (!editDraft.companion) {
           if (!props.charter.roles?.[roleKey]?.companion) {
-            alert("Pick a companion before adding this role.");
+            alert("Pick a smart agent before adding this role.");
             editBusy.value = false;
             return;
           }
@@ -1727,9 +1600,9 @@ export default {
           else delete next.roles[roleKey].pipelines;
           if (editDraft.connectors.length) next.roles[roleKey].connectors = [...new Set(editDraft.connectors)];
           else delete next.roles[roleKey].connectors;
-          const ownedSkills = new Set(getCompanySkillsForCompanion(editDraft.companion));
-          const mergedSkills = [...new Set(editDraft.grantedSkills)].filter((skillId) => ownedSkills.has(skillId));
-          if (mergedSkills.length) next.roles[roleKey].grantedSkills = mergedSkills;
+          delete next.roles[roleKey].assignedWorkflowIds;
+          // Legacy connector action grants are retained only for the same role holder.
+          if (editDraft.grantedSkills.length) next.roles[roleKey].grantedSkills = [...editDraft.grantedSkills];
           else delete next.roles[roleKey].grantedSkills;
           next.grantedSkills = [...new Set(
             Object.values(next.roles).flatMap((role) => role.grantedSkills || []),
@@ -1769,12 +1642,14 @@ export default {
       assigneeRole: "",
       priority: "normal",
       goalId: null,
+      workspaceChannel: "",
     });
     const issueModalOpen = ref(false);
     const issueFilter = ref("open");
     const issueBusy = ref(false);
 
     function openNewIssueModal() {
+      issueDraft.workspaceChannel = selectedDomain.value?.key || "";
       issueDraft.title = "";
       issueDraft.description = "";
       issueDraft.assigneeRole = filledRoles.value[0] || "";
@@ -1797,6 +1672,7 @@ export default {
           priority: issueDraft.priority,
           goalId: issueDraft.goalId || null,
           createdBy: "user",
+          labels: issueDraft.workspaceChannel ? [`workspace:${issueDraft.workspaceChannel}`] : [],
         });
         issueDraft.title = "";
         issueDraft.description = "";
@@ -1805,6 +1681,16 @@ export default {
       } finally {
         issueBusy.value = false;
       }
+    }
+    function issueWorkspace(issue) {
+      return domainViews.value.find(view => workInDomain(issue, view.key))?.key || '';
+    }
+    async function moveIssueWorkspace(issue, key) {
+      try {
+        await store.updateIssue(issue.id, {
+          labels: [...(issue.labels || []).filter(label => !label.startsWith('workspace:')), ...(key ? [`workspace:${key}`] : [])],
+        });
+      } catch (error) { exportMessage.value = error.message; }
     }
     async function setIssueStatus(issueId, status) {
       await store.updateIssue(issueId, { status });
@@ -1837,7 +1723,7 @@ export default {
       if (target.type === "content") await store.removeContent(target.id);
     }
     const filteredIssues = computed(() => {
-      const all = props.state.issues || [];
+      const all = displayState.value.issues || [];
       if (issueFilter.value === "all") return all;
       if (issueFilter.value === "active") return all.filter((i) => i.status === "open" || i.status === "in_progress");
       return all.filter((i) => i.status === issueFilter.value);
@@ -1870,12 +1756,20 @@ export default {
     }
 
     // ─── Goals (parent of issues) — filters + grouping ──────────────
-    const workStatusFilter = ref("active");
+    const workStatusFilter = ref("all"), workQuery = ref(''), showEarlierPlanning = ref(false);
+    function clearWorkFilters() { workStatusFilter.value='all'; workQuery.value=''; }
+    const deliverableSection = ref('assets');
+    const deliverableSections = computed(() => resultLibrarySections(props.charter));
+    watch(() => props.charter.id, () => { deliverableSection.value = 'assets'; });
+    function openResultTask(issueId) {
+      if (props.charter.workspace?.executionWorkflowId) return openChannelByKey({ view: 'studio', issueId });
+      return openWorkResult(issueId);
+    }
     const workStatusFilters = [
+      { id: "all", label: "All" },
       { id: "active", label: "Active" },
       { id: "attention", label: "Needs attention" },
       { id: "completed", label: "Completed" },
-      { id: "all", label: "All" },
     ];
     function goalStatusClass(s) {
       return ({
@@ -1885,11 +1779,10 @@ export default {
       })[s] || "company-pill--neutral";
     }
     const filteredGoals = computed(() => {
-      return (props.state.goals || []).slice().sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+      return (displayState.value.goals || []).slice().sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
     });
-    const visibleGoals = computed(() => filteredGoals.value.slice(0, goalLimit.value));
     function issuesForGoal(goalId) {
-      return (props.state.issues || []).filter((i) => i.goalId === goalId);
+      return (displayState.value.issues || []).filter((i) => i.goalId === goalId);
     }
     function goalProgress(goal) {
       const list = issuesForGoal(goal.id);
@@ -1897,9 +1790,10 @@ export default {
       const total = list.length || 1;
       return { done, total, pct: Math.round((done / total) * 100) };
     }
-    const ungroupedIssues = computed(() =>
-      (props.state.issues || []).filter((i) => !i.goalId),
-    );
+    const ungroupedIssues = computed(() => {
+      const goalIds = new Set((displayState.value.goals || []).map(goal => goal.id));
+      return (displayState.value.issues || []).filter(issue => !issue.goalId || !goalIds.has(issue.goalId));
+    });
     const kanbanColumnDefs = [
       { id: "open", label: "Open", hint: "Outcomes ready to be decomposed and tasks waiting for a teammate.", icon: "radio_button_unchecked", statuses: ["open"] },
       { id: "in_progress", label: "In Progress", hint: "Assigned work currently being handled by a teammate.", icon: "pending", statuses: ["in_progress"] },
@@ -1914,7 +1808,7 @@ export default {
     }
     const kanbanColumns = computed(() => {
       const items = [];
-      for (const goal of visibleGoals.value) {
+      for (const goal of filteredGoals.value) {
         const linkedIssues = issuesForGoal(goal.id);
         if (!linkedIssues.length) {
           items.push({
@@ -1946,24 +1840,36 @@ export default {
       }
       return kanbanColumnDefs.map((column) => ({
         ...column,
-        items: items.filter((item) => column.statuses.includes(item.column)),
+        items: items.filter((item) => column.statuses.includes(item.column) && (!selectedDomain.value || workInDomain(item.issue, selectedDomain.value.key))),
       }));
     });
     const allWorkItems = computed(() => kanbanColumns.value.flatMap((column) =>
       column.items.map((item) => ({ ...item, columnLabel: column.label })),
     ));
-    const todoWorkItems = computed(() => {
-      if (workStatusFilter.value === "all") return allWorkItems.value;
-      if (workStatusFilter.value === "active") return allWorkItems.value.filter((item) => ["open", "in_progress"].includes(item.column));
-      if (workStatusFilter.value === "attention") return allWorkItems.value.filter((item) => item.column === "blocked");
-      if (workStatusFilter.value === "completed") return allWorkItems.value.filter((item) => item.column === "done");
-      return allWorkItems.value;
+    function isEarlierPlanningItem(item) {
+      if (!props.charter.workspace?.executionWorkflowId) return false;
+      return item.type === 'goal' ? item.goal.createdBy === 'ceo' : isAutonomousWorkflowTask(props.charter, item.issue, item.goal);
+    }
+    const earlierPlanningItems = computed(() => allWorkItems.value.filter(isEarlierPlanningItem));
+    const selectedWorkItems = computed(() => allWorkItems.value.filter(item => showEarlierPlanning.value ? isEarlierPlanningItem(item) : !isEarlierPlanningItem(item)));
+    const matchedWorkItems = computed(() => {
+      const query=workQuery.value.trim().toLocaleLowerCase();
+      return selectedWorkItems.value.filter(item=>{
+        const status=workStatusFilter.value;
+        if(status==='active' && !['open','in_progress'].includes(item.column))return false;
+        if(status==='attention' && item.column!=='blocked')return false;
+        if(status==='completed' && item.column!=='done')return false;
+        const record=item.issue || item.goal;
+        return !query || [record?.title,record?.description,record?.rationale,roleDisplayName(record?.assigneeRole)].some(value=>String(value||'').toLocaleLowerCase().includes(query));
+      });
     });
+    const todoWorkItems = computed(() => matchedWorkItems.value.slice(0, goalLimit.value));
+    watch([workStatusFilter, workQuery, showEarlierPlanning], () => { goalLimit.value = 20; });
     function workStatusCount(status) {
-      if (status === "all") return allWorkItems.value.length;
-      if (status === "active") return allWorkItems.value.filter((item) => ["open", "in_progress"].includes(item.column)).length;
-      if (status === "attention") return allWorkItems.value.filter((item) => item.column === "blocked").length;
-      if (status === "completed") return allWorkItems.value.filter((item) => item.column === "done").length;
+      if (status === "all") return selectedWorkItems.value.length;
+      if (status === "active") return selectedWorkItems.value.filter((item) => ["open", "in_progress"].includes(item.column)).length;
+      if (status === "attention") return selectedWorkItems.value.filter((item) => item.column === "blocked").length;
+      if (status === "completed") return selectedWorkItems.value.filter((item) => item.column === "done").length;
       return 0;
     }
 
@@ -2017,149 +1923,189 @@ export default {
       await store.cancelGoal(goalId);
     }
 
-    // ───── Live multi-instance LLM pool inventory ─────
-    // The pool is always visible in the operations rail, so poll quietly
-    // for lightweight status instead of tying visibility to a tab.
-    const pool = reactive({
-      ready: false,
-      instances: [],
-      totalBytes: 0,
-      budgetBytes: 0,
-      err: null,
-    });
-    let _poolTimer = null;
-    async function refreshPool() {
-      if (document.hidden) return;
-      if (!window.electronAPI?.poolInventory) {
-        pool.err = "Pool IPC not available — restart the app to pick up the new build.";
+    // Shared server + parallel pool, measured in the main process. Never use
+    // configured role models or a team's memory budget as runtime telemetry.
+    const runtime = reactive({ snapshot: null, checking: false, error: '' });
+    let runtimeTimer = null, runtimeUnsubscribe = null, runtimeMounted = false;
+    async function refreshRuntime() {
+      if (!runtimeMounted || document.hidden || runtime.checking) return;
+      if (!window.electronAPI?.localExecutionStatus) {
+        runtime.error = 'Restart BonzAI to enable live execution status.';
         return;
       }
+      runtime.checking = true;
+      let timeout;
       try {
-        const res = await window.electronAPI.poolInventory();
-        if (res?.ok) {
-          pool.ready = true;
-          pool.instances = res.instances || [];
-          pool.totalBytes = res.totalBytes || 0;
-          pool.budgetBytes = res.budgetBytes || 0;
-          pool.err = null;
-        } else {
-          pool.err = res?.error || "unknown pool error";
-        }
-      } catch (err) {
-        pool.ready = false;
-        pool.instances = [];
-        pool.totalBytes = 0;
-        pool.budgetBytes = 0;
-        pool.err = err.message || "Pool inventory unavailable";
+        const snapshot = await Promise.race([
+          window.electronAPI.localExecutionStatus(),
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('timeout')), 4000); }),
+        ]);
+        if (!snapshot || !Number.isFinite(snapshot.loaded) || !Number.isFinite(snapshot.observedAt)) throw new Error('Invalid runtime status');
+        if (runtimeMounted) { runtime.snapshot = snapshot; runtime.error = ''; }
+      } catch {
+        if (runtimeMounted) { runtime.snapshot = null; runtime.error = 'Local execution status unavailable'; }
+      } finally {
+        clearTimeout(timeout);
+        runtime.checking = false;
       }
     }
-    function startPoolPolling() {
-      stopPoolPolling();
-      refreshPool();
-      _poolTimer = setInterval(refreshPool, 15000);
-    }
-    function stopPoolPolling() {
-      if (_poolTimer) { clearInterval(_poolTimer); _poolTimer = null; }
-    }
     function onVisibilityChange() {
-      if (!document.hidden) refreshPool();
+      // Hide stale readings until a fresh snapshot arrives after resuming.
+      if (!document.hidden) { runtime.snapshot = null; refreshRuntime(); }
     }
     onMounted(() => {
-      startPoolPolling();
+      void loadSmartAgents().then(consumeHireRequest).catch(console.warn);
+      runtimeMounted = true;
+      refreshRuntime();
+      runtimeTimer = setInterval(refreshRuntime, 2000);
+      runtimeUnsubscribe = window.electronAPI?.onModelChanged?.(() => refreshRuntime());
       refreshModelAvailability();
       document.addEventListener("visibilitychange", onVisibilityChange);
     });
     onUnmounted(() => {
-      stopPoolPolling();
+      runtimeMounted = false;
+      clearInterval(runtimeTimer);
+      if (typeof runtimeUnsubscribe === 'function') runtimeUnsubscribe();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     });
 
-    function fmtBytes(b) {
-      if (!Number.isFinite(b) || b <= 0) return "0 GB";
-      return `${(b / 1024 ** 3).toFixed(2)} GB`;
+    const workspaceBlueprint = computed(() => props.charter.workspace || buildWorkspaceBlueprint({
+      templateId: props.charter.template?.id,
+      businessType: props.charter.businessContext?.businessType,
+      currentWorkflow: props.charter.businessContext?.existingProcessSummary,
+    }));
+    const subtabs = computed(() => hydrateWorkspaceChannels(workspaceBlueprint.value, displayState.value, props.charter.template?.id).map((item) => ({
+      ...item,
+      value: item.view,
+      badge: item.badgeValue,
+      focus: item.domainView,
+    })));
+    const hasMaintenance = computed(() => subtabs.value.some(view => view.value === 'gmao'));
+    const primaryViews = computed(() => workspaceNavigation(subtabs.value, displayState.value, props.charter));
+    const domainViews = computed(() => domainWorkspaceViews(subtabs.value));
+    const selectedDomain = computed(() => active.value === 'issues' ? domainViews.value.find(view => view.key === activeChannel.value) : null);
+    const activeSection = computed(() => selectedDomain.value?.key || workspaceSection(active.value, gmaoView.value, hasMaintenance.value));
+    const currentChannel = computed(() => selectedDomain.value || (active.value === 'gmao' ? maintenanceDestination(gmaoView.value)
+      : primaryViews.value.find(view => view.value === active.value) || workspaceViews.find(view => view.value === active.value) || workspaceViews[0]));
+    function openChannel(channel) {
+      const destination = channel.value === 'gmao' ? maintenanceDestination(channel.focus) : channel;
+      active.value = destination.value;
+      activeChannel.value = destination.key;
+      if (destination.focus) gmaoView.value = destination.focus;
     }
-    const poolUsedPct = computed(() => {
-      if (!effectiveBudgetBytes.value) return 0;
-      return Math.min(100, Math.round((effectivePoolBytes.value / effectiveBudgetBytes.value) * 100));
-    });
-    const configuredRoleModels = computed(() => {
-      const grouped = new Map();
-      for (const [roleKey, role] of Object.entries(props.charter.roles || {})) {
-        if (!role?.companion) continue;
-        const key = role.llm || "__current__";
-        const existing = grouped.get(key) || {
-          key,
-          label: key === "__current__" ? "CURRENT CHAT MODEL" : llmLabel(key),
-          roles: [],
-        };
-        existing.roles.push(roleDisplayName(roleKey));
-        const spec = llmOptionsList.value.find((item) => item.key === key);
-        existing.sizeBytes = spec?.filesizeBytes || existing.sizeBytes || 0;
-        grouped.set(key, existing);
+    async function newTeamTask() {
+      if (!props.charter.workspace?.executionWorkflowId) return openNewIssueModal();
+      await openChannelByKey('studio');
+      workflowStudio.value?.newTask();
+    }
+    function interactiveWorkflowStep(issue) {
+      if (issue.status !== 'blocked') return null;
+      return issue.execution?.steps?.find(step => step.action?.type === 'runWorkflow' && (step.status === 'requires_input' || (step.status === 'failed' && step.output?.status === 'requires_input')));
+    }
+    async function continueWorkflowTask(issue) {
+      const step = interactiveWorkflowStep(issue);
+      if (!step) return;
+      setCompanyWorkflowHandoff({ companyId: props.charter.id, issueId: issue.id, skillId: step.action.workflowId, agentId: issue.assigneeCompanion });
+      await openChannelByKey('studio');
+      workflowStudio.value?.focusTask();
+    }
+    const grantsWorkspace = ref(null);
+    async function openChannelByKey(target) {
+      const key = typeof target === 'object' ? target.view : target;
+      if (key === 'studio' && target?.issueId) {
+        const issue = props.state.issues.find(item => item.id === target.issueId && (!item.companyId || item.companyId === props.charter.id));
+        const workflowId = props.charter.workspace?.executionWorkflowId;
+        if (!issue || !workflowId || !issue.execution?.steps?.some(step => step.action?.type === 'runWorkflow' && step.action.workflowId === workflowId)) return;
+        setCompanyWorkflowHandoff({ companyId: props.charter.id, issueId: issue.id, skillId: workflowId, agentId: issue.assigneeCompanion });
       }
-      return [...grouped.values()];
-    });
-
-    const totalInFlight = computed(() =>
-      pool.instances.reduce((acc, i) => acc + (i.inFlight || 0), 0),
-    );
-    const maxLlmSlots = computed(() =>
-      Math.max(1, Number(props.charter.execution?.llm?.maxConcurrent) || configuredRoleModels.value.length || 1),
-    );
-    const activeLlmSlots = computed(() =>
-      Math.min(maxLlmSlots.value, Math.max(totalInFlight.value, Object.keys(props.state.activeStreams || {}).length)),
-    );
-    const capacitySlots = computed(() => `${activeLlmSlots.value}/${maxLlmSlots.value}`);
-    const configuredModelBytes = computed(() =>
-      configuredRoleModels.value.reduce((acc, model) => acc + (model.sizeBytes || 0), 0),
-    );
-    const effectivePoolBytes = computed(() => pool.totalBytes || configuredModelBytes.value);
-    const effectiveBudgetBytes = computed(() =>
-      pool.budgetBytes || (Number(props.charter.execution?.llm?.memoryBudgetGB) || 22) * 1024 ** 3,
-    );
-
-    const subtabs = computed(() => [
-      { value: "command", label: "Goals", icon: "forum" },
-      { value: "org", label: "Teams", icon: "groups" },
-      { value: "issues", label: "Work", icon: "flag",
-        badge: props.state.goalCounts?.active || props.state.issueCounts?.open || null },
-      { value: "approvals", label: "Approvals", icon: "rule",
-        badge: props.state.approvals.length || null },
-      { value: "deliverables", label: "Results", icon: "task_alt",
-        badge: props.state.issueCounts?.done || null },
-      { value: "connectors", label: "Tools", icon: "cable",
-        badge: (props.state.connectorHealth?.needs_auth || 0) + (props.state.connectorHealth?.broken || 0) || null },
-      { value: "charter", label: "Settings", icon: "edit_note" },
-    ]);
+      if (key === 'intake') return openCompanyIntake();
+      if(key==='issues' && target?.filter) { workStatusFilter.value=target.filter; workQuery.value=''; }
+      openChannel(resolveWorkspaceDestination(key, subtabs.value, hasMaintenance.value));
+      await nextTick();
+      if (key === 'studio' && target?.issueId) workflowStudio.value?.focusTask();
+      if (key === 'grants' && target?.section) grantsWorkspace.value?.openSection(target.section);
+      if (key === 'purchasing' && target?.section) purchasingWorkspace.value?.openSection?.(target.section);
+    }
+    async function startPartsInvoice(parts) {
+      active.value='billing';await nextTick();await billingWorkspace.value?.createFromParts(parts);
+    }
+    async function openOperationalRecord(target) {
+      if (target?.kind==='recordMessage') {
+        try {
+          const record=await window.electronAPI.db.recordOperations.messageTarget(props.charter.id,target.id);
+          await openOperationalRecord(record);
+          for(let attempt=0;attempt<20;attempt++) {
+            await nextTick();
+            const button=[...document.querySelectorAll('[data-review-message]')].find(el=>el.dataset.reviewMessage===target.id);
+            if(button){button.click();break;}
+            await new Promise(resolve=>setTimeout(resolve,100));
+          }
+        } catch(error){exportMessage.value=error.message;}
+        return;
+      }
+      if (!target?.id || !['invoice', 'customerInvoice', 'workOrder', 'supplierInvoice', 'rfq', 'purchaseRequest', 'purchaseOrder', 'grant'].includes(target.kind)) return;
+      taskReview.value = null;
+      if(target.kind==='grant'){await openChannelByKey('grants');await grantsWorkspace.value?.openRecord(target.id);return;}
+      if(target.kind==='workOrder'){await openOperationalWorkOrder(target.id);return;}
+      active.value = ['invoice','customerInvoice'].includes(target.kind) ? 'billing' : 'purchasing';
+      activeChannel.value = active.value;
+      await nextTick();
+      if (['invoice','customerInvoice'].includes(target.kind)) await billingWorkspace.value?.openInvoice(target.id, target.revision);
+      else if (target.kind === 'purchaseOrder') await purchasingWorkspace.value?.openOrder(target.id);
+      else if (target.kind === 'supplierInvoice') await purchasingWorkspace.value?.openSupplierInvoice(target.id);
+      else if (target.kind === 'purchaseRequest') await purchasingWorkspace.value?.openRequest(target.id, target.revision);
+      else await purchasingWorkspace.value?.openRfq(target.id, target.revision);
+    }
+    async function openOperationalWorkOrder(id) {
+      await store.refreshActive();
+      gmaoClientId.value = '';
+      openChannelByKey('work-orders');
+      await nextTick();
+      operationalWorkspace.value?.openWorkOrder(id);
+    }
+    async function openOperationalTask(id) {
+      await store.refreshActive();
+      workStatusFilter.value = 'all';
+      openChannelByKey('issues');
+      await nextTick();
+      const row = [...document.querySelectorAll('[data-issue-id]')].find(element => element.dataset.issueId === id);
+      row?.scrollIntoView({block:'center'});
+      row?.focus({preventScroll:true});
+    }
+    watch(() => [props.charter.id, props.initialView, props.initialResultId, hasMaintenance.value], ([id, view, resultId], previous) => {
+      if (id !== previous?.[0]) gmaoClientId.value = '';
+      openChannelByKey(view);
+      if (resultId) expandedWorkResults.add(resultId);
+    }, { immediate: true });
 
     const filledRoles = computed(() =>
       Object.keys(props.charter.roles || {})
         .filter((k) => props.charter.roles[k]?.companion),
     );
     const treasuryEntries = computed(() =>
-      props.state.audit.filter((e) => e.kind === "treasury"),
+      displayState.value.audit.filter((e) => e.kind === "treasury"),
     );
     const totalSales = computed(() =>
-      props.state.catalog.reduce((acc, e) => acc + (e.sales || 0), 0),
+      displayState.value.catalog.reduce((acc, e) => acc + (e.sales || 0), 0),
     );
     const latestProduced = computed(() =>
-      (props.state.catalog || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0] || null,
+      (displayState.value.catalog || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0] || null,
     );
     const catalogRows = computed(() =>
-      (props.state.catalog || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+      (displayState.value.catalog || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
     );
     const completedWorkRows = computed(() => {
-      const goals = new Map((props.state.goals || []).map((goal) => [goal.id, goal]));
-      const catalog = props.state.catalog || [];
-      return (props.state.issues || [])
+      const goals = new Map((displayState.value.goals || []).map((goal) => [goal.id, goal]));
+      const catalog = displayState.value.catalog || [];
+      return (displayState.value.issues || [])
         .filter((issue) => issue.status === "done")
         .map((issue) => {
           const attempt = (issue.attempts || []).slice().sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0] || null;
           const report = attempt?.result || {};
-          const issueEvents = (props.state.audit || [])
+          const issueEvents = (displayState.value.audit || [])
             .filter((event) => event.issueId === issue.id)
             .sort((a, b) => (a.ts || a.createdAt || 0) - (b.ts || b.createdAt || 0));
-          const receipt = (props.state.audit || [])
+          const receipt = (displayState.value.audit || [])
             .filter((event) => event.issueId === issue.id && (event.txOrLink || (event.kind === "action" && event.note)))
             .sort((a, b) => (b.ts || b.createdAt || 0) - (a.ts || a.createdAt || 0))[0];
           const contentIds = new Set([
@@ -2185,19 +2131,15 @@ export default {
             recordId: attempt?.id || issue.id,
             completedAt: attempt?.finishedAt || issue.updatedAt || issue.createdAt,
             summary: report.summary || receipt?.note || `Completed “${issue.title}”.`,
-            justification: report.justification || goal?.rationale || goal?.missionAlignment || issue.description || "This work was assigned to advance the active company goal.",
+            justification: report.justification || goal?.rationale || goal?.missionAlignment || issue.description || "This task was created from your request.",
             actions,
             artifacts,
           };
         })
         .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
     });
-    const visibleCatalogRows = computed(() => catalogRows.value.slice(0, catalogLimit.value));
-    const visibleApprovals = computed(() =>
-      (props.state.approvals || []).slice(0, approvalLimit.value),
-    );
     const visibleAuditEntries = computed(() =>
-      (props.state.audit || []).slice(0, auditLimit.value),
+      (displayState.value.audit || []).slice(0, auditLimit.value),
     );
     const catalogColumns = computed(() => [
       { key: "createdAt", title: "Created", width: "96px", formatter: (v) => fmtTime(v) },
@@ -2227,19 +2169,19 @@ export default {
     ]);
 
     const openIssues = computed(() =>
-      (props.state.issues || []).filter((i) => i.status === "open"),
+      (displayState.value.issues || []).filter((i) => i.status === "open"),
     );
     const inProgressIssues = computed(() =>
-      (props.state.issues || []).filter((i) => i.status === "in_progress"),
+      (displayState.value.issues || []).filter((i) => i.status === "in_progress"),
     );
     const blockedIssues = computed(() =>
-      (props.state.issues || []).filter((i) => i.status === "blocked"),
+      (displayState.value.issues || []).filter((i) => i.status === "blocked"),
     );
     const todayActiveWork = computed(() =>
       [...inProgressIssues.value, ...openIssues.value].slice(0, 6),
     );
     const recentProof = computed(() =>
-      (props.state.audit || []).filter((e) => e.status === "executed").length,
+      (displayState.value.audit || []).filter((e) => e.status === "executed").length,
     );
     const workflowName = computed(() => {
       const id = props.charter.template?.id || "";
@@ -2256,7 +2198,7 @@ export default {
       },
       {
         label: "Work",
-        value: String(props.state.goalCounts?.active || 0),
+        value: String(displayState.value.goalCounts?.active || 0),
         hint: `${openIssues.value.length} open items`,
       },
       {
@@ -2265,13 +2207,23 @@ export default {
         hint: "audit and learning entries",
       },
       {
+        label: "Autonomy",
+        value: automationHealth.value.label,
+        hint: automationHealth.value.detail,
+      },
+      {
         label: "Guardrail",
-        value: fmtMoney(props.state.treasuryState?.balance, props.state.treasuryState?.currency),
-        hint: `${fmtMoney(props.charter.rules?.reserveFloor, props.state.treasuryState?.currency)} reserve`,
+        value: fmtMoney(displayState.value.treasuryState?.balance, displayState.value.treasuryState?.currency),
+        hint: `${fmtMoney(props.charter.rules?.reserveFloor, displayState.value.treasuryState?.currency)} reserve`,
       },
     ]);
+    const automationHealth = computed(() => displayState.value.runtimeError
+      ? {level:'error',label:'Needs attention',detail:displayState.value.runtimeError}
+      : props.charter.status !== 'active'
+      ? { level: 'idle', label: 'Paused', detail: 'This team is paused.' }
+      : displayState.value.automation?.health || { level: 'idle', label: 'Ready', detail: 'No run recorded yet' });
     const _companionMap = Object.fromEntries(DEFAULT_COMPANIONS.map((c) => [c.id, c.name]));
-    function companionName(id) { return _companionMap[id] || id; }
+    function companionName(id) { return smartAgentCatalog.agents.find(agent => agent.id === id)?.name || _companionMap[id] || id; }
 
     /**
      * Short label for a granted-skill id ("skill.twilio_sms" → "twilio_sms").
@@ -2290,14 +2242,14 @@ export default {
      * ("Producer:text", "GeneralCounsel", "RnDLead") because they're
      * persisted in charters; this helper only changes the rendering.
      */
-    function roleDisplayName(roleKey) { return formatRoleTitle(roleKey); }
+    function roleDisplayName(roleKey) { return operationText(formatRoleTitle(roleKey),i18n.state.locale); }
     function llmLabel(llmKey) {
-      if (!llmKey) return "CURRENT MODEL";
-      const model = llmOptionsList.value.find((item) => item.key === llmKey);
+      if (!llmKey) return operationText("Current model", i18n.state.locale);
+      const model = modelSpec(llmKey);
       return formatModelLabel(model?.label || llmKey);
     }
-    function companionImage(id) { return companionAvatar(id); }
-    function modelSpec(llmKey) { return llmOptionsList.value.find((item) => item.key === llmKey); }
+    function companionImage(id) { return companionAvatar(smartAgentCatalog.agents.find((agent) => agent.id === id) || id); }
+    function modelSpec(llmKey) { return llmOptionsList.value.find((item) => item.key === canonicalWorkerModelKey(llmKey)); }
     function modelNeedsDownload(llmKey) {
       const spec = modelSpec(llmKey);
       return Boolean(spec?.filename && modelAvailability[spec.filename] === false);
@@ -2310,6 +2262,27 @@ export default {
         .map((key) => ({ key, label: llmLabel(key) }));
     });
     const missingRoleModelsDownloading = computed(() => missingRoleModels.value.some((model) => modelDownloading[model.key] != null));
+    const roleDownloadItems = computed(() => {
+      const sizes = missingRoleModels.value.map(model => modelSpec(model.key)?.filesizeBytes || 0);
+      const bytes = sizes.reduce((sum, size) => sum + size, 0);
+      return [{ category: 'language', size: sizes.length && sizes.every(size => size > 0) ? `${(bytes / 1e9).toFixed(1)} GB` : '' }];
+    });
+    const roleDownloadProgress = computed(() => {
+      const progress = Object.values(modelDownloading);
+      return progress.length ? progress.reduce((sum, value) => sum + value, 0) / progress.length : 0;
+    });
+    async function cancelRoleDownloads() {
+      if (isCancellingRoleDownloads.value) return;
+      isCancellingRoleDownloads.value = true;
+      roleDownloadRun++;
+      try {
+        await cancelLocalDownloads({ filenames: Object.keys(modelDownloading).map(key => modelSpec(key)?.filename) });
+      } catch (error) {
+        roleDownloadError.value = error.message;
+      } finally {
+        isCancellingRoleDownloads.value = false;
+      }
+    }
     async function refreshModelAvailability() {
       if (!window.electronAPI?.checkModel) return;
       const used = [...new Set(Object.values(props.charter.roles || {}).map((role) => role?.llm).filter(Boolean))];
@@ -2321,6 +2294,7 @@ export default {
     async function downloadRoleModel(llmKey) {
       const spec = modelSpec(llmKey);
       if (!spec?.url || !spec?.filename || modelDownloading[llmKey] != null) return;
+      roleDownloadError.value = '';
       modelDownloading[llmKey] = 0;
       const unsubscribe = window.electronAPI?.onDownloadProgress?.((_event, data) => {
         if (data.filename === spec.filename) modelDownloading[llmKey] = Math.round((data.percent || 0) * 100);
@@ -2328,14 +2302,25 @@ export default {
       try {
         const result = await window.electronAPI.downloadModel(spec.url, spec.filename);
         modelAvailability[spec.filename] = Boolean(result === true || result?.savedPath);
-        if (result?.error) alert(`Model download failed: ${result.error}`);
+        if (!modelAvailability[spec.filename] && !result?.canceled && !isCancellingRoleDownloads.value) {
+          roleDownloadError.value = result?.error || 'Model download failed';
+        }
+        return modelAvailability[spec.filename];
+      } catch (error) {
+        if (!isCancellingRoleDownloads.value) roleDownloadError.value = error.message;
+        return false;
       } finally {
         unsubscribe?.();
         delete modelDownloading[llmKey];
       }
     }
     async function downloadMissingRoleModels() {
-      for (const model of missingRoleModels.value) await downloadRoleModel(model.key);
+      if (isCancellingRoleDownloads.value || missingRoleModelsDownloading.value) return;
+      const run = ++roleDownloadRun;
+      for (const model of missingRoleModels.value) {
+        if (run !== roleDownloadRun) return;
+        if (!await downloadRoleModel(model.key)) return;
+      }
     }
     function pipelineLabel(key) {
       return mediaPipelineOptions.find((pipeline) => pipeline.key === key)?.label || key;
@@ -2375,31 +2360,20 @@ export default {
       if (expandedWorkResults.has(id)) expandedWorkResults.delete(id);
       else expandedWorkResults.add(id);
     }
-    function openWorkResult(id) {
+    async function openWorkResult(id) {
+      const issue=displayState.value.issues.find(item=>item.id===id);
+      if(issue && issue.status!=='done') {
+        clearWorkFilters();await openChannelByKey('issues');
+        await nextTick();
+        const row=[...(workspaceRoot.value?.querySelectorAll('[data-issue-id]')||[])].find(el=>el.dataset.issueId===id);
+        row?.scrollIntoView({block:'center',behavior:'auto'});row?.focus({preventScroll:true});return;
+      }
+      deliverableSection.value='work';
       expandedWorkResults.add(id);
-      active.value = "deliverables";
+      await openChannelByKey("deliverables");
     }
     function humanizeAction(value) {
-      return String(value || "Action").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-    }
-    function stripReasoningTags(value) {
-      return String(value || "")
-        .replace(/<think>[\s\S]*?<\/think>/gi, "")
-        .replace(/<\/?(?:think|thinking|reasoning|analysis|reflection)\b[^>]*>/gi, "")
-        .trim();
-    }
-
-    async function approve(id) { await store.approve(id); }
-    async function approveAll() {
-      if (!props.state.approvals.length) return;
-      if (!confirm(`Approve all ${props.state.approvals.length} pending actions?`)) return;
-      await store.approveMany(props.state.approvals.map((item) => item.id));
-    }
-    async function rejectAll() {
-      if (!props.state.approvals.length) return;
-      const reason = prompt(`Reason for rejecting all ${props.state.approvals.length} pending actions (optional):`, "");
-      if (reason === null) return;
-      await store.rejectMany(props.state.approvals.map((item) => item.id), reason);
+      return actionDisplayName(value, i18n.state.locale);
     }
 
     /**
@@ -2413,18 +2387,14 @@ export default {
       try { await store.update(next); }
       catch (err) { alert("Could not toggle demo mode: " + (err.message || err)); }
     }
-    async function reject(id) {
-      const reason = prompt("Reason for rejection (optional):", "");
-      if (reason !== null) await store.reject(id, reason);
-    }
     async function clearCatalog() {
-      if (!props.state.catalog.length) return;
+      if (!displayState.value.catalog.length) return;
       if (!confirm("Clear all outputs? Audit, outcomes, and treasury stay intact.")) return;
       await store.clearCatalog();
     }
     async function removeContent(id) { await store.removeContent(id); }
     async function clearAuditConfirm() {
-      if (!props.state.audit.length) return;
+      if (!displayState.value.audit.length) return;
       if (!confirm("Clear the audit log? Goals, catalog, and treasury stay intact.")) return;
       await store.clearAudit();
     }
@@ -2461,7 +2431,7 @@ export default {
       finally { document.body.removeChild(area); }
     }
     async function copyDeliverable(row) {
-      await copy(deliverableBody(row));
+      await copy(await artifactPlainText(row));
     }
     function deliverableFilename(row) {
       const ts = row?.createdAt ? new Date(row.createdAt).toISOString().slice(0, 19).replace(/[:T]/g, "-") : Date.now();
@@ -2481,15 +2451,8 @@ export default {
         createdAt: row?.createdAt,
       }, null, 2);
     }
-    function downloadDeliverable(row) {
-      const type = typeof row?.payload === "string" ? "text/plain" : "application/json";
-      const blob = new Blob([deliverableBody(row)], { type });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = deliverableFilename(row);
-      a.click();
-      URL.revokeObjectURL(url);
+    async function downloadDeliverable(row) {
+      await downloadArtifact(row);
     }
     async function runCEO() {
       await store.tickNow();
@@ -2508,37 +2471,46 @@ export default {
       await store.refreshActive();
     }
     async function exportCompany() {
-      const bundle = await store.exportActive({ includePayloads: true });
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${props.charter.name.replace(/\s+/g, "_")}-export.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      exportMessage.value = '';
+      try {
+        const bundle = await store.exportActive({ includePayloads: true });
+        const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url;
+        link.download = `${props.charter.name.replace(/\s+/g, '_')}-export.json`;
+        link.click(); URL.revokeObjectURL(url);
+        exportMessage.value = bundle.warnings?.length
+          ? `Backup created with missing attachments: ${bundle.warnings.join(' ')}`
+          : 'Company backup created, including task history, memory and attachments. Credentials are excluded.';
+      } catch (error) { exportMessage.value = `Backup failed: ${error.message}`; }
     }
+
     return {
-      store, active, subtabs, manual,
+      workspaceRoot, teamDockStyle, teamVeilStyle, hoveredCommand, showCommandLabel,
+      inboxReview, inboxWorkspace, openCompanyIntake, operationalWorkspace, billingWorkspace, purchasingWorkspace, taskReview, exportMessage, openOperationalTask, openOperationalWorkOrder, openOperationalRecord, startPartsInvoice,
+      taskProgress, store, active, studioOpened, workflowStudio, activeChannel, gmaoView, gmaoClientId, subtabs, primaryViews, activeSection, hasMaintenance,
+      grantsWorkspace, currentChannel, domainViews, issueWorkspace, moveIssueWorkspace, openChannel, openChannelByKey, manual,
       isFullscreen,
-      charterDraft, charterBusy, companyDisplayName, saveCharter, resetCharterDraft,
-      goalLimit, catalogLimit, approvalLimit, auditLimit, expandedWorkResults,
+      charterDraft, charterBusy, charterError, charterSaved, teamSettingsSection, teamSettingsSections, companyDisplayName, saveCharter, resetCharterDraft,
+      state: displayState,
+      goalLimit, auditLimit, expandedWorkResults,
       filledRoles, treasuryEntries, totalSales,
       openIssues,
-      visibleGoals, catalogRows, visibleCatalogRows, completedWorkRows, visibleApprovals, visibleAuditEntries,
+      catalogRows, completedWorkRows, visibleAuditEntries,
       catalogColumns, treasuryColumns, auditColumns,
       companionName, companionImage, roleDisplayName, llmLabel, pipelineLabel, skillShortName, fmtMoney, fmtCount, fmtTime,
-      modelAvailability, modelDownloading, modelNeedsDownload, downloadRoleModel,
+      modelAvailability, modelDownloading, modelNeedsDownload, downloadRoleModel, saveWorkerModel, refreshModelAvailability,
       missingRoleModels, missingRoleModelsDownloading, downloadMissingRoleModels,
-      roleConnectorCount, roleSkillCount, auditActionLabel,
-      approve, reject, approveAll, rejectAll,
+      roleDownloadItems, roleDownloadProgress, roleDownloadError, isCancellingRoleDownloads, cancelRoleDownloads,
+      roleConnectorCount, auditActionLabel,
       clearCatalog, removeContent, requestDeleteIssue, requestDeleteContent,
       pendingDelete, dismissDelete, confirmDelete,
-      downloadDeliverable, copyDeliverable, toggleWorkResult, openWorkResult, humanizeAction,
+      downloadDeliverable, copyDeliverable, toggleWorkResult, openWorkResult, openResultTask, humanizeAction,
       clearAuditConfirm,
       recordRevenue, recordSpend, copy, toggleDemoMode,
       toggleExecution, exportCompany,
-      // pool
-      pool, refreshPool, fmtBytes, poolUsedPct, totalInFlight, capacitySlots, configuredRoleModels,
+      // live execution
+      runtime, refreshRuntime,
       // issues
       issueDraft, issueFilter, issueBusy, issueModalOpen, filteredIssues,
       openNewIssueModal, closeNewIssueModal,
@@ -2546,20 +2518,20 @@ export default {
       priorityClass, statusClass,
       sentenceCaseTask,
       // goals
-      workStatusFilter, workStatusFilters,
-      filteredGoals, ungroupedIssues, kanbanColumns, todoWorkItems, workStatusCount,
+      workQuery, clearWorkFilters, showEarlierPlanning, earlierPlanningItems, selectedWorkItems, isEarlierPlanningItem, newTeamTask, interactiveWorkflowStep, continueWorkflowTask, deliverableSection, deliverableSections, workStatusFilter, workStatusFilters,
+      filteredGoals, ungroupedIssues, kanbanColumns, allWorkItems, todoWorkItems, matchedWorkItems, workStatusCount,
       issuesForGoal, goalProgress, goalStatusClass,
       goalModalOpen, goalBusy, goalDraft,
       openNewGoalModal, closeNewGoalModal, addGoalTask, removeGoalTask,
       submitNewGoal, cancelGoal,
       // command center
-      operatingMetrics,
+      operatingMetrics, automationHealth,
       latestProduced, outputPreview,
       blockedIssues, inProgressIssues, todayActiveWork, runCEO,
       // role-edit modal
       editingRoleKey, editDraft, editBusy,
-      companionList, llmOptionsList, mediaPipelineOptions, roleConnectorOptions, roleCapabilityOptions, availableRoleOptions, rolePickerOptions, defaultBudgetForRole,
-      toggleRoleConnector, toggleRoleSkill, skillConnectorSummary, skillNeedsConnector,
+      requestAgentJobAction, selectRoleAgent, hireAgent, selectedSmartAgent, selectedAgentCanHire, companionList, llmOptionsList, mediaPipelineOptions, roleConnectorOptions, availableRoleOptions, rolePickerOptions, defaultBudgetForRole,
+      toggleRoleConnector,
       openRoleEdit, closeRoleEdit, saveRoleEdit, fireRole,
     };
   },
@@ -2581,12 +2553,13 @@ hr {
 
 .dash {
   color: var(--bz-fg);
-  height: 100%;
+  height: auto;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(260px, 1fr) clamp(156px, 16vh, 190px);
+  grid-template-columns: 196px minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(260px, 1fr) clamp(144px, 15vh, 180px);
   gap: var(--bz-space-3);
-  overflow: hidden;
+  overflow: visible;
 }
 .dash--fullscreen {
   position: fixed;
@@ -2594,7 +2567,36 @@ hr {
   z-index: 70;
   padding: var(--bz-space-4);
   background: var(--bz-canvas);
+  overflow: auto;
 }
+
+.company-channel-head {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--bz-space-4);
+  padding: var(--bz-space-3) var(--bz-space-4);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r);
+  background: color-mix(in srgb, var(--bz-card) 92%, transparent);
+}
+.company-channel-head__copy { min-width: 0; display: flex; align-items: center; gap: var(--bz-space-3); }
+.company-channel-head__symbol { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 10px; background: var(--bz-purple-soft); color: var(--bz-purple-100); font-size: 22px; font-weight: 800; }
+.company-channel-head__copy > div { min-width: 0; }
+.company-channel-head h1 { margin: 0 !important; color: var(--bz-fg) !important; font-size: 28px !important; line-height: 1.2 !important; text-align: left !important; }
+.company-channel-head p { max-width: 640px; margin: 5px 0 0; overflow: hidden; color: var(--bz-fg-low); font-size: var(--bz-size-micro); text-overflow: ellipsis; white-space: nowrap; }
+.company-channel-head__signals { display: flex; align-items: center; gap: var(--bz-space-2); }
+.company-channel-head__signals > span { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 9px; border: 1px solid var(--bz-border); border-radius: var(--bz-r-pill); color: var(--bz-fg-mid); font-size: var(--bz-size-micro); white-space: nowrap; }
+.company-channel-head__signals > span i { width: 7px; height: 7px; border-radius: 50%; background: var(--bz-warning); }
+.company-channel-head__signals > span i.is-healthy, .company-channel-head__signals > span i.is-running { background: var(--bz-emerald-500); }
+.company-channel-head__signals > span i.is-error { background: var(--bz-danger); }
+
+.company-model-requirements { margin: 0 0 var(--bz-space-6); }
+.company-dashboard-shell { grid-column: 2; grid-row: 3; }
+.company-telemetry-bar { grid-column: 2; grid-row: 4; }
 
 .company-cockpit {
   display: grid;
@@ -2631,7 +2633,7 @@ hr {
 }
 .company-cockpit__metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--bz-space-2);
 }
 .company-cockpit__actions {
@@ -2789,7 +2791,7 @@ hr {
 }
 .company-dashboard-shell {
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .rail-panel {
   box-sizing: border-box;
@@ -3132,15 +3134,15 @@ hr {
 /* ───────── Panels ───────── */
 .dash-body {
   min-width: 0;
-  height: 100%;
+  height: auto;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
   padding: 0;
 }
 .panel {
   padding: 2em 2.5em !important;
   border: 1px solid var(--bz-border);
-  border-radius: 4px !important;
+  border-radius: var(--bz-r-lg) !important;
   background: var(--bz-card);
 }
 .section-head {
@@ -3345,11 +3347,6 @@ hr {
   flex-direction: column;
   gap: 1em;
 }
-.company-model-alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--bz-space-3); padding: var(--bz-space-3) var(--bz-space-4); border: 1px solid var(--bz-warning); border-radius: var(--bz-r-sm); background: var(--bz-warning-soft); color: var(--bz-fg); }
-.company-model-alert > .material-symbols-outlined { color: var(--bz-warning); font-size: 26px; }
-.company-model-alert strong { font-size: var(--bz-size-body); }
-.company-model-alert p { margin: 2px 0 0; color: var(--bz-fg-mid); font: 400 var(--bz-size-micro)/1.3 var(--bz-font-mono); }
-.company-model-alert .bz-btn { min-height: 36px; padding: 0 var(--bz-space-3); font-size: var(--bz-size-meta); white-space: nowrap; }
 .today-command__head,
 .today-lane__head,
 .today-output__meta,
@@ -4217,9 +4214,15 @@ hr {
   .kanban-column__lane {
     max-height: 540px;
   }
+  .company-channel-head__signals > span { display: none; }
 }
 
 @media (max-width: 720px) {
+  .dash { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(260px, 1fr); }
+  .company-channel-head { grid-column: 1; grid-row: 1; }
+  .company-dashboard-shell { grid-column: 1; grid-row: 2; }
+  .company-telemetry-bar { display: none; }
+  .company-channel-head p { display: none; }
   .command-center__metrics,
   .company-cockpit__metrics,
   .owner-brief__grid {
@@ -4431,6 +4434,7 @@ hr {
   font-style: italic;
   color: var(--bz-warning);
 }
+
 .org-card__companion {
   color: var(--bz-fg);
   font-size: 1.05rem;
@@ -5135,6 +5139,7 @@ code {
   position: fixed;
   inset: 0;
   background: var(--bz-overlay);
+  backdrop-filter: blur(10px);
   z-index: 9999;
   display: flex;
   align-items: center;
@@ -5154,6 +5159,8 @@ code {
   padding: 2em 2.5em !important;
   border: 1px solid var(--bz-border-strong) !important;
   background: var(--bz-card) !important;
+  border-radius: var(--bz-r-lg) !important;
+  box-shadow: var(--bz-shadow-xl);
 }
 .role-modal__header {
   display: flex;
@@ -5183,10 +5190,10 @@ code {
   margin: 0.5em 0 0 !important;
   font-size: 15px !important;
   text-align: left !important;
-  font-style: italic;
+  font-style: normal;
 }
-.role-modal .field { margin-bottom: 1em; }
-.role-modal .label { color: var(--bz-fg) !important; }
+.role-modal .field { margin-bottom: 24px; }
+.role-modal .label { color: var(--bz-fg) !important; font: 500 14px/1.45 var(--bz-font-body); margin-bottom: 10px; }
 .role-modal .hint {
   font-size: 12px !important;
   color: var(--bz-fg-low) !important;
@@ -5419,4 +5426,99 @@ code {
   border-color: var(--bz-purple-300) !important;
   box-shadow: 0 0 0 3px var(--bz-purple-soft) !important;
 }
+
+.team-members,.team-backlog{min-width:0;color:var(--bz-fg)}
+.team-section-count{display:inline-flex;align-items:baseline;gap:8px;color:var(--bz-fg-mid);font-size:14px}
+.team-section-count b{font-size:28px;color:var(--bz-fg)}
+.team-members .section-head,.team-backlog .goals-head{margin-bottom:24px;align-items:center}
+.team-members .org-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:24px}
+.team-members .org-card{padding:28px;border-radius:var(--bz-r-lg);background:var(--bz-card);gap:20px;min-width:0;overflow-wrap:anywhere;transition:border-color var(--bz-dur-fast) var(--bz-ease)}
+.team-members .org-card:hover,.team-members .org-card:focus-within{border-color:var(--bz-border-strong);box-shadow:none;transform:none}
+.team-members .org-card__role{font:500 13px/1.4 var(--bz-font-body);color:var(--bz-accent);order:0;letter-spacing:0}
+.team-members .org-card__avatar{width:64px;height:64px;box-shadow:none;border:1px solid var(--bz-border-strong)}
+.team-members .org-card__companion{font-size:24px;line-height:1.3;min-width:0}
+.org-card__team{display:block;font:400 12px/1.5 var(--bz-font-body);color:var(--bz-fg-mid);margin-top:4px}
+.team-members .org-card__llm{font-size:13px;line-height:1.5;padding:12px;border-radius:var(--bz-r);text-transform:none;letter-spacing:0;flex-wrap:wrap;white-space:normal;overflow-wrap:anywhere}
+.team-members .org-card__capability-summary{font-size:13px;line-height:1.5;color:var(--bz-fg-mid);gap:10px}
+.team-members .org-card__divider{margin-top:auto}
+.team-members .org-card__meta{flex-wrap:wrap;gap:12px}
+.team-members .org-card__queue-badge{background:transparent;border:0;padding:0}
+.team-members .org-card__queue-count{font-size:24px}
+.team-members .org-card__run-btn{color:var(--bz-fg);background:var(--bz-raised);border-color:var(--bz-border)}
+.team-backlog .work-status-tabs{gap:6px;padding:0 0 20px;margin:0 0 24px;border-bottom:1px solid var(--bz-border)}
+.team-backlog .issue-filter__chip{min-height:40px;padding:8px 12px;text-transform:none;letter-spacing:0;font:500 13px/1.4 var(--bz-font-body);border-radius:var(--bz-r);gap:8px;transition:background var(--bz-dur-fast) var(--bz-ease),border-color var(--bz-dur-fast) var(--bz-ease)}
+.team-backlog .issue-filter__chip .bz-metric{font-size:17px;min-width:18px}
+.team-backlog .work-todo{border-radius:var(--bz-r-lg);padding:24px;background:var(--bz-card);gap:20px;border-color:var(--bz-border);transition:border-color var(--bz-dur-fast) var(--bz-ease)}
+.team-backlog .work-todo:hover{border-color:var(--bz-border-strong)}
+.team-backlog .work-todo--goal{background:var(--bz-panel);border-left:3px solid var(--bz-accent)}
+.team-backlog .work-todo__title{font-size:21px;line-height:1.3;margin:2px 0}
+.team-backlog .work-todo__copy{font-size:14px;line-height:1.7;margin:0;max-width:82ch;color:var(--bz-fg-mid)}
+.team-backlog .work-todo__main{gap:12px;min-width:0}
+.team-backlog .work-todo__topline{row-gap:8px}
+.team-empty{display:grid;justify-items:center;gap:16px;padding:48px 16px;color:var(--bz-fg-mid)}.team-empty>span{font-size:32px}.team-empty p{margin:0;text-align:center}
+.team-backlog .work-todo__actions{flex-wrap:wrap;align-self:start}
+@media(max-width:760px){.team-members .section-head,.team-backlog .goals-head{align-items:flex-start;flex-direction:column;gap:16px}.team-members .org-card{padding:20px}.team-backlog .work-todo{grid-template-columns:24px minmax(0,1fr);padding:16px;gap:12px}.team-backlog .work-todo__check{width:24px;height:24px;border:0;background:none}.team-backlog .work-todo__actions{grid-column:2;justify-content:flex-start}}
+</style>
+
+<style scoped>
+.approval-business{display:grid;gap:8px;margin:16px 0}.approval-business>div{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px}.approval-business dt{color:var(--bz-fg-mid);font-size:12px}.approval-business dd{margin:0;color:var(--bz-fg);white-space:pre-wrap;overflow-wrap:anywhere}.approval-card details{margin:12px 0;color:var(--bz-fg-mid);font-size:12px}@media(max-width:600px){.approval-business>div{grid-template-columns:1fr;gap:3px}}
+
+.dash{display:flex;flex-direction:column;min-width:0;gap:0}
+.company-view-nav{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;padding:12px 0 20px;margin-bottom:24px;border-bottom:1px solid var(--bz-border);font-size:13px}
+.company-view-nav__operations,.company-view-nav__team{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0}
+.company-view-nav__team{margin-left:auto;padding:4px;border:1px solid var(--bz-border);border-radius:var(--bz-r-lg);background:var(--bz-card)}
+.company-view-nav button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:8px 10px;border:1px solid transparent;border-radius:var(--bz-r-sm);background:transparent;color:var(--bz-fg-mid);font:inherit;cursor:pointer;white-space:nowrap}
+.company-view-nav button[aria-current=page]{background:var(--bz-accent-soft);border-color:var(--bz-border-brand);color:var(--bz-fg)}
+.company-view-nav button:hover{color:var(--bz-fg);background:var(--bz-raised)}
+.company-view-nav button:focus-visible{outline:2px solid var(--bz-accent);outline-offset:2px}
+.company-view-nav .material-symbols-outlined{font-size:18px}
+.company-channel-head__signals .company-ask-team{white-space:nowrap}
+
+.company-context-nav{display:flex;flex-wrap:wrap;gap:4px;margin:0}.company-context-nav>button{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;min-height:36px;border:0;border-radius:var(--bz-r-sm);font:inherit;font-size:13px;background:transparent;color:var(--bz-fg-mid);cursor:pointer}.company-context-nav>button:hover,.company-context-nav>button[aria-current=page]{background:var(--bz-raised);color:var(--bz-fg)}.company-context-nav .material-symbols-outlined{font-size:17px}
+.company-view-nav select{max-width:200px;min-height:42px;background:var(--bz-canvas);color:var(--bz-fg);border:1px solid var(--bz-border);border-radius:var(--bz-r-sm);padding:var(--bz-space-2);font:inherit}
+.company-channel-head{padding:0 0 var(--bz-space-4);background:transparent;border:0;min-width:0;flex-wrap:wrap;gap:var(--bz-space-3)}
+.company-channel-head h1{font-size:30px}.company-channel-head p{margin-top:var(--bz-space-1);color:var(--bz-fg-mid)}
+.company-dashboard-shell{flex:1;min-height:0;width:100%}
+@media(max-width:720px){.company-view-nav{gap:12px;width:100%;margin-bottom:20px}.company-view-nav__team{width:100%;margin-left:0}.company-view-nav button{flex:1 0 auto}.company-channel-head p{display:block}.company-channel-head h1{font-size:26px}}
+
+.company-inbox{padding:4px 0}.company-inbox__approvals{padding-bottom:20px;margin-bottom:20px;border-bottom:1px solid var(--bz-border)}.company-inbox .empty{padding:16px 0;text-align:left;font-size:14px;font-style:normal}.company-inbox .panel-title{font-size:22px}
+.company-execution-strip{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;border-block:1px solid var(--bz-border);padding:10px 0;margin-bottom:18px;font-size:12px;color:var(--bz-fg-mid)}
+.company-execution-strip strong{color:var(--bz-fg);font-weight:600}.company-execution-strip>.material-symbols-outlined{font-size:19px}.company-execution-strip .bz-iconbtn{margin-left:auto}.company-execution-strip__error{color:var(--bz-warning)}
+</style>
+
+<style src="./company-workspace.css"></style>
+
+<style scoped>
+.team-command-veil {
+ position:fixed;z-index:39;display:grid;place-items:center;pointer-events:none;
+ opacity:0;backdrop-filter:blur(0);-webkit-backdrop-filter:blur(0);
+ background:transparent;transition:opacity 220ms ease,backdrop-filter 280ms ease,background 280ms ease;
+}
+.team-command-veil.is-visible {
+ opacity:1;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+ background:color-mix(in srgb,var(--bz-canvas) 55%,transparent);
+}
+.team-command-veil__label {
+ color:var(--bz-fg);font-size:clamp(30px,4vw,64px);line-height:1.15;
+ text-align:center;padding:24px;max-width:90%;overflow-wrap:anywhere;
+ transform:translateY(8px);transition:transform 220ms ease;
+}
+.team-command-veil.is-visible .team-command-veil__label{transform:translateY(0)}
+@media(prefers-reduced-motion:reduce){.team-command-veil,.team-command-veil__label{transition:none}}
+.company-workspace .company-view-nav__team {
+ position:fixed;bottom:24px;z-index:40;margin:0;width:max-content;
+ flex-wrap:nowrap;overflow-x:auto;box-sizing:border-box;padding:8px;gap:4px;
+ border:1px solid var(--bz-border);border-radius:16px;background:var(--bz-panel);
+ box-shadow:0 8px 28px rgb(0 0 0 / .18);
+}
+.company-workspace .company-view-nav__team button {flex:0 0 auto;min-height:42px}
+.company-workspace {padding-bottom:104px!important}
+@media(max-width:720px){.company-workspace .company-view-nav__team{bottom:16px;padding:6px}}
+</style>
+
+<style scoped>
+.company-model-requirements--studio { margin: 0; }
+.company-production { padding-top: var(--bz-space-6); }
+.backlog-planning-note { display: flex; align-items: center; flex-wrap: wrap; gap: var(--bz-space-3); margin-bottom: var(--bz-space-5); }
+.backlog-planning-note p { margin: 0; color: var(--bz-fg-mid); font-size: var(--bz-size-meta); line-height: 1.6; max-width: 70ch; }
 </style>

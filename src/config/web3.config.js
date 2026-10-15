@@ -4,6 +4,8 @@
  * Defines token addresses, level requirements, NFT contracts, and treasury settings
  */
 
+import { ECONOMY_NETWORK_KEYS, economyChainId, economyAddress as resolveEconomyAddress } from './economy.config.js';
+
 const env = import.meta?.env || {};
 const ETHEREUM_CHAIN_ID = 1;
 const ETHEREUM_CHAIN_ID_HEX = "0x1";
@@ -22,24 +24,14 @@ const BONZAI_ROBINHOOD = env.VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS || null;
 const BONZAI_ROBINHOOD_TESTNET = env.VITE_BONZAI_TOKEN_ROBINHOODTESTNET_ADDRESS || null;
 const USDG_ROBINHOOD = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
 const WETH_ROBINHOOD = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
-const ECONOMY_CHAIN_ID = Number(env.VITE_BONZAI_ECONOMY_CHAIN_ID || ROBINHOOD_CHAIN_ID);
-const ECONOMY_NETWORK_KEYS = {
-  1: 'ethereum',
-  42161: 'arbitrum',
-  8453: 'base',
-  4663: 'robinhood',
-  46630: 'robinhoodTestnet',
-};
+const ECONOMY_CHAIN_ID = economyChainId(env);
 export const ECONOMY_NETWORK_KEY = ECONOMY_NETWORK_KEYS[ECONOMY_CHAIN_ID];
-if (!ECONOMY_NETWORK_KEY) {
-  throw new Error(`Unsupported VITE_BONZAI_ECONOMY_CHAIN_ID: ${ECONOMY_CHAIN_ID}`);
-}
 export const networkKeyForChainId = (chainId) => ({
   ...ECONOMY_NETWORK_KEYS,
   42: 'lukso',
   46630: 'robinhoodTestnet',
 })[Number(chainId)] || null;
-const BONZAI_ECONOMY = {
+const BONZAI_ECONOMY = resolveEconomyAddress(env, 'TOKEN', ECONOMY_CHAIN_ID) || {
   1: BONZAI_ETHEREUM,
   42161: "0x0a84edf70f30325151631ce7a61307d1f4d619a3",
   8453: BONZAI_BASE,
@@ -47,23 +39,20 @@ const BONZAI_ECONOMY = {
   46630: BONZAI_ROBINHOOD_TESTNET,
 }[ECONOMY_CHAIN_ID];
 
-const economyAddress = (name, ...legacyKeys) => {
-  const chainKey = `VITE_BONZAI_${name}_${ECONOMY_NETWORK_KEY.toUpperCase()}_ADDRESS`;
-  const genericKey = `VITE_BONZAI_${name}_ADDRESS`;
-  return env[chainKey] || env[genericKey] || legacyKeys.map((key) => env[key]).find(Boolean) || null;
-};
+const economyAddress = (name) => resolveEconomyAddress(env, name, ECONOMY_CHAIN_ID);
 
 const ECONOMY_CONTRACTS = {
-  unlock: economyAddress('UNLOCK', 'VITE_BONZAI_UNLOCK_ETHEREUM_ADDRESS'),
-  skillRegistry: economyAddress('SKILL_REGISTRY', 'VITE_BONZAI_SKILL_REGISTRY_ETHEREUM_ADDRESS'),
-  skillOwnership: economyAddress('SKILL_OWNERSHIP', 'VITE_BONZAI_SKILL_OWNERSHIP_ETHEREUM_ADDRESS'),
-  collectibles: economyAddress('COLLECTIBLES', 'VITE_BONZAI_COLLECTIBLES_ETHEREUM_ADDRESS'),
-  collectiblesFactory: economyAddress('COLLECTIBLES_FACTORY', 'VITE_BONZAI_COLLECTIBLES_FACTORY_ETHEREUM_ADDRESS'),
-  mintPool: economyAddress('MINT_POOL', 'VITE_BONZAI_MINT_POOL_ETHEREUM_ADDRESS'),
-  royaltySplitter: economyAddress('ROYALTY_SPLITTER', 'VITE_BONZAI_ROYALTY_SPLITTER_ETHEREUM_ADDRESS'),
+  unlock: economyAddress('UNLOCK'),
+  skillRegistry: economyAddress('SKILL_REGISTRY'),
+  skillOwnership: economyAddress('SKILL_OWNERSHIP'),
+  collectibles: economyAddress('COLLECTIBLES'),
+  collectiblesFactory: economyAddress('COLLECTIBLES_FACTORY'),
+  mintPool: economyAddress('MINT_POOL'),
+  basketRewards: economyAddress('BASKET_REWARDS'),
+  royaltySplitter: economyAddress('ROYALTY_SPLITTER'),
   fineTuneTokenFactory: economyAddress('FINE_TUNE_TOKEN_FACTORY'),
   companions: economyAddress('COMPANIONS'),
-  providerRegistry: economyAddress('PROVIDER_REGISTRY', 'VITE_BONZAI_PROVIDER_REGISTRY_ETHEREUM_ADDRESS'),
+  providerRegistry: economyAddress('PROVIDER_REGISTRY'),
   serviceTime: economyAddress('SERVICE_TIME'),
   stakingVault: economyAddress('STAKING_VAULT'),
   revenueRouter: economyAddress('REVENUE_ROUTER'),
@@ -73,8 +62,8 @@ const ECONOMY_CONTRACTS = {
   evaluationRegistry: economyAddress('EVALUATION_REGISTRY'),
   contributionScoreOracle: economyAddress('CONTRIBUTION_SCORE_ORACLE'),
   jobEscrow: economyAddress('JOB_ESCROW'),
-  p2pPayment: economyAddress('P2P_PAYMENT', 'VITE_BONZAI_P2P_PAYMENT_ETHEREUM_ADDRESS'),
-  pipelinePayment: economyAddress('PIPELINE_PAYMENT', 'VITE_BONZAI_PIPELINE_PAYMENT_ETHEREUM_ADDRESS'),
+  p2pPayment: economyAddress('P2P_PAYMENT'),
+  pipelinePayment: economyAddress('PIPELINE_PAYMENT'),
   companionTokenFactory: economyAddress('COMPANION_TOKEN_FACTORY'),
   gameRegistry: economyAddress('GAME_REGISTRY'),
   gameTokenFactory: economyAddress('GAME_TOKEN_FACTORY'),
@@ -189,6 +178,7 @@ export const CONFIG = {
       arbitrum: "0x0a84edf70f30325151631ce7a61307d1f4d619a3",
       base: BONZAI_BASE,
       robinhood: BONZAI_ROBINHOOD,
+      robinhoodTestnet: BONZAI_ROBINHOOD_TESTNET,
       decimals: 18,
       symbol: "BONZAI",
     },
@@ -196,7 +186,8 @@ export const CONFIG = {
       ethereum: USDC_ETHEREUM,
       arbitrum: USDC_ARBITRUM,
       base: USDC_BASE,
-      robinhood: USDG_ROBINHOOD,
+      robinhood: env.VITE_BONZAI_USDC_ROBINHOOD_ADDRESS || (ECONOMY_CHAIN_ID === ROBINHOOD_CHAIN_ID ? env.VITE_BONZAI_USDC_ADDRESS : null) || null,
+      robinhoodTestnet: env.VITE_BONZAI_USDC_ROBINHOODTESTNET_ADDRESS || (ECONOMY_CHAIN_ID === ROBINHOOD_TESTNET_CHAIN_ID ? env.VITE_BONZAI_USDC_ADDRESS : null) || null,
     },
     USDG: { robinhood: USDG_ROBINHOOD },
     WETH: { robinhood: WETH_ROBINHOOD },
@@ -376,6 +367,11 @@ export const CONFIG = {
     contractAddress: ECONOMY_CONTRACTS.mintPool,
     chainId: ECONOMY_CHAIN_ID,
   },
+  basketRewards: {
+    contractAddress: ECONOMY_CONTRACTS.basketRewards,
+    usdcAddress: economyAddress('USDC'),
+    chainId: ECONOMY_CHAIN_ID,
+  },
   royaltySplitter: {
     contractAddress: ECONOMY_CONTRACTS.royaltySplitter,
     chainId: ECONOMY_CHAIN_ID,
@@ -435,15 +431,16 @@ export const CONFIG = {
   stakingEconomy: {
     chainId: ECONOMY_CHAIN_ID,
     stakingVaultAddress: ECONOMY_CONTRACTS.stakingVault,
+    basketRewardsAddress: ECONOMY_CONTRACTS.basketRewards,
     revenueRouterAddress: ECONOMY_CONTRACTS.revenueRouter,
     tokenAddress: BONZAI_ECONOMY,
     utilityTiers: [
-      { tier: 1, label: 'Contributor', amount: 1000, rights: ['Publish basic contribution packs', 'Mint text assets', 'Join contribution routes'] },
-      { tier: 2, label: 'Curator', amount: 5000, rights: ['Publish curated datasets', 'Boost curation weight', 'Mint audio assets'] },
-      { tier: 3, label: 'Builder', amount: 10000, rights: ['Publish image/model assets', 'Boost marketplace trust', 'Mint image assets'] },
-      { tier: 4, label: 'Producer', amount: 25000, rights: ['Back fine-tune campaigns', 'Boost provider routing', 'Mint video assets'] },
-      { tier: 5, label: 'Operator', amount: 33000, rights: ['Launch companions and advanced skills', 'Boost company reputation', 'Mint 3D assets'] },
-      { tier: 6, label: 'Sovereign', amount: 50000, rights: ['Launch high-value model tokens', 'Create Zero-Human Companies', 'Mint training assets'] },
+      { tier: 1, label: 'LVL1', amount: 1000, rights: ['Mint text assets', 'Share in LVL1–LVL1 revenue allocations across currencies'] },
+      { tier: 2, label: 'LVL2', amount: 5000, rights: ['Mint audio assets', 'Share in LVL1–LVL2 revenue allocations across currencies'] },
+      { tier: 3, label: 'LVL3', amount: 10000, rights: ['Mint image assets', 'Share in LVL1–LVL3 revenue allocations across currencies'] },
+      { tier: 4, label: 'LVL4', amount: 25000, rights: ['Mint video assets', 'Share in LVL1–LVL4 revenue allocations across currencies'] },
+      { tier: 5, label: 'LVL5', amount: 33000, rights: ['Mint 3D assets', 'Share in LVL1–LVL5 revenue allocations across currencies'] },
+      { tier: 6, label: 'LVL6', amount: 50000, rights: ['Mint training assets', 'Share in LVL1–LVL6 revenue allocations across currencies'] },
     ],
     lockOptions: [
       { label: 'Flexible', seconds: 0, multiplierBps: 10000 },
@@ -459,6 +456,12 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════════════════
   // COMPANION NFT CONTRACT (Ethereum - ERC-8004 + self-custody agent wallet)
   // ═══════════════════════════════════════════════════════════════════════════
+  // Successor slot/reserve contracts. Never fall back to the legacy atomic minter.
+  smartAgentIssuance: {
+    contractAddress: economyAddress('SMART_AGENTS'),
+    factoryAddress: economyAddress('AGENT_TOKEN_FACTORY'),
+    chainId: ECONOMY_CHAIN_ID,
+  },
   companionNFT_BASE: {
     // BonzaiCompanions contract on Ethereum
     contractAddress: ECONOMY_CONTRACTS.companions,
@@ -720,10 +723,12 @@ export const CONFIG = {
 
   // ═══════════════════════════════════════════════════════════════════════════
   // UNISWAP V4 ADDRESSES
-  // Arbitrum is now the primary deployment target. Base addresses are kept
-  // here for any legacy reads but should not be used by new code.
+  // Resolve addresses on the configured economy chain. Robinhood deployments
+  // must be supplied explicitly and verified before enabling issuance.
   // ═══════════════════════════════════════════════════════════════════════════
   uniswap: {
+    robinhood: {},
+    robinhoodTestnet: {},
     ethereum: {
       poolManager: env.VITE_UNISWAP_V4_POOL_MANAGER || null,
       positionManager: env.VITE_UNISWAP_V4_POSITION_MANAGER || null,
@@ -758,5 +763,12 @@ export const CONFIG = {
     },
   },
 };
+
+const uniswapFields = { poolManager: 'POOL_MANAGER', positionManager: 'POSITION_MANAGER', universalRouter: 'UNIVERSAL_ROUTER', quoter: 'QUOTER', stateView: 'STATE_VIEW', permit2: 'PERMIT2' };
+for (const [field, suffix] of Object.entries(uniswapFields)) {
+  const configured = env[`VITE_UNISWAP_V4_${suffix}_${ECONOMY_NETWORK_KEY.toUpperCase()}`] || env[`VITE_UNISWAP_V4_${suffix}`];
+  if (configured) CONFIG.uniswap[ECONOMY_NETWORK_KEY][field] = configured;
+}
+CONFIG.uniswap[ECONOMY_NETWORK_KEY].feeHook = economyAddress('UNISWAP_HOOK');
 
 export default CONFIG;

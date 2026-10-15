@@ -21,6 +21,12 @@ const {
  * Build a PoolKey struct for use in afterSwap tests.
  * currency0 = address(0) (ETH), currency1 = arbitrary token address.
  */
+function packDelta(amount0, amount1) {
+  return BigInt.asIntN(256, (BigInt.asUintN(128, amount0) << 128n) | BigInt.asUintN(128, amount1));
+}
+
+function saleDelta(output) { return packDelta(output, -output); }
+
 function makePoolKey(hookAddress, tokenAddress) {
   return {
     currency0: ethers.ZeroAddress,
@@ -38,7 +44,7 @@ function makePoolKey(hookAddress, tokenAddress) {
 function makeSwapParams(zeroForOne = false) {
   return {
     zeroForOne,
-    amountSpecified: 0,
+    amountSpecified: -1n,
     sqrtPriceLimitX96: 0,
   };
 }
@@ -351,13 +357,13 @@ describe("BonzaiUniswapHook", function () {
       return { ...base, key, poolId, mintPoolIndex };
     }
 
-    it("should capture 1% fee on COMPANION pool swap (negative delta)", async function () {
+    it("should capture 1% fee on COMPANION pool swap (packed positive ETH output)", async function () {
       const { hook, poolManager, key, beneficiary, companionOwner, user1 } =
         await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
       const swapOutput = ethers.parseEther("1");
-      const delta = -swapOutput;
+      const delta = saleDelta(swapOutput);
 
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
 
@@ -387,7 +393,7 @@ describe("BonzaiUniswapHook", function () {
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
       const swapOutput = ethers.parseEther("10");
-      const delta = -swapOutput;
+      const delta = saleDelta(swapOutput);
 
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
 
@@ -411,7 +417,7 @@ describe("BonzaiUniswapHook", function () {
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
       const swapOutput = ethers.parseEther("10");
-      const delta = -swapOutput;
+      const delta = saleDelta(swapOutput);
 
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
 
@@ -435,7 +441,7 @@ describe("BonzaiUniswapHook", function () {
           user1.address,
           key,
           makeSwapParams(),
-          -ethers.parseEther("1"),
+          saleDelta(ethers.parseEther("1")),
           "0x"
         )
       ).to.be.revertedWith("Only PoolManager");
@@ -447,7 +453,7 @@ describe("BonzaiUniswapHook", function () {
       const pmAddr = await poolManager.getAddress();
 
       const key = makePoolKey(hookAddr, "0x0000000000000000000000000000000000000099");
-      const delta = -ethers.parseEther("1");
+      const delta = saleDelta(ethers.parseEther("1"));
 
       await user1.sendTransaction({ to: pmAddr, value: ethers.parseEther("1") });
 
@@ -496,7 +502,7 @@ describe("BonzaiUniswapHook", function () {
       expect(hookDelta).to.equal(0);
     });
 
-    it("should return negative hookDelta equal to fee amount", async function () {
+    it("should return positive hookDelta equal to fee amount", async function () {
       const { hook, poolManager, key, user1 } = await loadFixture(deployWithCompanionPool);
       const hookAddr = await hook.getAddress();
       const pmAddr = await poolManager.getAddress();
@@ -509,12 +515,12 @@ describe("BonzaiUniswapHook", function () {
         user1.address,
         key,
         makeSwapParams(),
-        -swapOutput,
+        saleDelta(swapOutput),
         "0x"
       );
 
       const expectedFee = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
-      expect(hookDelta).to.equal(-expectedFee);
+      expect(hookDelta).to.equal(expectedFee);
     });
 
     it("should emit FeeCaptured event for COMPANION swap", async function () {
@@ -533,7 +539,7 @@ describe("BonzaiUniswapHook", function () {
       const poolShare = feeAmount - walletShare - ownerShare - treasuryShare;
 
       await expect(
-        poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x")
+        poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x")
       )
         .to.emit(hook, "FeeCaptured")
         .withArgs(poolId, POOL_TYPE_COMPANION, feeAmount, walletShare, ownerShare, treasuryShare, poolShare);
@@ -554,7 +560,7 @@ describe("BonzaiUniswapHook", function () {
       const poolShare = feeAmount - beneficiaryShare - treasuryShare;
 
       await expect(
-        poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x")
+        poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x")
       )
         .to.emit(hook, "FeeCaptured")
         .withArgs(poolId, POOL_TYPE_FINETUNE, feeAmount, beneficiaryShare, 0, treasuryShare, poolShare);
@@ -573,7 +579,7 @@ describe("BonzaiUniswapHook", function () {
           user1.address,
           key,
           makeSwapParams(),
-          -ethers.parseEther("1"),
+          saleDelta(ethers.parseEther("1")),
           "0x"
         );
       }
@@ -602,7 +608,7 @@ describe("BonzaiUniswapHook", function () {
         user1.address,
         key,
         makeSwapParams(),
-        -ethers.parseEther("1"),
+        saleDelta(ethers.parseEther("1")),
         "0x"
       );
 
@@ -618,7 +624,7 @@ describe("BonzaiUniswapHook", function () {
       const swapOutput = ethers.parseEther("10");
 
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
-      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
+      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x");
 
       const feeAmount = (swapOutput * HOOK_FEE_BPS) / BPS_DENOMINATOR;
       const walletShare = (feeAmount * COMPANION_WALLET_BPS) / BPS_DENOMINATOR;
@@ -647,7 +653,7 @@ describe("BonzaiUniswapHook", function () {
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
-      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
+      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x");
 
       return { ...base, key, poolId, swapOutput };
     }
@@ -710,7 +716,7 @@ describe("BonzaiUniswapHook", function () {
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
-      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
+      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x");
 
       return { ...base, key, poolId, swapOutput };
     }
@@ -759,7 +765,7 @@ describe("BonzaiUniswapHook", function () {
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
-      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
+      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x");
 
       return { ...base, key, poolId, mintPoolIndex, swapOutput };
     }
@@ -816,7 +822,7 @@ describe("BonzaiUniswapHook", function () {
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
-      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
+      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x");
 
       // Send extra ETH directly to the hook (surplus)
       const surplus = ethers.parseEther("0.5");
@@ -861,7 +867,7 @@ describe("BonzaiUniswapHook", function () {
       const swapOutput = ethers.parseEther("10");
       const pmAddr = await poolManager.getAddress();
       await user1.sendTransaction({ to: pmAddr, value: swapOutput });
-      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), -swapOutput, "0x");
+      await poolManager.callAfterSwap(hookAddr, user1.address, key, makeSwapParams(), saleDelta(swapOutput), "0x");
 
       await expect(
         hook.connect(owner).withdrawSurplus()
@@ -985,9 +991,9 @@ describe("BonzaiUniswapHook", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("View functions", function () {
-    it("getHookPermissions() should return 0x0090", async function () {
+    it("getHookPermissions() should return 0x0044", async function () {
       const { hook } = await loadFixture(deployHook);
-      expect(await hook.getHookPermissions()).to.equal(0x0090);
+      expect(await hook.getHookPermissions()).to.equal(0x0044);
     });
 
     it("getPoolConfig() should return default values for unregistered pool", async function () {

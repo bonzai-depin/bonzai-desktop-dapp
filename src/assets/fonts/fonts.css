@@ -78,3 +78,13 @@
   font-style: italic;
   font-weight: 900;
 }
+
+/* Canvas chart libraries accept a family but no font weight/style. This alias
+   keeps their numeric labels in the same black-italic face as .bz-metric. */
+@font-face {
+  font-display: swap;
+  font-family: 'BonzAI Metrics';
+  font-style: normal;
+  font-weight: 400;
+  src: url('./FiraSansCondensed-BlackItalic.ttf') format('truetype');
+}

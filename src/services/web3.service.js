@@ -11,6 +11,8 @@
  */
 
 import { ethers } from "ethers";
+import { waitForWalletAddress, awaitWalletStep, walletConnectionCancelled } from "./walletConnection.js";
+import { ensureWalletChain } from "./walletNetwork.js";
 import { reactive, readonly, computed } from "vue";
 import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { authService } from "./auth.service.js";
@@ -23,16 +25,18 @@ import { createAppKit } from "@reown/appkit/vue";
 import { EthersAdapter } from "@reown/appkit-adapter-ethers";
 import { mainnet, arbitrum, base, lukso, defineChain } from "@reown/appkit/networks";
 
-const robinhood = defineChain({
-  id: 4663,
-  caipNetworkId: "eip155:4663",
+const defineConfiguredChain = (network) => defineChain({
+  id: network.chainId,
+  caipNetworkId: `eip155:${network.chainId}`,
   chainNamespace: "eip155",
-  name: "Robinhood Chain",
-  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: ["https://rpc.mainnet.chain.robinhood.com"] } },
-  blockExplorers: { default: { name: "Robinhood Chain Explorer", url: "https://robinhoodchain.blockscout.com" } },
+  name: network.name,
+  nativeCurrency: network.currency,
+  rpcUrls: { default: { http: [network.rpc] } },
+  blockExplorers: { default: { name: network.name, url: network.explorer } },
+  testnet: Boolean(network.testnet),
 });
-
+const robinhood = defineConfiguredChain(CONFIG.networks.robinhood);
+const robinhoodTestnet = defineConfiguredChain(CONFIG.networks.robinhoodTestnet);
 
 // Universal Profile custom wallet for LUKSO network
 const UP_CUSTOM_WALLET = {
@@ -123,61 +127,36 @@ const rpcProviders = {};
 
 let eip1193Provider = null; // injected or WalletConnect provider
 let appKit = null; // AppKit instance (singleton)
+let pendingEmailConnection = null;
 
 /**
  * Create a provider that tries the primary RPC, then fallbacks
  */
 const createProviderWithFallback = async (network) => {
   const config = CONFIG.networks[network];
-  const allRpcs = [config.rpc, ...(config.rpcFallbacks || [])];
-
+  if (!config) throw new Error(`Unknown network: ${network}`);
+  const allRpcs = [...new Set([config.rpc, ...(config.rpcFallbacks || [])])];
   for (const rpcUrl of allRpcs) {
+    const request = new ethers.FetchRequest(rpcUrl);
+    request.timeout = 10000;
+    const provider = new ethers.JsonRpcProvider(request, config.chainId);
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      // Quick check to verify the RPC works
-      await provider.getBlockNumber();
-      console.log(`[Web3] Connected to ${network} via ${rpcUrl}`);
+      const actualChainId = Number(await provider.send('eth_chainId', []));
+      if (actualChainId !== config.chainId) throw new Error(`RPC chain ${actualChainId}, expected ${config.chainId}`);
       return provider;
-    } catch (e) {
-      console.warn(`[Web3] RPC ${rpcUrl} failed: ${e.message}`);
+    } catch (error) {
+      provider.destroy();
+      console.warn(`[Web3] ${network} RPC unavailable: ${error.message}`);
     }
   }
-
-  // If all fail, try the primary anyway (it might work later)
-  console.error(`[Web3] All ${network} RPCs failed, using primary`);
-  return new ethers.JsonRpcProvider(config.rpc);
+  throw new Error(`No verified RPC available for ${config.name}`);
 };
 
-/**
- * Initialize RPC providers for balance checking on multiple chains
- */
 const initRpcProviders = async () => {
-  try {
-    // Try to connect with fallback support
-    const [ethProvider, arbProvider, baseProvider, robinhoodProvider] = await Promise.all([
-      createProviderWithFallback("ethereum"),
-      createProviderWithFallback("arbitrum"),
-      createProviderWithFallback("base"),
-      createProviderWithFallback("robinhood"),
-    ]);
-    rpcProviders.ethereum = ethProvider;
-    rpcProviders.arbitrum = arbProvider;
-    rpcProviders.base = baseProvider;
-    rpcProviders.robinhood = robinhoodProvider;
-  } catch (e) {
-    console.error("[Web3] Failed to initialize RPC providers:", e);
-    // Fallback to simple initialization
-    rpcProviders.ethereum = new ethers.JsonRpcProvider(
-      CONFIG.networks.ethereum.rpc
-    );
-    rpcProviders.arbitrum = new ethers.JsonRpcProvider(
-      CONFIG.networks.arbitrum.rpc
-    );
-    rpcProviders.base = new ethers.JsonRpcProvider(
-      CONFIG.networks.base.rpc
-    );
-    rpcProviders.robinhood = new ethers.JsonRpcProvider(CONFIG.networks.robinhood.rpc);
-  }
+  const networks = ['ethereum', 'arbitrum', 'base', ECONOMY_NETWORK_KEY];
+  await Promise.allSettled([...new Set(networks)].map(async (network) => {
+    if (!rpcProviders[network]) rpcProviders[network] = await createProviderWithFallback(network);
+  }));
 };
 
 /**
@@ -219,7 +198,7 @@ const initAppKit = () => {
   try { localStorage.removeItem('@appkit/recent_wallets'); } catch { /* noop */ }
   try { localStorage.removeItem('@appkit/recent_wallet'); } catch { /* noop */ }
 
-  const appKitNetworks = { ethereum: mainnet, arbitrum, base, robinhood };
+  const appKitNetworks = { ethereum: mainnet, arbitrum, base, robinhood, robinhoodTestnet };
   const defaultNetwork = appKitNetworks[ECONOMY_NETWORK_KEY];
   appKit = createAppKit({
     adapters: [new EthersAdapter()],
@@ -353,6 +332,7 @@ export const connectWallet = async () => {
   // Reset connecting state if it's been stuck for more than 60 seconds
   if (state.isConnecting && state._connectStartTime && Date.now() - state._connectStartTime > 60000) {
     console.warn('[Web3] Connection was stuck, resetting state...');
+    pendingEmailConnection?.controller.abort();
     state.isConnecting = false;
   }
 
@@ -477,6 +457,7 @@ export const connectWallet = async () => {
  * Disconnect wallet and logout from auth service
  */
 export const disconnectWallet = async () => {
+  pendingEmailConnection?.controller.abort();
   try {
     // Privy-specific logout
     if (state.authProvider === 'privy') {
@@ -536,8 +517,8 @@ export const disconnectWallet = async () => {
 /**
  * Fetch BONZAI balance on a specific chain
  */
-const fetchBalanceOnChain = async (chain) => {
-  if (!state.walletAddress) return 0;
+const fetchBalanceOnChain = async (chain, walletAddress = state.walletAddress) => {
+  if (!walletAddress) return 0;
 
   const provider = rpcProviders[chain];
   const tokenAddress = CONFIG.tokens.BONZAI[chain];
@@ -549,7 +530,7 @@ const fetchBalanceOnChain = async (chain) => {
 
   try {
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-    const balance = await contract.balanceOf(state.walletAddress);
+    const balance = await contract.balanceOf(walletAddress);
     const decimals = CONFIG.tokens.BONZAI.decimals;
     return parseFloat(ethers.formatUnits(balance, decimals));
   } catch (e) {
@@ -562,6 +543,14 @@ const fetchBalanceOnChain = async (chain) => {
   }
 };
 
+// Read a candidate wallet without publishing its identity or balances to the app.
+const readBalancesForAddress = async (walletAddress) => {
+  const [ethereum, arbitrum, base, robinhood] = await Promise.all(
+    ['ethereum', 'arbitrum', 'base', 'robinhood'].map(chain => fetchBalanceOnChain(chain, walletAddress))
+  );
+  return { ethereum, arbitrum, base, robinhood, total: ethereum + arbitrum + base + robinhood };
+};
+
 /**
  * Fetch BONZAI balances across all supported chains
  */
@@ -571,19 +560,10 @@ export const fetchAllBalances = async () => {
   state.isLoadingBalances = true;
 
   try {
-    // Fetch balances in parallel across all chains
-    const [ethBalance, arbBalance, baseBalance, robinhoodBalance] = await Promise.all([
-      fetchBalanceOnChain("ethereum"),
-      fetchBalanceOnChain("arbitrum"),
-      fetchBalanceOnChain("base"),
-      fetchBalanceOnChain("robinhood"),
-    ]);
-
-    state.balances.ethereum = ethBalance;
-    state.balances.arbitrum = arbBalance;
-    state.balances.base = baseBalance;
-    state.balances.robinhood = robinhoodBalance;
-    state.balances.total = ethBalance + arbBalance + baseBalance + robinhoodBalance;
+    const walletAddress = state.walletAddress;
+    const balances = await readBalancesForAddress(walletAddress);
+    if (state.walletAddress !== walletAddress) return state.balances;
+    Object.assign(state.balances, balances);
     state.lastBalanceCheck = Date.now();
 
     return state.balances;
@@ -613,30 +593,7 @@ export const switchNetwork = async (networkKey) => {
     await ensureWalletProvider({ auto: true });
   }
 
-  try {
-    await eip1193Provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: network.chainIdHex }],
-    });
-  } catch (e) {
-    // Chain not added, try to add it
-    if (e.code === 4902) {
-      await eip1193Provider.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: network.chainIdHex,
-            chainName: network.name,
-            nativeCurrency: network.currency,
-            rpcUrls: [network.rpc],
-            blockExplorerUrls: [network.explorer],
-          },
-        ],
-      });
-    } else {
-      throw e;
-    }
-  }
+  await ensureWalletChain(eip1193Provider, network);
 
   // Update state directly — WalletConnect providers may not fire chainChanged
   state.currentChainId = network.chainId;
@@ -798,40 +755,49 @@ export const currentNetworkName = computed(() => {
  * @returns {Promise<{success: boolean, address?: string, needsOtp?: boolean, error?: string}>}
  */
 export const connectWithPrivy = async (options = {}) => {
+  if (options.signal?.aborted) return { success: false, cancelled: true, error: 'Sign-in cancelled' };
   if (state.isConnecting) return { success: false, error: "Connection in progress" };
 
+  const attempt = { controller: new AbortController() };
+  const { signal } = attempt.controller;
+  const cancel = () => attempt.controller.abort();
+  const release = () => {
+    if (pendingEmailConnection !== attempt) return;
+    pendingEmailConnection = null;
+    state.isConnecting = false;
+    state._connectStartTime = null;
+  };
+  const assertCurrent = () => {
+    if (signal.aborted || pendingEmailConnection !== attempt) throw walletConnectionCancelled();
+  };
+  pendingEmailConnection = attempt;
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  signal.addEventListener('abort', release, { once: true });
   state.isConnecting = true;
   state._connectStartTime = Date.now();
   state.error = null;
+  let pendingBrowserProvider;
+  let committed = false;
 
   try {
     // No desktop-side Privy auth — the wallet window handles everything.
     // Just wait for the wallet address to arrive from the wallet window.
-    const walletAddress = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Wallet setup timed out. Open the wallet window and sign in.')), 60000);
-
-      // Check if address was already cached from a previous session
-      window.electronAPI?.wallet?.getAddress?.().then(cached => {
-        if (cached) {
-          clearTimeout(timeout);
-          resolve(cached);
-        }
-      });
-
-      // Listen for address from the wallet window
-      const cleanup = window.electronAPI?.onWalletAddress?.((address) => {
-        clearTimeout(timeout);
-        if (cleanup) cleanup();
-        resolve(address);
-      });
-    });
+    const walletAddress = await waitForWalletAddress(window.electronAPI, { signal });
+    assertCurrent();
 
     // Create a provider that delegates signing to the wallet window
     const privyProvider = {
       request: async ({ method, params }) => {
         if (['eth_requestAccounts', 'eth_accounts'].includes(method)) return [walletAddress];
         if (method === 'eth_chainId') return '0x1';
-        if (method === 'wallet_switchEthereumChain') return null; // Always on Ethereum
+        if (method === 'wallet_switchEthereumChain') {
+          if (Number(params?.[0]?.chainId) !== 1) {
+            const error = new Error('Email sign-in currently supports Ethereum. Connect an external wallet to use the configured economy network.');
+            error.code = 4200;
+            throw error;
+          }
+          return null;
+        }
         if (['eth_sendTransaction', 'eth_signTypedData_v4', 'personal_sign'].includes(method)) {
           return window.electronAPI.wallet.signRequest({ method, params });
         }
@@ -840,32 +806,34 @@ export const connectWithPrivy = async (options = {}) => {
       },
     };
 
-    eip1193Provider = privyProvider;
-    browserProvider = new ethers.BrowserProvider(eip1193Provider);
-
-    state.walletAddress = walletAddress;
-    state.isConnected = true;
-    state.authProvider = 'privy';
-    state.walletType = 'privy';
+    pendingBrowserProvider = new ethers.BrowserProvider(privyProvider);
 
     // Initialize RPC providers for balance checks
-    await initRpcProviders();
+    await awaitWalletStep(() => initRpcProviders(), signal);
+    assertCurrent();
 
     // Get current chain
+    let chainId = 1;
     try {
-      const network = await browserProvider.getNetwork();
-      state.currentChainId = Number(network.chainId);
+      const network = await awaitWalletStep(() => pendingBrowserProvider.getNetwork(), signal);
+      chainId = Number(network.chainId);
     } catch {
-      state.currentChainId = 1; // Default to Ethereum
+      assertCurrent(); // Only network errors may fall back to Ethereum.
     }
 
-    // Fetch balances
-    await fetchAllBalances();
+    const balances = await awaitWalletStep(() => readBalancesForAddress(walletAddress), signal);
+    assertCurrent();
 
-    // Privy users are authenticated by default (Privy handles auth)
-    state.isAuthenticated = true;
-    state.authLevel = 'privy';
-    state.authLevelValue = 0;
+    // Publish a complete session only after every cancellable check succeeds.
+    eip1193Provider = privyProvider;
+    browserProvider = pendingBrowserProvider;
+    committed = true;
+    Object.assign(state, {
+      walletAddress, currentChainId: chainId, balances, lastBalanceCheck: Date.now(),
+      isConnected: true, authProvider: 'privy', walletType: 'privy',
+      isAuthenticated: true, authLevel: 'privy', authLevelValue: 0,
+      isUniversalProfile: false, universalProfileData: null,
+    });
 
     console.log(`[Web3] Connected via Privy: ${state.walletAddress}`);
 
@@ -879,12 +847,17 @@ export const connectWithPrivy = async (options = {}) => {
       authProvider: 'privy',
     };
   } catch (e) {
+    if (signal.aborted || pendingEmailConnection !== attempt) {
+      return { success: false, cancelled: true, error: 'Sign-in cancelled' };
+    }
     state.error = e.message;
     console.error('[Web3] Privy connection failed:', e);
     return { success: false, error: e.message };
   } finally {
-    state.isConnecting = false;
-    state._connectStartTime = null;
+    options.signal?.removeEventListener('abort', cancel);
+    signal.removeEventListener('abort', release);
+    release();
+    if (!committed) pendingBrowserProvider?.destroy();
   }
 };
 
@@ -908,7 +881,8 @@ export const getBrowserProvider = async () => {
  * Get RPC provider for a specific chain
  */
 export const getProvider = async (chain = ECONOMY_NETWORK_KEY) => {
-  if (!rpcProviders[chain]) await initRpcProviders();
+  if (!CONFIG.networks[chain]) throw new Error(`Unknown network: ${chain}`);
+  if (!rpcProviders[chain]) rpcProviders[chain] = await createProviderWithFallback(chain);
   return rpcProviders[chain];
 };
 

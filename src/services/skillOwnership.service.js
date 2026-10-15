@@ -7,7 +7,7 @@
  * Revenue flow (USDC-only marketplace):
  *   SkillOwnership registrations → companion-token access to compatible skills
  *   → weighted by BONZAI_balance * profileScore → credited to companion wallets
- *   → claimable via claimRevenueUSDC().
+ *   → claimable via claimRevenue().
  */
 
 import { ethers } from 'ethers';
@@ -16,6 +16,7 @@ import { web3Service } from './web3.service.js';
 import { agentWalletService } from './agentWallet.service.js';
 import { owsService } from './ows.service.js';
 import { OWSEthersSigner } from './owsSigner.adapter.js';
+import { walletCredentials, ensureOWSPassphrase } from './walletCredentials.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABI (Human-readable for ethers v6)
@@ -34,12 +35,12 @@ const SKILL_OWNERSHIP_ABI = [
   'event CompanionRevenueShare(bytes32 indexed skillId, address indexed wallet, uint256 indexed companionTokenId, uint256 share, uint256 weight, uint256 totalWeight, uint256 timestamp)',
   'event RevenueDistributedUSDC(bytes32 indexed skillId, uint256 totalAmount, uint256 recipientCount, uint256 timestamp)',
 
-  // Revenue (USDC-only marketplace — ETH variants retired)
-  'function distributeRevenueUSDC(bytes32 skillId, uint256 amount) external',
-  'function claimRevenueUSDC() external',
+  // Revenue (Native ETH revenue)
+  'function distributeRevenue(bytes32 skillId, uint256 amount) payable',
+  'function claimRevenue() external',
 
   // Views
-  'function unclaimedRevenueUSDC(address wallet) view returns (uint256)',
+  'function unclaimedRevenue(address wallet) view returns (uint256)',
   'function getSkillCompanions(bytes32 skillId) view returns (tuple(uint256 companionTokenId, address companionWallet, address ownerAddress, uint8 profileScore, uint256 registeredAt, bool active)[])',
   'function getSkillCompanionCount(bytes32 skillId) view returns (uint256)',
   'function isCompanionRegistered(uint256 companionTokenId, bytes32 skillId) view returns (bool)',
@@ -99,6 +100,7 @@ async function getContract(withSigner = false) {
   }
 
   if (withSigner) {
+    await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
     const signer = await web3Service.getSigner();
     return new ethers.Contract(contractAddress, SKILL_OWNERSHIP_ABI, signer);
   }
@@ -203,23 +205,25 @@ export async function updateCompanionRegistration(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Claim all accumulated USDC revenue.
+ * Claim all accumulated native ETH revenue.
  * @returns {Promise<ethers.TransactionReceipt>}
  */
-export async function claimAllRevenueUSDC() {
+export async function claimAllRevenue() {
   const contract = await getContract(true);
-  const tx = await contract.claimRevenueUSDC();
+  const tx = await contract.claimRevenue();
   return await tx.wait();
 }
 
-/** Alias for back-compat — ETH variant was retired; this now claims USDC. */
-export const claimAllRevenue = claimAllRevenueUSDC;
+/** Do not silently spend from an obsolete USDC action. */
+export async function claimAllRevenueUSDC() {
+  throw new Error('Skill ownership rewards are paid in ETH. Use claimAllRevenue.');
+}
 
 /**
  * Fetch the distribution history for a wallet. Indexes
- * `CompanionRevenueShare` events emitted by `distributeRevenueUSDC()` where
+ * `CompanionRevenueShare` events emitted by `distributeRevenue()` where
  * this wallet was a recipient. Each entry includes the skill ID, share in
- * USDC (6 decimals), weight-on-total ratio, and block timestamp.
+ * ETH (wei), weight-on-total ratio, and block timestamp.
  *
  * @param {string} walletAddress
  * @param {number} [fromBlock=0] Optional lower bound; default scans from genesis.
@@ -236,7 +240,7 @@ export async function getDistributionHistory(walletAddress, fromBlock = 0) {
     skillId: ev.args.skillId,
     wallet: ev.args.wallet,
     companionTokenId: ev.args.companionTokenId.toString(),
-    share: ev.args.share.toString(),          // raw USDC (6 decimals)
+    share: ev.args.share.toString(),          // raw ETH (wei)
     weight: ev.args.weight.toString(),
     totalWeight: ev.args.totalWeight.toString(),
     ratio: Number(ev.args.weight) / Number(ev.args.totalWeight || 1n),
@@ -251,31 +255,15 @@ export async function getDistributionHistory(walletAddress, fromBlock = 0) {
  * @param {string} walletAddress - Wallet to query
  * @returns {Promise<string>} Unclaimed USDC amount (raw, 6 decimals)
  */
-export async function getUnclaimedRevenueUSDC(walletAddress) {
-  try {
-    const contract = await getContract();
-    const amount = await contract.unclaimedRevenueUSDC(walletAddress);
-    return amount.toString();
-  } catch (err) {
-    console.warn('Failed to fetch unclaimed USDC revenue:', err.message);
-    return '0';
-  }
+// Kept only to give legacy callers a clear migration error. This contract pays ETH.
+export async function getUnclaimedRevenueUSDC() {
+  throw new Error('Skill ownership rewards are paid in ETH. Use getUnclaimedRevenue.');
 }
 
-/**
- * Back-compat wrapper — returns USDC amount formatted as a human-readable
- * decimal string (e.g. "12.50" for 12,500,000 raw units). Callers that used
- * to treat the return as ETH should update their labels to "USDC".
- * @param {string} walletAddress
- * @returns {Promise<string>}
- */
+/** Read native ETH revenue; an unavailable RPC must never appear as a zero balance. */
 export async function getUnclaimedRevenue(walletAddress) {
-  const raw = await getUnclaimedRevenueUSDC(walletAddress);
-  try {
-    return ethers.formatUnits(raw, 6);
-  } catch {
-    return '0';
-  }
+  const contract = await getContract();
+  return ethers.formatEther(await contract.unclaimedRevenue(walletAddress));
 }
 
 /**
@@ -399,7 +387,6 @@ export async function getStats() {
 // deployed BonzaiSkillOwnership contract via setAttestationSigner().
 // ═══════════════════════════════════════════════════════════════════════════
 
-const ATTESTATION_SIGNER_KEY = 'bonzai-attestation-signer';
 let _attestationSignerCache = null;
 
 /**
@@ -413,12 +400,16 @@ let _attestationSignerCache = null;
 async function getAttestationSigner() {
   if (_attestationSignerCache) return _attestationSignerCache;
 
+  // Migrate any legacy signing key before reading either wallet backend.
+  // An unavailable system keychain must never trigger a new signer identity.
+  const storedSignerKey = await walletCredentials.getAttestationKey();
+
   // Try OWS attestation wallet first
   const OWS_ATTESTATION_WALLET = 'bonzai-attestation-signer';
   try {
     const owsWallet = await owsService.getWallet(OWS_ATTESTATION_WALLET);
     if (owsWallet && !owsWallet.error) {
-      const passphrase = await window.electronAPI?.store?.get('ows-passphrase-attestation');
+      const passphrase = await walletCredentials.getOWS('attestation', 'passphrase');
       if (passphrase) {
         _attestationSignerCache = new OWSEthersSigner(OWS_ATTESTATION_WALLET, passphrase);
         console.log('[SkillOwnership] Using OWS attestation signer:', owsWallet.address);
@@ -427,11 +418,8 @@ async function getAttestationSigner() {
     }
   } catch { /* OWS not available, fall through */ }
 
-  // Check if we already have a stored signer key (legacy)
-  let signerKey = null;
-  try {
-    signerKey = await window.electronAPI?.store?.get(ATTESTATION_SIGNER_KEY);
-  } catch { /* no store available */ }
+  // Securely stored legacy derivation remains available for recovery.
+  const signerKey = storedSignerKey;
 
   if (signerKey) {
     _attestationSignerCache = new ethers.Wallet(signerKey);
@@ -448,25 +436,17 @@ async function getAttestationSigner() {
   );
 
   const signer = new ethers.Wallet(seed);
+  await walletCredentials.setAttestationKey(seed);
   _attestationSignerCache = signer;
 
   // Try to import into OWS for future use
   try {
-    const passphraseBytes = new Uint8Array(24);
-    globalThis.crypto.getRandomValues(passphraseBytes);
-    const passphrase = btoa(String.fromCharCode(...passphraseBytes))
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    const passphrase = await ensureOWSPassphrase('attestation');
     const importResult = await owsService.importWalletPrivateKey(OWS_ATTESTATION_WALLET, seed, passphrase);
     if (!importResult.error) {
-      await window.electronAPI?.store?.set('ows-passphrase-attestation', passphrase);
       console.log('[SkillOwnership] Attestation signer migrated to OWS:', importResult.address);
     }
-  } catch { /* OWS import failed, legacy key still works */ }
-
-  // Persist the private key so we can recover the signer on restart
-  try {
-    await window.electronAPI?.store?.set(ATTESTATION_SIGNER_KEY, seed);
-  } catch { /* no store */ }
+  } catch { /* OWS import failed, protected legacy key still works */ }
 
   console.log('[SkillOwnership] Attestation signer derived:', signer.address);
   return signer;

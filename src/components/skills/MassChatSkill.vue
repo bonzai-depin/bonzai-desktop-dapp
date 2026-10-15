@@ -166,6 +166,7 @@
         </h2>
         <textarea
           v-model="prompt"
+          :disabled="isRunning"
           class="skill-textarea"
           rows="3"
           placeholder="Ask every selected model the same question..."
@@ -196,6 +197,8 @@
           </button>
         </div>
       </section>
+
+      <p v-if="runError" class="bz-notice bz-notice--warning" role="alert">{{ runError }}</p>
 
       <!-- Split View Results -->
       <section
@@ -258,6 +261,7 @@
                   :source="r.response"
                   class="response-text"
                 />
+                <p v-if="r.imageError" class="bz-notice bz-notice--warning">{{ r.imageError }}</p>
                 <img
                   v-if="r.imageUrl"
                   :src="r.imageUrl"
@@ -276,10 +280,9 @@
 <script>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import VueMarkdown from "vue-markdown-render";
-import { hasSkillTokenAccess, isDevMode } from "../../services/agent.service.js";
 import { listAllLLMs } from "../../skills/flagship.js";
+import { canStartGeneration, startGeneration, stopGeneration } from "../../stores/generationStore.js";
 
-const SKILL_ID = "mass-chat-v1.0.0";
 const PROMPT_LIBRARY_KEY = "bonzai.mass-chat.library";
 const VOTE_KEY = "bonzai.mass-chat.votes";
 const MAX_LIBRARY = 100;
@@ -311,6 +314,7 @@ export default {
   props: {
     skill: { type: Object, default: null },
   },
+  emits: ['status-update', 'result-created'],
   setup(props, { emit }) {
     const isFullscreen = ref(false);
     const showLibrary = ref(false);
@@ -318,6 +322,7 @@ export default {
     const selectedModels = ref([]);
     const results = ref([]);
     const isRunning = ref(false);
+    const runError = ref("");
     const generateImages = ref(false);
     const savedPrompts = ref([]);
     const votes = ref({});
@@ -397,7 +402,7 @@ export default {
     });
 
     // ─── Per-model execution ─────────────────────────────────────────────
-    const runOneModel = async (entry) => {
+    const runOneModel = async (entry, runPrompt, withImage) => {
       const result = results.value.find((r) => r.filename === entry.filename);
       if (!result) return;
       result.status = "running";
@@ -416,37 +421,39 @@ export default {
         modelname: entry.modelname,
       };
 
+      let unsubToken;
       try {
-        await window.electronAPI.loadModel(modelSpec);
-        await window.electronAPI.resetChat?.();
-
+        const api = window.electronAPI;
+        const loaded = await api.loadModel(modelSpec);
+        if (loaded === false || loaded?.ok === false || loaded?.error) throw new Error(loaded?.error || 'The selected model could not be loaded.');
         let tokenCount = 0;
-        const unsubToken = window.electronAPI.onChatToken?.((chunk) => {
-          if (chunk?.text) {
-            result.response += chunk.text;
-            tokenCount += 1;
-          }
-        });
-
-        const reply = await window.electronAPI.chat(prompt.value, {
-          temperature: 0.7,
-          maxTokens: 512,
-        });
-        if (!result.response) {
-          const text = typeof reply === "string" ? reply : reply?.text || "";
-          result.response = text;
-          tokenCount = (text.split(/\s+/).filter(Boolean) || []).length;
+        let reply;
+        if (typeof api.zhcChatStream === 'function' && typeof api.onZhcChatToken === 'function') {
+          const streamId = `mass-chat-${crypto.randomUUID()}`;
+          unsubToken = api.onZhcChatToken(({ streamId: id, chunk }) => {
+            if (id !== streamId) return;
+            const text = typeof chunk === 'string' ? chunk : chunk?.text || '';
+            result.response += text;
+            if (text) tokenCount += 1;
+          });
+          reply = await api.zhcChatStream({ streamId, prompt: runPrompt, temperature: 0.7, maxTokens: 512 });
+        } else {
+          // Never subscribe to the unscoped personal-chat token channel or reset its history.
+          reply = await api.chat(runPrompt, { temperature: 0.7, maxTokens: 512, isolated: true, returnMetadata: true });
         }
-        try {
-          if (typeof unsubToken === "function") unsubToken();
-        } catch {}
+        const finalText = typeof reply === 'string' ? reply : reply?.text || reply?.response || '';
+        if (finalText.trim()) result.response = finalText;
+        tokenCount = Number(reply?.tokenCount) || tokenCount || result.response.split(/\s+/).filter(Boolean).length;
+        if (!result.response.trim()) throw new Error("The model returned no answer. Retry this comparison.");
+        if (typeof unsubToken === "function") unsubToken();
+        unsubToken = null;
 
         const durationMs = performance.now() - startedAt;
         result.durationMs = Math.round(durationMs);
         result.tokensPerSecond =
           tokenCount > 0 ? tokenCount / (durationMs / 1000) : 0;
 
-        if (generateImages.value) {
+        if (withImage) {
           await generateImageForResult(result);
         }
         result.status = "done";
@@ -454,6 +461,9 @@ export default {
         console.error("[MassChat] run failed on", entry.filename, e);
         result.status = "error";
         result.error = e?.message || String(e);
+      } finally {
+        // A failed model must never receive tokens from the next model.
+        if (typeof unsubToken === "function") unsubToken();
       }
     };
 
@@ -474,54 +484,69 @@ export default {
             guidance_scale: 0.0,
           }),
         });
-        if (!imgRes.ok) return;
         const body = await imgRes.json();
+        if (!imgRes.ok || imgRes.status === 202 || body.error) throw new Error(body.error || 'The illustration could not be generated.');
         if (body?.image_base64) {
           result.imageUrl = `data:image/png;base64,${body.image_base64}`;
+        } else if (body?.image_path) {
+          result.imageUrl = `${API_BASE}/media/stream?path=${encodeURIComponent(body.image_path)}`;
+        } else {
+          throw new Error('The image model returned no illustration.');
         }
       } catch (e) {
         console.warn("[MassChat] Image gen failed:", e?.message);
+        result.imageError = e?.message || 'The illustration could not be generated.';
       }
     };
 
     const runMassChat = async () => {
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        console.warn("[MassChat] Skill not purchased — execution blocked.");
+      if (isRunning.value || !prompt.value.trim() || selectedModels.value.length === 0) return;
+      runError.value = '';
+      if (!canStartGeneration() || !startGeneration('text')) {
+        runError.value = 'Another creation is running. Try again when the device is available.';
+        emit('status-update', runError.value);
         return;
       }
-      if (!prompt.value.trim() || selectedModels.value.length === 0) return;
+      const runPrompt = prompt.value.trim();
+      const withImage = generateImages.value;
 
       isRunning.value = true;
       emit("status-update", "Starting mass chat...");
 
-      // Build plain-object rows from the downloaded-model catalog. Each row
-      // is mutated in place as the run progresses.
-      results.value = selectedModels.value.map((filename) => {
-        const m = availableModels.value.find((x) => x.filename === filename);
-        return {
-          filename,
-          modelname: m?.modelname || filename,
-          url: m?.url,
-          filesizeBytes: m?.filesizeBytes,
-          parameters: m?.parameters,
-          context: m?.context,
-          status: "pending",
-          response: "",
-          durationMs: 0,
-          tokensPerSecond: 0,
-          imageUrl: null,
-          error: null,
-        };
-      });
+      try {
+        // Build plain-object rows from the downloaded-model catalog. Each row
+        // is mutated in place as the run progresses.
+        results.value = selectedModels.value.map((filename) => {
+          const m = availableModels.value.find((x) => x.filename === filename);
+          return {
+            filename,
+            modelname: m?.modelname || filename,
+            url: m?.url,
+            filesizeBytes: m?.filesizeBytes,
+            parameters: m?.parameters,
+            context: m?.context,
+            status: "pending",
+            response: "",
+            durationMs: 0,
+            tokensPerSecond: 0,
+            imageUrl: null,
+            error: null,
+          };
+        });
 
-      // Sequential — loading multiple GGUFs concurrently would OOM on macOS.
-      for (const entry of results.value) {
-        emit("status-update", `Running ${entry.modelname}…`);
-        await runOneModel(entry);
+        // Sequential — loading multiple GGUFs concurrently would OOM on macOS.
+        for (const entry of results.value) {
+          emit("status-update", `Running ${entry.modelname}…`);
+          await runOneModel(entry, runPrompt, withImage);
+        }
+
+        const successful = results.value.filter(entry => entry.response && !entry.error).length;
+        emit("status-update", successful === results.value.length ? "Mass chat complete." : `${successful} of ${results.value.length} answers generated. Review the failed models.`);
+        if (successful) emit('result-created', { prompt: runPrompt, requestedModels: results.value.length, successfulModels: successful, partial: successful < results.value.length, results: JSON.parse(JSON.stringify(results.value)) });
+      } finally {
+        isRunning.value = false;
+        stopGeneration('text');
       }
-
-      emit("status-update", "Mass chat complete.");
-      isRunning.value = false;
     };
 
     // ─── Voting + Library + Export ───────────────────────────────────────
@@ -603,6 +628,7 @@ export default {
     };
 
     return {
+      runError,
       isFullscreen,
       showLibrary,
       prompt,

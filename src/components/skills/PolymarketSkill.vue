@@ -371,9 +371,7 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
 import VueMarkdown from 'vue-markdown-render';
 import polymarketAgent from '../polymarketAgent.js';
-import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 
-const SKILL_ID = 'polymarket-top-performers-v1.0.0';
 const WHALE_PULSE_INTERVAL_MS = 30_000;
 const WHALE_PULSE_MIN_SIZE = 5_000; // only flag positions ≥ $5k
 
@@ -390,7 +388,7 @@ export default {
       default: false,
     },
   },
-  emits: ['analyzing'],
+  emits: ['analyzing', 'analysis-created'],
   setup(props, { emit }) {
     // State
     const isAnalyzing = ref(false);
@@ -452,12 +450,6 @@ export default {
     };
 
     const runAnalysis = async () => {
-      // Purchase gate: SmartAgent also shows a preview screen, but this
-      // guards programmatic calls (console, extensions) that bypass the UI.
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        console.warn('[Polymarket] Skill not purchased — execution blocked.');
-        return;
-      }
       isAnalyzing.value = true;
       emit('analyzing', true);
       Object.keys(investmentTheses).forEach((k) => delete investmentTheses[k]);
@@ -488,6 +480,7 @@ export default {
             },
           },
         ];
+        if (!results?.error && results?.success !== false) emit('analysis-created', analysisHistory.value[0]);
       } catch (e) {
         console.error('[PolymarketSkill] Analysis error:', e);
         analysisHistory.value = [{ error: e.message }];
@@ -560,7 +553,6 @@ Be direct and analytical.`;
 
     const pollWhalePulse = async () => {
       if (isLoadingPulse.value) return;
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) return;
       isLoadingPulse.value = true;
       try {
         const leaderboard = await fetchViaProxy('leaderboard', {

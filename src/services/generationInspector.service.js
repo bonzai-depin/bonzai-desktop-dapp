@@ -39,6 +39,7 @@
  */
 
 import { reactive, readonly } from "vue";
+import { generationElapsedMs } from "../shared/generationTiming.js";
 
 const _state = reactive({
   open: false,
@@ -49,7 +50,7 @@ export const inspector = {
   state: readonly(_state),
 
   show(generation) {
-    _state.generation = generation || null;
+    _state.generation = generation ? { ...generation, elapsedMs: generationElapsedMs(generation) } : null;
     _state.open = true;
   },
 

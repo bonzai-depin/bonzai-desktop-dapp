@@ -1,6 +1,6 @@
 {
   "name": "bonzai-openclaw-bridge",
-  "version": "1.0.0",
+  "version": "4.0.0-rc.1",
   "description": "Bridge between OpenClaw gateway and BonzAI companion/skill system",
   "main": "bridge.js",
   "scripts": {

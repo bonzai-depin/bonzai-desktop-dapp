@@ -90,8 +90,8 @@ const DRY_RUN = process.env.DRY_RUN === '1';
 const RPC_URL = process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc';
 const PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY;
 
-if (!DRY_RUN && !PRIVATE_KEY) {
-  console.error('Missing DEPLOYER_PRIVATE_KEY environment variable.');
+if (!DRY_RUN) {
+  console.error('Legacy Arbitrum MVP deployment is disabled: its payment and staking wiring does not implement the v4 RC. Use the reviewed single-chain deployment workflow and production preflight.');
   process.exit(1);
 }
 

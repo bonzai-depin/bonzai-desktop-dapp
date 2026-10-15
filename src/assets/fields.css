@@ -1,0 +1,22 @@
+/* Text-entry controls use their existing frame as the interaction indicator.
+   Component rings and browser outlines must not stack around that frame.
+   Buttons, checkboxes and switches retain their keyboard focus treatment. */
+:is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=button]):not([type=submit]):not([type=reset]):not([type=color]), textarea, select) {
+  outline: none !important;
+  box-shadow: none !important;
+  transition: none !important;
+}
+:is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=button]):not([type=submit]):not([type=reset]):not([type=color]), textarea, select):not(:disabled):is(:active, :focus, :focus-visible) {
+  border-color: var(--bz-accent) !important;
+}
+@media (forced-colors: active) {
+  :is(input, textarea, select):focus-visible {
+    outline: 1px solid Highlight !important;
+    outline-offset: -1px !important;
+  }
+}
+/* The shared calendar owns pointer interaction; retain native text segments
+   for direct keyboard entry and constraint validation. */
+input:is([type=date], [type=datetime-local], [type=time]) { color-scheme: dark; }
+:is([data-theme=light], [data-theme=mistral], [data-theme=warm], [data-theme=papergrid], [data-theme=popcanvas]) input:is([type=date], [type=datetime-local], [type=time]) { color-scheme: light; }
+input:is([type=date], [type=datetime-local])::-webkit-calendar-picker-indicator { pointer-events: none; opacity: .8; }

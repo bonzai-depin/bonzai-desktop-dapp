@@ -1,5 +1,5 @@
 <template>
-  <section class="memory-graph">
+  <section class="memory-graph" :class="{ 'memory-graph--empty': !graph.nodes.length }">
     <header class="memory-hero">
       <div>
         <p class="bz-eyebrow">{{ $t('views.memory.eyebrow') }}</p>
@@ -14,8 +14,8 @@
       </button>
     </header>
 
-    <div class="memory-layout">
-      <aside class="memory-rail" aria-label="Memory summary and filters">
+    <div class="memory-layout" :class="{ 'memory-layout--empty': !graph.nodes.length }">
+      <aside v-if="graph.nodes.length" class="memory-rail" aria-label="Memory summary and filters">
         <div class="memory-identity">
           <span class="material-symbols-outlined memory-identity__icon">account_tree</span>
           <div>
@@ -33,7 +33,7 @@
 
         <label class="memory-search">
           <span class="material-symbols-outlined">search</span>
-          <input v-model="query" type="search" placeholder="Search memory" />
+          <input v-model="query" type="search" placeholder="Search memory" aria-label="Search memory" />
         </label>
 
         <div class="memory-filters" aria-label="Filter memory graph">
@@ -42,6 +42,7 @@
             :key="filter.id"
             class="memory-filter"
             :class="{ 'is-active': activeFilter === filter.id }"
+            :aria-pressed="activeFilter === filter.id"
             @click="activeFilter = filter.id"
           >
             <span class="memory-filter__dot" :style="{ background: filter.color }"></span>
@@ -54,9 +55,9 @@
 
       <div class="memory-stage">
         <div class="memory-canvas-wrap" :class="{ 'is-empty': !visibleGraph.nodes.length }">
-          <canvas ref="canvasRef" class="memory-canvas" aria-label="Neuronal memory graph"></canvas>
-          <div class="memory-stage__glow" aria-hidden="true"></div>
-          <div class="memory-stage__topline">
+          <canvas v-if="visibleGraph.nodes.length" ref="canvasRef" class="memory-canvas" aria-label="Neuronal memory graph"></canvas>
+          <div v-if="visibleGraph.nodes.length" class="memory-stage__glow" aria-hidden="true"></div>
+          <div v-if="visibleGraph.nodes.length" class="memory-stage__topline">
             <span class="memory-stage__badge fira-sans-condensed-black-italic">
               {{ visibleGraph.nodes.length }} nodes
             </span>
@@ -65,16 +66,16 @@
             </span>
             <span class="memory-stage__hint">Drag to orbit. Scroll to zoom. Click a neuron.</span>
           </div>
-          <div class="memory-stage__legend" aria-label="Relationship legend">
+          <div v-if="visibleGraph.nodes.length" class="memory-stage__legend" aria-label="Relationship legend">
             <span v-for="item in relationLegend" :key="item.id">
               <i :style="{ background: item.color }"></i>{{ item.label }}
             </span>
           </div>
-          <div class="memory-stage__actions">
-            <button class="memory-stage__action" title="Focus selected node" @click="focusSelectedNode">
+          <div v-if="visibleGraph.nodes.length" class="memory-stage__actions">
+            <button class="memory-stage__action" title="Focus selected node" aria-label="Focus selected node" @click="focusSelectedNode">
               <span class="material-symbols-outlined">filter_center_focus</span>
             </button>
-            <button class="memory-stage__action" title="Reset camera" @click="resetCamera">
+            <button class="memory-stage__action" title="Reset camera" aria-label="Reset camera" @click="resetCamera">
               <span class="material-symbols-outlined">home</span>
             </button>
           </div>
@@ -82,15 +83,22 @@
             <span class="material-symbols-outlined">hourglass_empty</span>
             <strong class="fira-sans-condensed-black-italic">Reading local memory</strong>
           </div>
-          <div v-else-if="!visibleGraph.nodes.length" class="memory-empty">
+          <div v-else-if="loadError" class="memory-empty" role="alert"><p>{{ loadError }}</p><button type="button" class="bz-btn bz-btn--primary" @click="refreshMemory">{{ $t('common.refresh') }}</button></div>
+          <div v-else-if="!visibleGraph.nodes.length && graph.nodes.length" class="memory-empty"><strong>{{ $t('rcWorkflows.noMemoryMatches') }}</strong><button type="button" class="bz-btn bz-btn--primary" @click="query = ''; activeFilter = 'all'">{{ $t('rcWorkflows.clearFilters') }}</button></div>
+          <div v-else-if="!graph.nodes.length" class="memory-empty">
             <span class="material-symbols-outlined">neurology</span>
             <strong class="fira-sans-condensed-black-italic">No memory nodes yet</strong>
             <p>Generate, train, curate datasets, or chat with companions to feed the local wiki.</p>
+            <div class="memory-empty__actions">
+              <button type="button" class="bz-btn bz-btn--primary" @click="navigateTo('chat')">{{ $t('rcWorkflows.startChat') }}</button>
+              <button type="button" class="bz-btn bz-btn--ghost" @click="navigateTo('image')">{{ $t('rcWorkflows.generate') }}</button>
+              <button type="button" class="bz-btn bz-btn--ghost" @click="navigateTo('tune')">{{ $t('rcWorkflows.importDataset') }}</button>
+            </div>
           </div>
         </div>
       </div>
 
-      <aside class="memory-detail" aria-label="Selected memory node">
+      <aside v-if="visibleGraph.nodes.length" class="memory-detail" aria-label="Selected memory node">
         <template v-if="selectedNode">
           <div class="memory-detail__head">
             <span class="memory-detail__kind">{{ selectedNode.kindLabel }}</span>
@@ -158,6 +166,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import memoryService from "../services/memory.service.js";
 import { useI18n } from "../i18n/index.js";
+import { withTimeout } from "../utils/withTimeout.js";
 
 const i18n = useI18n();
 
@@ -191,13 +200,15 @@ const filters = computed(() => {
       label: meta.label,
       color: meta.color,
       count: counts[id] || 0,
-    })),
+    })).filter((filter) => filter.count > 0),
   ];
 });
 
 const canvasRef = ref(null);
 const memory = ref(null);
 const isLoading = ref(false);
+const loadError = ref("");
+const navigateTo = (tab) => window.dispatchEvent(new CustomEvent("navigate-to-tab", { detail: { tab } }));
 const query = ref("");
 const activeFilter = ref("all");
 const selectedNodeId = ref("");
@@ -316,10 +327,14 @@ const selectedLinkKeys = computed(() => {
 });
 
 async function refreshMemory() {
+  if (isLoading.value) return;
   isLoading.value = true;
+  loadError.value = "";
   try {
-    memory.value = await memoryService.getUserMemory();
+    memory.value = await withTimeout(memoryService.getUserMemory(), 10000, i18n.t("rcWorkflows.timeout"));
     if (!selectedNodeId.value && graph.value.nodes[0]) selectedNodeId.value = graph.value.nodes[0].id;
+  } catch (error) {
+    loadError.value = error?.message || String(error);
   } finally {
     isLoading.value = false;
   }
@@ -733,8 +748,8 @@ function roundRect(context, x, y, width, height, radius) {
 function disposeScene() {
   cancelAnimationFrame(animationFrame);
   resizeObserver?.disconnect();
-  canvasRef.value?.removeEventListener("pointerdown", onPointerDown);
-  canvasRef.value?.removeEventListener("pointerup", onPointerUp);
+  renderer?.domElement?.removeEventListener("pointerdown", onPointerDown);
+  renderer?.domElement?.removeEventListener("pointerup", onPointerUp);
   if (graphGroup) {
     graphGroup.traverse((object) => {
       object.geometry?.dispose?.();
@@ -757,6 +772,8 @@ function formatDate(value) {
 
 watch(visibleGraph, async () => {
   await nextTick();
+  if (!visibleGraph.value.nodes.length) { disposeScene(); return; }
+  setupScene();
   renderGraph();
 }, { deep: true });
 
@@ -807,6 +824,18 @@ onUnmounted(disposeScene);
   flex: 0 0 auto;
 }
 
+.memory-layout.memory-layout--empty { grid-template-columns: minmax(0, 1fr); }
+.memory-graph.memory-graph--empty { background: var(--bz-canvas); }
+.memory-layout--empty .memory-canvas-wrap {
+  min-height: 280px;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.memory-layout--empty .memory-empty { position: relative; min-height: 280px; }
+.memory-empty__actions { display: flex; flex-wrap: wrap; gap: var(--bz-space-2); justify-content: center; }
 .memory-layout {
   display: grid;
   grid-template-columns: 280px minmax(460px, 1fr) 330px;

@@ -18,6 +18,7 @@
                 :id="'meditation_' + scenario.id"
                 :value="scenario.id"
                 :checked="selectedScenario?.id === scenario.id"
+                :disabled="isGenerating || isExportingVideo || isRetryingArtwork"
                 @change="selectScenario(scenario)"
               />
               <label :for="'meditation_' + scenario.id" class="radio category">
@@ -40,7 +41,8 @@
             type="button"
             class="duration-preset"
             :class="{ 'is-selected': selectedDuration === preset.minutes }"
-            @click="selectedDuration = preset.minutes"
+            :disabled="isGenerating || isExportingVideo || isRetryingArtwork"
+            @click="setDuration(preset.minutes)"
           >
             <strong class="duration-preset__value">{{ preset.label }}</strong>
             <span>{{ preset.description }}</span>
@@ -73,7 +75,7 @@
       </div>
       <div class="meditation-session-cell">
         <span>Duration</span>
-        <strong>{{ formatDuration(selectedDuration) }}</strong>
+        <strong>{{ meditationData?.durationSeconds ? formatDuration(meditationData.durationSeconds / 60) : formatDuration(selectedDuration) }}</strong>
       </div>
       <div class="meditation-session-cell">
         <span>Progress</span>
@@ -208,7 +210,7 @@
             <button
               v-if="!isPlaying"
               class="bz-btn bz-btn--agent-cta bz-btn--lg"
-              :disabled="isGenerating || !meditationData"
+              :disabled="isGenerating || !meditationData || !audioSrc"
               @click="playMeditation"
             >
               <span class="material-symbols-outlined">play_arrow</span>
@@ -230,9 +232,10 @@
               <span class="material-symbols-outlined">stop</span>
               End Session
             </button>
+            <button type="button" class="bz-btn" :disabled="isGenerating || isExportingVideo || isRetryingArtwork" @click="selectScenario(selectedScenario)">New session</button>
             <button
               class="bz-btn bz-btn--primary bz-btn--lg"
-              :disabled="isGenerating || isExportingVideo || !meditationData || !audioSrc || !imageSrc"
+              :disabled="isGenerating || isExportingVideo || isRetryingArtwork || !meditationData || !audioSrc || !imageSrc"
               @click="exportMeditationVideo"
             >
               <span class="material-symbols-outlined">
@@ -247,6 +250,19 @@
       <p v-if="exportStatus" class="meditation-export-status bz-meta">
         {{ exportStatus }}
       </p>
+      <p v-if="generationError" class="bz-notice bz-notice--error" role="alert">{{ generationError }}</p>
+      <div v-if="meditationData && audioSrc && !imageSrc" class="meditation-artwork-recovery">
+        <p class="bz-notice" role="status">Your audio is ready. Artwork is required to export a video.</p>
+        <p v-if="artworkError" class="bz-notice bz-notice--error" role="alert">{{ artworkError }}</p>
+        <button type="button" class="bz-btn" :disabled="isGenerating || isExportingVideo || isRetryingArtwork" @click="retryArtwork">
+          <span class="material-symbols-outlined">{{ isRetryingArtwork ? 'hourglass_top' : 'refresh' }}</span>
+          {{ isRetryingArtwork ? 'Creating artwork...' : 'Retry artwork' }}
+        </button>
+      </div>
+      <p v-if="durationNotice" class="meditation-export-status bz-meta" role="status">{{ durationNotice }}</p>
+      <button v-if="companyTask && loadedFromHistory && meditationData && audioSrc" type="button" class="bz-btn bz-btn--primary" :disabled="isGenerating || isExportingVideo || isRetryingArtwork" @click="useSavedSession">
+        Use this session for this task
+      </button>
 
       <!-- Volume Control -->
       <div v-if="meditationData" class="volume-control volume-row">
@@ -316,13 +332,12 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import BonzaiPulse from '../BonzaiPulse.vue';
 import { getAuthHeaders } from '../../services/auth.service.js';
-import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
-import { resolveLLM } from '../../skills/flagship.js';
+import { meditationTiming, writeTimedMeditation } from '../../services/meditation/timing.js';
+import { measureNarrationDuration } from '../../services/meditation/audioDuration.js';
+import { meditationArtworkSource, validateMeditationArtwork } from '../../services/meditation/artwork.js';
+import { canStartGeneration, startGeneration, stopGeneration } from '../../stores/generationStore.js';
 
 const STORAGE_KEY = 'meditation-forge-sessions';
-const SKILL_ID = 'meditation-forge-v1.0.0';
-
-const DEFAULT_LLM = resolveLLM('qwen3_5_9b', 'q4');
 
 const SCRIPT_SYSTEM_PROMPT = `You are a professional guided meditation writer.
 Write only the spoken transcript that a calm ASMR narrator should read.
@@ -336,20 +351,13 @@ const durationPresets = [
   { minutes: 15, label: '15 min', description: 'Immersive' },
 ];
 
-const wordsForDuration = (minutes) => {
-  const n = Number(minutes) || 5;
-  if (n < 1) return 52;
-  return Math.max(320, Math.round(n * 95));
-};
-
-const secondsForDuration = (minutes) => Math.max(1, Math.round((Number(minutes) || 0) * 60));
-
-const isShortFormDuration = (minutes) => secondsForDuration(minutes) <= 45;
+const secondsForDuration = (minutes) => meditationTiming(minutes).seconds;
 
 const formatDuration = (minutes) => {
   const n = Number(minutes) || 0;
   if (n < 1) return `${Math.round(n * 60)} sec`;
-  return `${n} min`;
+  const seconds = Math.round(n * 60);
+  return seconds % 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds / 60} min`;
 };
 
 const formatDurationPrompt = (minutes) => {
@@ -357,74 +365,6 @@ const formatDurationPrompt = (minutes) => {
   if (n < 1) return `${Math.round(n * 60)}-second`;
   return `${n}-minute`;
 };
-
-const stripReasoningTags = (value) =>
-  String(value || "")
-    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, "")
-    .replace(/<\/?(?:think|thinking|reasoning|analysis|reflection)\b[^>]*>/gi, "")
-    .trim();
-
-const trimScriptToWordBudget = (value, maxWords) => {
-  const words = String(value || "").trim().split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return String(value || "").trim();
-  let trimmed = words.slice(0, maxWords).join(" ");
-  trimmed = trimmed.replace(/[,:;]?\s*$/, ".");
-  if (!/[.!?]$/.test(trimmed)) trimmed += ".";
-  if (!/\bnamaste[.!?]?$/i.test(trimmed)) trimmed += " Namaste.";
-  return trimmed;
-};
-
-const buildShortFormFallbackScript = (scenario) => {
-  const environment = scenario?.environment || "this peaceful place";
-  const intention = String(scenario?.intention || "calm").toLowerCase();
-  return `Welcome to your meditation. Let your eyes soften. Breathe in... hold... breathe out. Picture ${environment} around you, quiet and safe. Drop your shoulders. Unclench your jaw. Let one small layer of tension leave with the next exhale. Return to ${intention}. Breathe in... hold... breathe out. You are here. You are steady. Namaste.`;
-};
-
-const fitScriptToDuration = (value, minutes, fallback) => {
-  const targetWords = wordsForDuration(minutes);
-  const source = String(value || "").trim() || fallback;
-  if (isShortFormDuration(minutes)) {
-    return trimScriptToWordBudget(source, targetWords + 8);
-  }
-  return source;
-};
-
-const cleanMeditationScript = (value, fallback, minutes = 5) => {
-  let text = stripReasoningTags(value)
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```(?:text|markdown|md)?/gi, "").replace(/```/g, ""))
-    .replace(/^(?:transcript|script|meditation script|spoken transcript)\s*:\s*/i, "")
-    .trim();
-
-  const lower = text.toLowerCase();
-  const looksLikePrompt =
-    lower.includes("requirements:") ||
-    lower.includes("output only") ||
-    lower.includes("system prompt") ||
-    lower.includes("session variables") ||
-    lower.includes("environment:") ||
-    lower.startsWith("write a guided meditation");
-
-  const minLength = isShortFormDuration(minutes) ? 120 : 220;
-  if (!text || text.length < minLength || looksLikePrompt) return fallback;
-  return fitScriptToDuration(text, minutes, fallback);
-};
-
-// Load LLM model before generating text
-async function loadLLM(config = DEFAULT_LLM) {
-  if (!window.electronAPI?.loadModel) {
-    throw new Error('LLM API not available. Make sure you are running in the Electron app.');
-  }
-  console.log('[MeditationForge] Loading LLM:', config.filename);
-  await window.electronAPI.loadModel(config);
-  console.log('[MeditationForge] LLM loaded successfully');
-}
-
-// Unload LLM to free memory for image/audio generation
-async function unloadLLM() {
-  if (!window.electronAPI?.unloadModel) return;
-  console.log('[MeditationForge] Unloading LLM to free memory...');
-  await window.electronAPI.unloadModel();
-}
 
 export default {
   name: 'MeditationForgeSkill',
@@ -434,6 +374,7 @@ export default {
       type: Object,
       default: null,
     },
+    companyTask: { type: Object, default: null },
     modelAvailable: {
       type: [Function, Boolean],
       default: true,
@@ -458,6 +399,11 @@ export default {
     const imageSrc = ref('');
     const isExportingVideo = ref(false);
     const exportStatus = ref('');
+    const generationError = ref('');
+    const durationNotice = ref('');
+    const artworkError = ref('');
+    const isRetryingArtwork = ref(false);
+    const loadedFromHistory = ref(false);
     const volume = ref(0.7);
     const elapsedTime = ref(0);
     const totalDuration = ref(0);
@@ -980,6 +926,13 @@ You are lighter now. Namaste.`,
 
     // Methods
     const selectScenario = (scenario) => {
+      if (isGenerating.value || isExportingVideo.value || isRetryingArtwork.value) return;
+      resetMeditation();
+      generationError.value = '';
+      durationNotice.value = '';
+      artworkError.value = '';
+      exportStatus.value = '';
+      loadedFromHistory.value = false;
       selectedScenario.value = scenario;
       meditationData.value = null;
       audioSrc.value = '';
@@ -987,14 +940,68 @@ You are lighter now. Namaste.`,
       audioEnded.value = false;
     };
 
+    const createArtwork = async (scenario) => {
+      const baseUrl = `http://localhost:${window.BONZAI_SERVER_PORT || 65000}`;
+      const response = await fetch(`${baseUrl}/image/turbo`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({
+          prompt: scenario.visualPrompt,
+          negative_prompt: 'text, watermark, low quality, blurry, distorted, ugly, harsh, scary, people, person, face',
+          width: 1280, height: 720, steps: 4, guidance_scale: 3.5, auto_download: false,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 202) throw new Error('Artwork is not ready. Check that the image model is available, then retry artwork.');
+      if (!response.ok || data.error) throw new Error(data.error || 'The artwork could not be generated.');
+      return validateMeditationArtwork(meditationArtworkSource(data, baseUrl));
+    };
+
+    const retryArtwork = async () => {
+      if (!meditationData.value || !audioSrc.value || isGenerating.value || isExportingVideo.value || isRetryingArtwork.value) return;
+      if (!canStartGeneration() || !startGeneration('text')) {
+        artworkError.value = 'Another generation is running. Wait for it to finish before retrying artwork.';
+        return;
+      }
+      isRetryingArtwork.value = true;
+      artworkError.value = '';
+      emit('status-update', 'Creating artwork for the saved meditation...');
+      try {
+        const scenario = scenarios.find(item => item.id === meditationData.value.scenarioId);
+        if (!scenario) throw new Error('The saved session’s scenery is unavailable. Choose a new session.');
+        const source = await createArtwork(scenario);
+        imageSrc.value = source;
+        meditationData.value = { ...meditationData.value, imageSrc: source, hasImage: true };
+        sessionHistory.value = sessionHistory.value.map(session => session.id === meditationData.value.id ? { ...session, imageSrc: source, hasImage: true } : session);
+        await saveSessionHistory();
+        // Inspecting history never attaches it to a different task without the explicit action.
+        if (!loadedFromHistory.value) emit('meditation-created', meditationData.value);
+        emit('status-update', 'Meditation artwork is ready.');
+      } catch (error) {
+        artworkError.value = error.message || 'The artwork could not be generated.';
+        emit('status-update', artworkError.value);
+      } finally {
+        isRetryingArtwork.value = false;
+        stopGeneration('text');
+      }
+    };
+
     const generateMeditation = async () => {
-      if (!selectedScenario.value) return;
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        console.warn('[MeditationForge] Skill not purchased — execution blocked.');
+      if (!selectedScenario.value || isGenerating.value || isExportingVideo.value || isRetryingArtwork.value) return;
+      if (!canStartGeneration() || !startGeneration('text')) {
+        generationError.value = 'Another generation is running. Wait for it to finish before creating this meditation.';
         return;
       }
 
+      resetMeditation();
       isGenerating.value = true;
+      generationError.value = '';
+      durationNotice.value = '';
+      artworkError.value = '';
+      exportStatus.value = '';
+      loadedFromHistory.value = false;
+      meditationData.value = null;
+      audioSrc.value = '';
+      imageSrc.value = '';
       generationProgress.value = 0;
       emit('status-update', 'Starting meditation generation...');
 
@@ -1007,72 +1014,38 @@ You are lighter now. Namaste.`,
         generationProgress.value = 10;
         emit('status-update', generationStatus.value);
 
-        const targetWords = wordsForDuration(selectedDuration.value);
-        const durationText = formatDurationPrompt(selectedDuration.value);
-        const shortFormRules = isShortFormDuration(selectedDuration.value)
-          ? '- Start immediately. No setup sentence beyond "Welcome to your meditation"\n- Use 45-60 words total\n- One breath cycle, one sensory image, one closing line'
-          : '- Include progressive relaxation';
-        const scriptPrompt = `Write the spoken transcript for a ${durationText} guided meditation.
+        const assignedModel = props.companyTask?.llm;
+        if (assignedModel) {
+          if (!window.electronAPI?.ensureModel) throw new Error('The assigned worker’s model cannot be loaded by this desktop version. Finish current work and restart BonzAI.');
+          const ready = await window.electronAPI.ensureModel(assignedModel);
+          if (ready?.declined) throw new Error('The assigned worker’s model is waiting for another request to finish. Retry when the device is available.');
+          if (!ready || ready.ok === false || ready.success === false || ready.error) throw new Error(ready?.error || 'Download the assigned worker’s model before starting this task.');
+        }
 
+        const requestedMinutes = selectedDuration.value;
+        const timing = meditationTiming(requestedMinutes);
+        const scriptPrompt = `Write a complete spoken transcript for a ${formatDurationPrompt(requestedMinutes)} guided meditation.
 Journey: ${scenario.name}
 Theme: ${scenario.intention}
 Environment: ${scenario.environment}
 Description: ${scenario.description}
-
-Requirements:
-- About ${targetWords} words
-- Include breathing cues: "breathe in... hold... breathe out"
-- Use sensory descriptions (sight, sound, touch, smell)
-- Gentle, calming ASMR-style tone
-- Start with "Welcome to your meditation" and end with "Namaste"
-${shortFormRules}
-- For sessions under one minute, use one compact breath cycle and no extended intro
-- Do not include labels, JSON, variables, headings, bullet points, or notes
-
-Output ONLY the meditation script text, nothing else.`;
-
-        let meditation = {
+Use about ${timing.words} words (${timing.minWords}–${timing.maxWords} words). The recording reserves time between short paragraphs for calm breathing.
+Include a gentle opening, a clear guided practice and a complete closing sentence. Use sensory descriptions and natural breathing cues, without demanding breath holds. For a sleep session, end by inviting rest rather than asking the listener to wake up.
+Write only what the narrator should say, in short paragraphs. No headings, labels, JSON, stage directions or instructions for the app.`;
+        const meditation = {
           title: `${scenario.name} Meditation`,
-          script: fitScriptToDuration(
-            isShortFormDuration(selectedDuration.value) ? buildShortFormFallbackScript(scenario) : scenario.script,
-            selectedDuration.value,
-            scenario.script,
-          ),
+          script: await writeTimedMeditation({
+            minutes: requestedMinutes, prompt: scriptPrompt, system: SCRIPT_SYSTEM_PROMPT,
+            write: async (prompt, options) => {
+              if (!window.electronAPI?.chat) throw new Error('The local writing service is unavailable.');
+              // Isolated requests preserve other chats and let the shared model manager arbitrate memory.
+              return window.electronAPI.chat(`${SCRIPT_SYSTEM_PROMPT}\n\n${prompt}`, {
+                maxTokens: options.maxTokens, temperature: options.temperature, isolated: true,
+              });
+            },
+          }),
           breathingPattern: scenario.breathingPattern,
         };
-
-        try {
-          // Load LLM model
-          await loadLLM();
-          try {
-            await window.electronAPI?.setSystemPrompt?.(SCRIPT_SYSTEM_PROMPT);
-            await window.electronAPI?.resetChat?.();
-
-            // Generate meditation script using the chat API
-            const llmResponse = await window.electronAPI.chat(scriptPrompt, {
-              maxTokens: Math.min(2048, Math.max(700, Math.round(targetWords * 1.7))),
-              temperature: 0.72,
-            });
-            const fallbackScript = isShortFormDuration(selectedDuration.value)
-              ? buildShortFormFallbackScript(scenario)
-              : scenario.script;
-            const cleanScript = cleanMeditationScript(llmResponse, fallbackScript, selectedDuration.value);
-            if (cleanScript && cleanScript.length > (isShortFormDuration(selectedDuration.value) ? 100 : 200)) {
-              meditation.script = cleanScript;
-              console.log('[MeditationForge] LLM generated script, length:', meditation.script.length);
-            } else {
-              console.warn('[MeditationForge] LLM response too short, using fallback');
-            }
-          } finally {
-            await window.electronAPI?.setSystemPrompt?.("");
-            await window.electronAPI?.resetChat?.();
-          }
-
-          // Unload LLM to free memory for image/audio generation
-          await unloadLLM();
-        } catch (llmError) {
-          console.warn('[MeditationForge] LLM call failed, using fallback script:', llmError);
-        }
 
         generationStatus.value = 'Creating calming visuals...';
         generationProgress.value = 40;
@@ -1084,37 +1057,11 @@ Output ONLY the meditation script text, nothing else.`;
           'Content-Type': 'application/json',
           ...authHeaders,
         };
-        // Generate calming image with FLUX Klein
+        // Preserve a completed narration even if artwork needs a separate retry.
         try {
-          const imageResponse = await fetch(`http://localhost:${port}/image/turbo`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              prompt: scenario.visualPrompt,
-              negative_prompt: 'text, watermark, low quality, blurry, distorted, ugly, harsh, scary, people, person, face',
-              width: 1280,
-              height: 720,
-              steps: 4,
-              guidance_scale: 3.5,
-            }),
-          });
-
-          if (imageResponse.ok) {
-            const imageData = await imageResponse.json();
-            console.log('[MeditationForge] Image response:', Object.keys(imageData));
-            if (imageData.image_base64) {
-              imageSrc.value = `data:image/png;base64,${imageData.image_base64}`;
-              console.log('[MeditationForge] Image set, length:', imageData.image_base64.length);
-            } else if (imageData.image) {
-              imageSrc.value = `data:image/png;base64,${imageData.image}`;
-              console.log('[MeditationForge] Image set from "image" field');
-            }
-          } else {
-            const errData = await imageResponse.json().catch(() => ({}));
-            console.warn('[MeditationForge] Image generation failed:', imageResponse.status, errData);
-          }
-        } catch (imgError) {
-          console.warn('[MeditationForge] Image generation error:', imgError);
+          imageSrc.value = await createArtwork(scenario);
+        } catch (error) {
+          artworkError.value = error.message || 'The artwork could not be generated.';
         }
         const sessionImageSrc = imageSrc.value;
 
@@ -1122,58 +1069,58 @@ Output ONLY the meditation script text, nothing else.`;
         generationProgress.value = 70;
         emit('status-update', generationStatus.value);
 
-        // Generate ASMR narration with Kokoro TTS
-        try {
-          const audioResponse = await fetch(`http://localhost:${port}/audio/turbo`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              prompt: meditation.script,
-              voice: 'af_nicole',
-              speed: isShortFormDuration(selectedDuration.value) ? 1.02 : 0.85,
-            }),
-          });
-
-          if (audioResponse.ok) {
-            const audioData = await audioResponse.json();
-            if (audioData.audio_path) {
-              audioSrc.value = `http://localhost:${port}/media/stream?path=${encodeURIComponent(audioData.audio_path)}`;
-            } else if (audioData.audio_base64) {
-              audioSrc.value = `data:audio/wav;base64,${audioData.audio_base64}`;
-            }
-            console.log('[MeditationForge] Audio generated successfully:', audioSrc.value);
-          } else {
-            const errorData = await audioResponse.json().catch(() => ({}));
-            console.warn('[MeditationForge] Audio generation failed:', audioResponse.status, errorData);
-          }
-        } catch (audioError) {
-          console.warn('[MeditationForge] Audio generation error:', audioError);
-        }
+        // Narration is the required deliverable. Never report a script-only attempt as a session.
+        const audioResponse = await fetch(`http://localhost:${port}/audio/turbo`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ prompt: meditation.script, voice: 'af_nicole', speed: 0.85,
+            target_duration_seconds: timing.seconds, auto_download: false }),
+        });
+        const audioData = await audioResponse.json();
+        if (!audioResponse.ok || audioData.error) throw new Error(audioData.error || 'The narration could not be recorded. Please retry.');
+        if (audioData.audio_path) audioSrc.value = `http://localhost:${port}/media/stream?path=${encodeURIComponent(audioData.audio_path)}`;
+        else if (audioData.audio_base64) audioSrc.value = `data:audio/wav;base64,${audioData.audio_base64}`;
+        if (!audioSrc.value) throw new Error('The narrator returned no playable audio. Please retry.');
+        const reportedSeconds = Number(audioData.duration_seconds);
+        const measuredSeconds = Number.isFinite(reportedSeconds) && reportedSeconds > 0 ? reportedSeconds : await measureNarrationDuration(audioSrc.value);
+        meditation.durationSeconds = measuredSeconds;
+        meditation.requestedDurationSeconds = timing.seconds;
+        meditation.durationPaced = Number(audioData.requested_duration_seconds) > 0;
+        meditation.narrationSeconds = Number(audioData.narration_seconds) || measuredSeconds;
+        meditation.captionSegments = audioData.caption_segments || [];
+        meditation.voice = 'af_nicole';
+        totalDuration.value = measuredSeconds;
+        if (!Number.isFinite(reportedSeconds) || reportedSeconds <= 0) durationNotice.value = 'This session uses the complete recorded audio length. Restart BonzAI after current work finishes to enable duration pacing for future sessions.';
+        else if (measuredSeconds > timing.seconds + 1) durationNotice.value = 'The complete narration runs longer than requested. Playback and video include the full ending.';
         const sessionAudioSrc = audioSrc.value;
 
         generationProgress.value = 100;
         generationStatus.value = 'Meditation ready!';
 
         // Store meditation data
+        const sessionId = `meditation-${Date.now()}`;
         meditationData.value = {
           ...meditation,
+          id: sessionId,
           scenarioId: scenario.id,
           scenarioName: scenario.name,
-          duration: selectedDuration.value,
+          duration: requestedMinutes,
           audioSrc: sessionAudioSrc,
           imageSrc: sessionImageSrc,
           createdAt: new Date().toISOString(),
         };
 
-        // Add to history (store metadata only, not large base64 data)
-        // Audio/image would need to be regenerated when loading a session
-        const sessionId = `meditation-${Date.now()}`;
+        // Retain the actual script, timing and media so a prior session can be reused.
         sessionHistory.value.unshift({
           id: sessionId,
           title: meditationData.value.title,
           scenarioId: meditationData.value.scenarioId,
           scenarioName: meditationData.value.scenarioName,
           duration: meditationData.value.duration,
+          durationSeconds: meditation.durationSeconds,
+          requestedDurationSeconds: meditation.requestedDurationSeconds,
+          durationPaced: meditation.durationPaced,
+          narrationSeconds: meditation.narrationSeconds,
+          captionSegments: meditation.captionSegments,
           voice: meditationData.value.voice,
           script: meditationData.value.script,
           audioSrc: sessionAudioSrc,
@@ -1195,19 +1142,23 @@ Output ONLY the meditation script text, nothing else.`;
 
       } catch (error) {
         console.error('[MeditationForge] Generation error:', error);
-        generationStatus.value = `Error: ${error.message}`;
+        generationError.value = error.message || 'The meditation could not be created. Please retry.';
+        generationStatus.value = generationError.value;
+        emit('status-update', generationError.value);
       } finally {
         isGenerating.value = false;
+        stopGeneration('text');
       }
     };
 
-    const playMeditation = () => {
-      if (!meditationData.value || !audioPlayer.value) return;
-
+    const playMeditation = async () => {
+      if (!meditationData.value || !audioPlayer.value || !audioSrc.value) return;
+      generationError.value = '';
+      audioPlayer.value.volume = volume.value;
+      try { await audioPlayer.value.play(); }
+      catch { generationError.value = 'This session’s audio is unavailable. Create a new session or reopen its saved deliverable.'; return; }
       isPlaying.value = true;
       audioEnded.value = false;
-      audioPlayer.value.volume = volume.value;
-      audioPlayer.value.play();
 
       // Enter fullscreen when starting
       enterFullscreen();
@@ -1241,6 +1192,7 @@ Output ONLY the meditation script text, nothing else.`;
     };
 
     const startBreathingAnimation = () => {
+      stopBreathingAnimation();
       const pattern = meditationData.value?.breathingPattern || { inhale: 4, hold: 4, exhale: 6 };
       let phase = 'inhale';
       let counter = 0;
@@ -1306,14 +1258,14 @@ Output ONLY the meditation script text, nothing else.`;
     };
 
     const exportMeditationVideo = async () => {
-      if (!meditationData.value || !audioSrc.value || !imageSrc.value) return;
+      if (!meditationData.value || !audioSrc.value || !imageSrc.value || isGenerating.value || isRetryingArtwork.value || isExportingVideo.value) return;
       if (!window.electronAPI?.exportMeditationVideo) {
         exportStatus.value = 'Video export is only available in the desktop app.';
         return;
       }
 
       isExportingVideo.value = true;
-      exportStatus.value = 'Rendering vertical meditation video with karaoke captions...';
+      exportStatus.value = 'Rendering the complete meditation with captions...';
       emit('status-update', exportStatus.value);
 
       try {
@@ -1323,12 +1275,10 @@ Output ONLY the meditation script text, nothing else.`;
           .replace(/^-+|-+$/g, '') || 'meditation';
         const result = await window.electronAPI.exportMeditationVideo({
           title: meditationData.value.title,
-          script: fitScriptToDuration(
-            meditationData.value.script,
-            meditationData.value.duration || selectedDuration.value,
-            meditationData.value.script,
-          ),
-          durationSeconds: secondsForDuration(meditationData.value.duration || selectedDuration.value),
+          script: meditationData.value.script,
+          durationSeconds: meditationData.value.durationSeconds || totalDuration.value || secondsForDuration(meditationData.value.duration || selectedDuration.value),
+          requestedDurationSeconds: meditationData.value.durationPaced ? meditationData.value.requestedDurationSeconds : (meditationData.value.durationSeconds || totalDuration.value || 0),
+          captionSegments: meditationData.value.captionSegments || [],
           imageSource: imageSrc.value,
           audioSource: audioSrc.value,
           defaultName: `bonzai-${safeName}-${formatDuration(meditationData.value.duration || selectedDuration.value).replace(/\s+/g, '-')}.mp4`,
@@ -1336,6 +1286,9 @@ Output ONLY the meditation script text, nothing else.`;
         });
 
         if (result?.success) {
+          meditationData.value = { ...meditationData.value, videoSrc: result.path, durationSeconds: result.durationSeconds || meditationData.value.durationSeconds };
+          sessionHistory.value = sessionHistory.value.map(session => session.id === meditationData.value.id ? { ...session, videoSrc: result.path, durationSeconds: meditationData.value.durationSeconds } : session);
+          if (!loadedFromHistory.value) emit('meditation-created', meditationData.value);
           exportStatus.value = 'Meditation video exported.';
           emit('status-update', 'Meditation video exported.');
         } else {
@@ -1359,6 +1312,12 @@ Output ONLY the meditation script text, nothing else.`;
     };
 
     const loadSession = (session) => {
+      if (isGenerating.value || isExportingVideo.value || isRetryingArtwork.value) return;
+      resetMeditation();
+      loadedFromHistory.value = true;
+      generationError.value = '';
+      durationNotice.value = '';
+      artworkError.value = '';
       const scenario = scenarios.find(s => s.id === session.scenarioId);
       if (scenario) {
         selectedScenario.value = scenario;
@@ -1379,6 +1338,7 @@ Output ONLY the meditation script text, nothing else.`;
     const deleteSession = (sessionId, event) => {
       // Stop event propagation to prevent loadSession from being triggered
       event.stopPropagation();
+      if (isGenerating.value || isExportingVideo.value || isRetryingArtwork.value) return;
       sessionHistory.value = sessionHistory.value.filter(s => s.id !== sessionId);
       // If we deleted the currently loaded session, clear it
       if (meditationData.value?.id === sessionId) {
@@ -1392,13 +1352,19 @@ Output ONLY the meditation script text, nothing else.`;
     const saveSessionHistory = async () => {
       try {
         if (window.electronAPI?.store?.set) {
-          // Only store metadata, not large media data
+          // Preserve media references alongside their measured timing.
           const dataToStore = sessionHistory.value.map(session => ({
             id: session.id,
             title: session.title,
             scenarioId: session.scenarioId,
             scenarioName: session.scenarioName,
             duration: session.duration,
+            durationSeconds: session.durationSeconds,
+            requestedDurationSeconds: session.requestedDurationSeconds,
+            durationPaced: session.durationPaced,
+            narrationSeconds: session.narrationSeconds,
+            captionSegments: session.captionSegments,
+            videoSrc: session.videoSrc,
             voice: session.voice,
             script: session.script,
             audioSrc: session.audioSrc,
@@ -1469,6 +1435,13 @@ Output ONLY the meditation script text, nothing else.`;
       imageSrc,
       isExportingVideo,
       exportStatus,
+      generationError,
+      durationNotice,
+      artworkError,
+      isRetryingArtwork,
+      retryArtwork,
+      loadedFromHistory,
+      useSavedSession: () => { if (!isGenerating.value && !isExportingVideo.value && !isRetryingArtwork.value && meditationData.value && audioSrc.value) { emit('meditation-created', meditationData.value); loadedFromHistory.value = false; } },
       volume,
       elapsedTime,
       totalDuration,
@@ -1481,6 +1454,7 @@ Output ONLY the meditation script text, nothing else.`;
       // Methods
       formatDuration,
       selectScenario,
+      setDuration: (minutes) => { if (!isGenerating.value && !isExportingVideo.value && !isRetryingArtwork.value && selectedDuration.value !== minutes) { selectScenario(selectedScenario.value); selectedDuration.value = minutes; } },
       generateMeditation,
       playMeditation,
       pauseMeditation,

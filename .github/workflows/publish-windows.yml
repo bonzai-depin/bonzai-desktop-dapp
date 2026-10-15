@@ -5,16 +5,24 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. 2.1.2)'
+        description: 'Existing release tag (e.g. v4.0.0-rc.1)'
         required: true
         type: string
+      publish:
+        description: 'Publish installers (false builds and validates only)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
   group: release-windows-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish_on_windows:
@@ -26,34 +34,39 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish }}
       CI: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
-      - name: Resolve tag
+      - name: Resolve version
         shell: bash
         run: |
-          RAW="${{ env.RELEASE_TAG }}"
-          echo "TAG=${RAW#v}" >> "$GITHUB_ENV"
+          python - <<'PYCODE'
+          import json, os
+          version = json.load(open('package.json'))['version']
+          if os.environ.get('PUBLISH_RELEASE') == 'true' and os.environ['RELEASE_TAG'].removeprefix('v') != version:
+              raise SystemExit('Release tag must match package.json version')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'TAG={version}\n')
+          PYCODE
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # Install CUDA-enabled PyTorch for full GPU performance on NVIDIA GPUs.
-      # cu124 = CUDA 12.4, compatible with drivers 525+. The PyInstaller binary
-      # will fall back to CPU if no NVIDIA GPU is present at runtime.
-      - name: Install PyTorch (CUDA 12.4)
+      # Install nightly CUDA-enabled PyTorch for full GPU performance on NVIDIA
+      # GPUs. The PyInstaller binary falls back to CPU when CUDA is unavailable.
+      - name: Install nightly PyTorch (CUDA 13.0)
         run: |
-          pip install --no-cache-dir --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+          pip install --no-cache-dir --upgrade --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
 
       - name: Install Python deps
         run: |
-          pip install -r requirements.txt
-          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
-          pip install -U qwen-tts --no-deps
-          pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
+          python scripts/install-python-deps.py --skip-torch
 
       # Privacy-pipeline smoke tests — see linux-release.yml for rationale.
       # Python on Windows may not expose socket.AF_UNIX, so the provider
@@ -94,46 +107,12 @@ jobs:
       # Use --onedir instead of --onefile: CUDA PyTorch exceeds the 4GB
       # uint32 limit for onefile CArchive. onedir produces an executable +
       # _internal/ folder with shared libraries — no size limit.
-      - name: Build Python binary (Windows x64)
+      - name: Build Python runtime
+        shell: bash
         run: |
-          pyinstaller `
-            --onedir `
-            --distpath "binaries\${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" `
-            --workpath "$env:RUNNER_TEMP\pybuild" `
-            --specpath "$env:RUNNER_TEMP" `
-            --collect-submodules=engineio `
-            --collect-submodules=socketio `
-            --collect-submodules=diffusers `
-            --collect-submodules=transformers `
-            --collect-submodules=huggingface_hub `
-            --collect-submodules=accelerate `
-            --collect-submodules=safetensors `
-            --collect-submodules=peft `
-            --collect-submodules=datasets `
-            --collect-submodules=qwen_tts `
-            --collect-submodules=qwen_vl_utils `
-            --collect-submodules=acestep `
-            --collect-submodules=torch `
-            --collect-submodules=realesrgan `
-            --collect-submodules=basicsr `
-            --collect-data=basicsr `
-            --collect-submodules=imageio_ffmpeg `
-            --collect-data=imageio_ffmpeg `
-            --hidden-import=pytorch_lightning `
-            --hidden-import=torchaudio `
-            --hidden-import=torchaudio.functional `
-            --hidden-import=torchvision `
-            --hidden-import=torchvision.transforms `
-            --hidden-import=soundfile `
-            --hidden-import=compel `
-            --hidden-import=onnxruntime `
-            --hidden-import=psutil `
-            --hidden-import=PIL `
-            --hidden-import=PIL.Image `
-            --hidden-import=torch.cuda `
-            --hidden-import=torch.backends.cudnn `
-            --hidden-import=cv2 `
-            "${{ env.MAIN_PY_FILE }}"
+          python -m PyInstaller --noconfirm --clean \
+            --distpath "binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" \
+            --workpath "$RUNNER_TEMP/pybuild" diffuser.spec
 
       - name: Verify Python binary
         shell: bash
@@ -158,6 +137,11 @@ jobs:
           "
           ls -lh src/assets/logo.ico
 
+      - name: Smoke-test frozen inference runtime
+        shell: bash
+        run: |
+          binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser.exe --bonzai-runtime-check
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -172,11 +156,11 @@ jobs:
           npm run build:rpc
 
       - name: Build Vite bundles
+        shell: bash
         env:
-          VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}
+          BONZAI_VALIDATE_WEB3: ${{ vars.BONZAI_VALIDATE_WEB3 }}
           VITE_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
           VITE_ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
-          PRIVY_APP_SECRET: ${{ secrets.PRIVY_APP_SECRET }}
           VITE_BONZAI_ECONOMY_CHAIN_ID: ${{ secrets.BONZAI_ECONOMY_CHAIN_ID }}
           VITE_ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
           VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS: ${{ secrets.BONZAI_TOKEN_ROBINHOOD_ADDRESS }}
@@ -207,7 +191,9 @@ jobs:
           VITE_UNISWAP_V4_UNIVERSAL_ROUTER: ${{ secrets.UNISWAP_V4_UNIVERSAL_ROUTER }}
           VITE_UNISWAP_V4_QUOTER: ${{ secrets.UNISWAP_V4_QUOTER }}
           VITE_UNISWAP_V4_STATE_VIEW: ${{ secrets.UNISWAP_V4_STATE_VIEW }}
-        run: npm run web3:verify && npm run build:vite
+        run: |
+          if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
+          npm run build:vite
 
       - name: Package Electron app
         shell: bash
@@ -218,7 +204,7 @@ jobs:
             --out=out \
             --overwrite \
             --icon=src/assets/logo.ico \
-            --ignore="^/(dist|bonzai|binaries|out|\.venv|venv|build)$"
+            --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$"
 
       # main.js expects: resources/server/python-runtime/windows-x64/diffuser.exe + _internal/
       - name: Copy Python runtime to app
@@ -255,40 +241,30 @@ jobs:
           Write-Host "Installer created:"
           Get-ChildItem "$ROOT\out\make\" | Format-Table Name, Length
 
-      - name: Create Release & Upload
+      - name: Prepare checksummed release assets
         shell: bash
-        run: |
-          TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-windows-x64-setup.exe"
+        run: python scripts/release-assets.py prepare out/make
 
-          if [ ! -f "$ASSET" ]; then
-            echo "ERROR: No installer found"
-            ls -la out/make/
-            exit 1
-          fi
-
-          echo "Uploading: $ASSET"
-          gh release upload "${TAG}" "$ASSET" --clobber \
-            || gh release create "${TAG}" "$ASSET" \
-              --title "BonzAI v${TAG}" \
-              --generate-notes
-
-          echo "Released Windows installer for v${TAG}"
+      - name: Upload release assets
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
+        run: python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
 
       - name: Mirror to bonzai-releases
+        if: github.event_name == 'release' || inputs.publish
         shell: bash
         env:
           MIRROR_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
-          if [ -z "$MIRROR_TOKEN" ]; then
-            echo "RELEASES_PAT not configured, skipping mirror"
-            exit 0
+          if [ -n "$MIRROR_TOKEN" ]; then
+            GH_TOKEN="$MIRROR_TOKEN" python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo bonzai-depin/bonzai-releases
           fi
-          export GH_TOKEN="$MIRROR_TOKEN"
 
-          TAG="${{ env.TAG }}"
-          ASSET="out/make/BonzAI-${TAG}-windows-x64-setup.exe"
-
-          gh release upload "$TAG" "$ASSET" --clobber \
-            --repo bonzai-depin/bonzai-releases \
-            || echo "Mirror upload skipped (release may not exist yet)"
+      - name: Save validated build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bonzai-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          path: out/make/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7

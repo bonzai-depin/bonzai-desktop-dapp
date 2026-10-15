@@ -26,6 +26,7 @@ export const useWeb3Store = defineStore('web3', () => {
   const isInitialized = ref(false);
   const isConnecting = ref(false);
   const error = ref(null);
+  let connectionAttempt = 0;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // GETTERS (COMPUTED)
@@ -100,6 +101,7 @@ export const useWeb3Store = defineStore('web3', () => {
   };
 
   const connect = async () => {
+    const attempt = ++connectionAttempt;
     isConnecting.value = true;
     error.value = null;
 
@@ -109,31 +111,44 @@ export const useWeb3Store = defineStore('web3', () => {
       if (result.success) {
         await refreshAll();
       } else {
-        error.value = result.error;
+        if (attempt === connectionAttempt) error.value = result.error;
       }
 
       return result;
     } catch (e) {
-      error.value = e.message;
+      if (attempt === connectionAttempt) error.value = e.message;
       return { success: false, error: e.message };
     } finally {
-      isConnecting.value = false;
+      if (attempt === connectionAttempt) isConnecting.value = false;
     }
   };
 
   const connectWithPrivy = async (options = {}) => {
+    if (options.signal?.aborted) return { success: false, cancelled: true, error: 'Sign-in cancelled' };
+    const attempt = ++connectionAttempt;
+    const cancel = () => {
+      if (attempt !== connectionAttempt) return;
+      connectionAttempt++;
+      isConnecting.value = false;
+    };
+    options.signal?.addEventListener('abort', cancel, { once: true });
     isConnecting.value = true;
     error.value = null;
     try {
       const result = await web3Service.connectWithPrivy(options);
-      if (result.success) await refreshAll();
-      else if (result.error) error.value = result.error;
+      if (attempt === connectionAttempt) {
+        // The service already staged balances before committing the session.
+        // Level reads must not keep a cancellable sign-in open after that commit.
+        if (result.success) refreshLevels().catch(e => console.warn('[Web3Store] Level refresh failed:', e.message));
+        else if (!result.cancelled && result.error) error.value = result.error;
+      }
       return result;
     } catch (e) {
-      error.value = e.message;
+      if (attempt === connectionAttempt) error.value = e.message;
       return { success: false, error: e.message };
     } finally {
-      isConnecting.value = false;
+      options.signal?.removeEventListener('abort', cancel);
+      if (attempt === connectionAttempt) isConnecting.value = false;
     }
   };
 
@@ -144,6 +159,8 @@ export const useWeb3Store = defineStore('web3', () => {
   };
 
   const disconnect = async () => {
+    connectionAttempt++;
+    isConnecting.value = false;
     await web3Service.disconnectWallet();
 
     Object.keys(levelService.state.levels).forEach((key) => {

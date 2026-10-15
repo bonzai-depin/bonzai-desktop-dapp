@@ -1,3 +1,15 @@
+import * as companySales from '../db/repos/companySales.js';
+import * as companyIntake from '../db/repos/companyIntake.js';
+import { workspaceLicense, registerWorkspaceIpc } from '../workspace/ipc.js';
+import { needsWorkspaceLicense } from '../workspace/license.js';
+import * as companyWorkspace from '../db/repos/companyWorkspace.js';
+import * as companyGrants from '../db/repos/companyGrants.js';
+import { createCompanyBrowser } from '../companyBrowser.js';
+import path from 'node:path';
+import {get} from '../db/connection.js';
+import * as recordOperations from '../db/repos/recordOperations.js';
+import {createRecordDelivery} from '../gmao/recordDelivery.js';
+import * as teamRepo from "../db/repos/teamCommunication.js";
 /**
  * BonzAI data-layer IPC bridge.
  *
@@ -13,7 +25,7 @@
  *     pick up updates without polling
  */
 
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain as electronIpcMain, BrowserWindow, dialog } from "electron";
 import * as auditRepo from "../db/repos/audit.js";
 import * as generationsRepo from "../db/repos/generations.js";
 import * as blobsRepo from "../db/repos/blobs.js";
@@ -21,6 +33,10 @@ import * as blobStore from "../db/blobs.js";
 import * as companiesRepo from "../db/repos/companies.js";
 import * as goalsRepo from "../db/repos/goals.js";
 import * as issuesRepo from "../db/repos/issues.js";
+import * as gmaoOps from "../db/repos/gmaoOperations.js";
+import { printLocalPdf } from "../gmao/pdf.js";
+import { createDeliveryService } from "../gmao/delivery.js";
+import * as gmaoRepo from "../db/repos/gmao.js";
 import * as treasuryRepo from "../db/repos/treasury.js";
 import * as approvalsRepo from "../db/repos/approvals.js";
 import * as distributionRepo from "../db/repos/distribution.js";
@@ -38,6 +54,14 @@ import * as socialRepo from "../db/repos/social.js";
 import * as web3Repo from "../db/repos/web3.js";
 import * as memoryRepo from "../db/repos/memory.js";
 import * as jobsRepo from "../db/repos/jobs.js";
+import * as companyPortabilityRepo from "../db/repos/companyPortability.js";
+import * as automationRepo from "../db/repos/automation.js";
+import * as companyBillingRepo from '../db/repos/companyBilling.js';
+import * as maintenanceRepo from '../db/repos/gmaoMaintenance.js';
+import * as purchasingRepo from '../db/repos/purchasing.js';
+import { COMPANY_OPERATIONS } from '../../shared/companyOperations.js';
+import crypto from 'node:crypto';
+import { createChorusBilling } from '../connectors/chorusBilling.js';
 
 /**
  * Send a "table changed" event to every active renderer. The store's
@@ -50,7 +74,181 @@ function broadcast(channel, payload) {
 }
 
 /** Register every IPC handler. Called once from main.js after DB open. */
-export function registerDbIpc() {
+export function registerDbIpc({ connectorRequest, readConnectorCredential } = {}) {
+  registerWorkspaceIpc();
+  const ipcMain = { handle(channel, handler) {
+    electronIpcMain.handle(channel, (event, ...args) => {
+      if (needsWorkspaceLicense(channel)) workspaceLicense().assert();
+      return handler(event, ...args);
+    });
+  } };
+
+  purchasingRepo.configureDelivery(connectorRequest);
+  recordOperations.recoverMessages();
+  const recordDelivery = createRecordDelivery({request:connectorRequest,printPdf:printLocalPdf});
+  const reminderTimer = setInterval(() => {
+    if (!workspaceLicense().status().unlocked) return;
+    for (const row of get().db.prepare("SELECT id FROM companies WHERE status='active'").all()) {
+      try {
+        if (companyGrants.runReminders(row.id).length) { broadcast('db:companyGrants:changed',{companyId:row.id}); broadcast('db:issues:changed',{companyId:row.id}); }
+        if (recordOperations.runReminders(row.id).length) {
+          broadcast('db:recordOperations:changed',{companyId:row.id});
+          broadcast('db:issues:changed',{companyId:row.id});
+        }
+      } catch (error) { console.warn('[records] Reminder preparation failed:', error.message); }
+    }
+  }, 60000);
+  reminderTimer.unref();
+  const chorusAction = createChorusBilling({billing:companyBillingRepo,connectors:connectorsRepo,blobs:blobStore,readCredential:readConnectorCredential});
+  ipcMain.handle('db:companyBilling:chorusAction', async (_event, companyId, id, input) => {
+    try {
+      return await chorusAction(companyId, id, input);
+    } finally {
+      // An uncertain provider response may still have saved a pending journal.
+      broadcast('db:companyBilling:changed', {companyId});
+      broadcast('db:audit:changed', {companyId});
+    }
+  });
+  const browser = createCompanyBrowser({BrowserWindow,dialog,assertCompany:companyGrants.assertCompany,record:(...args)=>{const value=companyGrants.persist(...args);broadcast('db:companyGrants:changed',{companyId:args[0]});return value;},
+    context: (companyId,id) => companyGrants.recordById(companyId,'dossier',id),
+    capture: async (companyId,dossierId,file,label) => {
+      const dossier=companyGrants.recordById(companyId,'dossier',dossierId);
+      const ext=path.extname(file).slice(1).toLowerCase();
+      if (!['pdf','png','jpg','jpeg','txt','csv'].includes(ext) || (await fs.promises.stat(file)).size>30*1024*1024) throw new Error('Downloaded file could not be attached. Use a PDF, image or text file under 30 MB.');
+      const blob=blobStore.write(await fs.promises.readFile(file),ext,{source:'company-grant-portal',sourceId:companyId});
+      const doc=companyGrants.persist(companyId,'document',{label,documentType:'notice',dossierId,beneficiary:dossier.beneficiary,blob_id:blob.id,ext});
+      const current=companyGrants.recordById(companyId,'dossier',dossierId);
+      companyGrants.persist(companyId,'dossier',{...current,revision:current.revision+1,documentIds:[...new Set([...(current.documentIds||[]),doc.id])]},dossierId);
+      broadcast('db:companyGrants:changed',{companyId});
+      return doc.id;
+    },
+    document: (companyId,id,dossierId) => {
+      if (!dossierId) throw new Error('Open the portal from an application before uploading documents.');
+      const doc=companyGrants.portalPackage(companyId,{id:dossierId}).documents.find(d=>d.id===id);
+      if(!doc || !/^[a-f0-9]{64}$/.test(doc.blob_id) || !/^[a-z0-9]{1,10}$/.test(doc.ext)) throw new Error('Document not found in this team.');
+      return {...doc,path:blobStore.blobPath(doc.blob_id,doc.ext)};
+    }
+  });
+  const grants = {...companyGrants,
+    readDocument: async (companyId,input={}) => {
+      const doc=companyGrants.snapshot(companyId).documents.find(d=>d.id===input.id);
+      if(!doc || !/^[a-f0-9]{64}$/.test(doc.blob_id) || !/^[a-z0-9]{1,10}$/.test(doc.ext)) throw new Error('Document not found in this team.');
+      return {...doc,base64:(await fs.promises.readFile(blobStore.blobPath(doc.blob_id,doc.ext))).toString('base64')};
+    },
+    draftDocument: (companyId,input={}) => {
+      companyGrants.assertCompany(companyId);
+      const context=companyGrants.documentContext(companyId,input);
+      if(!String(input.title || '').trim() || !String(input.content || '').trim() || input.content.length>150000) throw new Error('Document title and content are required (maximum 150,000 characters).');
+      const blob=blobStore.write(Buffer.from(input.content,'utf8'),'txt',{source:'company-grant-draft',sourceId:companyId});
+      return companyGrants.persist(companyId,'document',{label:input.title,...context,documentType:input.documentType,draft:true,blob_id:blob.id,ext:'txt'});
+    },
+    attachDocument: async (companyId,input={}) => {
+    companyGrants.assertCompany(companyId);
+    const context=companyGrants.documentContext(companyId,input);
+    if(input.validUntil && (!/^\d{4}-\d{2}-\d{2}$/.test(input.validUntil) || !Number.isFinite(Date.parse(input.validUntil)))) throw new Error('Invalid document expiry date.');
+    const choice=await dialog.showOpenDialog({title:'Supporting document',properties:['openFile'],filters:[{name:'Documents',extensions:['pdf','png','jpg','jpeg','docx','xlsx','csv','txt']}]});
+    if(choice.canceled) return {status:'cancelled'};
+    const file=choice.filePaths[0];
+    if(fs.statSync(file).size>30*1024*1024) throw new Error('Maximum document size is 30 MB.');
+    const ext=path.extname(file).slice(1).toLowerCase();
+    const blob=blobStore.write(await fs.promises.readFile(file),ext,{source:'company-grant',sourceId:companyId});
+    return companyGrants.persist(companyId,'document',{label:input.label || path.basename(file),...context,validUntil:input.validUntil || null,documentType:String(input.documentType || '').trim(),blob_id:blob.id,ext});
+  }};
+  const operationalRepos = { companyWorkspace, companyIntake, companySales, companyGrants:grants, companyBrowser:browser, recordOperations:{...recordOperations,...recordDelivery}, companyBilling: companyBillingRepo, gmaoMaintenance: maintenanceRepo, purchasing: purchasingRepo };
+  for (const [namespace, methods] of Object.entries(COMPANY_OPERATIONS)) {
+    const repo = operationalRepos[namespace];
+    for (const method of [...methods.reads, ...methods.writes]) {
+      ipcMain.handle(`db:${namespace}:${method}`, async (_event, companyId, ...args) => {
+        if (['companyBrowser','companyGrants'].includes(namespace) && !(_event.sender.getURL().startsWith('file:') || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(_event.sender.getURL()))) throw new Error('Use the local BonzAI workspace.');
+        if (typeof repo[method] !== 'function') throw new Error(`Operational action unavailable: ${namespace}.${method}`);
+        try {
+          return await repo[method](companyId, ...args);
+        } finally {
+          if (methods.writes.includes(method) && !(namespace==='companyIntake' && ['claim','renew','mailboxCheckpoint'].includes(method))) {
+            broadcast(`db:${namespace}:changed`, { companyId });
+            if(namespace !== 'recordOperations')broadcast('db:recordOperations:changed', {companyId});
+            if(namespace === 'companySales' || method === 'shareEvidence') {
+              broadcast('db:teams:changed', {});
+              const peers=get().db.prepare('SELECT source_company_id, target_company_id FROM team_threads WHERE source_company_id=? OR target_company_id=?').all(companyId,companyId);
+              for(const peerId of new Set(peers.flatMap(t=>[t.source_company_id,t.target_company_id]))) {
+                broadcast('db:companySales:changed',{companyId:peerId});
+                broadcast('db:issues:changed',{companyId:peerId});
+                broadcast('db:gmao:changed',{companyId:peerId});
+              }
+            }
+            if(namespace === 'purchasing') {
+              if (method === 'saveLogistics') broadcast('db:teams:changed', {});
+              const shared=get().db.prepare("SELECT DISTINCT source_company_id AS id FROM team_threads WHERE target_company_id=?").all(companyId);
+              for(const source of shared) {broadcast('db:recordOperations:changed',{companyId:source.id});broadcast('db:gmao:changed',{companyId:source.id});}
+            }
+            broadcast('db:gmao:changed', { companyId });
+            broadcast('db:audit:changed', { companyId });
+            if (namespace === 'companyIntake' || ['recordCorrection', 'importInstallations', 'saveRequest', 'reportDefect', 'runReview', 'preparePayment', 'prepareReportTask', 'runReminders'].includes(method)) {
+              broadcast('db:issues:changed', { companyId });
+            }
+          }
+        }
+      });
+    }
+    if (['companyBilling', 'purchasing'].includes(namespace)) {
+      ipcMain.handle(`db:${namespace}:generateDocument`, async (_event, companyId, id) => {
+        const html = repo.documentHtml(companyId, id);
+        const version = crypto.createHash('sha256').update(html).digest('hex');
+        const bytes = await printLocalPdf(html);
+        // Recheck after asynchronous printing so a changed document cannot be
+        // attached as evidence for a newer invoice or purchase-order revision.
+        if (repo.documentHtml(companyId, id) !== html) throw new Error('Document changed during PDF generation. Generate it again.');
+        const blob = blobStore.write(bytes, 'pdf', { mimeType: 'application/pdf', source: namespace, sourceId: companyId });
+        const result = repo.attachDocument(companyId, id, { blobId: blob.id, blobExt: 'pdf', filename: `${namespace}-${version.slice(0, 12)}.pdf`, version });
+        broadcast(`db:${namespace}:changed`, { companyId });
+        return result;
+      });
+    }
+  }
+  const delivery = createDeliveryService({request: connectorRequest, printPdf: printLocalPdf});
+  gmaoOps.recoverOutbox();
+  for (const name of ['saveClient','saveServiceContract','saveSupplier','acknowledgeHandoff','saveOutbox','resolveOutbox','getDossier','searchWorkOrders']) {
+    ipcMain.handle('db:gmao:'+name, async (_e,id,...args)=>{const result=await gmaoOps[name](id,...args);if(!['getDossier','searchWorkOrders'].includes(name))broadcast('db:gmao:changed',{companyId:id});return result;});
+  }
+  for (const name of ['generateDocument','sendOutbox','checkDelivery']) {
+    ipcMain.handle('db:gmao:'+name, async (_e,id,...args)=>{try{return await delivery[name](id,...args);}finally{broadcast('db:gmao:changed',{companyId:id});}});
+  }
+  const notifyTeams = () => { broadcast('db:teams:changed', {}); broadcast('db:audit:changed', {}); broadcast('db:issues:changed', {}); };
+  for (const name of ['list', 'directory', 'read']) ipcMain.handle('db:teams:'+name, (_e,id,...args)=>teamRepo[name](id,...args));
+  for (const name of ['request','reply']) ipcMain.handle('db:teams:'+name, (_e,id,input)=>{const result=teamRepo[name](id,input,{role:'owner'});notifyTeams();return result;});
+  ipcMain.handle('db:teams:execute', (_e,id,type,input,context)=>{
+    const issue=issuesRepo.getById(id,context?.issueId);
+    if(!issue || issue.assigneeRole!==context?.role)throw new Error('Team actions require the assigned task and member.');
+    const actor={role:issue.assigneeRole};
+    const params={...input,requestKey:context.requestKey||`${issue.id}:${type}:${input.conversationId||input.targetTeamId||''}`};
+    const result=type==='team.directory'?teamRepo.directory(id):type==='team.readConversation'?teamRepo.read(id,input.conversationId):type==='team.requestWork'?teamRepo.request(id,params,actor):type==='team.reply'?teamRepo.reply(id,params,actor):type==='team.readProcurement'?teamRepo.readProcurement(id,input.conversationId):type==='team.updateProcurement'?teamRepo.updateProcurement(id,params,actor):null;
+    if(!result)throw new Error('Unknown team action.');
+    if(['team.requestWork','team.reply','team.updateProcurement'].includes(type)) {notifyTeams();broadcast('db:gmao:changed',{});}
+    return result;
+  });
+  // ─── durable company automation runtime ──────────────────────────
+  ipcMain.handle('db:companyPortability:export', (_e, id, options) => companyPortabilityRepo.exportBundle(id, options));
+  ipcMain.handle('db:companyPortability:import', (_e, bundle, options) => {
+    const charter = companyPortabilityRepo.importBundle(bundle, options);
+    broadcast('db:companies:changed', { companyId: charter.id });
+    return charter;
+  });
+  ipcMain.handle("db:automation:renew", (_e, id, runId, leaseMs) => automationRepo.renew(id, runId, leaseMs));
+  ipcMain.handle("db:automation:begin", (event, companyId, input) => automationRepo.begin(companyId, {...input, executorId:`${process.pid}:${event.sender.id}`}));
+  ipcMain.handle("db:automation:finish", (_e, companyId, runId, input) => {
+    const state = automationRepo.finish(companyId, runId, input);
+    broadcast("db:automation:changed", { companyId });
+    return state;
+  });
+  ipcMain.handle("db:automation:state", (_e, companyId) => automationRepo.getState(companyId));
+  ipcMain.handle("db:automation:recent", (_e, companyId, limit) => automationRepo.recent(companyId, limit));
+  ipcMain.handle("db:automation:recover", (_e, companyId, staleBefore) => {
+    const result = automationRepo.recover(companyId, staleBefore);
+    broadcast("db:automation:changed", { companyId });
+    return result;
+  });
+  ipcMain.handle("db:automation:clear", (_e, companyId) => ({ ok: automationRepo.clear(companyId) }));
+
   // ─── audit ────────────────────────────────────────────────────────
   ipcMain.handle("db:audit:append", (_e, companyId, entry) => {
     const row = auditRepo.append(companyId, entry);
@@ -142,6 +340,12 @@ export function registerDbIpc() {
   ipcMain.handle("db:companies:remove", (_e, id) => companiesRepo.remove(id));
   ipcMain.handle("db:companies:bulkInsert", (_e, rows) => ({ inserted: companiesRepo.bulkInsert(rows) }));
 
+  ipcMain.handle('db:goals:createWithTasks', (_e, companyId, input, tasks) => {
+    const result = goalsRepo.createWithTasks(companyId, input, tasks);
+    broadcast('db:goals:changed', { companyId }); broadcast('db:issues:changed', { companyId });
+    return result;
+  });
+
   // ─── goals ────────────────────────────────────────────────────────
   ipcMain.handle("db:goals:create", (_e, companyId, input) => {
     const r = goalsRepo.create(companyId, input);
@@ -166,6 +370,33 @@ export function registerDbIpc() {
   ipcMain.handle("db:goals:clear", (_e, companyId) => { goalsRepo.clear(companyId); return { ok: true }; });
   ipcMain.handle("db:goals:bulkInsert", (_e, rows) => ({ inserted: goalsRepo.bulkInsert(rows) }));
 
+  ipcMain.handle('db:issues:reconcileExecution', (_e, id, issueId, stepId, input) => {
+    const result = issuesRepo.reconcileExecution(id, issueId, stepId, input);
+    broadcast('db:issues:changed', { companyId: id });
+    broadcast('db:distribution:changed', { companyId: id });
+    return result;
+  });
+  ipcMain.handle('db:issues:saveWorkflowResult', (_e, companyId, issueId, input) => {
+    const result = issuesRepo.saveWorkflowResult(companyId, issueId, input);
+    broadcast('db:issues:changed', { companyId });
+    broadcast('db:distribution:changed', { companyId });
+    broadcast('db:audit:changed', { companyId });
+    return result;
+  });
+  ipcMain.handle('db:issues:reviewWorkflowResult', (_e, companyId, issueId, stepId, input) => {
+    const result = issuesRepo.reviewWorkflowResult(companyId, issueId, stepId, input);
+    broadcast('db:issues:changed', { companyId });
+    broadcast('db:goals:changed', { companyId });
+    broadcast('db:audit:changed', { companyId });
+    return result;
+  });
+  ipcMain.handle("db:issues:saveExecution", (_e, companyId, id, execution, revision) => issuesRepo.saveExecution(companyId, id, execution, revision));
+  ipcMain.handle('db:issues:wakeTeamWaits', (_e, id) => issuesRepo.wakeTeamWaits(id));
+  ipcMain.handle('db:issues:answerQuestion', (_e, id, issueId, answer) => {
+    const task = issuesRepo.answerQuestion(id, issueId, answer);
+    broadcast('db:issues:changed', {companyId:id}); return task;
+  });
+  ipcMain.handle("db:issues:resumeApproval", (_e, companyId, id) => issuesRepo.resumeApproval(companyId, id));
   // ─── issues + attempts ────────────────────────────────────────────
   ipcMain.handle("db:issues:create", (_e, companyId, input) => {
     const r = issuesRepo.create(companyId, input);
@@ -186,6 +417,11 @@ export function registerDbIpc() {
     return { ok: true };
   });
   ipcMain.handle("db:issues:nextForRole", (_e, companyId, roleKey, currentCompanion) => issuesRepo.nextForRole(companyId, roleKey, currentCompanion));
+  ipcMain.handle("db:issues:claimNextForRole", (_e, companyId, roleKey, currentCompanion) => {
+    const r = issuesRepo.claimNextForRole(companyId, roleKey, currentCompanion);
+    if (r) broadcast("db:issues:changed", { companyId });
+    return r;
+  });
   ipcMain.handle("db:issues:startAttempt", (_e, companyId, issueId, role, companion) => {
     const r = issuesRepo.startAttempt(companyId, issueId, role, companion);
     broadcast("db:issues:changed", { companyId });
@@ -193,13 +429,63 @@ export function registerDbIpc() {
   });
   ipcMain.handle("db:issues:finishAttempt", (_e, companyId, issueId, outcome) => {
     const r = issuesRepo.finishAttempt(companyId, issueId, outcome);
-    broadcast("db:issues:changed", { companyId });
+    broadcast("db:issues:changed", {});
     return r;
   });
   ipcMain.handle("db:issues:attempts", (_e, issueId) => issuesRepo.attempts(issueId));
   ipcMain.handle("db:issues:counts", (_e, companyId) => issuesRepo.counts(companyId));
+  ipcMain.handle("db:issues:recoverStale", (_e, companyId, staleBefore) => {
+    const r = issuesRepo.recoverStale(companyId, staleBefore);
+    if (r.recovered) broadcast("db:issues:changed", { companyId });
+    return r;
+  });
   ipcMain.handle("db:issues:clear", (_e, companyId) => { issuesRepo.clear(companyId); return { ok: true }; });
   ipcMain.handle("db:issues:bulkInsert", (_e, rows) => ({ inserted: issuesRepo.bulkInsert(rows) }));
+
+  // ─── HVAC GMAO ────────────────────────────────────────────────────
+  const gmaoMutation = (operation) => (_e, companyId, ...args) => {
+    const result = operation(companyId, ...args);
+    broadcast("db:gmao:changed", { companyId });
+    const buyers = get().db.prepare("SELECT DISTINCT target_company_id AS id FROM team_threads WHERE source_company_id=?").all(companyId);
+    for (const buyer of buyers) broadcast('db:purchasing:changed', {companyId:buyer.id});
+    return result;
+  };
+  ipcMain.handle("db:gmao:bootstrap", gmaoMutation(gmaoRepo.bootstrap));
+  ipcMain.handle("db:gmao:snapshot", (_e, companyId, now) => gmaoRepo.snapshot(companyId, now));
+  ipcMain.handle("db:gmao:saveContract", gmaoMutation(gmaoRepo.saveContract));
+  ipcMain.handle("db:gmao:saveSite", gmaoMutation(gmaoRepo.saveSite));
+  ipcMain.handle("db:gmao:saveAsset", gmaoMutation(gmaoRepo.saveAsset));
+  ipcMain.handle("db:gmao:importAssets", gmaoMutation(gmaoRepo.importAssets));
+  ipcMain.handle("db:gmao:savePlan", gmaoMutation(gmaoRepo.savePlan));
+  ipcMain.handle("db:gmao:createWorkOrder", gmaoMutation(gmaoRepo.createWorkOrder));
+  ipcMain.handle("db:gmao:updateWorkOrder", gmaoMutation(gmaoRepo.updateWorkOrder));
+  ipcMain.handle("db:gmao:transitionWorkOrder", gmaoMutation(gmaoRepo.transitionWorkOrder));
+  ipcMain.handle("db:gmao:addEvent", gmaoMutation(gmaoRepo.addEvent));
+  ipcMain.handle("db:gmao:recordAttachmentSheet", gmaoMutation(gmaoRepo.recordAttachmentSheet));
+  ipcMain.handle("db:gmao:saveProcurement", gmaoMutation(gmaoRepo.saveProcurement));
+  ipcMain.handle("db:gmao:saveNotification", gmaoMutation(gmaoRepo.saveNotification));
+  ipcMain.handle("db:gmao:addDocument", gmaoMutation(gmaoRepo.addDocument));
+  ipcMain.handle("db:gmao:saveCompliance", gmaoMutation(gmaoRepo.saveCompliance));
+  ipcMain.handle("db:gmao:saveSubcontractor", gmaoMutation(gmaoRepo.saveSubcontractor));
+  ipcMain.handle("db:gmao:saveRate", gmaoMutation(gmaoRepo.saveRate));
+  ipcMain.handle("db:gmao:createQuote", gmaoMutation(gmaoRepo.createQuote));
+  ipcMain.handle("db:gmao:updateQuote", gmaoMutation(gmaoRepo.updateQuote));
+  ipcMain.handle("db:gmao:validateProcessStep", gmaoMutation(gmaoRepo.validateProcessStep));
+  ipcMain.handle("db:gmao:recordServiceAcceptance", gmaoMutation(gmaoRepo.recordServiceAcceptance));
+  ipcMain.handle("db:gmao:saveInvoice", gmaoMutation(gmaoRepo.saveInvoice));
+  ipcMain.handle("db:gmao:saveOnCallShift", gmaoMutation(gmaoRepo.saveOnCallShift));
+  ipcMain.handle("db:gmao:generatePreventive", gmaoMutation(gmaoRepo.generatePreventive));
+  ipcMain.handle("db:gmao:evaluateSla", gmaoMutation(gmaoRepo.evaluateAndRecordSla));
+  ipcMain.handle("db:gmao:ingestDocument", gmaoMutation(gmaoRepo.ingestDocument));
+  ipcMain.handle("db:gmao:applyDocumentIntake", gmaoMutation(gmaoRepo.applyDocumentIntake));
+  ipcMain.handle("db:gmao:resolveRecommendation", gmaoMutation(gmaoRepo.resolveRecommendation));
+  ipcMain.handle("db:gmao:recommendSchedule", gmaoMutation(gmaoRepo.recommendSchedule));
+  ipcMain.handle("db:gmao:recordAssetSignal", gmaoMutation(gmaoRepo.recordAssetSignal));
+  ipcMain.handle("db:gmao:saveBillingLine", gmaoMutation(gmaoRepo.saveBillingLine));
+  ipcMain.handle("db:gmao:reconcileBilling", gmaoMutation(gmaoRepo.reconcileWorkOrderBilling));
+  ipcMain.handle("db:gmao:runAutomation", gmaoMutation(gmaoRepo.runAutomation));
+  ipcMain.handle("db:gmao:exportWeeklyRegister", (_e, companyId, options) => gmaoRepo.exportWeeklyRegister(companyId, options));
+  ipcMain.handle("db:gmao:exportInventory", (_e, companyId) => gmaoRepo.exportInventory(companyId));
 
   // ─── treasury ─────────────────────────────────────────────────────
   ipcMain.handle("db:treasury:getState", (_e, companyId) => treasuryRepo.getState(companyId));
@@ -305,6 +591,11 @@ export function registerDbIpc() {
     return { ok: true };
   });
   ipcMain.handle("db:companions:bulkInsert", (_e, rows) => ({ inserted: companionsRepo.bulkInsert(rows) }));
+  ipcMain.handle("db:companions:replaceRoster", (_e, rows) => {
+    const inserted = companionsRepo.replaceRoster(rows);
+    broadcast("db:companions:changed", { replaced: true });
+    return { inserted };
+  });
   ipcMain.handle("db:companions:memoryAdd", (_e, companionId, mem) => companionsRepo.memoryAdd(companionId, mem));
   ipcMain.handle("db:companions:memoryList", (_e, companionId, scope) => companionsRepo.memoryList(companionId, scope));
   ipcMain.handle("db:companions:memoryRecall", (_e, companionId, scope, limit) => companionsRepo.memoryRecall(companionId, scope, limit));

@@ -26,6 +26,7 @@ import * as roleplayRepo from "./repos/roleplay.js";
 import * as skillsRepo from "./repos/skills.js";
 import * as embedBackfill from "./embed-backfill.js";
 import * as blobStore from "./blobs.js";
+import { companionExtraMetadata } from "../../shared/companionMetadata.js";
 
 const FLAG_PREFIX = "db.migrated.";
 
@@ -545,6 +546,7 @@ function importCompanions(store) {
     contractAddress: c.contractAddress ?? null,
     tokenId: c.tokenId ?? null,
     agentWallet: c.agentWallet ?? null,
+    extraJson: companionExtraMetadata(c),
     createdAt: c.createdAt || Date.now(),
     updatedAt: c.updatedAt || Date.now(),
   }));

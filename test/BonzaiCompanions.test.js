@@ -1133,20 +1133,19 @@ describe("BonzaiCompanions", function () {
       }
     });
 
-    it("falls back to treasury when MintPool reverts", async function () {
+    it("retains MintPool funds for retry when its deposit reverts", async function () {
       const { companions, mintPool, user1, treasury } = await loadFixture(deployWithMintPool);
 
       await mintPool.setShouldRevert(true);
 
-      // All 50% pool budget should fall back to treasury alongside the 50%
-      // treasury slice — i.e. treasury receives the full mintPrice (minus
-      // any rounding remainder, which also goes to treasury).
+      const perPool = (COMPANION_MINT_PRICE - COMPANION_MINT_PRICE / 2n) / 6n;
       await expect(
         companions.connect(user1).mintCompanion(
           AGENT_URI, PERSONALITY_HASH, VALID_SPENDING_PROFILE, GENDER_FEMALE, ethers.ZeroAddress,
           { value: COMPANION_MINT_PRICE }
         )
-      ).to.changeEtherBalance(treasury, COMPANION_MINT_PRICE);
+      ).to.changeEtherBalance(treasury, COMPANION_MINT_PRICE - perPool * 6n);
+      expect(await companions.totalPendingPoolFees()).to.equal(perPool * 6n);
     });
 
     it("falls back to treasury when MintPool is unset", async function () {

@@ -79,6 +79,7 @@ contract BonzaiContributionRegistry is Ownable, ReentrancyGuard, Pausable {
         uint8 visibility,
         bytes32[] calldata parents
     ) external nonReentrant whenNotPaused returns (bytes32 contributionId) {
+        require(contentHash != bytes32(0), "Content hash required");
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
         if (bytes(licenseURI).length == 0) revert EmptyLicenseURI();
         if (qualityScore > 100) revert InvalidQualityScore(qualityScore);
@@ -124,6 +125,11 @@ contract BonzaiContributionRegistry is Ownable, ReentrancyGuard, Pausable {
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
         if (qualityScore > 100) revert InvalidQualityScore(qualityScore);
 
+        // A verification attests to the reviewed metadata, not future edits.
+        if (contribution.verified) {
+            contribution.verified = false;
+            emit ContributionVerificationChanged(contributionId, false, block.timestamp);
+        }
         contribution.metadataURI = metadataURI;
         contribution.qualityScore = qualityScore;
         contribution.updatedAt = block.timestamp;

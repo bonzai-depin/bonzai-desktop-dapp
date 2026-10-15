@@ -43,12 +43,17 @@ async function deployMintPool() {
     EPOCH_DURATION,
     treasury.address,
   );
+  const StakingVault = await ethers.getContractFactory("BonzaiStakingVault");
+  const stakingVault = await StakingVault.deploy(
+    await token.getAddress(), POOL_THRESHOLDS.map(value => ethers.parseEther(String(value))),
+  );
+  await mintPool.setStakingVault(await stakingVault.getAddress());
 
   // Genesis is next Monday 00:00 UTC — advance time so tests start in epoch 0
   const genesis = await mintPool.genesisTime();
   await time.increaseTo(genesis);
 
-  return { mintPool, token, owner, user1, user2, user3, treasury };
+  return { mintPool, token, stakingVault, owner, user1, user2, user3, treasury };
 }
 
 /**
@@ -159,6 +164,7 @@ async function deployCompanionTokenFactory() {
 
   const MockPermit2 = await ethers.getContractFactory("MockPermit2");
   const permit2 = await MockPermit2.deploy();
+  await positionManager.setPermit2(await permit2.getAddress());
 
   const MockFeeHook = await ethers.getContractFactory("MockFeeHook");
   const feeHook = await MockFeeHook.deploy();
@@ -193,12 +199,20 @@ async function deployFineTuneTokenFactory() {
 
   const MockPermit2 = await ethers.getContractFactory("MockPermit2");
   const permit2 = await MockPermit2.deploy();
+  await positionManager.setPermit2(await permit2.getAddress());
 
   const MockFeeHook = await ethers.getContractFactory("MockFeeHook");
   const feeHook = await MockFeeHook.deploy();
 
   const MockBonzaiContent = await ethers.getContractFactory("MockBonzaiContent");
-  const mockContent = await MockBonzaiContent.deploy();
+  const contentImplementation = await MockBonzaiContent.deploy();
+  const CollectiblesFactory = await ethers.getContractFactory("BonzaiCollectiblesFactory");
+  const collectiblesFactory = await CollectiblesFactory.deploy(
+    await contentImplementation.getAddress(), owner.address, ethers.ZeroAddress, ethers.ZeroAddress, ethers.ZeroAddress,
+  );
+  await collectiblesFactory.getOrCreateCollection("Model collection");
+  const contentCollection = await collectiblesFactory.collections(owner.address);
+  const mockContent = MockBonzaiContent.attach(contentCollection);
 
   const FineTuneTokenFactory = await ethers.getContractFactory("FineTuneTokenFactory");
   const factory = await FineTuneTokenFactory.deploy(
@@ -208,9 +222,9 @@ async function deployFineTuneTokenFactory() {
     await feeHook.getAddress(),
   );
 
-  await factory.setContentContract(await mockContent.getAddress());
+  await factory.setContentContract(await collectiblesFactory.getAddress());
 
-  return { factory, poolManager, positionManager, permit2, feeHook, mockContent, owner, user1, creator };
+  return { factory, poolManager, positionManager, permit2, feeHook, mockContent, contentCollection, collectiblesFactory, contentImplementation, owner, user1, creator };
 }
 
 /**

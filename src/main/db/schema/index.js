@@ -12,9 +12,14 @@
 export * from "./audit.js";
 export * from "./blobs.js";
 export * from "./companies.js";
+export * from "./companyBilling.js";
 export * from "./companions.js";
 export * from "./embeddings.js";
 export * from "./generations.js";
+export * from "./gmao.js";
+export * from "./purchasing.js";
 export * from "./skills.js";
 export * from "./social.js";
 export * from "./web3.js";
+
+export * from './recordFollowup.js';

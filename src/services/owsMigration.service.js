@@ -8,6 +8,8 @@
 
 import { owsService } from './ows.service.js';
 import { agentWalletService } from './agentWallet.service.js';
+import { walletCredentials, ensureOWSPassphrase } from './walletCredentials.service.js';
+import { CONFIG } from '../config/web3.config.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MIGRATION STATUS
@@ -44,7 +46,7 @@ export async function getMigrationStatus() {
  * Migrate a single companion's legacy wallet to OWS.
  *
  * Strategy:
- * 1. Read existing private key from Electron Store
+ * 1. Migrate/read the existing key through OS-protected credential storage
  * 2. Import into OWS vault with same key (same address)
  * 3. Generate passphrase, create API key
  * 4. Store OWS wallet mapping
@@ -54,52 +56,52 @@ export async function getMigrationStatus() {
  */
 export async function migrateCompanion(companionId) {
   try {
-    // Step 1: Get existing credentials
+    // Protect existing OWS credentials even when a prior migration already completed.
+    const existingMapping = await window.electronAPI?.store?.get(`ows-wallet-${companionId}`);
+    if (existingMapping) {
+      await walletCredentials.getOWS(companionId, 'passphrase');
+      return { success: true, address: existingMapping.address, walletName: existingMapping.walletName };
+    }
     const credentials = await agentWalletService.getAgentWalletCredentials(companionId);
     if (!credentials) {
       return { success: false, error: `No legacy wallet found for companion ${companionId}` };
     }
 
-    // Step 2: Check if already migrated
-    const existingMapping = await window.electronAPI?.store?.get(`ows-wallet-${companionId}`);
-    if (existingMapping) {
-      return { success: true, address: existingMapping.address, walletName: existingMapping.walletName };
-    }
-
     // Step 3: Generate passphrase and wallet name
-    const passphrase = generatePassphrase();
+    const passphrase = await ensureOWSPassphrase(companionId);
     const walletName = `bonzai-companion-${companionId}`;
 
-    // Step 4: Import private key into OWS
-    const importResult = await owsService.importWalletPrivateKey(
-      walletName,
-      credentials.privateKey,
-      passphrase
+    // Recover a completed import if a previous metadata write was interrupted.
+    const existingWallet = await owsService.getWallet(walletName);
+    if (existingWallet?.address && existingWallet.address.toLowerCase() !== credentials.address.toLowerCase()) {
+      throw new Error('Existing OWS wallet does not match the legacy wallet address');
+    }
+    const importResult = existingWallet?.address ? existingWallet : await owsService.importWalletPrivateKey(
+      walletName, credentials.privateKey, passphrase,
     );
-    if (importResult.error) {
-      return { success: false, error: `OWS import failed: ${importResult.error}` };
+    if (importResult?.error || !importResult?.address) {
+      throw new Error('The legacy wallet could not be imported into OWS');
     }
 
-    // Step 5: Create API key for autonomous agent operations
-    const apiKeyResult = await owsService.createApiKey(
-      `${walletName}-agent`,
-      [walletName],
-      ['base-spending'],
-      passphrase,
-      '2027-12-31T23:59:59Z'
-    );
-
-    // Step 6: Store passphrase and mapping
-    await window.electronAPI?.store?.set(`ows-passphrase-${companionId}`, passphrase);
-    if (apiKeyResult && !apiKeyResult.error) {
-      await window.electronAPI?.store?.set(`ows-api-key-${companionId}`, apiKeyResult.token);
-    }
-    await window.electronAPI?.store?.set(`ows-wallet-${companionId}`, {
-      walletName,
-      address: importResult.address,
-      provider: 'ows',
-      migratedAt: new Date().toISOString(),
+    // Passphrase is already protected; record the successful import before optional capabilities.
+    const saved = await window.electronAPI?.store?.set(`ows-wallet-${companionId}`, {
+      walletName, address: importResult.address, provider: 'ows', migratedAt: new Date().toISOString(),
     });
+    if (saved !== true) throw new Error('The OWS wallet mapping could not be saved');
+
+    // Receive-only companions do not need a spending API token.
+    if (CONFIG.agentWallet.enabledOperations?.includes('pay')) {
+      let apiKeyResult;
+      try {
+        apiKeyResult = await owsService.createApiKey(
+          `${walletName}-agent`, [walletName], ['base-spending'], passphrase, '2027-12-31T23:59:59Z',
+        );
+        if (apiKeyResult?.token) await walletCredentials.setOWS(companionId, 'apiKey', apiKeyResult.token);
+      } catch {
+        if (apiKeyResult?.id) await owsService.revokeApiKey(apiKeyResult.id).catch(() => {});
+        console.warn('[OWSMigration] Optional API token was not provisioned');
+      }
+    }
 
     console.log(`[OWSMigration] Migrated companion ${companionId}: ${importResult.address}`);
     return { success: true, address: importResult.address, walletName };
@@ -134,32 +136,6 @@ export async function migrateAll(companionIds, onProgress) {
   }
 
   return { migrated, failed };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Generate a 32-character random passphrase.
- * @returns {string}
- */
-function generatePassphrase() {
-  // Use Web Crypto API (available in renderer)
-  const bytes = new Uint8Array(24);
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    // Fallback
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  // Convert to base64url (32 chars from 24 bytes)
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
 }
 
 export const owsMigrationService = {

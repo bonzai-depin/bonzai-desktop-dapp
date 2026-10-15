@@ -110,3 +110,12 @@ out/
 build/
 dist/
 bonzai/
+
+# Private checkout authority state (deploy outside the repository).
+workspace-checkout-ledger.json*
+
+# Local release cleanup archive and presentation scratch work
+.local-release-archive/
+.chart-data-*
+.codex-presentation-build/
+.codex-finalizer/

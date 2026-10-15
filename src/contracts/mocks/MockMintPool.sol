@@ -7,6 +7,7 @@ pragma solidity ^0.8.20;
  */
 contract MockMintPool {
     bool public shouldRevert;
+    mapping(uint8 => bool) public poolShouldRevert;
     uint256 public totalDeposits;
     mapping(uint8 => uint256) public poolDeposits;
     uint256[6] private _totalDeposited;
@@ -15,8 +16,12 @@ contract MockMintPool {
         shouldRevert = _shouldRevert;
     }
 
+    function setPoolShouldRevert(uint8 poolIndex, bool value) external {
+        poolShouldRevert[poolIndex] = value;
+    }
+
     function depositForPool(uint8 poolIndex) external payable {
-        if (shouldRevert) {
+        if (shouldRevert || poolShouldRevert[poolIndex]) {
             revert("MockMintPool: deposit reverted");
         }
         require(poolIndex < 6, "Invalid pool index");

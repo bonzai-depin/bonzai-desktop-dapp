@@ -12,12 +12,21 @@ import { v4 as uuid } from "uuid";
 import { get } from "../connection.js";
 import { pendingApprovals } from "../schema/companies.js";
 
-export function enqueue(companyId, { cls, action, role, requestedBy }) {
-  const { orm } = get();
+export function enqueue(companyId, { cls, action, role, requestedBy, issueId = null, stepId = null }) {
+  const { orm, db } = get();
+  if (issueId && stepId) {
+    const existing = orm.select().from(pendingApprovals).where(and(eq(pendingApprovals.companyId, companyId), eq(pendingApprovals.issueId, issueId), eq(pendingApprovals.stepId, stepId))).get();
+    if (existing) {
+      if (existing.status !== 'pending' || JSON.stringify(existing.action) !== JSON.stringify(action)) throw new Error('This task step already has a different or decided approval.');
+      return existing;
+    }
+    if (!db.prepare('SELECT id FROM issues WHERE id = ? AND company_id = ?').get(issueId, companyId)) throw new Error('Task not found.');
+  }
   const row = {
     id: uuid(),
     companyId,
     cls,
+    issueId, stepId,
     action,
     role: role ?? null,
     requestedBy: requestedBy ?? null,
@@ -50,6 +59,10 @@ export function approve(companyId, pendingId) {
 }
 
 export function reject(companyId, pendingId, reason) {
+  return get().db.transaction(() => rejectInTransaction(companyId, pendingId, reason))();
+}
+
+function rejectInTransaction(companyId, pendingId, reason) {
   const { orm, db } = get();
   const row = db.prepare("SELECT * FROM pending_approvals WHERE id = ? AND company_id = ?")
     .get(pendingId, companyId);
@@ -58,7 +71,17 @@ export function reject(companyId, pendingId, reason) {
   orm.update(pendingApprovals)
     .set({ status: "rejected", decidedAt: Date.now(), rejectReason: reason ?? null })
     .where(eq(pendingApprovals.id, pendingId)).run();
-  return { ...row, status: "rejected", rejectReason: reason ?? null };
+  if (row.issue_id) {
+    const issue = db.prepare('SELECT execution FROM issues WHERE company_id = ? AND id = ?').get(companyId, row.issue_id);
+    const execution = issue?.execution ? JSON.parse(issue.execution) : null;
+    const step = execution?.steps.find(step => step.id === row.step_id);
+    if (step) {
+      step.status = 'rejected'; step.error = reason || 'Owner rejected this action.';
+      db.prepare("UPDATE issues SET status = 'blocked', execution = ?, execution_revision = execution_revision + 1, last_error = ?, updated_at = ? WHERE company_id = ? AND id = ?")
+        .run(JSON.stringify(execution), step.error, Date.now(), companyId, row.issue_id);
+    }
+  }
+  return { ...row, action: JSON.parse(row.action), status: "rejected", rejectReason: reason ?? null };
 }
 
 export function clear(companyId) {

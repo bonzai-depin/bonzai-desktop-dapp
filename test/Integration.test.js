@@ -88,8 +88,8 @@ describe("Integration Tests", function () {
     await bonzaiToken.mint(user2.address, ethers.parseEther("10000"));
     await bonzaiToken.connect(user1).approve(await stakingVault.getAddress(), ethers.MaxUint256);
     await bonzaiToken.connect(user2).approve(await stakingVault.getAddress(), ethers.MaxUint256);
-    await stakingVault.connect(user1).stake(ethers.parseEther("50000"), 0);
-    await stakingVault.connect(user2).stake(ethers.parseEther("10000"), 0);
+    await stakingVault.connect(user1).stake(ethers.parseEther("50000"), 30 * 86400);
+    await stakingVault.connect(user2).stake(ethers.parseEther("10000"), 30 * 86400);
 
     return { bonzaiToken, mintPool, stakingVault, content, content2, factory, splitter, owner, treasury, user1, user2 };
   }

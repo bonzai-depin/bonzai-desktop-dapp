@@ -62,6 +62,12 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
     /// @notice Sum of creatorClaimable values; complements creatorPendingPool.
     uint256 public creatorTotalAttributed;
 
+    /// @notice Failed pool payments retain their original destination and category.
+    mapping(address => mapping(uint8 => uint256)) public pendingPoolFees;
+    uint256 public totalPendingPoolFees;
+    event PoolFeesRetried(address indexed pool, uint8 indexed poolIndex, uint256 amount);
+
+
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════
@@ -110,17 +116,16 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
      *      balances) >= minDistributionAmount. Uses address(this).balance.
      */
     function distribute() external nonReentrant whenNotPaused {
-        // Only the part of the balance NOT already owed to creators is
-        // splitable. creatorPendingPool + creatorTotalAttributed represent
-        // ETH the contract holds for creators (pending or already credited
-        // and not yet claimed) — neither is up for re-distribution.
-        uint256 reserved = creatorPendingPool + creatorTotalAttributed;
+        // Creator obligations and failed pool payments are already allocated;
+        // neither may be split again or recovered by the treasury.
+        uint256 reserved = creatorPendingPool + creatorTotalAttributed + totalPendingPoolFees;
         uint256 freeBalance = address(this).balance - reserved;
         require(freeBalance >= minDistributionAmount, "Below minimum distribution amount");
 
         uint256 creatorShare = freeBalance / 3;
         uint256 treasuryShare = creatorShare;
         uint256 poolShare = freeBalance - creatorShare - treasuryShare;
+        address pool = mintPool;
 
         // Hold creator share in pending pool — actual ETH stays in this
         // contract, accounted for by creatorPendingPool.
@@ -131,8 +136,8 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
         require(s1, "Treasury transfer failed");
 
         // 1/3 to pools, weighted by historical deposit activity per content type
-        if (mintPool != address(0) && poolShare > 0) {
-            uint256[6] memory deposited = IBonzaiMintPoolSplitter(mintPool).getAllTotalDeposited();
+        if (pool != address(0) && poolShare > 0) {
+            uint256[6] memory deposited = IBonzaiMintPoolSplitter(pool).getAllTotalDeposited();
             uint256 totalAllPools = 0;
             for (uint8 i = 0; i < NUM_POOLS; ) {
                 totalAllPools += deposited[i];
@@ -146,16 +151,19 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
                     if (deposited[i] > 0) {
                         uint256 poolAmt = (poolShare * deposited[i]) / totalAllPools;
                         if (poolAmt > 0) {
-                            try IBonzaiMintPoolSplitter(mintPool).depositForPool{value: poolAmt}(i) {
-                                distributed += poolAmt;
+                            distributed += poolAmt;
+                            try IBonzaiMintPoolSplitter(pool).depositForPool{value: poolAmt}(i) {
+                                // Delivered directly.
                             } catch {
+                                pendingPoolFees[pool][i] += poolAmt;
+                                totalPendingPoolFees += poolAmt;
                                 emit PoolDepositFailed(i, poolAmt);
                             }
                         }
                     }
                     unchecked { i++; }
                 }
-                // Undistributed amount (rounding dust + any failed deposits) goes to treasury
+                // Only rounding dust goes to treasury; failed allocations remain reserved.
                 uint256 remainder = poolShare - distributed;
                 if (remainder > 0) {
                     (bool s2, ) = treasury.call{value: remainder}("");
@@ -170,15 +178,18 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
                         ? poolShare - (perPool * (NUM_POOLS - 1))
                         : perPool;
                     if (poolAmt > 0) {
-                        try IBonzaiMintPoolSplitter(mintPool).depositForPool{value: poolAmt}(i) {
-                            distributed += poolAmt;
+                        distributed += poolAmt;
+                        try IBonzaiMintPoolSplitter(pool).depositForPool{value: poolAmt}(i) {
+                            // Delivered directly.
                         } catch {
+                            pendingPoolFees[pool][i] += poolAmt;
+                            totalPendingPoolFees += poolAmt;
                             emit PoolDepositFailed(i, poolAmt);
                         }
                     }
                     unchecked { i++; }
                 }
-                // Any failed deposits go to treasury
+                // Only unallocated rounding dust may go to treasury.
                 uint256 remainder = poolShare - distributed;
                 if (remainder > 0) {
                     (bool s2, ) = treasury.call{value: remainder}("");
@@ -286,13 +297,19 @@ contract BonzaiRoyaltySplitter is Ownable, ReentrancyGuard, Pausable {
         require(success && (data.length == 0 || abi.decode(data, (bool))), "Transfer failed");
     }
 
-    /**
-     * @notice Recover stuck ETH that is NOT owed to creators.
-     * @dev Subtracts creatorPendingPool + creatorTotalAttributed before
-     *      withdrawing — ensures owner can never drain creator royalties.
-     */
+    /// @notice Anyone may deliver retained fees, without changing their beneficiary.
+    function retryPoolFees(address pool, uint8 poolIndex) external nonReentrant {
+        uint256 amount = pendingPoolFees[pool][poolIndex];
+        require(amount > 0, "No pending pool fees");
+        pendingPoolFees[pool][poolIndex] = 0;
+        totalPendingPoolFees -= amount;
+        IBonzaiMintPoolSplitter(pool).depositForPool{value: amount}(poolIndex);
+        emit PoolFeesRetried(pool, poolIndex, amount);
+    }
+
+    /// @notice Recover surplus ETH only; reserved pool fees remain payable to their original pool.
     function withdrawETH() external onlyOwner nonReentrant {
-        uint256 reserved = creatorPendingPool + creatorTotalAttributed;
+        uint256 reserved = creatorPendingPool + creatorTotalAttributed + totalPendingPoolFees;
         uint256 balance = address(this).balance;
         require(balance > reserved, "No surplus ETH (creator funds reserved)");
         uint256 surplus = balance - reserved;

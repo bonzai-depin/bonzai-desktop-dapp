@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Legacy migration disabled for the v4 contract interfaces.
+throw new Error('Legacy redeployment is disabled: global content identities and optional staking vaults are incompatible with v4. Use the canonical v4 deployment workflow for new contracts; existing funds require a separately reviewed migration.');
+
 
 /**
  * Redeploy BonzaiMintPool + BonzaiSkillRegistry with unlock contract support.

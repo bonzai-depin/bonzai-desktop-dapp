@@ -39,6 +39,7 @@ const ENDPOINT_TO_PIPELINE = Object.freeze({
   '/audio/quality/persona':  'audio_quality',
   '/audio/music':            'music',
   '/video':                  'video_fast',
+  '/video/sota':             'video_sota',
   '/video/quality':          'video_quality',
   '/vision/analyze':         'vision',
   '/vision/caption':         'vision_caption',

@@ -21,7 +21,7 @@ export function publish(companyId, opts) {
 
   if (opts.blobId && opts.blobExt) {
     blobId = opts.blobId; blobExt = opts.blobExt;
-  } else if (opts.payload && opts.pipeline !== "text" && opts.pipeline !== "vision") {
+  } else if (opts.payload && ["image", "audio", "video", "music", "3d"].includes(opts.pipeline) && !["path", "text"].includes(opts.meta?.payloadEncoding)) {
     // Image/audio/video payload arrives as base64. Push to blob store.
     try {
       const ref = blobStore.writeBase64(opts.payload, _extOf(opts.pipeline), {

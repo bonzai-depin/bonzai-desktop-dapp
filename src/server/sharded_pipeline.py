@@ -19,7 +19,7 @@ Models covered (mapping to BonzaiProviderRegistry pipeline categories):
     flux_klein                         →  IMAGE_TURBO   (1)   DiT
     ltx2_video                         →  VIDEO_FAST    (9)   DiT (3D)
     wan22_high / wan22_low             →  VIDEO_QUALITY       DiT (2× per gen)
-    qwen3_tts                          →  AUDIO_QUALITY (7)   transformer-decoder
+    chatterbox                         →  AUDIO_QUALITY (7)   transformer-decoder
     ace_step                           →  MUSIC         (8)   transformer-encoder + diffusion
 
 NOT covered:
@@ -192,7 +192,7 @@ register_runner("z_image_advanced", _z_image_runner)
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# GENERIC DiT RUNNER FACTORY (LTX-2, Wan 2.2, FLUX, Qwen3-TTS, ACE-Step)
+# GENERIC DiT RUNNER FACTORY (LTX-2, Wan 2.2, FLUX, Chatterbox, ACE-Step)
 # ─────────────────────────────────────────────────────────────────────────
 #
 # Every other DiT-style model on the provider follows the same shape:
@@ -328,30 +328,25 @@ def _wan22_loader_low():
 
 
 def _flux_klein_loader():
-    """FLUX Klein needs a refactor first — diffuser.py:2984 currently
-    loads it via `Flux2KleinPipeline.from_pretrained` which bundles the
-    transformer. This loader extracts the transformer separately.
-    Verify the attribute path against the FLUX Klein release on the
-    target machine before going live."""
+    """Load the same quantized Turbo transformer used by local image generation."""
     import diffuser as df
-    from diffusers import Flux2KleinPipeline
+    from diffusers import Flux2Transformer2DModel, GGUFQuantizationConfig
     device = df.DeviceManager.get_device()
-    dtype = df.DeviceManager.get_dtype(device)
-    pipe = Flux2KleinPipeline.from_pretrained(
-        str(df.repo_local_dir(df.FLUX_KLEIN_REPO)),
-        dtype=dtype,
+    dtype = torch.float32 if device.type == "cpu" else torch.float16
+    if device.type == "cuda" and torch.cuda.is_bf16_supported():
+        dtype = torch.bfloat16
+    return Flux2Transformer2DModel.from_single_file(
+        str(df.MODEL_DIR / df.FLUX_KLEIN_9B_GGUF_NAME),
+        config=str(df.repo_local_dir(df.FLUX_KLEIN_9B_REPO)), subfolder="transformer",
+        quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
+        torch_dtype=dtype, local_files_only=True,
     ).to(device)
-    return pipe.transformer
 
 
-def _qwen3_tts_loader():
-    """Qwen3-TTS — decoder-only transformer. The relevant block list
-    likely sits at `model.layers` on the AutoModelForCausalLM side or
-    `transformer.h` on legacy GPT-style. Verify against the actual
-    qwen-tts release the provider has installed."""
+def _chatterbox_loader():
+    """Chatterbox V3 T3 decoder loader placeholder for privacy sharding."""
     raise NotImplementedError(
-        "qwen3_tts loader: model attribute path needs hardware verification "
-        "(qwen-tts pip release shape changes between versions). See sharded_pipeline.py."
+        "chatterbox loader: T3 block slicing needs hardware verification."
     )
 
 
@@ -369,7 +364,7 @@ _DIT_SPECS = [
     _DiTSpec("wan22_high", "blocks",             _wan22_loader_high, "Wan 2.2 (high noise)"),
     _DiTSpec("wan22_low",  "blocks",             _wan22_loader_low,  "Wan 2.2 (low noise)"),
     _DiTSpec("flux_klein", "transformer_blocks", _flux_klein_loader, "FLUX Klein"),
-    _DiTSpec("qwen3_tts",  "layers",             _qwen3_tts_loader,  "Qwen3-TTS"),
+    _DiTSpec("chatterbox", "layers",             _chatterbox_loader, "Chatterbox V3"),
     _DiTSpec("ace_step",   "transformer_blocks", _ace_step_loader,   "ACE-Step"),
 ]
 
@@ -436,10 +431,10 @@ register_runner("wan22_low", _wan22_runner)
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# QWEN3-TTS (audio_quality)
+# CHATTERBOX V3 (audio_quality)
 # ─────────────────────────────────────────────────────────────────────────
 
-def _qwen3_tts_runner(hidden, conditioning, step, record=None):
+def _chatterbox_runner(hidden, conditioning, step, record=None):
     """
     Decoder-only transformer architecture. Sharding splits the decoder
     blocks similar to LLM pipeline parallelism. Conditioning (text
@@ -450,7 +445,7 @@ def _qwen3_tts_runner(hidden, conditioning, step, record=None):
     return _identity_runner(hidden, conditioning, step, record)
 
 
-register_runner("qwen3_tts", _qwen3_tts_runner)
+register_runner("chatterbox", _chatterbox_runner)
 
 
 # ─────────────────────────────────────────────────────────────────────────

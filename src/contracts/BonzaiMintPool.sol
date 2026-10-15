@@ -11,6 +11,7 @@ interface IBonzaiUnlock {
 }
 
 interface IBonzaiStakePositions {
+    function bonzaiToken() external view returns (address);
     function positions(address user) external view returns (
         uint256 amount,
         uint256 lockedUntil,
@@ -18,9 +19,13 @@ interface IBonzaiStakePositions {
         uint32 contributionScore
     );
 }
+interface IMintBasketRewards {
+    function stakingVault() external view returns (address);
+    function depositNative() external payable;
+}
 
 /**
- * @title BonzaiMintPool (Arbitrum)
+ * @title BonzaiMintPool
  * @notice Epoch-based revenue pools for BONZAI LVL holders + P2P providers.
  *
  *   6 pools (0..5): text, audio, image, video, 3D, training.
@@ -29,15 +34,17 @@ interface IBonzaiStakePositions {
  *     - provider side  (providerShareBps / 10000, default 5000 = 50%)
  *
  * Balance verification:
- *   Arbitrum-local. balanceOf() is read directly from the BONZAI token on
- *   Arbitrum. No cross-chain oracle, no attestor, no CRE.
+ *   The configured chain's staking vault holds the BONZAI position. Holder
+ *   registration requires its non-transferable lock to cover the entire next
+ *   epoch (the claim window), so one balance cannot register in many wallets.
  *
  * Holder path:
  *   - User calls registerForEpoch() during the current epoch; their BONZAI
- *     balance is snapshotted.
+ *     locked stake is snapshotted. Flexible stake does not qualify.
  *   - After the epoch closes, user calls confirmClaim(), then after 256 blocks
  *     calls claimEpoch(poolIndex) to pull their weighted share of the holder
- *     side of that pool. (256-block gap is flash-loan protection.)
+ *     side of that pool. The stake lock, rather than the block gap alone,
+ *     prevents borrowed/recycled balances from earning holder rewards.
  *
  * Provider path:
  *   - BonzaiServiceTime is the only contract authorized to pull from the
@@ -49,6 +56,14 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     address public treasury;
     IBonzaiUnlock public unlockContract;
     IBonzaiStakePositions public stakingVault;
+    bool public stakingVaultFrozen;
+    IMintBasketRewards public basketRewards;
+    uint256 public pendingBasketRewards;
+    uint256 public totalBasketForwarded;
+    uint256 public constant BASKET_ROUTING_GAS_LIMIT = 500_000;
+    event BasketRewardsConfigured(address indexed rewards);
+    event BasketRewardsForwarded(uint256 amount);
+    event BasketRewardForwardingFailed(uint256 amount);
 
     /// @notice BonzaiServiceTime contract — exclusive withdrawer for provider side.
     address public serviceTimeContract;
@@ -177,7 +192,8 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         uint256 dayOfWeek = (block.timestamp / 1 days + 4) % 7;
         uint256 todayStart = (block.timestamp / 1 days) * 1 days;
-        uint256 daysUntilMonday = dayOfWeek == 0 ? 7 : (7 - dayOfWeek);
+        uint256 daysUntilMonday = (8 - dayOfWeek) % 7;
+        if (daysUntilMonday == 0) daysUntilMonday = 7;
         genesisTime = todayStart + daysUntilMonday * 1 days;
 
         for (uint8 i = 0; i < 6; i++) {
@@ -213,7 +229,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // HOLDER REGISTRATION (Arbitrum-local balanceOf)
+    // HOLDER REGISTRATION (locked stake on the configured chain)
     // ═══════════════════════════════════════════════════════════════════════════
 
     function registerForEpoch() external whenNotPaused {
@@ -232,6 +248,11 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         }
 
         require(balance >= epochThresholds[epochId][0], "Below LVL1 threshold");
+        (, uint256 lockedUntil,,) = stakingVault.positions(msg.sender);
+        require(lockedUntil >= epochEndTime(epochId + 1), "Lock must cover claim window");
+        // Continuity relies on one non-transferable vault throughout every
+        // registered epoch; governance cannot swap in a different balance source.
+        stakingVaultFrozen = true;
 
         registeredBalances[epochId][msg.sender] = balance;
         registeredAt[epochId][msg.sender] = block.timestamp;
@@ -277,7 +298,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // DEPOSIT (split holder / provider)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function depositForPool(uint8 poolIndex) external payable {
+    function depositForPool(uint8 poolIndex) external payable nonReentrant {
         require(
             msg.sender == contentContract ||
             msg.sender == royaltySplitter ||
@@ -293,12 +314,16 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         uint256 providerAmount = (msg.value * providerShareBps) / MAX_BPS;
         uint256 holderAmount = msg.value - providerAmount;
 
-        epochs[epochId].holderDeposits[poolIndex] += holderAmount;
+        // Previously accrued holder claims remain in their original epochs.
+        // New holder fees support every LVL, independently of content type.
+        if (address(basketRewards) == address(0)) epochs[epochId].holderDeposits[poolIndex] += holderAmount;
+        else pendingBasketRewards += holderAmount;
         epochs[epochId].providerDeposits[poolIndex] += providerAmount;
         totalDeposited[poolIndex] += holderAmount;
         totalProviderDeposited[poolIndex] += providerAmount;
 
         emit PoolDeposit(poolIndex, holderAmount, providerAmount, msg.sender, epochId);
+        if (address(basketRewards) != address(0) && holderAmount > 0) _tryForwardBasket(holderAmount);
     }
 
     /// @notice Record that a wallet minted a collectible of the given type in
@@ -334,6 +359,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
+        require(_eligibleStake(msg.sender) >= balance, "Balance dropped since registration");
 
         uint256 threshold = epochThresholdSnapshotted[epochId]
             ? epochThresholds[epochId][poolIndex]
@@ -377,6 +403,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
+        require(_eligibleStake(msg.sender) >= balance, "Balance dropped since registration");
 
         EpochData storage epoch = epochs[epochId];
         uint256 totalWeight = totalWeightedRegistered[epochId];
@@ -435,6 +462,9 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         require(msg.sender == serviceTimeContract, "Only ServiceTime");
         require(poolIndex < NUM_POOLS, "Invalid pool index");
         require(isEpochFinalized(epochId), "Epoch not finalized");
+        require(currentEpoch() == epochId + 1, "Claim window closed");
+        require(!epochSwept[epochId], "Epoch already settled");
+        require(provider != address(0), "Invalid provider");
         require(providerTime > 0 && totalTime > 0, "No service time");
         require(providerTime <= totalTime, "Invalid weights");
 
@@ -443,6 +473,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         amount = (pool * providerTime) / totalTime;
         require(amount > 0, "Claim amount too small");
+        require(epochProviderWithdrawn[epochId][poolIndex] + amount <= pool, "Provider pool exhausted");
 
         // Track cumulative withdrawals so sweep accounting stays correct.
         epochProviderWithdrawn[epochId][poolIndex] += amount;
@@ -486,13 +517,14 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         if (poolIndex >= NUM_POOLS) return false;
         uint256 epochId = currentEpoch();
         uint256 regBalance = registeredBalances[epochId][user];
-        if (regBalance > 0) return regBalance >= poolThresholds[poolIndex];
+        if (regBalance > 0) return regBalance >= epochThresholds[epochId][poolIndex];
         return false;
     }
 
     function previewHolderClaim(uint256 epochId, uint8 poolIndex, address user) external view returns (uint256) {
         if (poolIndex >= NUM_POOLS) return 0;
         if (!isEpochFinalized(epochId)) return 0;
+        if (currentEpoch() != epochId + 1 || epochSwept[epochId] || hasClaimed[epochId][user][poolIndex]) return 0;
         EpochData storage epoch = epochs[epochId];
         uint256 balance = registeredBalances[epochId][user];
         if (balance == 0) return 0;
@@ -579,6 +611,42 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         emit ServiceTimeContractUpdated(old, _svc);
     }
 
+    function setBasketRewards(address rewards) external onlyOwner {
+        require(address(basketRewards) == address(0) && rewards.code.length > 0, "Invalid basket");
+        require(IMintBasketRewards(rewards).stakingVault() == address(stakingVault), "Basket vault mismatch");
+        basketRewards = IMintBasketRewards(rewards);
+        stakingVaultFrozen = true;
+        emit BasketRewardsConfigured(rewards);
+    }
+
+    /// @notice Deliver new holder fees without coupling mint availability to rewards.
+    /// Provider revenue and historical registered-holder claims remain untouched.
+    function forwardBasketRewards() external nonReentrant {
+        uint256 amount = pendingBasketRewards;
+        require(amount > 0, "No basket rewards");
+        require(_tryForwardBasket(amount), "Basket routing unavailable");
+    }
+
+    function _tryForwardBasket(uint256 amount) private returns (bool forwarded) {
+        // Mint callers historically catch pool failures. Optional reward delivery
+        // must never revert the mandatory holder/provider accounting and let an
+        // upstream caller redirect their fee to treasury. Retain the fee instead.
+        if (gasleft() < BASKET_ROUTING_GAS_LIMIT * 64 / 63 + 100_000) {
+            emit BasketRewardForwardingFailed(amount);
+            return false;
+        }
+        pendingBasketRewards -= amount;
+        totalBasketForwarded += amount;
+        try basketRewards.depositNative{value: amount, gas: BASKET_ROUTING_GAS_LIMIT}() {
+            forwarded = true;
+            emit BasketRewardsForwarded(amount);
+        } catch {
+            pendingBasketRewards += amount;
+            totalBasketForwarded -= amount;
+            emit BasketRewardForwardingFailed(amount);
+        }
+    }
+
     /**
      * @notice Atomically set holder + provider shares. Sums must equal MAX_BPS
      *         and each must be >= MIN_SIDE_BPS so admins can't accidentally
@@ -629,8 +697,10 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     }
 
     function setStakingVault(address _vault) external onlyOwner {
-        require(_vault != address(0), "Invalid staking vault");
+        require(_vault.code.length > 0, "Invalid staking vault");
         address old = address(stakingVault);
+        require(!stakingVaultFrozen || _vault == old, "Staking vault is frozen");
+        require(IBonzaiStakePositions(_vault).bonzaiToken() == address(bonzaiToken), "Wrong staking token");
         stakingVault = IBonzaiStakePositions(_vault);
         emit StakingVaultUpdated(old, _vault);
     }
@@ -669,7 +739,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         emit PoolThresholdUpdated(poolIndex, old, newThreshold);
     }
 
-    function sweepUnclaimed(uint256 epochId) external onlyOwner {
+    function sweepUnclaimed(uint256 epochId) external onlyOwner nonReentrant {
         require(isEpochFinalized(epochId), "Epoch not ended");
         require(currentEpoch() >= epochId + 2, "Claim window still open");
         require(!epochSwept[epochId], "Already swept or recirculated");
@@ -701,14 +771,11 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
             uint256 providerUnclaimed = epochs[epochId].providerDeposits[i] - epochProviderWithdrawn[epochId][i];
             if (holderUnclaimed > 0) {
                 epochs[current].holderDeposits[i] += holderUnclaimed;
-                // H4: keep lifetime totals in sync so RoyaltySplitter weighting
-                // stays accurate after recirculation.
-                totalDeposited[i] += holderUnclaimed;
+                // Moving an existing liability does not create a new deposit.
                 totalRecirculated += holderUnclaimed;
             }
             if (providerUnclaimed > 0) {
                 epochs[current].providerDeposits[i] += providerUnclaimed;
-                totalProviderDeposited[i] += providerUnclaimed;
                 totalRecirculated += providerUnclaimed;
             }
             unchecked { ++i; }
@@ -728,7 +795,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         require(success && (data.length == 0 || abi.decode(data, (bool))), "Transfer failed");
     }
 
-    function withdrawETH() external onlyOwner {
+    function withdrawETH() external onlyOwner nonReentrant {
         uint256 totalHolder = 0;
         uint256 totalProvider = 0;
         for (uint8 i = 0; i < NUM_POOLS; ) {
@@ -736,7 +803,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
             totalProvider += totalProviderDeposited[i];
             unchecked { i++; }
         }
-        uint256 accountable = (totalHolder + totalProvider) - totalClaimed - totalProviderWithdrawn - totalSwept;
+        uint256 accountable = (totalHolder + totalProvider) - totalClaimed - totalProviderWithdrawn - totalSwept - totalBasketForwarded;
         uint256 balance = address(this).balance;
         require(balance > accountable, "No surplus ETH to withdraw");
         uint256 surplus = balance - accountable;
@@ -760,9 +827,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     }
 
     function _eligibleStake(address user) internal view returns (uint256) {
-        if (address(stakingVault) == address(0)) {
-            return bonzaiToken.balanceOf(user);
-        }
+        require(address(stakingVault) != address(0), "Staking vault not configured");
         (uint256 amount,,,) = stakingVault.positions(user);
         return amount;
     }

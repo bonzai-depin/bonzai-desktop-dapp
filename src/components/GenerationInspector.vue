@@ -151,6 +151,7 @@ import { computed, onMounted, onUnmounted } from "vue";
 import { inspector } from "../services/generationInspector.service.js";
 import BzCloseButton from "./BzCloseButton.vue";
 import { i18n } from "../i18n/index.js";
+import { generationElapsedMs, formatGenerationTime } from "../shared/generationTiming.js";
 
 const g = computed(() => inspector.state.generation);
 
@@ -217,8 +218,8 @@ const runRows = computed(() => {
   if (v.status) rows.push({ k: "Status", v: v.status });
   if (v.errorMessage) rows.push({ k: "Error", v: v.errorMessage });
   if (v.ts || v.createdAt) rows.push({ k: "Created", v: formatDate(v.ts || v.createdAt) });
-  if (v.elapsedMs != null) rows.push({ k: "Elapsed", v: `${Math.round(Number(v.elapsedMs))} ms`, mono: true });
-  else if (v.extra?.elapsedMs) rows.push({ k: "Elapsed", v: String(v.extra.elapsedMs), mono: true });
+  const elapsedMs = generationElapsedMs(v);
+  if (elapsedMs !== null) rows.push({ k: "Generation time", v: formatGenerationTime(elapsedMs, i18n.state.locale) });
   if (v.extra?.tokensPerSecond) rows.push({ k: "Speed", v: String(v.extra.tokensPerSecond), mono: true });
   if (v.extra?.promptWords) rows.push({ k: "Prompt words", v: String(v.extra.promptWords), mono: true });
   if (v.extra?.promptChars) rows.push({ k: "Prompt chars", v: String(v.extra.promptChars), mono: true });

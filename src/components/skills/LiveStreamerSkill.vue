@@ -92,7 +92,7 @@
               <button
                 class="bz-btn bz-btn--lg"
                 :class="isPaused ? 'bz-btn--agent-cta' : 'bz-btn--agent-cta'"
-                @click="isPaused = !isPaused"
+                @click="togglePause"
               >
                 <span class="material-symbols-outlined">{{ isPaused ? 'play_arrow' : 'pause' }}</span>
                 {{ isPaused ? 'Resume' : 'Pause' }}
@@ -124,6 +124,7 @@
             :id="'platform_' + p.id"
             :value="p.id"
             :checked="chatPlatform === p.id"
+            :disabled="p.unavailable || chatConnected"
             @change="chatPlatform = p.id"
           />
           <label :for="'platform_' + p.id" class="radio category">
@@ -300,7 +301,8 @@
       </h2>
 
       <!-- NSFW Filter -->
-      <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">NSFW Filter</h3>
+      <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Sensitive keyword filter</h3>
+      <p class="help">Blocks explicit keywords in requests. This does not inspect generated images or replace stream moderation.</p>
       <span class="category-selector" style="grid-template-columns: repeat(2, 1fr); max-width: 300px">
         <input type="radio" name="nsfw" id="nsfw_on" :checked="nsfwFilter" @change="nsfwFilter = true" />
         <label for="nsfw_on" class="radio category">
@@ -360,76 +362,8 @@
         Stream Settings
       </h2>
 
-      <!-- Companion Bot -->
       <h3 class="fira-sans-condensed-black-italic is-size-5 has-text-white mb-3">Stream Companion</h3>
-      <p class="has-text-white mb-3" style="font-size: 13px; opacity: 0.7">Select a companion to attend chat as your stream bot. The companion's persona will be used for moderation and @mentions.</p>
-
-      <div v-if="companions.length === 0" class="bz-card-shell config-card has-text-left">
-        <p style="font-size: 13px; color: var(--bz-fg-low)">
-          <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle">info</span>
-          No companions found. Create one in the Roleplay tab first.
-        </p>
-      </div>
-
-      <span v-else class="category-selector companion-selector" style="grid-template-columns: repeat(3, 1fr)">
-        <!-- None option -->
-        <input
-          type="radio"
-          name="stream_companion"
-          id="companion_none"
-          :checked="!selectedCompanionId"
-          @change="selectedCompanionId = null"
-        />
-        <label for="companion_none" class="radio category">
-          <span class="material-symbols-outlined" style="font-size: 18px">block</span>
-          None
-        </label>
-        <!-- Companion options -->
-        <template v-for="comp in companions" :key="comp.id">
-          <input
-            type="radio"
-            name="stream_companion"
-            :id="'companion_' + comp.id"
-            :checked="selectedCompanionId === comp.id"
-            @change="selectedCompanionId = comp.id"
-          />
-          <label :for="'companion_' + comp.id" class="radio category">
-            <img
-              v-if="comp.image"
-              :src="getImageSrc(comp.image)"
-              class="companion-avatar-mini"
-              :alt="comp.name"
-            />
-            <span class="material-symbols-outlined" v-else style="font-size: 18px">
-              {{ comp.gender === 'female' ? 'female' : comp.gender === 'male' ? 'male' : 'smart_toy' }}
-            </span>
-            {{ comp.name }}
-          </label>
-        </template>
-      </span>
-
-      <!-- Selected companion info -->
-      <div v-if="selectedCompanion" class="bz-card-shell config-card mt-4 has-text-left">
-        <div style="display: flex; align-items: center; gap: 12px">
-          <img
-            v-if="selectedCompanion.image"
-            :src="getImageSrc(selectedCompanion.image)"
-            class="companion-avatar-preview"
-            :alt="selectedCompanion.name"
-          />
-          <div>
-            <h4 class="fira-sans-condensed-black-italic is-size-5 mb-1">{{ selectedCompanion.name }}</h4>
-            <p style="font-size: 12px; color: var(--bz-fg-low)">
-              {{ selectedCompanion.personality?.slice(0, 120) || selectedCompanion.description?.slice(0, 120) || 'No description' }}
-            </p>
-            <div class="tags mt-2">
-              <span v-if="selectedCompanion.isNFT" class="skill-chip skill-chip--success">NFT</span>
-              <span v-if="selectedCompanion.agentWallet" class="skill-chip skill-chip--info">Agent Wallet</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
+      <p class="help">Companion moderation and chat replies are not available yet. Use the queue controls and keyword filters below.</p>
       <hr />
 
       <!-- Poll Duration -->
@@ -463,40 +397,11 @@
       <span class="category-selector" style="grid-template-columns: repeat(2, 1fr); max-width: 300px">
         <input type="radio" name="monetization" id="monetization_free" :checked="!monetizationEnabled" @change="monetizationEnabled = false" />
         <label for="monetization_free" class="radio category">Free</label>
-        <input type="radio" name="monetization" id="monetization_paid" :checked="monetizationEnabled" @change="monetizationEnabled = true" />
-        <label for="monetization_paid" class="radio category">Paid (USDC)</label>
+        <input type="radio" name="monetization" id="monetization_paid" :checked="monetizationEnabled" disabled />
+        <label for="monetization_paid" class="radio category">Paid · unavailable</label>
       </span>
 
-      <div v-if="monetizationEnabled" class="bz-card-shell config-card mt-4 has-text-left">
-        <h4 class="fira-sans-condensed-black-italic is-size-5 mb-3">Price Per Generation (USDC)</h4>
-        <div v-for="ct in contentTypes" :key="ct.id" class="field is-horizontal mb-2">
-          <div class="field-label is-normal" style="flex: 0 0 100px">
-            <label class="label has-text-white" style="font-size: 13px">
-              <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle">{{ ct.icon }}</span>
-              {{ ct.label }}
-            </label>
-          </div>
-          <div class="field-body">
-            <div class="field has-addons">
-              <div class="control">
-                <input v-model.number="generationPrices[ct.id]" type="number" class="skill-input skill-input--sm" step="0.01" min="0" style="width: 90px" />
-              </div>
-              <div class="control">
-                <a class="skill-unit bz-btn--sm">USDC</a>
-              </div>
-            </div>
-          </div>
-        </div>
-        <p class="help mt-3">80% to you, 20% to BonzAI treasury. Fans type <code>!link</code> in chat to connect their wallet.</p>
-        <hr />
-        <h4 class="fira-sans-condensed-black-italic is-size-5 mb-3">Your Payout Wallet</h4>
-        <div class="field">
-          <div class="control">
-            <input v-model="streamerWallet" type="text" class="skill-input" placeholder="0x... (Base address for receiving 80% of fan payments)" @change="saveStreamerWallet" />
-          </div>
-          <p class="help mt-2">Your wallet on Base to receive streamer share. Leave empty to use your connected wallet.</p>
-        </div>
-      </div>
+      <p class="help mt-3">{{ $ui('Paid requests are not available. Select Free to accept audience requests.') }}</p>
 
       <hr />
 
@@ -632,11 +537,10 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import BzCloseButton from '../BzCloseButton.vue';
 
-const SKILL_ID = 'live-streaming-v1.0.0';
+const API_BASE = window.electronAPI?.env?.API_BASE || `http://127.0.0.1:${window.BONZAI_SERVER_PORT || 65000}`;
 
 export default {
   name: 'LiveStreamerSkill',
@@ -645,7 +549,7 @@ export default {
     skill: { type: Object, default: null },
     modelAvailable: { type: [Function, Boolean], default: true },
   },
-  emits: ['status-update'],
+  emits: ['status-update', 'result-created', 'model-requirements-change'],
   setup(props, { emit }) {
     // ═══ TABS ═══
     const tabs = [
@@ -676,10 +580,10 @@ export default {
 
     const platforms = [
       { id: 'twitch', label: 'Twitch', icon: 'live_tv' },
-      { id: 'youtube', label: 'YouTube', icon: 'smart_display' },
+      { id: 'youtube', label: 'YouTube · unavailable', icon: 'smart_display', unavailable: true },
       { id: 'tiktok', label: 'TikTok', icon: 'music_video' },
-      { id: 'kick', label: 'Kick', icon: 'sports_esports' },
-      { id: 'discord', label: 'Discord', icon: 'forum' },
+      { id: 'kick', label: 'Kick · unavailable', icon: 'sports_esports', unavailable: true },
+      { id: 'discord', label: 'Discord · unavailable', icon: 'forum', unavailable: true },
     ];
     const tiktokUsername = ref('');
 
@@ -689,7 +593,6 @@ export default {
       { type: 'audio', label: 'Speech', icon: 'record_voice_over', sourceName: '' },
       { type: 'music', label: 'Music', icon: 'music_note', sourceName: '' },
       { type: 'video', label: 'Video', icon: 'movie', sourceName: '' },
-      { type: '3d', label: '3D', icon: '3d_rotation', sourceName: '' },
     ]);
 
     // ═══ QUEUE ═══
@@ -779,68 +682,13 @@ export default {
       return fanWallets.get(key) || null;
     }
 
-    /**
-     * Charge a fan for generation via USDC transferFrom.
-     * Non-custodial: the fan pre-approved USDC spending on bonzai.sh/link.
-     * The streamer's wallet calls transferFrom to pull USDC from the fan.
-     * @returns {Promise<boolean>} true if payment succeeded
-     */
-    async function chargeFan(user, platform, contentType) {
-      if (!monetizationEnabled.value) return true; // Free mode
-
-      const price = generationPrices[contentType] || 0;
-      if (price <= 0) return true;
-
-      const fanWallet = getFanWallet(user, platform);
-      if (!fanWallet?.address) {
-        logActivity(user, platform, 'no wallet linked — visit bonzai.sh/link');
-        return false;
-      }
-
-      const priceUsdc = Math.round(price * 1_000_000);
-      const streamerShare = Math.round(priceUsdc * 0.8);
-      const treasuryShare = priceUsdc - streamerShare;
-
-      // Get streamer wallet (connected wallet or configured payout address)
-      let streamerAddress = await window.electronAPI?.store?.get('live-streamer-wallet', null);
-      if (!streamerAddress) {
-        try {
-          const { web3Service } = await import('../../services/web3.service.js');
-          streamerAddress = web3Service.state.walletAddress;
-        } catch { /* */ }
-      }
-      if (!streamerAddress) {
-        logActivity('system', platform, 'No wallet connected — generation is free');
-        return true;
-      }
-
-      const TREASURY = '0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89';
-      const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-
-      try {
-        // Use the streamer's signer to call transferFrom on the fan's approved USDC
-        const { web3Service } = await import('../../services/web3.service.js');
-        const signer = await web3Service.getSigner();
-        const { ethers } = await import('ethers');
-        const usdc = new ethers.Contract(USDC_BASE, [
-          'function transferFrom(address from, address to, uint256 amount) returns (bool)',
-        ], signer);
-
-        // 80% to streamer
-        const tx1 = await usdc.transferFrom(fanWallet.address, streamerAddress, streamerShare);
-        await tx1.wait();
-
-        // 20% to treasury
-        const tx2 = await usdc.transferFrom(fanWallet.address, TREASURY, treasuryShare);
-        await tx2.wait();
-
-        stats.revenue = (parseFloat(stats.revenue) + price).toFixed(2);
-        logActivity(user, platform, `paid $${price.toFixed(2)} USDC`);
-        return true;
-      } catch (err) {
-        logActivity(user, platform, `payment failed: ${err.message}`);
-        return false;
-      }
+    // Paid stream requests require a configured, atomic settlement flow.
+    // Never charge two transfers or silently process paid requests for free.
+    async function chargeFan(user, platform) {
+      if (!monetizationEnabled.value) return true;
+      logActivity(user, platform, 'Paid requests are unavailable. Switch to free mode to continue.');
+      showStatus('Paid requests are unavailable. Switch to free mode to continue.', 'error');
+      return false;
     }
 
     // ═══ SETTINGS ═══
@@ -851,9 +699,12 @@ export default {
       { id: 'audio', label: 'Speech', icon: 'record_voice_over' },
       { id: 'music', label: 'Music', icon: 'music_note' },
       { id: 'video', label: 'Video', icon: 'movie' },
-      { id: '3d', label: '3D', icon: '3d_rotation' },
     ];
-    const enabledTypes = ref(['image', 'audio', 'music', 'video', '3d']);
+    const enabledTypes = ref(['image', 'audio', 'music', 'video']);
+    watch(enabledTypes, types => emit('model-requirements-change', {
+      workflowId: 'live-streaming-v1.0.0',
+      keys: types.map(type => ({ image: 'image_turbo', audio: 'audio_turbo', music: 'music_fast', video: 'video_fast' })[type]).filter(Boolean),
+    }), { immediate: true, deep: true });
     const streamerWallet = ref('');
 
     async function saveStreamerWallet() {
@@ -866,14 +717,14 @@ export default {
     const statCards = computed(() => [
       { label: 'Generations', value: stats.totalGenerations, color: 'has-text-white' },
       { label: 'Unique Viewers', value: stats.uniqueViewers, color: 'has-text-info' },
-      { label: 'NFTs Minted', value: stats.mints, color: 'has-text-success' },
-      { label: 'Mint Revenue', value: stats.revenue + ' ETH', color: 'has-text-warning' },
+      { label: 'Pending requests', value: queue.value.length, color: 'has-text-success' },
+      { label: 'Generation revenue', value: stats.revenue + ' USDC', color: 'has-text-warning' },
     ]);
 
     // ═══ DISPLAY ═══
     const previewBgStyle = computed(() => {
       if (lastOutput.value?.type === 'image' && lastOutput.value?.data) {
-        return { backgroundImage: `url(${lastOutput.value.data})`, backgroundSize: 'cover', backgroundPosition: 'center' };
+        return { backgroundImage: `url(${getImageSrc(lastOutput.value.data)})`, backgroundSize: 'cover', backgroundPosition: 'center' };
       }
       return {};
     });
@@ -893,10 +744,6 @@ export default {
     let chatClient = null;
 
     async function connectChat() {
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        showStatus('Skill not purchased — live streaming blocked.', 'error');
-        return;
-      }
       chatConnecting.value = true;
       emit('status-update', `Connecting to ${chatPlatform.value}...`);
       try {
@@ -909,7 +756,7 @@ export default {
           });
           chatClient.on('message', (channel, tags, message, self) => {
             if (self) return;
-            handleChatMessage(tags['display-name'] || tags.username, message, 'twitch');
+            handleChatMessage(tags.username || tags['display-name'], message, 'twitch', tags.mod === true || tags.badges?.broadcaster === '1');
           });
           await chatClient.connect();
 
@@ -919,7 +766,7 @@ export default {
           const { WebcastPushConnection } = await import('tiktok-live-connector');
           chatClient = new WebcastPushConnection(username);
           chatClient.on('chat', (data) => {
-            handleChatMessage(data.uniqueId || data.nickname, data.comment, 'tiktok');
+            handleChatMessage(data.uniqueId || data.nickname, data.comment, 'tiktok', String(data.uniqueId || '').toLowerCase() === username.toLowerCase());
           });
           chatClient.on('gift', (data) => {
             logActivity(data.uniqueId || data.nickname, 'tiktok', `sent ${data.giftName} x${data.repeatCount}`);
@@ -937,6 +784,8 @@ export default {
         }
         chatConnected.value = true;
         isLive.value = true;
+        isPaused.value = false;
+        processQueue();
         showStatus(`Connected to ${chatPlatform.value}!`, 'success');
         logActivity('system', chatPlatform.value, `Connected to ${chatPlatform.value}`);
         saveConfig();
@@ -949,6 +798,11 @@ export default {
     }
 
     function disconnectChat() {
+      isPaused.value = true;
+      if (currentGeneration.value) currentGeneration.value.discarded = true;
+      queue.value = [];
+      if (pollTimer) clearInterval(pollTimer);
+      activePoll.value = null;
       if (chatClient?.disconnect) chatClient.disconnect();
       chatClient = null;
       chatConnected.value = false;
@@ -979,9 +833,10 @@ export default {
     const userCooldowns = new Map();
     const viewerSet = new Set();
 
-    async function handleChatMessage(user, message, platform) {
+    async function handleChatMessage(user, message, platform, moderator = false) {
+      if (!user || typeof message !== 'string' || bannedUsers.value.includes(user.toLowerCase())) return;
       const msg = message.trim();
-      if (msg.startsWith('!bl ')) { handleStreamerCommand(msg.slice(4).trim()); return; }
+      if (msg.startsWith('!bl ')) { if (moderator) handleStreamerCommand(msg.slice(4).trim()); return; }
       if (msg.startsWith('!vote ') && activePoll.value) {
         const vote = msg.slice(6).trim().toUpperCase();
         if (vote === 'A' || vote === '1') activePoll.value.votesA++;
@@ -989,11 +844,12 @@ export default {
         return;
       }
       if (msg.startsWith('!poll ')) {
+        if (!moderator) return;
         const parts = msg.slice(6).split(/\s+vs\s+/i);
         if (parts.length === 2) startPoll(parts[0].trim(), parts[1].trim(), user, platform);
         return;
       }
-      if (msg === '!level' || msg === '!mint') { logActivity(user, platform, msg.slice(1)); return; }
+      if (msg === '!level' || msg === '!mint') { logActivity(user, platform, 'This command is not available in live streaming.'); return; }
 
       // Balance check — fans manage wallets at bonzai.sh/link
       if (msg === '!balance' || msg === '!link' || msg === '!wallet') {
@@ -1019,11 +875,11 @@ export default {
       else if (cmd.startsWith('say ')) { type = 'audio'; prompt = cmd.slice(4); }
       else if (cmd.startsWith('song ')) { type = 'music'; prompt = cmd.slice(5); }
       else if (cmd.startsWith('clip ')) { type = 'video'; prompt = cmd.slice(5); }
-      else if (cmd.startsWith('3d ')) { type = '3d'; prompt = cmd.slice(3); }
-      if (!type) return; // Unknown command
+      if (!type || !prompt.trim()) return; // Unknown or empty request
 
       if (!enabledTypes.value.includes(type)) return;
       const blocked = blocklist.value.split('\n').filter(w => w.trim());
+      if (nsfwFilter.value) blocked.push('porn', 'nude', 'naked', 'sexual', 'explicit', 'nudité', 'pornographique');
       if (blocked.some(w => prompt.toLowerCase().includes(w.trim().toLowerCase()))) return;
       if (queue.value.length >= maxQueueSize.value) return;
 
@@ -1048,11 +904,7 @@ export default {
     // ═══ QUEUE PROCESSING ═══
     let isProcessing = false;
     async function processQueue() {
-      if (isProcessing || isPaused.value || queue.value.length === 0) return;
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        console.warn('[LiveStreamer] Skill not purchased — queue processing blocked.');
-        return;
-      }
+      if (isProcessing || isPaused.value || !isLive.value || queue.value.length === 0) return;
       isProcessing = true;
       const item = queue.value.shift();
       currentGeneration.value = item;
@@ -1064,8 +916,11 @@ export default {
         else if (item.type === 'music') result = await generateMusic(item.prompt);
         else if (item.type === 'video') result = await generateVideo(item.prompt);
 
+        if (!result) throw new Error('The model returned no media.');
+        if (item.discarded || !isLive.value) return;
         if (result) {
-          lastOutput.value = { type: item.type, data: result, user: item.user, platform: item.platform, prompt: item.prompt };
+          lastOutput.value = { id: item.id, type: item.type, data: result, user: item.user, platform: item.platform, prompt: item.prompt };
+          emit('result-created', lastOutput.value);
           if (obsConnected.value) await pushToOBS(item.type, result);
           stats.totalGenerations++;
           stats.byType[item.type] = (stats.byType[item.type] || 0) + 1;
@@ -1082,30 +937,32 @@ export default {
     }
 
     // ═══ GENERATION FUNCTIONS ═══
-    async function generateImage(prompt) {
-      const res = await fetch('http://127.0.0.1:65000/image/turbo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, width: 1024, height: 1024 }) });
-      if (!res.ok) throw new Error(`Image: ${res.status}`);
+    async function requestMedia(endpoint, body, type) {
+      const res = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
-      return data.image_base64 ? `data:image/png;base64,${data.image_base64}` : data.image_path;
+      if (res.status === 202) throw new Error('Required models are not ready. Download them before retrying this request.');
+      if (!res.ok || data.error || data.success === false) throw new Error(data.error || `${type}: ${res.status}`);
+      if (data[`${type}_path`]) return data[`${type}_path`];
+      if (data[`${type}_base64`]) {
+        const mime = { image: 'image/png', audio: 'audio/wav', video: 'video/mp4' }[type];
+        return `data:${mime};base64,${data[`${type}_base64`].replace(/^data:[^,]+,/, '')}`;
+      }
+      throw new Error(`The ${type} model returned no media.`);
+    }
+    async function generateImage(prompt) {
+      return requestMedia('/image/turbo', { prompt, width: 1024, height: 1024 }, 'image');
     }
     async function generateAudio(text) {
-      const res = await fetch('http://127.0.0.1:65000/audio/turbo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: 'af_heart' }) });
-      if (!res.ok) throw new Error(`Audio: ${res.status}`);
-      const data = await res.json();
-      return data.audio_path || data.audio_base64;
+      return requestMedia('/audio/turbo', { prompt: text, voice: 'af_heart' }, 'audio');
     }
     async function generateMusic(prompt) {
       let style = 'pop', bpm = 120;
       const m = prompt.match(/^\[([^\]]+)\]\s*/);
       if (m) { const parts = m[1].split(/\s+/); style = parts[0] || style; bpm = parseInt(parts[1]) || bpm; prompt = prompt.slice(m[0].length); }
-      const res = await fetch('http://127.0.0.1:65000/audio/music', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, tags: style, bpm, duration: 30 }) });
-      if (!res.ok) throw new Error(`Music: ${res.status}`);
-      return (await res.json()).audio_path;
+      return requestMedia('/audio/music', { prompt, tags: style, bpm, duration: 30 }, 'audio');
     }
     async function generateVideo(prompt) {
-      const res = await fetch('http://127.0.0.1:65000/video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, width: 768, height: 480, num_frames: 81, fps: 24 }) });
-      if (!res.ok) throw new Error(`Video: ${res.status}`);
-      return (await res.json()).video_path;
+      return requestMedia('/video', { mode: 't2v', prompt, width: 768, height: 480, frames: 97, frame_rate: 24, steps: 8, guidance_scale: 1 }, 'video');
     }
 
     // ═══ OBS BRIDGE ═══
@@ -1114,9 +971,16 @@ export default {
       const mapping = sourceMappings.find(m => m.type === type);
       if (!mapping?.sourceName) return;
       try {
+        if (data.startsWith('data:')) {
+          const mime = data.slice(5, data.indexOf(';'));
+          const ext = { 'image/png': 'png', 'audio/wav': 'wav', 'video/mp4': 'mp4' }[mime];
+          const saved = ext && await window.electronAPI?.db?.blobs?.write(data.split(',')[1], ext, { source: 'stream', mimeType: mime });
+          if (!saved?.path) throw new Error('The media could not be prepared for OBS.');
+          data = saved.path;
+        }
         if (type === 'image') await obsWs.call('SetInputSettings', { inputName: mapping.sourceName, inputSettings: { file: data } });
         else if (['audio', 'music', 'video'].includes(type)) await obsWs.call('SetInputSettings', { inputName: mapping.sourceName, inputSettings: { local_file: data, is_local_file: true } });
-      } catch (err) { console.warn('[LiveStreamer] OBS push failed:', err.message); }
+      } catch (err) { showStatus(`Media saved, but OBS was not updated: ${err.message}`, 'error'); logActivity('system', 'obs', `Delivery failed: ${err.message}`); }
     }
 
     // ═══ POLL ═══
@@ -1140,7 +1004,8 @@ export default {
     }
 
     // ═══ HELPERS ═══
-    function skipCurrent() { currentGeneration.value = null; showStatus('Skipped', 'info'); }
+    function skipCurrent() { if (!currentGeneration.value) return; currentGeneration.value.discarded = true; showStatus('This result will be discarded. The next request starts when generation finishes.', 'info'); }
+    function togglePause() { isPaused.value = !isPaused.value; if (!isPaused.value) processQueue(); }
     function clearQueue() { queue.value = []; showStatus('Queue cleared', 'info'); }
     function removeFromQueue(index) { queue.value.splice(index, 1); }
     function toggleContentType(id) { const idx = enabledTypes.value.indexOf(id); if (idx >= 0) enabledTypes.value.splice(idx, 1); else enabledTypes.value.push(id); }
@@ -1156,7 +1021,7 @@ export default {
       try {
         const c = await window.electronAPI?.store?.get('live-streamer', null);
         if (!c) return;
-        if (c.chatPlatform) chatPlatform.value = c.chatPlatform;
+        if (platforms.some(platform => platform.id === c.chatPlatform && !platform.unavailable)) chatPlatform.value = c.chatPlatform;
         if (c.twitchChannel) twitchChannel.value = c.twitchChannel;
         if (c.tiktokUsername) tiktokUsername.value = c.tiktokUsername;
         if (c.obsUrl) obsUrl.value = c.obsUrl;
@@ -1167,8 +1032,8 @@ export default {
         if (c.selectedCompanionId) selectedCompanionId.value = c.selectedCompanionId;
         if (c.pollDuration) pollDuration.value = c.pollDuration;
         if (c.maxQueueSize) maxQueueSize.value = c.maxQueueSize;
-        if (c.enabledTypes) enabledTypes.value = c.enabledTypes;
-        if (c.monetizationEnabled != null) monetizationEnabled.value = c.monetizationEnabled;
+        if (Array.isArray(c.enabledTypes)) enabledTypes.value = c.enabledTypes.filter(id => contentTypes.some(type => type.id === id));
+        if (c.monetizationEnabled === true) { monetizationEnabled.value = true; showStatus('Paid requests are unavailable. Switch to free mode to continue.', 'error'); }
         if (c.generationPrices) Object.assign(generationPrices, c.generationPrices);
         if (c.sourceMappings) for (const s of c.sourceMappings) { const m = sourceMappings.find(x => x.type === s.type); if (m) m.sourceName = s.sourceName; }
       } catch { /* */ }
@@ -1182,6 +1047,9 @@ export default {
       if (savedWallet) streamerWallet.value = savedWallet;
     });
     onUnmounted(() => {
+      isPaused.value = true;
+      isLive.value = false;
+      if (currentGeneration.value) currentGeneration.value.discarded = true;
       if (chatClient?.disconnect) chatClient.disconnect();
       if (obsWs?.disconnect) obsWs.disconnect();
       if (pollTimer) clearInterval(pollTimer);
@@ -1193,7 +1061,7 @@ export default {
       chatPlatform, chatConnected, chatConnecting, obsConnected, obsConnecting, isLive,
       platforms, twitchChannel, twitchToken, tiktokUsername, youtubeStreamId, discordToken, discordChannelId, kickChannel,
       obsUrl, obsPassword, sourceMappings, connectChat, disconnectChat, connectOBS,
-      queue, currentGeneration, lastOutput, isPaused, skipCurrent, clearQueue, removeFromQueue,
+      queue, currentGeneration, lastOutput, isPaused, skipCurrent, togglePause, clearQueue, removeFromQueue,
       activePoll, pollDuration, pollPercentA, pollPercentB,
       cooldownSeconds, nsfwFilter, blocklist, bannedUsers, banInput, banUser,
       companions, selectedCompanionId, selectedCompanion, companionEnabled, getImageSrc,

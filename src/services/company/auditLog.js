@@ -6,13 +6,8 @@
  * solely to keep the existing service consumers (dispatcher, treasury,
  * goals, issues, etc.) on a stable import path.
  *
- * Graceful-degradation contract: when the main-process data layer is
- * unavailable (e.g. `npm install` hasn't been run yet so better-sqlite3
- * couldn't be imported), every call resolves with a safe default and
- * we log ONCE so the user has a clear pointer to the install step.
- * The rest of the app — Generative Text, RoleplayChat, skills — runs
- * untouched; only ZHC's audit-log-derived views (Live, KPIs, Trail)
- * read empty until the data layer comes online.
+ * Read-only views may degrade when the database is unavailable. Writes must
+ * fail visibly: an agent must not continue believing unrecorded work is durable.
  */
 
 const _api = () => window.electronAPI?.db?.audit || null;
@@ -22,7 +17,7 @@ function _warnOnce(err) {
   if (_warned) return;
   _warned = true;
   console.warn(
-    "[audit] data layer not reachable — ZHC audit log writes will be dropped " +
+    "[audit] data layer not reachable — activity history is unavailable " +
     "until the DB is open. Run `npm install` to install better-sqlite3 + " +
     "drizzle-orm + sqlite-vec, then restart the app. Underlying error: " +
     (err?.message || err || "no IPC handler"),
@@ -31,8 +26,7 @@ function _warnOnce(err) {
 
 /**
  * Wrap an IPC call so a missing handler / rejection becomes a safe
- * default. This is what makes the app survive a deps-missing bootstrap
- * — every audit append silently no-ops, every read returns empty.
+ * default for read-only views. append() deliberately does not use this.
  */
 async function _safe(fn, fallback) {
   const api = _api();
@@ -50,7 +44,10 @@ async function _safe(fn, fallback) {
 // ─────────────────────────────────────────────────────────────────────
 
 export async function append(companyId, entry) {
-  const row = await _safe((api) => api.append(companyId, entry), null);
+  const api = _api();
+  if (!api?.append) throw new Error('Team activity could not be saved. Restart BonzAI to reconnect local storage.');
+  const row = await api.append(companyId, entry);
+  if (!row) throw new Error('Team activity could not be saved.');
   if (row) _notify();
   return row;
 }

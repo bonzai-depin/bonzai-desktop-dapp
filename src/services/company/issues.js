@@ -34,12 +34,23 @@ async function _safe(fn, fallback) {
   catch (err) { _warnOnce(err); return fallback; }
 }
 
+async function _write(fn) {
+  const api = _api();
+  if (!api) throw new Error('Company task storage is unavailable. Restart the desktop app.');
+  return fn(api);
+}
+export const saveExecution = (companyId, id, execution, revision) => _write(api => {
+  if (!api.saveExecution) throw new Error('Restart BonzAI to enable durable task execution.');
+  return api.saveExecution(companyId, id, execution, revision);
+});
+export const resumeApproval = (companyId, id) => _write(api => api.resumeApproval(companyId, id));
+
 // ─────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────
 
 export async function create(companyId, input) {
-  const issue = await _safe((api) => api.create(companyId, input), null);
+  const issue = await _write((api) => api.create(companyId, input));
   if (issue) {
     await append(companyId, {
       kind: "issue", role: issue.assigneeRole, action: "createIssue",
@@ -61,7 +72,7 @@ export async function get(companyId, issueId) {
 }
 
 export async function update(companyId, issueId, patch) {
-  const issue = await _safe((api) => api.update(companyId, issueId, patch), null);
+  const issue = await _write((api) => api.update(companyId, issueId, patch));
   if (issue && patch?.status) {
     await append(companyId, {
       kind: "issue", role: issue.assigneeRole, action: `issue.${patch.status}`,
@@ -73,7 +84,7 @@ export async function update(companyId, issueId, patch) {
 }
 
 export async function reopen(companyId, issueId) {
-  const issue = await _safe((api) => api.reopen(companyId, issueId), null);
+  const issue = await _write((api) => api.reopen(companyId, issueId));
   if (issue) {
     await append(companyId, {
       kind: "issue", role: issue.assigneeRole, action: "issue.reopen",
@@ -106,11 +117,18 @@ export async function nextForRole(companyId, roleKey, currentCompanion) {
 }
 
 export async function startAttempt(companyId, issueId, role, companion) {
-  return _safe((api) => api.startAttempt(companyId, issueId, role, companion), null);
+  return _write((api) => api.startAttempt(companyId, issueId, role, companion));
+}
+
+export async function claimNextForRole(companyId, roleKey, currentCompanion) {
+  return _write(api => {
+    if (!api.claimNextForRole) throw new Error('Restart BonzAI to enable atomic task execution.');
+    return api.claimNextForRole(companyId, roleKey, currentCompanion);
+  });
 }
 
 export async function finishAttempt(companyId, issueId, outcome) {
-  const issue = await _safe((api) => api.finishAttempt(companyId, issueId, outcome), null);
+  const issue = await _write((api) => api.finishAttempt(companyId, issueId, outcome));
   if (issue) {
     await append(companyId, {
       kind: "issue", role: issue.assigneeRole, action: `issue.${issue.status}`,
@@ -131,6 +149,14 @@ export async function counts(companyId) {
     (api) => api.counts(companyId),
     { total: 0, open: 0, in_progress: 0, blocked: 0, done: 0, cancelled: 0 },
   );
+}
+
+export async function recoverStale(companyId, staleBefore) {
+  const api = _api();
+  // Recovery was added after the original issues bridge. Its absence means
+  // "old preload still active", not "database unavailable".
+  if (!api || typeof api.recoverStale !== "function") return { recovered: 0 };
+  return _safe((readyApi) => readyApi.recoverStale(companyId, staleBefore), { recovered: 0 });
 }
 
 export async function clear(companyId) {

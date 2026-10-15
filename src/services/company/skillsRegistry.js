@@ -1,3 +1,5 @@
+import { executeTeamAction } from "./teamCommunication.js";
+import { executeFinanceLocal } from "./finance/evidence.js";
 /**
  * BonzAI Company — Skills Registry (runtime executor)
  *
@@ -8,11 +10,14 @@
  * executors in live mode.
  */
 
-import * as connectors from "./connectors.js";
 import * as treasury from "./treasury.solo.js";
+import * as connectors from "./connectors.js";
 import { append } from "./auditLog.js";
 import { SKILL_MANIFESTS, getManifest } from "./skillManifests.js";
 import { executeConnectorAction } from "./connectorExecutors.js";
+import { executeLocalAction } from "./gmao.js";
+import { OPERATIONAL_ACTIONS, executeOperationalAction } from './operationalActions.js';
+import { saveSupplierSearchEvidence, simulateSupplierSearch } from "./supplierSourcing.js";
 
 /**
  * Find the manifest that owns an action type. Returns the manifest, or
@@ -53,6 +58,10 @@ export async function execute(companyId, actionType, params, ctx = {}) {
     throw new Error(`unknown skill action: ${actionType}`);
   }
 
+  const supplierSearch = actionType === "sourcing.searchSuppliers";
+  if (supplierSearch && ctx.role !== "PurchasingManager") throw new Error("Supplier web search is restricted to the Purchasing Manager.");
+  if (supplierSearch && ctx.charter?.demoMode) return { ok: true, ...simulateSupplierSearch(params) };
+
   // Connector pre-flight — every required connector must be active.
   for (const kind of manifest.requiredConnectors) {
     const conn = await connectors.getByKind(companyId, kind);
@@ -65,71 +74,46 @@ export async function execute(companyId, actionType, params, ctx = {}) {
     }
   }
 
-  const result = ctx.charter?.demoMode
-    ? await _mockExecute(manifest, actionType, params)
-    : await executeConnectorAction(companyId, actionType, params, ctx.idempotencyKey || `${companyId}:${actionType}:${ctx.issueId || Date.now()}`);
-
-  // Bridge money-movement skill actions to the local treasury. Without
-  // this, "$180 paid to Carlos" appears in the audit log but the
-  // company's books never move — a silent ledger drift the user
-  // can't reconcile. Cap-bypass is intentional: the role's spend was
-  // already gated upstream by `gateAction` based on the action class.
-  try {
-    await _maybeBridgeTreasury(companyId, actionType, params, ctx);
-  } catch (err) {
-    // Treasury reject (currency mismatch, reserve floor, cap) — promote
-    // to an action error so the issue lifecycle reflects it.
-    await append(companyId, {
-      kind: "action", role: ctx.role, action: actionType, status: "error",
-      note: `treasury rejected: ${err.message?.slice(0, 200) || "unknown"}`,
-    });
-    return { ok: false, error: err.message };
+  const outflow = ['stripe.refund', 'qbo.payBill', 'shopify.refundOrder'].includes(actionType);
+  if (outflow && !ctx.charter?.demoMode) {
+    const amount = Number(params.amount);
+    const state = await treasury.getState(companyId);
+    const currency = String(params.currency || ctx.charter?.rules?.currency || '').toUpperCase();
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(ctx.cap) || amount > ctx.cap
+      || currency !== state.currency || state.balance - amount < (ctx.charter?.rules?.reserveFloor || 0)) {
+      return { ok: false, error: 'Payment needs an explicit amount within this role’s cap, matching treasury currency and reserve floor.' };
+    }
+    if (actionType === 'qbo.payBill' && Number(params.payload?.TotalAmt) !== amount) return { ok: false, error: 'QuickBooks payment amount must match the amount approved for this task.' };
   }
+  const financeLocal = ["finance.reconcilePayouts", "finance.listEvidence", "finance.readEvidence"].includes(actionType);
+  const operational = Object.hasOwn(OPERATIONAL_ACTIONS, actionType);
+  const operationalExternal = OPERATIONAL_ACTIONS[actionType]?.external === true;
+  const localAction = (operational && !operationalExternal) || actionType.startsWith("team.") || financeLocal || actionType.startsWith("gmao.") || actionType.startsWith("field.");
+  let result = operationalExternal && ctx.charter?.demoMode ? {status:'simulated',summary:'Simulation only. No supplier message or invoice was submitted.'} : operational ? await executeOperationalAction(companyId, actionType, params) : actionType.startsWith("team.") ? await executeTeamAction(companyId, actionType, params, ctx) : financeLocal ? await executeFinanceLocal(companyId, actionType, params, ctx) : localAction
+    ? await executeLocalAction(companyId, actionType, params, ctx)
+    : ctx.charter?.demoMode
+      ? await _mockExecute(manifest, actionType, params)
+      : await executeConnectorAction(companyId, actionType, params, ctx.idempotencyKey || `${companyId}:${actionType}:${ctx.issueId || Date.now()}`);
+
+  if (!result || result.ok === false) return result || { ok: false, error: 'No result returned.' };
+  if (supplierSearch) result = await saveSupplierSearchEvidence(companyId, result, ctx);
+  const simulated = ctx.charter?.demoMode === true && !localAction;
+  // Connector acknowledgements are not settled cash. Keep provider receipts for
+  // reconciliation; never mutate the cash ledger from unverified amounts.
+  const reconciliationRequired = !simulated && (outflow || actionType === 'stripe.chargeOnFile');
+  const outcome = reconciliationRequired ? { ...result, reconciliationRequired: true, status: 'requires_input',
+    message: 'The provider receipt is saved. Verify the financial outcome and reconcile the company ledger before confirming completion. Do not repeat the payment.' } : result;
 
   await append(companyId, {
     kind: "action",
     role: ctx.role,
     action: actionType,
-    status: "executed",
-    note: result.summary || _summarize(actionType, params),
+    status: simulated ? "simulated" : outcome.status || "executed",
+    note: outcome.message || outcome.summary || _summarize(actionType, params),
     txOrLink: result.shareLink || null,
   });
 
-  return { ok: true, ...result };
-}
-
-/**
- * If the skill action represents real money movement, mirror it into
- * the local treasury so the books match the audit log. The mapping is
- * conservative — only known billing actions are bridged; everything
- * else (SMS, calendar, content) doesn't touch the ledger.
- */
-async function _maybeBridgeTreasury(companyId, actionType, params, ctx) {
-  const role = ctx.role || "CFO";
-  const currency = ctx.charter?.rules?.currency || ctx.charter?.treasury?.currency || "USD";
-
-  // Outflows (company → external)
-  const outflows = {
-    "qbo.payContractor":      { amount: params.amount, recipient: params.contractorId || "contractor", memo: params.memo || "" },
-    "qbo.payBill":            { amount: params.amount, recipient: params.vendorId || "vendor", memo: params.memo || "" },
-    "stripe.refund":          { amount: params.amount, recipient: `refund:${params.chargeId}`, memo: "stripe refund" },
-    "fulfillment.assignToHuman": null, // assignment only — no money moves until shipment recorded
-  };
-  // Inflows (external → company)
-  const inflows = {
-    "qbo.recordPayment":      { amount: params.amount, source: `invoice:${params.invoiceId}`, memo: `paid via ${params.method || "ach"}` },
-    "stripe.chargeOnFile":    { amount: params.amount, source: `customer:${params.customerId}`, memo: params.memo || "stripe charge" },
-  };
-
-  if (outflows[actionType] && Number.isFinite(Number(outflows[actionType].amount))) {
-    await treasury.paySupplier(companyId, {
-      ...outflows[actionType], currency, role,
-      // No reserveFloor / cap enforcement here — the role's spend mask
-      // already gated this action upstream via gateAction.
-    });
-  } else if (inflows[actionType] && Number.isFinite(Number(inflows[actionType].amount))) {
-    await treasury.recordRevenue(companyId, { ...inflows[actionType], currency, role });
-  }
+  return { ok: true, ...outcome, ...(simulated ? { simulated: true, status: 'simulated' } : {}) };
 }
 
 async function _mockExecute(manifest, actionType, params) {

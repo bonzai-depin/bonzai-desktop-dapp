@@ -1,47 +1,21 @@
 /**
- * BonzAI ServiceTime — provider-side reward accounting (post-audit shape).
- *
- * The audit (see memory/audit_app_integration.md) replaced the EIP-712
- * envelope handshake that the v1 client used. Sessions are no longer
- * signed by the consumer — the provider self-reports seconds served:
- *
- *     BonzaiServiceTime.recordServiceTime(uint8 pipelineId, uint256 sec)
- *
- * Submission flow:
- *   1. The shard worker (src/server/shard.py) appends one row per
- *      completed session to ~/bonzai-server/service_time.ndjson.
- *   2. The Electron main bridge (src/main/shardSession.js) appends rows
- *      from its own bookkeeping path (kept symmetric so both halves can
- *      contribute when we add bridge-only sessions later).
- *   3. This module reads the ledger via IPC, batches by pipelineId,
- *      submits one `recordServiceTimeBatch` tx, and on success asks
- *      main to truncate the ingested rows.
- *   4. At epoch close the provider calls `claimProviderRewards(epochId,
- *      poolIndex)` to pull their weighted share of the MintPool's
- *      provider-side allocation.
- *
- * Sybil resistance: provider must satisfy the deployed ServiceTime contract's
- * LVL1 threshold on the economy chain at submit time. We check before sending the tx so a
- * provider below threshold sees a clean error instead of a wasted
- * gas estimate.
- *
- * The contract address comes from the same economy-chain configuration as
- * MintPool and ProviderRegistry.
+ * Provider reward reads and claims. Local service ledgers are untrusted evidence:
+ * reward submission requires an independent attestor and verified onchain receipts.
+ * This client never converts unsigned local seconds into reward entitlement.
  */
 
 import { ethers } from "ethers";
 import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { getSigner, getProvider, switchNetwork } from "./web3.service.js";
+import { web3Service } from "./web3.service.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABIs (audit-aligned)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SERVICE_TIME_ABI = [
-  // Provider self-reports session time after the consumer disconnects.
-  // pipelineId maps to a MintPool poolIndex via pipelineToPool().
-  "function recordServiceTime(uint8 pipelineId, uint256 secondsServed)",
-  "function recordServiceTimeBatch((uint8 pipelineId,uint256 secondsServed)[] records)",
+  "function claimsPaused() view returns (bool)",
+  "function serviceTimeAttestor() view returns (address)",
 
   // Claim weighted share of the pool's provider-side after epoch close.
   "function claimProviderRewards(uint256 epochId, uint8 poolIndex)",
@@ -53,13 +27,14 @@ const SERVICE_TIME_ABI = [
   "function pipelineToPool(uint8 pipelineId) pure returns (uint8)",
   "function LVL1_THRESHOLD() view returns (uint256)",
 
-  "event ServiceTimeRecorded(address indexed provider, uint8 indexed poolIndex, uint256 indexed epochId, uint256 secondsServed)",
-  "event ProviderRewardsClaimed(address indexed provider, uint256 indexed epochId, uint8 indexed poolIndex, uint256 providerTime, uint256 totalTime)",
+  "event ServiceTimeRecorded(address indexed provider, uint8 indexed poolIndex, uint256 indexed epochId, uint256 secondsServed, uint8 pipelineId)",
+  "event ProviderRewardsClaimed(address indexed provider, uint256 indexed epochId, uint8 indexed poolIndex, uint256 providerTime, uint256 totalTime, uint256 paidAmount)",
 ];
 
 const MINT_POOL_ABI = [
   "function currentEpoch() view returns (uint256)",
   "function isEpochFinalized(uint256 epochId) view returns (bool)",
+  "function stakingVault() view returns (address)",
 ];
 
 const BONZAI_TOKEN_ABI = [
@@ -185,83 +160,39 @@ export async function checkEligibility() {
   if (!isConfigured()) {
     return { ok: false, configured: false, balance: 0n, threshold: DEFAULT_LVL1_BONZAI };
   }
-  const { serviceTime, bonzai, provider } = await _getReadClients();
-  const signer = await getSigner();
-  const address = await signer.getAddress();
-  let threshold = DEFAULT_LVL1_BONZAI;
-  try { threshold = await serviceTime.LVL1_THRESHOLD(); } catch {}
-  let balance = 0n;
-  if (bonzai) {
-    try { balance = await bonzai.balanceOf(address); } catch {}
-  }
+  const address = web3Service.state.walletAddress;
+  if (!address) return { ok: false, configured: true, balance: 0n, threshold: DEFAULT_LVL1_BONZAI, submissionAvailable: false, reason: 'wallet_required' };
+  const { serviceTime, mintPool, provider } = await _getReadClients();
+  const [threshold, claimsPaused, attestor, vaultAddress] = await Promise.all([
+    serviceTime.LVL1_THRESHOLD(), serviceTime.claimsPaused(), serviceTime.serviceTimeAttestor(),
+    mintPool ? mintPool.stakingVault() : ethers.ZeroAddress,
+  ]);
+  if (vaultAddress === ethers.ZeroAddress) return { ok: false, configured: false, balance: 0n, threshold, address, claimsPaused, attestor, submissionAvailable: false };
+  const vault = new ethers.Contract(vaultAddress, ['function positions(address) view returns (uint256 amount,uint256 lockedUntil,uint256 updatedAt,uint32 contributionScore)'], provider);
+  const balance = (await vault.positions(address)).amount;
   return {
-    ok: balance >= threshold,
+    ok: balance >= threshold && !claimsPaused && attestor !== ethers.ZeroAddress,
+    stakeEligible: balance >= threshold,
     configured: true,
     address,
     balance,
     threshold,
+    claimsPaused,
+    attestor,
+    submissionAvailable: false,
   };
 }
 
 /**
- * Read the ledger, batch by pipelineId, submit
- * `recordServiceTimeBatch`, truncate ingested rows on success.
- *
- * Returns { rowsSubmitted, txHash, totals } or { rowsSubmitted: 0,
- * skipped: <reason> }. Caller can re-run safely; truncation only
- * happens after the tx confirms.
+ * Unsigned local ledgers cannot authorize rewards. Preserve all local records
+ * until an independently verified receipt workflow is implemented.
  */
 export async function flushPending() {
-  if (!isConfigured()) {
-    return { rowsSubmitted: 0, skipped: "not_configured" };
-  }
-  const elig = await checkEligibility();
-  if (!elig.ok) {
-    return { rowsSubmitted: 0, skipped: "below_lvl1_threshold", balance: elig.balance };
-  }
-
-  const rows = await _readLedger();
-  if (rows.length === 0) return { rowsSubmitted: 0, skipped: "ledger_empty" };
-
-  // Batch by pipelineId. We round seconds DOWN to integer — the contract
-  // stores uint256 seconds; partial-second rows in the ledger get
-  // accumulated and only the floor is reported per batch. Trailing
-  // sub-second remainder per pipeline stays in the ledger for the next
-  // flush.
-  const totals = new Map();
-  let maxTs = 0;
-  for (const r of rows) {
-    if (r.ts > maxTs) maxTs = r.ts;
-    totals.set(r.pipelineId, (totals.get(r.pipelineId) ?? 0) + (r.seconds ?? 0));
-  }
-  const pipelineIds = [];
-  const secondsServed = [];
-  for (const [pid, sec] of totals) {
-    const intSec = Math.floor(sec);
-    if (intSec <= 0) continue;
-    pipelineIds.push(pid);
-    secondsServed.push(BigInt(intSec));
-  }
-  if (pipelineIds.length === 0) {
-    return { rowsSubmitted: 0, skipped: "no_complete_seconds" };
-  }
-
-  const { serviceTime } = await _getWriteClient();
-  const tx = pipelineIds.length === 1
-    ? await serviceTime.recordServiceTime(pipelineIds[0], secondsServed[0])
-    : await serviceTime.recordServiceTimeBatch(
-      pipelineIds.map((pipelineId, index) => ({ pipelineId, secondsServed: secondsServed[index] })),
-    );
-  const receipt = await tx.wait();
-
-  await _truncateLedger(maxTs);
-
+  if (!isConfigured()) return { rowsSubmitted: 0, skipped: "not_configured" };
   return {
-    rowsSubmitted: rows.length,
-    txHash: receipt?.hash ?? tx.hash,
-    totals: Object.fromEntries(
-      pipelineIds.map((pid, i) => [pid, secondsServed[i].toString()]),
-    ),
+    rowsSubmitted: 0,
+    skipped: 'verified_service_receipts_required',
+    message: 'Provider rewards require independently verified service receipts. Local activity stays on this device; reward submission is unavailable.',
   };
 }
 
@@ -271,6 +202,8 @@ export async function flushPending() {
  */
 export async function claimProviderRewards(epochId, poolIndex) {
   if (poolIndex < 0 || poolIndex > 5) throw new Error("Invalid poolIndex");
+  const readClient = await _getReadClients();
+  if (await readClient.serviceTime.claimsPaused()) throw new Error('Provider reward claims are paused pending verified service receipts.');
   const { serviceTime } = await _getWriteClient();
   const tx = await serviceTime.claimProviderRewards(epochId, poolIndex);
   return tx.wait();

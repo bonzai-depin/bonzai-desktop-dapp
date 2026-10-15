@@ -1,3 +1,7 @@
+import {captureHarness, checkHarness, sameHarness, beginHarness} from "./harness.js";
+import { teamContext } from "./teamCommunication.js";
+import { companyMaintenanceContext } from "./gmao.js";
+import { paperasseGuide } from "./paperasseTeams.js";
 /**
  * BonzAI Company — CEO heartbeat + role dispatcher
  *
@@ -37,8 +41,16 @@ import {
   routeGoalToRole,
   effectiveRoleBudget,
 } from "./charter.js";
+import { allowsAutonomousPlanning, automationPolicy, isAutonomousWorkflowTask, isDuplicateIntent } from "../../shared/companyAutomation.js";
 
-const MEDIA_PIPELINES = ["image", "audio", "video", "3d", "music", "vision"];
+import { CREATE_ACTION_GUIDE, CREATE_PIPELINES, executeCreation } from "./createCapabilities.js";
+import { loadSmartAgents, smartAgentCatalog } from "../smartAgentCatalog.js";
+import { createTaskExecution, runTaskExecution, executionOutcome } from './taskExecution.js';
+import { createAgentExecution, runAgentLoop, agentContext, AGENT_PROTOCOL } from './agentLoop.js';
+import { SUPPORTED_CONNECTOR_ACTIONS } from './connectorExecutors.js';
+import { getAvailableAgentWorkflows, getAgentWorkflowIds } from '../agentWorkflows.js';
+import { executeCompanyWorkflow } from './workflowExecution.js';
+const MEDIA_PIPELINES = CREATE_PIPELINES;
 
 // Legacy queue storage key — kept only for migration cleanup on dissolve.
 // The unified model keeps work in goals + issues only.
@@ -57,7 +69,14 @@ const QUEUE_KEY = (id) => `companies/${id}/queues`;
  * @param {object} charter
  * @returns {Promise<{ goals: object[], issuesCreated: number, errors: string[] }>}
  */
-export async function tickCEO(charter) {
+export async function tickCEO(charter, run = null) {
+  if (!allowsAutonomousPlanning(charter)) {
+    return { goals: [], issuesCreated: 0, errors: [], skipped: true, reason: 'workflow_tasks_only' };
+  }
+  const harness = await captureHarness(charter,"CEO",resolveRoleCompanion(charter,"CEO")?.companion);
+  const canRun = () => run ? run.check() : checkHarness(harness);
+  const initial = await canRun();
+  if(!initial.ok)return {goals:[],issuesCreated:0,errors:[],skipped:true,reason:initial.reason};
   const companyId = charter.id;
   const errors = [];
 
@@ -88,6 +107,17 @@ export async function tickCEO(charter) {
     activeGoals: activeGoals.length,
     openIssues: openIssuesCount,
   };
+  const policy = automationPolicy(charter);
+  if (activeGoals.length >= policy.maxActiveGoals || openIssuesCount >= policy.maxOpenIssues) {
+    const reason = activeGoals.length >= policy.maxActiveGoals
+      ? `capacity reached (${activeGoals.length}/${policy.maxActiveGoals} active goals)`
+      : `work queue reached (${openIssuesCount}/${policy.maxOpenIssues} open issues)`;
+    await append(companyId, {
+      kind: "system", role: "CEO", action: "tickCEO", status: "executed",
+      note: `Planning skipped: ${reason}`,
+    });
+    return { goals: [], issuesCreated: 0, errors: [], skipped: true, reason };
+  }
 
   // The CEO's prompt now asks for explicit mission_alignment + decomposed
   // tasks per goal, so every issue we persist has rationale baked in.
@@ -95,12 +125,13 @@ export async function tickCEO(charter) {
     `${charter.name || "team"} ${charter.mission || ""} ${activeGoals.map((g) => g.title).join(" ")}`,
     { company: charter, roleKey: "CEO", includeUser: false, limit: 10 },
   );
+  const maintenanceContext = charter.template?.id === "hvac_residential" ? await companyMaintenanceContext(companyId,{directive:charter.mission}) : "";
   const prompt = [_ceoPrompt({
     charter,
     ceo,
     kpi: kpiSnapshot,
     activeGoals,
-  }), memoryContext].filter(Boolean).join("\n\n");
+  }), memoryContext, maintenanceContext, await teamContext(companyId)].filter(Boolean).join("\n\n");
 
   let plan;
   try {
@@ -124,7 +155,7 @@ export async function tickCEO(charter) {
       // Streaming context: enables zhcChatStream so the live feed shows
       // the CEO's plan materializing token-by-token. Skipped in demo
       // mode (the scripted planner has no streaming surface to plumb).
-      streamContext: charter.demoMode ? null : { role: "CEO", action: "tickCEO" },
+      streamContext: charter.demoMode ? null : { companyId, role: "CEO", action: "tickCEO" },
     });
     plan = result.json;
     // Log the actual LLM response so the Live feed can surface what the
@@ -144,16 +175,27 @@ export async function tickCEO(charter) {
     return { goals: [], issuesCreated: 0, errors };
   }
 
-  const goalDrafts = Array.isArray(plan?.goals) ? plan.goals : [];
+  const availableGoalSlots = Math.max(0, policy.maxActiveGoals - activeGoals.length);
+  const availableIssueSlots = Math.max(0, policy.maxOpenIssues - openIssuesCount);
+  const existingTitles = [
+    ...activeGoals.map((goal) => goal.title),
+    ...(await issues.list(companyId)).filter((issue) => ["open", "in_progress", "blocked"].includes(issue.status)).map((issue) => issue.title),
+  ];
+  const goalDrafts = (Array.isArray(plan?.goals) ? plan.goals : [])
+    .filter((draft) => !isDuplicateIntent(draft?.title || draft?.directive, existingTitles))
+    .slice(0, availableGoalSlots);
   const created = [];
   let issuesCreated = 0;
 
   for (const draft of goalDrafts) {
+    const validity=await canRun();
+    if(!validity.ok)return {goals:created,issuesCreated,errors:[],skipped:true,reason:validity.reason};
     const title = (draft.title || draft.directive || "").trim();
     if (!title) continue;
-    const tasks = Array.isArray(draft.tasks) && draft.tasks.length
+    const tasks = (Array.isArray(draft.tasks) && draft.tasks.length
       ? draft.tasks
-      : [{ title, description: "" }];
+      : [{ title, description: "" }]).slice(0, Math.max(0, availableIssueSlots - issuesCreated));
+    if (!tasks.length) break;
 
     const goalRecord = await goals.create(companyId, {
       title,
@@ -172,7 +214,7 @@ export async function tickCEO(charter) {
       const explicitRole = typeof task === "object" ? task.assigneeRole : null;
       const roleKey = explicitRole && ROLE_LIBRARY[explicitRole]
         ? explicitRole
-        : routeGoalToRole({ directive: taskTitle });
+        : routeGoalToRole({ directive: taskTitle, description: taskDescription }, charter);
       try {
         await issues.create(companyId, {
           title: taskTitle,
@@ -181,6 +223,7 @@ export async function tickCEO(charter) {
           assigneeRole: roleKey,
           goalId: goalRecord.id,
           createdBy: "ceo",
+          maxAttempts: policy.maxAttempts,
         });
         issuesCreated++;
       } catch (err) {
@@ -204,11 +247,14 @@ export async function tickCEO(charter) {
  *
  * Returns the count of executed / queued / vetoed actions.
  */
-export async function tickRole(charter, roleKey) {
+export async function tickRole(charter, roleKey, run = null) {
   const companyId = charter.id;
-  const out = { executed: 0, queued: 0, vetoed: 0, error: 0, receipts: [] };
+  const out = { executed: 0, queued: 0, vetoed: 0, error: 0, retryable: true, receipts: [] };
 
   if (charter.status !== "active") return out;
+  const harness=await captureHarness(charter,roleKey,resolveRoleCompanion(charter,roleKey)?.companion);
+  if(!(await (run ? run.check() : checkHarness(harness))).ok)return out;
+  await loadSmartAgents();
 
   const def = ROLE_LIBRARY[roleKey];
   if (!def) return out;
@@ -223,9 +269,8 @@ export async function tickRole(charter, roleKey) {
      (with goalId set), so the role only ever pulls from one place.
      Priority sort + FIFO within bucket means high-priority owner-created
      issues naturally preempt routine CEO-emitted ones. */
-  let issue = await issues.nextForRole(companyId, resolved.roleKey, resolved.companion);
+  let issue = await issues.claimNextForRole(companyId, roleKey, resolved.companion);
   if (!issue) return out;
-  issue = await issues.startAttempt(companyId, issue.id, resolved.roleKey, resolved.companion);
 
   // Resolve the parent goal (if any) so we can show its rationale to the
   // role's LLM — work feels purposeful, not arbitrary.
@@ -233,8 +278,18 @@ export async function tickRole(charter, roleKey) {
   if (issue.goalId) {
     try { parentGoal = await goals.get(companyId, issue.goalId); } catch {}
   }
+  if (isAutonomousWorkflowTask(charter, issue, parentGoal)) {
+    const reason = 'This earlier autonomous plan is outside the workflow request. Create a production task with the inputs you want to use.';
+    await issues.finishAttempt(companyId, issue.id, {
+      status: 'blocked', retryable: false, error: reason,
+      result: { summary: reason, objective: issue.title, actions: [], completedBy: resolved.companion, role: roleKey },
+    });
+    return { ...out, skipped: true, reason: 'autonomous_workflow_task' };
+  }
 
+  const prerequisite = issue.parentIssueId ? await issues.get(companyId, issue.parentIssueId) : null;
   const goal = {
+    prerequisiteResults: prerequisite?.execution?.steps?.map(step => ({ id: step.id, output: step.output })) || [],
     directive: issue.title,
     description: issue.description,
     priority: issue.priority,
@@ -246,14 +301,14 @@ export async function tickRole(charter, roleKey) {
     delegatedBy: issue.createdBy,
   };
 
-  const cap = effectiveRoleBudget(charter, resolved.roleKey);
-  const builtInAllowed = ROLE_LIBRARY[resolved.roleKey].allowedActions;
-  const roleMediaPipelines = _roleMediaPipelines(charter, resolved.roleKey);
+  const cap = effectiveRoleBudget(charter, roleKey);
+  const builtInAllowed = ROLE_LIBRARY[roleKey].allowedActions;
+  const roleMediaPipelines = _roleMediaPipelines(charter, roleKey);
 
   // Granted skills come from the role assignment (set by the template
   // wizard or owner edits). Each granted skill exposes its action types
   // to the LLM and adds them to the allowed-action mask.
-  const grantedSkills = charter.roles?.[resolved.roleKey]?.grantedSkills || [];
+  const grantedSkills = [...new Set([...(charter.roles?.[roleKey]?.grantedSkills || []), "skill.team_communication", "skill.local_intake"])].filter(id => id !== "skill.brave_supplier_search" || roleKey === "PurchasingManager");
   const skillActionLines = actionListForPrompt(grantedSkills);
   const skillActionTypes = new Set();
   for (const sid of grantedSkills) {
@@ -261,37 +316,55 @@ export async function tickRole(charter, roleKey) {
     if (!m) continue;
     for (const a of m.actions) skillActionTypes.add(a.type);
   }
-  const allowed = [...builtInAllowed, ...skillActionTypes];
+  const workflowCatalog = await getAvailableAgentWorkflows();
+  const agent = smartAgentCatalog.agents.find(agent => agent.id === resolved.companion);
+  const agentWorkflows = new Set(getAgentWorkflowIds(agent, workflowCatalog));
+  const availableWorkflows = [...agentWorkflows];
+  const implemented = new Set(['produce', 'runFineTune', 'publishFinancialReport', 'publishProductReport', 'publishComplianceReport', 'publishExperimentReport', ...SUPPORTED_CONNECTOR_ACTIONS]);
+  const allowed = [...builtInAllowed, ...skillActionTypes].filter(type => implemented.has(type));
+  if (availableWorkflows.length) allowed.push('runWorkflow');
+  allowed.push('smartAgent.runWorker', 'smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings');
   if (roleMediaPipelines.length && !allowed.includes("produce")) allowed.push("produce");
 
   // Hybrid roles get a different prompt framing — they coordinate a
   // human, they don't execute the work themselves.
-  const isHybrid = ROLE_LIBRARY[resolved.roleKey].kind === "human_supported";
-  const humans = charter.roles?.[resolved.roleKey]?.humanResources || [];
+  const isHybrid = ROLE_LIBRARY[roleKey].kind === "human_supported";
+  const humans = charter.roles?.[roleKey]?.humanResources || [];
 
   const memoryContext = await memoryService.buildRecallContext(
     `${goal.title || goal.directive || ""} ${goal.description || ""}`,
-    { company: charter, roleKey: resolved.roleKey, includeUser: false, limit: 10 },
+    { company: charter, roleKey: roleKey, includeUser: false, limit: 10 },
   );
+  const maintenanceContext = charter.template?.id === "hvac_residential" ? await companyMaintenanceContext(companyId, goal) : "";
   const prompt = [_rolePrompt({
     charter,
-    roleKey: resolved.roleKey,
+    roleKey: roleKey,
     companion: resolved.companion,
     goal,
     cap,
     allowed,
-    pipeline: ROLE_LIBRARY[resolved.roleKey].pipeline || null,
+    pipeline: ROLE_LIBRARY[roleKey].pipeline || null,
     mediaPipelines: roleMediaPipelines,
     skillActionLines,
     isHybrid,
     humans,
-  }), memoryContext].filter(Boolean).join("\n\n");
+  }), memoryContext, maintenanceContext, await teamContext(companyId)].filter(Boolean).join("\n\n");
 
   let plan;
-  try {
-    const roleLLM = charter.roles?.[resolved.roleKey]?.llm || null;
-    const roleGateway = charter.roles?.[resolved.roleKey]?.gateway || "openclaw";
-    const result = await _completeJSON(prompt, {
+  if ((!issue.execution || (issue.execution.agent && !issue.execution.harness)) && !charter.demoMode) {
+    const execution = issue.execution || createAgentExecution(harness);
+    execution.harness = harness;
+    execution.agent.instructions = `${prompt.replace(memoryContext, "")}\nAvailable workflows: ${JSON.stringify(workflowCatalog.filter(item => availableWorkflows.includes(item.id)).map(item => ({ id: item.id, name: item.name, inputs: item.inputs })))}\nPrerequisite results: ${JSON.stringify(goal.prerequisiteResults)}`;
+    issue = await issues.saveExecution(companyId, issue.id, execution, issue.executionRevision || 0);
+  }
+  if (!issue.execution) try {
+    const roleLLM = charter.roles?.[roleKey]?.llm || null;
+    const roleGateway = charter.roles?.[roleKey]?.gateway || "openclaw";
+    const result = await _completeJSON(`${prompt}
+
+Available workflows: ${JSON.stringify(workflowCatalog.filter(item => availableWorkflows.includes(item.id)).map(item => ({ id: item.id, name: item.name, inputs: item.inputs })))}.
+Use runWorkflow with workflowId and inputs to run an available workflow. Each action may have a unique stepId. Pass earlier results using {"$ref":"step1.id"} (or another actual output field). Never guess identifiers or output. A pending approval stops the plan. Local artifacts are drafts, not published work.
+Prerequisite results: ${JSON.stringify(goal.prerequisiteResults)}`, {
       temperature: 0.6,
       maxTokens: 1536,
       llmModel: roleLLM,
@@ -299,130 +372,166 @@ export async function tickRole(charter, roleKey) {
       executionMode: charter.execution,
       // Demo-mode short-circuit for role ticks.
       demoContext: charter.demoMode
-        ? { kind: "role", charter, roleKey: resolved.roleKey, goal }
+        ? { kind: "role", charter, roleKey: roleKey, goal }
         : null,
       streamContext: charter.demoMode
         ? null
-        : { role: resolved.roleKey, action: "tickRole" },
+        : { companyId, role: roleKey, action: "tickRole" },
     });
     plan = result.json;
-    await _logLLMTrace(companyId, resolved.roleKey, "tickRole", result.raw, result.json, result.durationMs);
+    issue = await issues.saveExecution(companyId, issue.id, {...createTaskExecution(plan?.actions),harness}, issue.executionRevision || 0);
+    await _logLLMTrace(companyId, roleKey, "tickRole", result.raw, result.json, result.durationMs);
   } catch (err) {
     out.error++;
-    await _logLLMTrace(companyId, resolved.roleKey, "tickRole", err.raw || "", null, err.durationMs || 0, err.message);
+    await _logLLMTrace(companyId, roleKey, "tickRole", err.raw || "", null, err.durationMs || 0, err.message);
     if (!_isJSONParseError(err)) {
       await append(companyId, {
-        kind: "system", role: resolved.roleKey, action: "tickRole",
+        kind: "system", role: roleKey, action: "tickRole",
         status: "error", note: `LLM call failed: ${_friendlyError(err)}`,
       });
     }
+    const policy = automationPolicy(charter);
+    await issues.finishAttempt(companyId, issue.id, {
+      status: "error",
+      error: `LLM call failed: ${_friendlyError(err)}`,
+      retryable: true,
+      retryBaseMs: policy.retryBaseMs,
+      retryMaxMs: policy.retryMaxMs,
+      result: {
+        summary: `Could not plan the next attempt for “${issue.title}”.`,
+        justification: "The local model or gateway failed before any external action was executed; the task is safe to retry.",
+        objective: issue.title,
+        actions: [],
+        completedBy: resolved.companion,
+        role: roleKey,
+      },
+    });
     return out;
   }
 
-  const actions = Array.isArray(plan?.actions) ? plan.actions : [];
-  for (const action of actions) {
-    if (!action || !action.type) { out.vetoed++; continue; }
-    if (!allowed.includes(action.type)) {
-      await append(companyId, {
-        kind: "veto", role: resolved.roleKey, action: action.type,
-        status: "vetoed", note: "outside role's allowed-action mask",
-      });
-      out.vetoed++;
-      out.receipts.push(_actionReceipt(action, "vetoed", null, "Outside this role's permissions."));
-      continue;
-    }
-    // Counsel veto pass (content classifier)
-    if (await _counselWouldVeto(charter, action)) {
-      await append(companyId, {
-        kind: "veto", role: resolved.roleKey, action: action.type,
-        status: "vetoed", note: "general counsel veto (content/classifier)",
-      });
-      out.vetoed++;
-      out.receipts.push(_actionReceipt(action, "vetoed", null, "Blocked by the company content policy."));
-      continue;
-    }
-    // Governance gate
-    const gate = await gov.gateAction(companyId, charter, action, {
-      role: resolved.roleKey, companion: resolved.companion,
-    });
-    if (gate.notify) {
-      try {
-        new Notification(`${charter.name}: ${action.type}`, {
-          body: _summarize(action),
-          silent: true,
-        });
-      } catch {}
-    }
-    if (!gate.pass) {
-      out.queued++;
-      out.receipts.push(_actionReceipt(action, "queued", null, "Waiting for owner approval."));
-      continue;
-    }
-    try {
-      const result = await dispatchAction(charter, resolved.roleKey, resolved.companion, action, { cap, issueId: issue?.id });
-      // A skill executor (or any handler) signaling failure via `{ ok: false, error }`
-      // must NOT count as executed — issues whose only action failed should
-      // land in `blocked`, not `done`. Treat the falsy-ok return identically
-      // to a thrown error.
-      if (result && result.ok === false) {
-        out.error++;
-        await append(companyId, {
-          kind: "action", role: resolved.roleKey, action: action.type,
-          status: "error", note: (result.error || "skill returned ok=false").slice(0, 200),
-          issueId: issue?.id,
-        });
-        out.receipts.push(_actionReceipt(action, "error", result, result.error || "The action failed."));
-      } else {
-        out.executed++;
-        out.receipts.push(_actionReceipt(action, "executed", result));
-        // Capture link / receipt for issue attempt log
-        if (issue && result?.shareLink) out.lastTxOrLink = result.shareLink;
-        else if (issue && result?.id) out.lastTxOrLink = String(result.id);
-      }
-    } catch (err) {
-      out.error++;
-      await append(companyId, {
-        kind: "action", role: resolved.roleKey, action: action.type,
-        status: "error", note: err.message?.slice(0, 200) || "execution failed",
-        issueId: issue?.id,
-      });
-      out.receipts.push(_actionReceipt(action, "error", null, err.message || "Execution failed."));
-    }
-  }
+  return executeIssuePlan(charter, issue, resolved.companion, allowed, null, run);
+}
 
-  // Issue lifecycle: roll up the role tick's outcome into the issue's
-  // attempt record. Any action that executed = done; vetoed-only = blocked;
-  // governance-queued = put back to open (will retry next tick).
-  let outcomeStatus;
-  if (out.executed > 0) outcomeStatus = "done";
-  else if (out.queued > 0) outcomeStatus = "queued";
-  else if (out.vetoed > 0 && out.error === 0) outcomeStatus = "vetoed";
-  else outcomeStatus = "error";
-  await issues.finishAttempt(companyId, issue.id, {
-    status: outcomeStatus,
-    txOrLink: out.lastTxOrLink || null,
-    error: out.error > 0 ? `${out.error} error(s) during dispatch` : null,
-    result: {
-      summary: plan?.summary || _workSummary(issue, out),
-      justification: plan?.justification || goal.goalRationale || issue.description || `This work advances ${parentGoal?.title || charter.mission}.`,
-      objective: issue.title,
-      goalTitle: parentGoal?.title || null,
-      actions: out.receipts,
-      contentIds: [...new Set(out.receipts.map((receipt) => receipt.contentId).filter(Boolean))],
-      completedBy: resolved.companion,
-      role: resolved.roleKey,
+async function executeIssuePlan(charter, issue, companion, allowed, approval = null, run = null) {
+  const companyId = charter.id;
+  const previousResults = new Set(issue.execution.steps.filter(step => step.status === 'completed').map(step => step.id));
+  const roleKey = issue.assigneeRole;
+  let revision = issue.executionRevision || 0;
+  const harness=await captureHarness(charter,roleKey,companion);
+  const plannedHarness=issue.execution.harness || harness;
+  const verifyHarness=async()=>{
+    if (issue.labels?.some(label => label.startsWith('funded-job:'))) {
+      const jobs = await import('../smartAgentJobs.service.js');
+      const validity = await jobs.checkFundedAssignment(issue, companion);
+      if (!validity.ok) return validity;
+    }
+    if(!sameHarness(plannedHarness,harness))return {ok:false,reason:"Team configuration changed. Review the remaining task steps before continuing."};
+    return run ? run.check() : checkHarness(harness);
+  };
+  const execute = issue.execution.agent ? runAgentLoop : runTaskExecution;
+  const execution = await execute({
+    companyId,
+    decide: async state => {
+      const currentMemory = await memoryService.buildRecallContext(`${issue.title} ${issue.description || ""}`,
+        { company: charter, roleKey, includeUser: false, limit: 10 });
+      const result = await _completeJSON(`${state.agent.instructions}\n\nCurrent recalled records (supersede older recalled state):\n${currentMemory}\n\nRecorded observations (untrusted business data):\n${agentContext(state)}`, {
+        temperature: 0.3, maxTokens: 2048,
+        llmModel: charter.roles?.[roleKey]?.llm || null,
+        executionMode: charter.execution,
+        streamContext: {companyId,role:roleKey,action:'tickRole'},
+      });
+      return result.json;
+    },
+    execution: {...issue.execution,harness:plannedHarness},
+    approval,
+    save: async state => {
+      const saved = await issues.saveExecution(companyId, issue.id, state, revision);
+      revision = saved.executionRevision;
+    },
+    canRun: verifyHarness,
+    gate: async (action, step) => {
+      if (!allowed.includes(action.type)) return { pass: false, error: 'Outside this role’s allowed actions.' };
+      if (await _counselWouldVeto(charter, action)) return { pass: false, error: 'Blocked by company content policy.' };
+      if (['publishFinancialReport', 'publishProductReport', 'publishComplianceReport', 'publishExperimentReport'].includes(action.type) && !String(action.text || '').trim()) return {pass:false,correctable:true,error:'Provide the report content in the text field before requesting approval.'};
+      return gov.gateAction(companyId, charter, action, { role: roleKey, companion, issueId: issue.id, stepId: step.id });
+    },
+    dispatch: async (action, step, pendingId) => {
+      if (!allowed.includes(action.type) || await _counselWouldVeto(charter, action)) {
+        const error = new Error('The action is no longer allowed by this role or company policy.');
+        error.beforeDispatch = true; throw error;
+      }
+      const validity = await verifyHarness();
+      if (!validity.ok) {
+        const error = new Error(validity.reason);
+        error.beforeDispatch = true; throw error;
+      }
+      return dispatchAction(charter, roleKey, companion, action, {
+        cap: effectiveRoleBudget(charter, roleKey), issueId: issue.id, pendingId,
+        idempotencyKey: `${companyId}:${issue.id}:${step.id}`,
+        harness,
+      });
     },
   });
+  const receipts = execution.steps.map(step => ({
+    ..._actionReceipt(step.resolvedAction || step.action, step.status, step.output, step.error),
+    stepId: step.id, output: step.output, error: step.error, approvalId: step.approvalId,
+  }));
+  const status = executionOutcome(execution);
+  const error = execution.steps.find(step => step.error)?.error || execution.pauseReason || null;
+  await issues.finishAttempt(companyId, issue.id, {
+    status, retryable: false, error,
+    result: {
+      summary: status === 'done' ? execution.agent?.completion?.summary || `All ${receipts.length} task steps completed; results are available for review.`
+        : status === 'queued' ? 'Waiting for approval. Completed steps are saved.'
+        : status === 'waiting' ? execution.agent.wait?.question || execution.agent.wait?.reason
+        : status === 'continue' ? 'Work saved. Continuing with the next step.' : error || 'This task needs attention.',
+      objective: issue.title, actions: receipts, completedBy: companion, role: roleKey,
+      contentIds: receipts.map(receipt => receipt.contentId).filter(Boolean),
+    },
+  });
+  if (status === 'done' && issue.goalId) await goals.maybeComplete(companyId, issue.goalId, await issues.list(companyId, { goalId: issue.goalId }));
+  return { executed: execution.steps.filter(step => step.status === 'completed' && !previousResults.has(step.id)).length,
+    queued: status === 'queued' ? 1 : 0, waiting: status === 'waiting' ? 1 : 0, continuing: status === 'continue' ? 1 : 0, error: status === 'blocked' ? 1 : 0, vetoed: 0, receipts };
+}
 
-  // Goal rollup — if every sibling issue has reached a terminal state,
-  // mark the parent goal completed.
-  if (issue.goalId) {
-    try {
-      const siblings = (await issues.list(companyId)).filter((i) => i.goalId === issue.goalId);
-      await goals.maybeComplete(companyId, issue.goalId, siblings);
-    } catch {}
+export async function resumeApprovedTask(charter, pending) {
+  const run=await beginHarness(charter,{lane:'roles',triggerType:'manual'});
+  if(!run?.acquired)throw new Error(run?.reason || 'This team is paused or executing another task.');
+  try {
+    const result=await resumeApprovedTaskClaimed(run.charter,pending,run);
+    await run.finish({status:result.error?'failed':'completed',result});
+    return result;
+  }catch(error){await run.finish({status:'failed',error:error.message});throw error;}
+  finally{run.dispose();}
+}
+
+async function resumeApprovedTaskClaimed(charter, pending, run) {
+  const validity=await run.check();
+  if(!validity.ok)throw new Error(validity.reason);
+  const savedIssue=await issues.get(charter.id,pending.issueId);
+  const parentGoal = savedIssue?.goalId ? await goals.get(charter.id, savedIssue.goalId) : null;
+  if (isAutonomousWorkflowTask(charter, savedIssue, parentGoal)) {
+    throw new Error('This approval belongs to an earlier autonomous plan. Reject it and create a production task with the inputs you want to use.');
   }
-  return out;
+  const binding=await captureHarness(charter,pending.role,pending.requestedBy);
+  if(savedIssue?.execution?.harness && !sameHarness(savedIssue.execution.harness,binding))throw new Error("Team configuration changed. Reject this approval and review the remaining task steps.");
+  if (resolveRoleCompanion(charter, pending.role)?.companion !== pending.requestedBy) throw new Error('This role’s agent changed. Reject the old request and review the task before continuing.');
+  const issue = await issues.resumeApproval(charter.id, pending.id);
+  // Record approval only after exclusive task claim. A crash thereafter is reconciled,
+  // never reauthorized silently on startup.
+  const action = await gov.approve(charter.id, pending.id);
+  if (!action) {
+    await issues.finishAttempt(charter.id, issue.id, { status: 'blocked', error: 'Approval could not be recorded. No action was executed.' });
+    throw new Error('Approval could not be recorded. No action was executed.');
+  }
+  const role = charter.roles?.[issue.assigneeRole] || {};
+  const allowed = [...(ROLE_LIBRARY[issue.assigneeRole]?.allowedActions || []), 'produce', 'runWorkflow',
+    'smartAgent.runWorker', 'smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings'];
+  for (const id of [...(role.grantedSkills || []), "skill.team_communication", "skill.local_intake"]) {
+    const manifest = (await import('./skillManifests.js')).getManifest(id);
+    allowed.push(...(manifest?.actions || []).map(action => action.type));
+  }
+  return executeIssuePlan(charter, issue, pending.requestedBy, allowed, { id: pending.id, stepId: pending.stepId, action }, run);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -431,6 +540,7 @@ export async function tickRole(charter, roleKey) {
 
 export async function dispatchAction(charter, roleKey, companion, action, ctx = {}) {
   const companyId = charter.id;
+  if ((gov.requiresOwnerApproval(action) || ctx.pendingId) && !gov.consumeOwnerApproval(companyId, ctx.pendingId, action)) throw new Error('This action requires an explicit owner approval for these exact details.');
 
   // Owner approve→dispatch path passes ctx.pendingId. We log a brief
   // trail entry so the live feed clearly links the dispatch back to the
@@ -438,114 +548,86 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
   if (ctx.pendingId) {
     await append(companyId, {
       kind: "approval", role: roleKey, action: action.type,
-      status: "executed", note: "post-approval dispatch", pendingId: ctx.pendingId,
+      status: "started", note: "post-approval dispatch", pendingId: ctx.pendingId,
     });
   }
 
   switch (action.type) {
-    case "produce": {
-      const pipeline = action.pipeline || ROLE_LIBRARY[roleKey].pipeline || "text";
-      const prompt = action.prompt || "";
-      let payload;
-      let meta = { pipeline, prompt };
-
-      if (pipeline === "text") {
-        // Use the existing local LLM (Qwen3.6 28B REAP) via electronAPI.
-        const text = await window.electronAPI.chat(prompt, { maxTokens: 600, temperature: 0.8 });
-        payload = typeof text === "string" ? text : (text?.text ?? String(text || ""));
-      } else if (typeof window.electronAPI?.inferenceRequest === "function") {
-        // image/audio/video/3D/music/vision route through the unified P2P-aware
-        // inference router; it falls back to local Flask if no peer selected.
-        const result = await window.electronAPI.inferenceRequest(pipeline, action.params || { prompt });
-        payload = result?.result?.image_base64 || result?.result?.audio_base64
-              || result?.result?.video_base64 || result?.result?.text || JSON.stringify(result?.result || {});
-        meta.raw = result?.result?.metadata || null;
-      } else {
-        throw new Error(`pipeline ${pipeline} not available in this build`);
+    case 'smartAgent.runWorker': {
+      const { executeCompanyWorker } = await import('../agentWorkers.service.js');
+      const { ethers } = await import('ethers');
+      const scopedAction = { ...action, requestId: action.requestId || ethers.id(`worker:${ctx.idempotencyKey || `${companyId}:${ctx.issueId}`}`) };
+      const result = await executeCompanyWorker(scopedAction, companion, Boolean(ctx.pendingId));
+      // Media has its own blob-backed deliverables below; this record is the
+      // readable execution report, never image/audio bytes.
+      const record = await dist.publishContent(companyId, { pipeline: result.pipeline === '3d' ? '3d' : 'text',
+        prompt: action.input?.prompt || action.capability, payload: result.text || JSON.stringify(result.artifacts),
+        role: roleKey, companion, issueId: ctx.issueId, meta: { payloadEncoding: 'text', kind: 'peer-worker-result', artifacts: result.artifacts, requestId: result.requestId } });
+      for (const artifact of result.artifacts || []) {
+        const saved = await dist.publishContent(companyId, { pipeline: artifact.mimeType.split('/')[0], prompt: action.input?.prompt || 'Worker delivery', blobId: artifact.id, blobExt: artifact.ext,
+          role: roleKey, companion, issueId: ctx.issueId, meta: { kind: 'peer-worker-media', requestId: result.requestId } });
+        if (!saved) throw new Error('Worker media could not be saved to company deliverables.');
       }
-
-      const record = await dist.publishContent(companyId, {
-        pipeline,
-        prompt,
-        payload,
-        price: action.price ?? _defaultPrice(pipeline, charter),
-        currency: charter.rules?.currency || "USD",
-        role: roleKey,
-        companion,
-        meta: { ...meta, issueId: ctx.issueId || null },
-        issueId: ctx.issueId || null,
-      });
-      return record;
+      if (!record) throw new Error('Worker result could not be saved to company deliverables.');
+      return { ...record, ok: true, status: 'completed', scope: 'local_draft' };
     }
 
-    case "publishContent": {
-      // Re-publish an existing item or wrap a payload provided inline.
-      if (action.contentId) {
-        // No-op for v1; in v0.1 this triggers a re-share to a new channel.
-        await append(companyId, {
-          kind: "production", role: roleKey, action: "publishContent",
-          status: "executed", contentId: action.contentId, note: "re-share noted",
-        });
-        return { id: action.contentId };
-      }
-      return dist.publishContent(companyId, {
-        pipeline: action.pipeline || "text",
-        prompt: action.prompt || "",
-        payload: action.payload || "",
+    case 'smartAgent.acceptJob':
+    case 'smartAgent.submitResult':
+    case 'smartAgent.withdrawEarnings': {
+      await loadSmartAgents();
+      const agent = smartAgentCatalog.agents.find(item => item.id === (action.agentId || companion));
+      if (!agent?.id || !agent.tokenAddress) throw new Error('Choose a launched smart agent with a social token.');
+      if (!action.jobId) throw new Error('An existing funded job ID is required.');
+      const { actOnSmartAgentJob, withdrawAgentJobPayment } = await import('../smartAgentJobs.service.js');
+      const result = action.type === 'smartAgent.withdrawEarnings'
+        ? await withdrawAgentJobPayment(agent, action.jobId, { approved: true })
+        : await actOnSmartAgentJob(action.type === 'smartAgent.acceptJob' ? 'acceptJob' : 'submitWork', action.jobId, action.resultURI || action.detail || '', { agent, approved: true });
+      await append(companyId, { kind: 'action', role: roleKey, action: action.type, status: 'executed', note: `Smart agent job ${action.jobId}`, txOrLink: result.txHash, pendingId: ctx.pendingId });
+      return { ...result, summary: action.type === 'smartAgent.acceptJob' ? 'Smart agent accepted the funded job.' : action.type === 'smartAgent.withdrawEarnings' ? 'Smart agent withdrew its settled earnings.' : 'Smart agent submitted the work for customer review.' };
+    }
+    case "runFineTune":
+    case "produce": {
+      await loadSmartAgents();
+      const agent = smartAgentCatalog.agents.find(item => item.id === companion);
+      const creation = await executeCreation({ ...action, pipeline: action.pipeline || ROLE_LIBRARY[roleKey]?.pipeline || "text" }, {
+        approved: Boolean(ctx.pendingId),
+        llm: charter.roles?.[roleKey]?.llm,
+        instructions: [agent?.instructions, paperasseGuide(charter, roleKey), charter.template?.id?.startsWith("paperasse_") ? charter.mission : "", action.source ? `Source data for this task:\n${JSON.stringify(action.source)}` : ''].filter(Boolean).join('\n\n'),
+        companyId, role: roleKey, agentId: companion,
+      });
+      const record = await dist.publishContent(companyId, {
+        ...creation,
         price: action.price ?? 0,
         currency: charter.rules?.currency || "USD",
-        role: roleKey,
-        companion,
-        meta: { issueId: ctx.issueId || null },
+        role: roleKey, companion,
+        meta: { ...creation.meta, issueId: ctx.issueId || null },
         issueId: ctx.issueId || null,
       });
+      if (!record) throw new Error("The generated artifact could not be saved to the company workspace.");
+      return { ...record, ok: true, status: 'completed', scope: 'local_draft' };
     }
 
+    case 'runWorkflow':
+      return executeCompanyWorkflow(charter, roleKey, companion, action, ctx);
+
+    case "publishContent":
     case "broadcastChannel":
-    case "scheduleBroadcast": {
-      // v1: log the broadcast intent; v0.1 wires OpenClaw/Telegram for real.
-      await append(companyId, {
-        kind: "action", role: roleKey, action: action.type,
-        status: "executed",
-        note: `→ ${action.channel || "default"}: ${(action.copy || "").slice(0, 200)}`,
-        txOrLink: action.contentLink || null,
-        issueId: ctx.issueId || null,
-      });
-      return { ok: true };
-    }
-
+    case "scheduleBroadcast":
     case "replyToInbox":
     case "sendCustomerOffer":
     case "recordCustomerSentiment":
-    case "escalateToCEO": {
-      await append(companyId, {
-        kind: "action", role: roleKey, action: action.type,
-        status: "executed",
-        note: (action.text || action.note || "").slice(0, 240),
-        issueId: ctx.issueId || null,
-      });
-      return { ok: true };
-    }
-
+    case "escalateToCEO":
     case "paySupplier":
-    case "transfer": {
-      const result = await treasury.paySupplier(companyId, {
-        amount: action.amount,
-        currency: action.currency || charter.rules?.currency,
-        recipient: action.recipient || action.to,
-        memo: action.memo || action.note,
-        role: roleKey,
-        cap: ctx.cap,
-        reserveFloor: charter.rules?.reserveFloor,
-      });
-      return result;
-    }
+    case "transfer":
+      return { ok: false, status: 'unsupported', error: `${action.type} has no verified execution handler. Use a configured connector or save a local draft.` };
 
     case "publishFinancialReport":
     case "publishProductReport":
     case "publishComplianceReport":
     case "publishExperimentReport": {
-      const text = action.text || `Report: no body provided.`;
+      const text = String(action.text || '').trim();
+      if (!text) return { ok: false, beforeDispatch: true, error: 'Report content is required in the text field.' };
       const record = await dist.publishContent(companyId, {
         pipeline: "text",
         prompt: action.title || action.type,
@@ -557,7 +639,7 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
         meta: { kind: "report", reportType: action.type, issueId: ctx.issueId || null },
         issueId: ctx.issueId || null,
       });
-      return record;
+      return { ...record, ok: true, status: 'completed', scope: 'local_draft' };
     }
 
     case "proposeHire":
@@ -566,7 +648,6 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
     case "proposeBuyback":
     case "executeBuyback":
     case "setReserveFloor":
-    case "runFineTune":
     case "runPromptExperiment":
     case "enqueueExperimentalProduction":
     case "updateClassifierRules":
@@ -579,12 +660,7 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
     case "enqueueProduction":
     case "runCampaign":
     case "setBrandVoice": {
-      // v1: log + acknowledge. v0.1 wires real handlers per action.
-      await append(companyId, {
-        kind: "action", role: roleKey, action: action.type, status: "executed",
-        note: _summarize(action),
-      });
-      return { ok: true };
+      return { ok: false, status: 'unsupported', error: `${action.type} is not implemented. No business action was performed.` };
     }
 
     default: {
@@ -600,7 +676,7 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
             companyId,
             action.type,
             { ...action },
-            { role: roleKey, companion, charter },
+            { ...ctx, role: roleKey, companion, charter },
           );
           return result;
         }
@@ -609,7 +685,7 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
         kind: "veto", role: roleKey, action: action.type, status: "vetoed",
         note: `unhandled action type`,
       });
-      return null;
+      return { ok: false, status: 'unsupported', error: `Unhandled action: ${action.type}` };
     }
   }
 }
@@ -649,6 +725,8 @@ function _ceoPrompt({ charter, ceo, kpi, activeGoals = [] }) {
 
 CHARTER / MISSION:
 ${charter.mission}
+OWNER INSTRUCTIONS: ${charter.experience?.instructions || "Follow the assigned business requests."}
+WORKING LANGUAGE: ${charter.experience?.language || "Match the owner."}
 
 CURRENT STATE:
 - Treasury: ${kpi.treasury.balance} ${kpi.treasury.currency}
@@ -699,6 +777,7 @@ zero) new goals. Do not include any text outside the JSON object.`;
 
 function _rolePrompt({ charter, roleKey, companion, goal, cap, allowed, pipeline, mediaPipelines = [], skillActionLines = [], isHybrid = false, humans = [] }) {
   const isProducer = roleKey.startsWith("Producer:");
+  const smartAgent = smartAgentCatalog.agents.find(agent => agent.id === companion);
   const productionPipelines = [...new Set([pipeline, ...mediaPipelines].filter(Boolean))];
   const skillsBlock = skillActionLines.length
     ? `\nGRANTED SKILL ACTIONS (in addition to built-ins above — emit any of these):\n${skillActionLines.join("\n")}\n`
@@ -714,51 +793,36 @@ function _rolePrompt({ charter, roleKey, companion, goal, cap, allowed, pipeline
       }\nWhen acting, refer to humans by name. Never claim to do physical work yourself.\n`
     : "";
   return `You are filling the ${roleKey} role at ${charter.name}, an autonomous AI company.
-You are companion ${companion}. Your job is to complete the goal below by emitting
+You are smart agent ${companion}. Your job is to complete the goal below by emitting
 typed actions. The dispatcher will execute them.
+${smartAgent ? `\nSMART AGENT: ${smartAgent.name}\nSERVICE: ${smartAgent.mission}\nPRIVATE WORKING INSTRUCTIONS: ${smartAgent.instructions || "Follow the company brief."}\n` : ""}
 
 CHARTER:
 ${charter.mission}
+
+OWNER'S TEAM INSTRUCTIONS: ${charter.experience?.instructions || 'Follow the assigned business request.'}
+WORKING LANGUAGE: ${charter.experience?.language === 'auto' || !charter.experience?.language ? 'Match the owner and the task.' : charter.experience.language}
+TONE: ${charter.experience?.tone || 'direct'}; DETAIL: ${charter.experience?.responseDetail || 'balanced'}
 
 ROLE: ${roleKey}
 ${isProducer ? `PRIMARY PIPELINE: ${pipeline}` : ""}
 PER-HEARTBEAT BUDGET: ${cap} ${charter.rules?.currency || "USD"}
 ALLOWED ACTION TYPES (built-in): ${allowed.filter((a) => !a.includes(".")).join(", ")}
 ${mediaBlock}${skillsBlock}${hybridBlock}
+${paperasseGuide(charter, roleKey)}
+${CREATE_ACTION_GUIDE}
+REMOTE WORKERS: smartAgent.runWorker uses an explicitly selected worker {key,peerId}, capability, input and signed accepted job. It shares only these inputs and requires owner approval. Use a discovered worker identity, never invent peers or job IDs.
+PAID SMART AGENT JOBS: smartAgent.acceptJob requires agentId and an existing funded jobId. smartAgent.submitResult requires agentId, jobId and resultURI pointing to the agreed deliverable. Both require explicit owner approval and use the smart agent wallet; neither starts work or moves funds merely by planning. Never invent job IDs or claim a transaction succeeded before its receipt.
 
 ${goal.goalTitle ? `PARENT GOAL: "${goal.goalTitle}"${goal.goalRationale ? `\nWHY THIS MATTERS: ${goal.goalRationale}` : ""}\n` : ""}ISSUE${goal.priority ? ` [priority: ${goal.priority}]` : ""}:
 "${goal.directive}"${goal.description ? `\n\nDETAILS:\n${goal.description}` : ""}
 
-OUTPUT (strict JSON, no commentary):
-{
-  "summary": "A concise explanation of what this work will accomplish and what success looks like.",
-  "justification": "Why these actions are the right response to the issue, grounded in the goal and available company context.",
-  "actions": [
-    ${isProducer
-      ? `{ "type": "produce", "pipeline": "${pipeline}", "prompt": "<the actual prompt for the inference engine>", "price": 0 }`
-      : productionPipelines.length
-        ? `{ "type": "produce", "pipeline": "${productionPipelines[0]}", "params": { "prompt": "<the actual prompt for the inference engine>" }, "price": 0 }`
-      : `{ "type": "replyToInbox", "to": "<user-or-thread-id>", "text": "<short reply text>" }`
-    }
-  ]
-}
-
-EXAMPLES per action type:
-- produce(text):       { "type": "produce", "pipeline": "text", "prompt": "Write a haiku about coffee.", "price": 1 }
-- produce(image):      { "type": "produce", "pipeline": "image", "params": { "prompt": "a misty harbor at dawn", "steps": 6 }, "price": 2 }
-- publishContent:      { "type": "publishContent", "contentId": "<id>" }
-- broadcastChannel:    { "type": "broadcastChannel", "channel": "telegram", "copy": "Today's haiku is live: <link>" }
-- replyToInbox:        { "type": "replyToInbox", "to": "<userId>", "text": "Hi! Yes, the bundle is $9." }
-- paySupplier:         { "type": "paySupplier", "amount": 5, "recipient": "API vendor", "memo": "Twitter API key" }
-
-CRITICAL:
-- summary and justification are mandatory and must be specific to this work
-- each action should include a short "reason" explaining why it is necessary
-- emit between 1 and 3 actions
-- every action must be one complete JSON object with a "type" field
-- spend actions must respect the budget cap above
-- never use incomplete placeholder objects
-- do not include any text outside the JSON object`;
+ALLOWED TOOL NAMES: ${allowed.join(", ")}
+Use runWorkflow with an available workflowId and its declared inputs to execute an existing smart-agent workflow.
+Use produce with a permitted pipeline, prompt or params for local creation. Report local outputs as drafts.
+Report actions (publishFinancialReport, publishProductReport, publishComplianceReport, publishExperimentReport) require text (the actual report content) and optionally title. They save a local draft; they do not send it to a customer.
+Actions must include a reason and their actual required fields. Never guess identifiers, recipients, amounts or connector availability.
+${AGENT_PROTOCOL}`;
 }
 
 function _summarize(action) {
@@ -794,7 +858,7 @@ function _workSummary(issue, out) {
 
 function _roleMediaPipelines(charter, roleKey) {
   const configured = charter.roles?.[roleKey]?.pipelines;
-  if (!Array.isArray(configured)) return [];
+  if (!Array.isArray(configured)) return [...CREATE_PIPELINES];
   return configured.filter((pipeline) => MEDIA_PIPELINES.includes(pipeline));
 }
 
@@ -841,8 +905,9 @@ function _withTimeout(promise, ms, label) {
  * the audit log. Throws on parse failure — and attaches `err.raw` +
  * `err.durationMs` so the caller can still log what was actually said.
  */
-async function _completeJSON(prompt, opts = {}) {
+export async function _completeJSON(prompt, opts = {}) {
   const t0 = Date.now();
+  const timeoutMs=Math.max(LLM_CALL_TIMEOUT_MS,Math.min(Number(opts.timeoutMs)||LLM_CALL_TIMEOUT_MS,30*60*1000));
 
   // ─── Demo mode short-circuit ──────────────────────────────────────
   // Bypass every LLM gateway and run the scripted planner. This is the
@@ -886,7 +951,7 @@ async function _completeJSON(prompt, opts = {}) {
         temperature: opts.temperature ?? 0.7,
         maxTokens: opts.maxTokens ?? 2048,
         enableThinking: opts.enableThinking ?? false,
-      }), LLM_CALL_TIMEOUT_MS, `pool[${opts.llmModel}]`);
+      }), timeoutMs, `pool[${opts.llmModel}]`);
       const raw = typeof res === "string" ? res : res?.text || "";
       try {
         return { json: _extractJSON(raw), raw, durationMs: Date.now() - t0 };
@@ -907,26 +972,11 @@ async function _completeJSON(prompt, opts = {}) {
   // requires the user to pre-load a model in Generative Text. The IPC
   // is idempotent, so paying the cost once per role-tick is cheap.
   //
-  // ensureModel may DECLINE the swap when another request is mid-flight
-  // (e.g. a RoleplayChat conversation). In that case it returns
-  // { ok: true, declined: true, filename: <current> } and we proceed
-  // against whatever model is already loaded — protecting the user's
-  // active session at the cost of (sometimes) using a non-preferred
-  // model for this tick. The next tick retries.
+  // A role's model binding is part of its harness. Defer if the shared
+  // device is busy instead of silently using another team's loaded model.
   if (opts.llmModel && typeof window.electronAPI?.ensureModel === "function") {
-    try {
-      const res = await window.electronAPI.ensureModel(opts.llmModel);
-      if (res && res.ok === false) {
-        console.warn(`[zhc] ensureModel failed for ${opts.llmModel}: ${res.error}`);
-      } else if (res?.declined) {
-        console.info(
-          `[zhc] ensureModel declined for ${opts.llmModel} (reason=${res.reason}, ` +
-          `using ${res.filename}) — protected an in-flight request.`,
-        );
-      }
-    } catch (err) {
-      console.warn(`[zhc] ensureModel threw for ${opts.llmModel}:`, err?.message);
-    }
+    const res = await window.electronAPI.ensureModel(opts.llmModel);
+    if (res?.ok === false || res?.declined) throw new Error(res.error || 'The assigned model is busy. Resume this task when it is available.');
   }
 
   // Singleton chat path. When the streaming bridge is available AND the
@@ -944,6 +994,7 @@ async function _completeJSON(prompt, opts = {}) {
     streamBus.emit({
       type: "begin",
       streamId,
+      companyId: opts.streamContext.companyId,
       role: opts.streamContext.role,
       action: opts.streamContext.action,
     });
@@ -963,7 +1014,7 @@ async function _completeJSON(prompt, opts = {}) {
           maxTokens: opts.maxTokens ?? 2048,
           enableThinking: opts.enableThinking ?? false,
         }),
-        LLM_CALL_TIMEOUT_MS,
+        timeoutMs,
         "zhcChatStream",
       );
       // The IPC returns the full assembled message; prefer it over the
@@ -989,10 +1040,11 @@ async function _completeJSON(prompt, opts = {}) {
 
   // Non-streaming fallback (no stream context, or IPC unavailable).
   const text = await _withTimeout(window.electronAPI.chat(prompt, {
+    isolated: true,
     temperature: opts.temperature ?? 0.7,
     maxTokens: opts.maxTokens ?? 2048,
     enableThinking: opts.enableThinking ?? false,
-  }), LLM_CALL_TIMEOUT_MS, "chat");
+  }), timeoutMs, "chat");
   raw = typeof text === "string" ? text : text?.text ?? "";
   try {
     return { json: _extractJSON(raw), raw, durationMs: Date.now() - t0 };

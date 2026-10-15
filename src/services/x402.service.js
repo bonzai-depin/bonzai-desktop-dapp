@@ -1,3 +1,6 @@
+// Native standard x402 v2 support is separate from the legacy ETH receipt flow below.
+import * as exact from './x402Exact.js';
+export { exactRequirements, signExactPayment, verifyExactPayment, settleExactPayment } from './x402Exact.js';
 /**
  * x402 Payment Service (ETH-Only)
  *
@@ -56,8 +59,9 @@ const PaymentToken = { ETH: 0, USDC: 1 };
 //   Renderer process  → window.electronAPI.store.get / .set  (async IPC)
 //   Main process      → electron-store instance               (sync)
 const NONCE_STORE_KEY = 'x402-used-nonces';
-const NONCE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const NONCE_TTL_MS = 24 * 60 * 60 * 1000; // Expiring signature authorizations only. Transaction proofs never expire.
 const NONCE_MAX_ENTRIES = 10_000;
+let _persistQueue = Promise.resolve();
 
 // In-memory mirror; lazily hydrated from Electron Store on first access.
 let _nonceEntries = null; // Array<{key: string, ts: number}> | null
@@ -117,61 +121,37 @@ async function _loadNonces() {
   }
 
   _loadPromise = (async () => {
-    let raw = null;
-    try {
-      const backend = await _getStoreBackend();
-      if (backend) {
-        raw = await backend.get(NONCE_STORE_KEY, null);
-      }
-    } catch (err) {
-      console.warn('[x402] Failed to load persisted nonces:', err.message);
-    }
-
-    const now = Date.now();
-    const entries = Array.isArray(raw)
-      ? raw.filter((e) => e && typeof e.key === 'string' && typeof e.ts === 'number' && now - e.ts < NONCE_TTL_MS)
-      : [];
-
-    _nonceEntries = entries;
-    _nonceSet = new Set(entries.map((e) => e.key));
-  })();
-
-  await _loadPromise;
-}
-
-/**
- * Persist the current nonce list to Electron Store.
- * Fire-and-forget; errors are logged but do not propagate.
- */
-async function _persistNonces() {
-  try {
     const backend = await _getStoreBackend();
-    if (backend) {
-      await backend.set(NONCE_STORE_KEY, _nonceEntries);
-    }
-  } catch (err) {
-    console.warn('[x402] Failed to persist nonces:', err.message);
-  }
+    if (!backend) throw new Error('Durable payment replay protection is unavailable');
+    const raw = await backend.get(NONCE_STORE_KEY, null);
+    if (raw != null && !Array.isArray(raw)) throw new Error('Payment replay store is corrupt');
+    const now = Date.now();
+    const entries = (raw || []).filter((entry) => {
+      if (!entry || typeof entry.key !== 'string' || typeof entry.ts !== 'number') throw new Error('Payment replay store is corrupt');
+      return entry.key.startsWith('tx:') || now - entry.ts < NONCE_TTL_MS;
+    });
+    _nonceEntries = entries;
+    _nonceSet = new Set(entries.map(entry => entry.key));
+  })();
+  try { await _loadPromise; } finally { _loadPromise = null; }
 }
 
-/**
- * Prune expired nonces (older than 24 h) and enforce the 10,000-entry cap
- * by evicting the oldest entries first.
- */
+/** Serialize durable writes. Never evict settled transaction proofs for reuse. */
+async function _persistNonces() {
+  const persist = _persistQueue.then(async () => {
+    const backend = await _getStoreBackend();
+    if (!backend) throw new Error('Durable payment replay protection is unavailable');
+    const result = await backend.set(NONCE_STORE_KEY, _nonceEntries.map(entry => ({ ...entry })));
+    if (result === false || result?.success === false) throw new Error('Payment replay store rejected the write');
+  });
+  _persistQueue = persist.catch(() => {});
+  return persist;
+}
+
 function _pruneNonces() {
   const now = Date.now();
-
-  // Remove expired
-  _nonceEntries = _nonceEntries.filter((e) => now - e.ts < NONCE_TTL_MS);
-
-  // Enforce cap — keep the newest entries
-  if (_nonceEntries.length > NONCE_MAX_ENTRIES) {
-    // Entries are appended chronologically, so oldest are at the front
-    _nonceEntries = _nonceEntries.slice(_nonceEntries.length - NONCE_MAX_ENTRIES);
-  }
-
-  // Rebuild the lookup set
-  _nonceSet = new Set(_nonceEntries.map((e) => e.key));
+  _nonceEntries = _nonceEntries.filter(entry => entry.key.startsWith('tx:') || now - entry.ts < NONCE_TTL_MS);
+  _nonceSet = new Set(_nonceEntries.map(entry => entry.key));
 }
 
 /**
@@ -186,13 +166,15 @@ function _hasNonce(key) {
  * Record a nonce as used, prune stale entries, and persist.
  * Must call `await _loadNonces()` before using this.
  */
-function _addNonce(key) {
+async function _addNonce(key) {
+  _pruneNonces();
+  if (_nonceEntries.length >= NONCE_MAX_ENTRIES) throw new Error('Payment replay store capacity reached; migration is required');
   const entry = { key, ts: Date.now() };
   _nonceEntries.push(entry);
   _nonceSet.add(key);
 
   _pruneNonces();
-  _persistNonces();
+  await _persistNonces();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -366,7 +348,7 @@ export async function validateSignedPayment(payment, options = {}) {
     }
 
     // Mark nonce as used (persists to Electron Store + prunes stale/overflow)
-    _addNonce(nonceKey);
+    await _addNonce(nonceKey);
 
     return {
       valid: true,
@@ -542,7 +524,7 @@ export async function validatePayment(payment, options = {}) {
     return { valid: false, error: 'wrong_chain' };
   }
 
-  await _loadNonces();
+  try { await _loadNonces(); } catch { return { valid: false, error: 'replay_protection_unavailable' }; }
   const proofKey = `tx:${payment.txHash.toLowerCase()}`;
   if (_hasNonce(proofKey) || _pendingTransactionProofs.has(proofKey)) {
     return { valid: false, error: 'transaction_reused' };
@@ -558,7 +540,7 @@ export async function validatePayment(payment, options = {}) {
       provider,
     });
     if (!validation.valid) return validation;
-    _addNonce(proofKey);
+    await _addNonce(proofKey);
     return {
       valid: true,
       consumer: validation.from,
@@ -566,6 +548,8 @@ export async function validatePayment(payment, options = {}) {
       txHash: payment.txHash,
       pipeline,
     };
+  } catch {
+    return { valid: false, error: 'replay_protection_unavailable' };
   } finally {
     _pendingTransactionProofs.delete(proofKey);
   }
@@ -727,7 +711,7 @@ export async function validatePipelinePayment(payment, options = {}) {
       return { valid: false, error: 'invalid_signature' };
     }
 
-    _addNonce(nonceKey);
+    await _addNonce(nonceKey);
 
     return {
       valid: true,
@@ -780,6 +764,7 @@ export function calculatePipelinePaymentSplit(totalCostWei, shards) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const x402Service = {
+  exact,
   // Config
   paymentChain: PAYMENT_CHAIN,
   EIP712_DOMAIN,

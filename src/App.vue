@@ -1,4 +1,5 @@
 <template>
+  <BzDatePicker />
   <Transition name="notif">
     <div v-if="authState.isAwaitingSignature" key="auth" class="bz-notif bz-notif--warning">
       <div class="bz-notif__body">
@@ -27,35 +28,24 @@
       <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click="generationToast.show = false" />
     </div>
 
-    <div v-else-if="serverStatus.show" key="server" class="bz-notif bz-notif--server" :class="notifClass">
-      <div class="bz-notif__server-icon">
-        <span class="material-symbols-outlined">{{ serverStatusIcon }}</span>
-      </div>
-      <div class="bz-notif__body">
-        <span class="bz-notif__title">{{ serverStatus.message }}</span>
-        <span class="bz-notif__desc">{{ serverStatusDescription }}</span>
-        <span v-if="serverStatus.type === 'starting' || serverStatus.type === 'restarting'" class="bz-notif__rail" aria-hidden="true"></span>
-      </div>
-      <div style="display:flex; align-items:center; gap:var(--bz-space-2)">
-        <button v-if="serverStatus.canRetry" class="bz-btn bz-btn--ghost" style="font-size:var(--bz-size-micro); padding:4px var(--bz-space-3)" @click="handleServerRestart">
-          <span class="material-symbols-outlined" style="font-size:14px">refresh</span>
-          {{ i18n.t('common.retry') }}
-        </button>
-        <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click="serverStatus.show = false" />
-      </div>
-    </div>
 
     <span v-else key="none"></span>
   </Transition>
 
-  <div id="bonzai">
-    <nav class="bz-sidebar" :aria-label="i18n.t('nav.primary')">
+
+
+  <div id="bonzai" :class="{ 'sidebar-compact': sidebarCompact }">
+    <nav data-i18n-skip class="bz-sidebar" :aria-label="i18n.t('nav.primary')">
       <div class="bz-sidebar__brand">
-        <span class="bz-sidebar__wordmark">BonzAI</span>
-        <div v-if="!isConnected && !isConnecting" class="bz-sidebar__auth">
-          <a href="#" class="bz-sidebar__auth-link" @click.prevent="connect">{{ i18n.t('auth.connectWallet') }}</a>
-          <span class="bz-sidebar__auth-sep"> {{ i18n.t('auth.or') }} </span>
-          <a href="#" class="bz-sidebar__auth-link" @click.prevent="openPrivyWallet">{{ i18n.t('auth.signIn') }}</a>
+        <div class="bz-sidebar__brand-row">
+          <span class="bz-sidebar__identity"><img src="./assets/logo.png" alt="" class="bz-sidebar__logo" /><span class="bz-sidebar__wordmark">BonzAI</span></span>
+          <button class="bz-iconbtn bz-sidebar__collapse" :aria-label="sidebarCompact ? 'Expand sidebar' : 'Compact sidebar'" :title="sidebarCompact ? 'Expand sidebar' : 'Compact sidebar'" :aria-pressed="sidebarCompact" @click="toggleSidebarCompact"><span class="material-symbols-outlined" aria-hidden="true">{{ sidebarCompact ? 'left_panel_open' : 'left_panel_close' }}</span></button>
+        </div>
+        <div v-if="!isConnected" class="bz-sidebar__auth">
+          <button type="button" class="bz-sidebar__auth-link" :title="i18n.t('connection.title')" :aria-label="i18n.t('connection.title')" @click.prevent="connect">
+            <span class="material-symbols-outlined bz-sidebar__auth-icon" aria-hidden="true">account_circle</span>
+            <span class="bz-sidebar__auth-label">{{ i18n.t('common.connect') }}</span>
+          </button>
         </div>
         <div v-if="isConnected && walletAddress" class="bz-sidebar__wallet bz-sidebar__wallet--top">
           <div class="bz-sidebar__wallet-info" @click="copyAddress">
@@ -68,63 +58,63 @@
             <span class="bz-sidebar__balance-token">BONZAI</span>
           </div>
           <div class="bz-sidebar__wallet-actions">
-            <button class="bz-sidebar__wallet-btn" @click="refresh" :title="i18n.t('common.refresh')">
+            <button class="bz-sidebar__wallet-btn" @click="refresh" :title="i18n.t('common.refresh')" :aria-label="i18n.t('common.refresh')">
               <span class="material-symbols-outlined" :class="{ spinning: isRefreshing }">sync</span>
             </button>
-            <button class="bz-sidebar__wallet-btn" @click="disconnect" :title="i18n.t('common.disconnect')">
+            <button class="bz-sidebar__wallet-btn" @click="disconnect" :title="i18n.t('common.disconnect')" :aria-label="i18n.t('common.disconnect')">
               <span class="material-symbols-outlined">logout</span>
             </button>
           </div>
         </div>
-        <MeshPresence embedded />
+        <MeshPresence embedded :compact="sidebarCompact" />
       </div>
 
       <div class="bz-sidebar__nav-shell" :class="{ 'has-more': sidebarCanScroll && !sidebarAtBottom }">
       <div ref="sidebarNav" class="bz-sidebar__nav" @scroll="updateSidebarScrollState">
         <div class="bz-sidebar__group">
           <span class="bz-sidebar__label">{{ i18n.t('nav.create') }}</span>
-          <button v-for="t in createItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+          <button v-for="t in createItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" :aria-label="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
           <span class="bz-sidebar__label">{{ i18n.t('nav.earn') }}</span>
-          <button v-for="t in earnItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="handleEarnAction(t.id)" :aria-pressed="modelMode === t.id">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+          <button v-for="t in earnItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" :aria-label="t.label" @click="handleEarnAction(t.id)" :aria-pressed="modelMode === t.id">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
           <span class="bz-sidebar__label">{{ i18n.t('nav.automate') }}</span>
-          <button v-for="t in automateItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+          <button v-for="t in automateItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" :aria-label="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
           <span class="bz-sidebar__label">{{ i18n.t('nav.train') }}</span>
-          <button v-for="t in trainItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">{{ t.icon }}</span>
+          <button v-for="t in trainItems" :key="t.id" class="bz-sidebar__item" :class="{ 'is-active': modelMode === t.id }" :title="t.label" :aria-label="t.label" @click="modelMode = t.id" :aria-pressed="modelMode === t.id">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
         </div>
 
         <div class="bz-sidebar__group">
           <span class="bz-sidebar__label">{{ i18n.t('nav.help') }}</span>
-          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'memory' }" :title="i18n.t('nav.memory')" @click="modelMode = 'memory'" :aria-pressed="modelMode === 'memory'">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">neurology</span>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'memory' }" :title="i18n.t('nav.memory')" :aria-label="i18n.t('nav.memory')" @click="modelMode = 'memory'" :aria-pressed="modelMode === 'memory'">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">neurology</span>
             <span class="bz-sidebar__item-label">{{ i18n.t('nav.memory') }}</span>
           </button>
-          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'harness' }" :title="i18n.t('nav.harness')" @click="modelMode = 'harness'" :aria-pressed="modelMode === 'harness'">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">device_hub</span>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'harness' }" :title="i18n.t('nav.harness')" :aria-label="i18n.t('nav.harness')" @click="modelMode = 'harness'" :aria-pressed="modelMode === 'harness'">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">device_hub</span>
             <span class="bz-sidebar__item-label">{{ i18n.t('nav.harness') }}</span>
           </button>
-          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'licenses' }" :title="i18n.t('nav.licenses')" @click="modelMode = 'licenses'" :aria-pressed="modelMode === 'licenses'">
-            <span class="bz-sidebar__item-icon material-symbols-outlined">article</span>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'licenses' }" :title="i18n.t('nav.licenses')" :aria-label="i18n.t('nav.licenses')" @click="modelMode = 'licenses'" :aria-pressed="modelMode === 'licenses'">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">article</span>
             <span class="bz-sidebar__item-label">{{ i18n.t('nav.licenses') }}</span>
           </button>
         </div>
@@ -133,7 +123,7 @@
           <span class="bz-sidebar__label">{{ i18n.t('nav.settings') }}</span>
           <LanguageSelector class="bz-sidebar__language" />
           <div class="bz-sidebar__theme-picker">
-            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(-1)" :title="i18n.t('theme.previous')">
+            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(-1)" :title="i18n.t('theme.previous')" :aria-label="i18n.t('theme.previous')">
               <span class="material-symbols-outlined">chevron_left</span>
             </button>
             <div class="bz-sidebar__theme-display">
@@ -142,7 +132,7 @@
               </div>
               <span class="bz-sidebar__theme-name">{{ currentTheme.name }}</span>
             </div>
-            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(1)" :title="i18n.t('theme.next')">
+            <button class="bz-sidebar__theme-arrow" @click="cycleTheme(1)" :title="i18n.t('theme.next')" :aria-label="i18n.t('theme.next')">
               <span class="material-symbols-outlined">chevron_right</span>
             </button>
           </div>
@@ -161,16 +151,13 @@
       </div>
 
       <div class="bz-sidebar__footer">
-        <button class="bz-sidebar__footer-action bz-sidebar__serve" @click="showNetworkModal = true" :title="p2pModeLabel">
-          <span class="material-symbols-outlined bz-sidebar__serve-icon">{{ p2pModeIcon }}</span>
-          <span class="bz-sidebar__serve-label">{{ p2pModeLabel }}</span>
-        </button>
 
-        <div class="bz-sidebar__footer-action bz-sidebar__model" @click="openBrowseModels" :title="i18n.t('network.browseModels')">
+
+        <button type="button" class="bz-sidebar__footer-action bz-sidebar__model" @click="openBrowseModels" :title="i18n.t('network.browseModels')" :aria-label="i18n.t('network.browseModels')">
           <span class="material-symbols-outlined bz-sidebar__model-icon">neurology</span>
           <span class="bz-sidebar__model-name">{{ sidebarModelName || i18n.t('network.noModel') }}</span>
           <span v-if="alwaysLoaded" class="bz-sidebar__model-lock material-symbols-outlined" :title="i18n.t('network.alwaysLoaded')">lock</span>
-        </div>
+        </button>
 
         <button v-if="systemValues?.memBudget" class="bz-sidebar__footer-action bz-sidebar__specs" @click="openSpecsModal" :title="(systemValues.memBudget / 1024**3).toFixed(0) + ' GB'">
           <span class="material-symbols-outlined">memory</span>
@@ -180,6 +167,8 @@
     </nav>
 
     <main class="bz-main">
+      <ApplicationActivityBar :server="serverStatus" @open-team="openTeamActivity" @open-mode="modelMode = $event" @open-roleplay="goToCompanionChat" @retry-server="handleServerRestart" />
+      <div class="bz-main__workspace">
       <GenerativeText v-if="modelMode == 'chat'" key="chat" />
       <GenerativeAudio v-if="modelMode == 'music'" key="music" />
       <GenerativeImage v-if="modelMode == 'image'" key="image" />
@@ -193,26 +182,29 @@
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
       <ContributionOwnershipDashboard v-if="modelMode == 'economy'" key="economy" />
       <Markets v-if="modelMode == 'markets'" key="markets" />
+      <RewardsView v-if="modelMode == 'rewards'" key="rewards" />
       <AgentJobBoard v-if="jobsEnabled && modelMode == 'jobs'" key="jobs" />
       <MemoryGraph v-if="modelMode == 'memory'" key="memory" />
       <KeepAlive>
-        <Company v-if="modelMode == 'company'" key="company" />
+        <Company v-if="modelMode == 'company'" key="company" :activity-target="teamActivityTarget" />
       </KeepAlive>
       <HarnessView v-if="modelMode == 'harness'" key="harness" />
       <ModelLicenses v-if="modelMode == 'licenses'" key="licenses" />
+      </div>
     </main>
   </div>
 
+  <ConnectionModal />
   <LlmModelPickerModal />
   <CommandPalette />
   <GenerationInspector />
+  <FirstRunWelcome v-if="showFirstRun" @complete="completeFirstRun" />
 
-  <RewardsModal v-if="showRewardsModal" @close="showRewardsModal = false" />
 
   <Teleport to="body">
     <Transition name="fade">
       <div v-if="showNetworkModal" class="network-modal-overlay" @click.self="showNetworkModal = false">
-        <div class="network-modal">
+        <div ref="networkDialog" class="network-modal" role="dialog" aria-modal="true" aria-label="Network settings">
           <div class="network-modal-header">
             <div class="network-titleblock">
               <p class="bz-eyebrow">Network</p>
@@ -230,7 +222,7 @@
 
     <Transition name="fade">
       <div v-if="showAuthModal" class="auth-modal-overlay" @click.self="showAuthModal = false">
-        <div class="auth-modal">
+        <div ref="authDialog" class="auth-modal" role="dialog" aria-modal="true" aria-label="Session status">
           <div class="auth-modal-header">
             <div class="bz-modal-titleblock">
               <p class="bz-eyebrow">Session</p>
@@ -260,30 +252,13 @@
       </div>
     </Transition>
 
-    <Transition name="fade">
-      <div v-if="showPrivyLogin" class="privy-modal-overlay" @click.self="closePrivyLogin">
-        <div class="privy-modal">
-          <div class="privy-modal-header">
-            <div class="bz-modal-titleblock">
-              <p class="bz-eyebrow">Account</p>
-              <h2 class="bz-h1">Sign In</h2>
-            </div>
-            <BzCloseButton size="md" aria-label="Close sign-in" @click="closePrivyLogin" />
-          </div>
-          <div class="privy-modal-body">
-            <p class="privy-subtitle">Sign in with email — no crypto wallet needed. Your wallet opens in a secure window.</p>
-            <button class="bz-btn bz-btn--success bz-btn--lg auth-action-btn fira-sans-condensed-black-italic" @click="openPrivyWallet"><span class="material-symbols-outlined mr-2">open_in_new</span>Open Wallet</button>
-            <div v-if="privyError" class="privy-error-card mt-4"><span class="material-symbols-outlined" style="font-size: 16px">error</span><span>{{ privyError }}</span></div>
-          </div>
-        </div>
-      </div>
-    </Transition>
+
   </Teleport>
 
   <Teleport to="body">
     <Transition name="modal">
       <div v-if="showSpecsModal" class="bz-modal-overlay" @click.self="showSpecsModal = false">
-        <div class="bz-modal" role="dialog" aria-modal="true" aria-label="System specifications">
+        <div ref="specsDialog" class="bz-modal" role="dialog" aria-modal="true" aria-label="System specifications">
           <div class="bz-modal__header">
             <div><span class="bz-eyebrow">System</span><h2 class="bz-h2" style="margin:0">Hardware Specifications</h2></div>
             <BzCloseButton size="md" aria-label="Close" @click="showSpecsModal = false" />
@@ -319,6 +294,8 @@
 </template>
 
 <script>
+
+import { startPublicSessions, stopPublicSessions } from "./services/chat/publicRuntime.js";
 import { defineAsyncComponent, ref, reactive, provide, computed, onMounted, onUnmounted, watch } from "vue";
 import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
@@ -328,6 +305,7 @@ import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
 import ContributionOwnershipDashboard from "./components/ContributionOwnershipDashboard.vue";
 import Markets from "./components/Markets.vue";
+import ApplicationActivityBar from "./components/ApplicationActivityBar.vue";
 import Company from "./components/Company.vue";
 import HarnessView from "./components/HarnessView.vue";
 import ModelLicenses from "./components/ModelLicenses.vue";
@@ -339,15 +317,20 @@ import CommandPalette from "./components/CommandPalette.vue";
 import GenerationInspector from "./components/GenerationInspector.vue";
 import AgentJobBoard from "./components/AgentJobBoard.vue";
 import LanguageSelector from "./components/LanguageSelector.vue";
-import RewardsModal from "./components/RewardsModal.vue";
+import RewardsView from "./components/RewardsView.vue";
 import NetworkSettings from "./components/NetworkSettings.vue";
 import MeshPresence from "./components/MeshPresence.vue";
+import FirstRunWelcome from "./components/FirstRunWelcome.vue";
+import ConnectionModal from "./components/ConnectionModal.vue";
 import { authService, userInitiatedReAuth, refreshToken } from "./services/auth.service.js";
 import { authVault } from "./services/authVault.service.js";
 import { themeService } from "./services/theme.service.js";
 import { useSkillStore } from "./stores/skillStore.js";
 import { initOpenClawHandler } from "./services/openclaw.handler.js";
 import { modelStore } from "./stores/modelStore.js";
+import BzDatePicker from "./components/BzDatePicker.vue";
+import { selectPreferredModel } from "./config/modelDefaults.js";
+import { listAllLLMs } from "./skills/flagship.js";
 import companyStore from "./stores/companyStore.js";
 import meshStore from "./stores/meshStore.js";
 import generationStore from "./stores/generationStore.js";
@@ -357,22 +340,48 @@ import { useBonzaiWeb3 } from "./composables/useBonzaiWeb3.js";
 import { CONFIG } from "./config/web3.config.js";
 import { levelService, checkAllLevels } from "./services/level.service.js";
 import { useI18n } from "./i18n/index.js";
+import { operationText } from "./i18n/operations.js";
+import { useModalAccessibility } from "./composables/useModalAccessibility.js";
 
 const MemoryGraph = defineAsyncComponent(() => import("./components/MemoryGraph.vue"));
 
 export default {
   name: "App",
-  components: {
+  components: { ApplicationActivityBar, BzDatePicker,
     GenerativeText, GenerativeImage, GenerativeVideo, GenerativeAudio,
     Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView,
     ContributionOwnershipDashboard, Markets, MemoryGraph, ModelLicenses, AgentJobBoard, LanguageSelector,
     BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
-    GenerationInspector, RewardsModal, NetworkSettings, MeshPresence,
+    GenerationInspector, RewardsView, NetworkSettings, MeshPresence,
+    FirstRunWelcome, ConnectionModal,
   },
   setup() {
     const i18n = useI18n();
+    const compactQuery = window.matchMedia('(max-width: 1024px)');
+    const readCompactPreference = () => { try { return localStorage.getItem('bonzai.sidebar.compact'); } catch { return null; } };
+    const sidebarCompact = ref(readCompactPreference() === null ? compactQuery.matches : readCompactPreference() === 'true');
+    const toggleSidebarCompact = () => {
+      sidebarCompact.value = !sidebarCompact.value;
+      try { localStorage.setItem('bonzai.sidebar.compact', String(sidebarCompact.value)); } catch {}
+    };
+    const followCompactViewport = () => { if (readCompactPreference() === null) sidebarCompact.value = compactQuery.matches; };
+    compactQuery.addEventListener('change', followCompactViewport);
+    onUnmounted(() => compactQuery.removeEventListener('change', followCompactViewport));
+    const networkDialog = ref(null);
+    const authDialog = ref(null);
+    const specsDialog = ref(null);
+    useModalAccessibility(networkDialog, { onClose: () => { showNetworkModal.value = false; } });
+    useModalAccessibility(authDialog, { onClose: () => { showAuthModal.value = false; } });
+    useModalAccessibility(specsDialog, { onClose: () => { showSpecsModal.value = false; } });
     const jobsEnabled = import.meta.env.VITE_ENABLE_EXPERIMENTAL_JOB_BOARD === "1";
     const modelMode = ref("chat");
+    const firstRunKey = "bonzai.onboarding.v4.completed";
+    const showFirstRun = ref(localStorage.getItem(firstRunKey) !== "true");
+    const completeFirstRun = (mode = "chat") => {
+      localStorage.setItem(firstRunKey, "true");
+      showFirstRun.value = false;
+      if (VALID_MODES.has(mode)) modelMode.value = mode;
+    };
     const sidebarNav = ref(null);
     const sidebarCanScroll = ref(false);
     const sidebarAtBottom = ref(true);
@@ -407,9 +416,9 @@ export default {
     const trainItems = computed(() => [
       { id: "tune", label: i18n.t('nav.tune'), icon: "tune" }, { id: "uncensor", label: i18n.t('nav.uncensor'), icon: "lock_open" },
     ]);
-    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "memory", "licenses"]);
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "rewards", "memory", "licenses"]);
     const handleEarnAction = (id) => {
-      if (id === "rewards") showRewardsModal.value = true;
+      if (id === "rewards") modelMode.value = "rewards";
       if (id === "economy") modelMode.value = "economy";
       if (id === "markets") modelMode.value = "markets";
       if (id === "memory") modelMode.value = "memory";
@@ -418,6 +427,14 @@ export default {
     const onSetModeEvent = (e) => {
       const next = e?.detail;
       if (typeof next === "string" && VALID_MODES.has(next)) modelMode.value = next;
+    };
+    const onHireSmartAgent = () => { modelMode.value = 'company'; };
+    const onRunAgentWorkflow = (event) => {
+      if (!event.detail?.skillId) return;
+      import('./services/company/workflowHandoff.js').then(({ requestCompanyWorkflow }) => {
+        requestCompanyWorkflow(event.detail);
+        modelMode.value = 'company';
+      });
     };
     const onNavigateToTab = (e) => {
       const tab = e?.detail?.tab || e?.detail;
@@ -450,12 +467,7 @@ export default {
     const p2pStatus = ref({ started: false });
     let p2pStatusInterval = null;
 
-    const p2pModeIcon = computed(() => {
-      if (p2pMode.value === "consumer") return "cloud_download";
-      if (p2pMode.value === "provider" && p2pStatus.value.started) return "sensors";
-      if (p2pMode.value === "provider") return "cloud_upload";
-      return p2pStatus.value.started ? "hub" : "wifi_off";
-    });
+    const p2pModeIcon = computed(() => "sensors");
 
     const p2pModeLabel = computed(() => {
       if (p2pMode.value === "consumer") return "Consumer Mode";
@@ -552,28 +564,32 @@ const {
       isConnected, isConnecting, walletAddress, truncatedAddress,
       isUniversalProfile, universalProfileData,
       totalBalance, levels,
-      connect: doConnect, connectWithPrivy: doConnectWithPrivy,
+      connect: doConnect,
       disconnect: doDisconnect, cancelConnection: doCancelConnection,
       refresh: doRefresh, authProvider,
     } = useBonzaiWeb3();
 
     const isRefreshing = ref(false);
-    const showRewardsModal = ref(false);
+    const openRewardsView = () => { modelMode.value = 'rewards'; };
     const showNetworkModal = ref(false);
     const showAuthModal = ref(false);
     const isReauthing = ref(false);
     const isRefreshingToken = ref(false);
-    const showPrivyLogin = ref(false);
-    const privyError = ref("");
     const generationToast = reactive({ show: false, title: "", desc: "" });
     let generationToastTimer = null;
 
-    const currentModelName = computed(() => modelStore.state.current?.modelname || null);
-    const companyModelSummary = computed(() => {
+    const currentModelName = computed(() => modelStore.state.current?.modelname || selectPreferredModel(listAllLLMs(), modelStore.state.preferredFilename)?.name || null);
+    const teamActivityTarget = ref(null);
+function openTeamActivity(id) {
+  teamActivityTarget.value = { id, revision: Date.now() };
+  modelMode.value = 'company';
+}
+
+const companyModelSummary = computed(() => {
       if (modelMode.value !== "company") return null;
       const charter = companyStore.activeCompany?.value;
       if (!charter) return null;
-      return "Company Settings";
+      return operationText("Team settings", i18n.state.locale);
     });
     const sidebarModelName = computed(() => companyModelSummary.value || currentModelName.value || null);
     const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
@@ -676,17 +692,6 @@ const {
     const disconnect = async () => { await doDisconnect(); };
     const cancelConnection = async () => { await doCancelConnection(); };
 
-    const openPrivyWallet = async () => {
-      showPrivyLogin.value = false;
-      const result = await window.electronAPI?.wallet?.open?.({ email: '' });
-      if (!result?.ok) { privyError.value = 'Failed to open wallet window'; return; }
-      doConnectWithPrivy({});
-    };
-    const closePrivyLogin = () => {
-      showPrivyLogin.value = false;
-      privyError.value = "";
-    };
-
     const refresh = async () => {
       isRefreshing.value = true;
       await doRefresh();
@@ -702,6 +707,7 @@ const {
     const handleNeedsReauth = () => { showAuthModal.value = true; };
 
     onMounted(() => {
+      startPublicSessions();
       themeService.init();
       requestAnimationFrame(() => {
         updateSidebarScrollState();
@@ -724,18 +730,19 @@ const {
 
       modelStore.initialize().then(() => modelStore.startListening());
 
-      window.electronAPI.getAppVersion()
-        .then((version) => { document.title = `BonzAI v${version}`; })
+      window.electronAPI?.getAppVersion?.()
+        ?.then((version) => { document.title = `BonzAI v${version}`; })
         .catch(() => { document.title = "BonzAI"; });
 
       initOpenClawHandler();
       window.addEventListener("bonzai:open-browse-models", showBrowseModels);
       window.addEventListener("bonzai:set-mode", onSetModeEvent);
       window.addEventListener("navigate-to-tab", onNavigateToTab);
+      window.addEventListener("bonzai:hire-smart-agent", onHireSmartAgent);
+      window.addEventListener("bonzai:run-agent-workflow", onRunAgentWorkflow);
       window.addEventListener("bonzai:open-specs", openSpecsModal);
       window.addEventListener("bonzai:open-network", () => { showNetworkModal.value = true; });
-      window.addEventListener("bonzai:open-rewards", () => { showRewardsModal.value = true; });
-      window.addEventListener("bonzai:open-connect", () => { showPrivyLogin.value = true; });
+      window.addEventListener("bonzai:open-rewards", openRewardsView);
       window.addEventListener("auth:needs-reauth", handleNeedsReauth);
       window.addEventListener("auth:expired", handleNeedsReauth);
 
@@ -743,23 +750,7 @@ const {
       refreshP2PStatus();
       p2pStatusInterval = setInterval(refreshP2PStatus, 30000);
 
-      if (window.electronAPI?.onPrivyOAuthCallback) {
-        window.electronAPI.onPrivyOAuthCallback(async (_event, url) => {
-          try {
-            const parsed = new URL(url);
-            const code = parsed.searchParams.get("code");
-            const state = parsed.searchParams.get("state");
-            const provider = parsed.searchParams.get("provider") || "google";
-            if (code && state) {
-              const result = await doConnectWithPrivy({ method: "oauth_callback", authorizationCode: code, returnedStateCode: state, provider });
-              if (result.success) showPrivyLogin.value = false;
-              else privyError.value = result.error || "OAuth sign-in failed";
-            }
-          } catch (e) { privyError.value = e.message || "OAuth callback failed"; }
-        });
-      }
-
-      unsubscribeServerStatus = window.electronAPI.onServerStatus((data) => {
+      const applyServerStatus = (data) => {
         if (autoHideTimeout) { clearTimeout(autoHideTimeout); autoHideTimeout = null; }
         serverStatus.show = true;
         serverStatus.type = data.status;
@@ -768,10 +759,14 @@ const {
         if (data.status === "ready") {
           autoHideTimeout = setTimeout(() => { serverStatus.show = false; }, 3000);
         }
-      });
+      };
+      let receivedServerEvent = false;
+      unsubscribeServerStatus = window.electronAPI?.onServerStatus?.(data => { receivedServerEvent = true; applyServerStatus(data); });
+      window.electronAPI?.getServerStatus?.()?.then(data => { if (!receivedServerEvent && data) applyServerStatus(data); }).catch(() => {});
     });
 
     onUnmounted(() => {
+      stopPublicSessions();
       sidebarResizeObserver?.disconnect();
       if (unsubscribeServerStatus) unsubscribeServerStatus();
       if (autoHideTimeout) clearTimeout(autoHideTimeout);
@@ -783,7 +778,10 @@ const {
       window.removeEventListener("bonzai:open-browse-models", showBrowseModels);
       window.removeEventListener("bonzai:set-mode", onSetModeEvent);
       window.removeEventListener("navigate-to-tab", onNavigateToTab);
+      window.removeEventListener("bonzai:hire-smart-agent", onHireSmartAgent);
+      window.removeEventListener("bonzai:run-agent-workflow", onRunAgentWorkflow);
       window.removeEventListener("bonzai:open-specs", openSpecsModal);
+      window.removeEventListener("bonzai:open-rewards", openRewardsView);
       window.removeEventListener("auth:needs-reauth", handleNeedsReauth);
       window.removeEventListener("auth:expired", handleNeedsReauth);
     });
@@ -820,13 +818,17 @@ const {
     );
 
     return {
+      teamActivityTarget, openTeamActivity,
+      sidebarCompact, toggleSidebarCompact,
+      networkDialog, authDialog, specsDialog,
       i18n, modelMode, jobsEnabled, createItems, earnItems, automateItems, trainItems,
+      showFirstRun, completeFirstRun,
       sidebarNav, sidebarCanScroll, sidebarAtBottom, updateSidebarScrollState, scrollSidebarForward,
       handleEarnAction,
       systemValues, videoImageBase64, goAnimateToVideo, goToCompanionChat,
       serverStatus, notifClass, serverStatusIcon, serverStatusDescription, handleServerRestart,
       authState, skillStore, showSpecsModal, specsData, openSpecsModal,
-      showRewardsModal, showNetworkModal, showAuthModal, showPrivyLogin,
+      showNetworkModal, showAuthModal,
       isConnected, isConnecting, walletAddress, truncatedAddress,
       totalBalance, formatBalance, displayedHighestLevelKey,
       upDisplayName, upAvatarUrl, isRefreshing,
@@ -837,7 +839,7 @@ const {
       tokenExpiresIn, pendingOps, vaultStatus, authStatusClass, authStatusText,
       formatExpiry, handleReauth, handleRefreshToken,
       connect, disconnect, cancelConnection,
-      openPrivyWallet, closePrivyLogin, privyError, refresh, copyAddress,
+      refresh, copyAddress,
       generationToast,
     };
   },
@@ -850,10 +852,11 @@ const {
 @import "./assets/themes.css";
 @import "./assets/buttons.css";
 @import "./assets/notices.css";
+@import "./assets/fields.css";
 
 html, body {
   -webkit-app-region: no-drag;
-  -webkit-user-select: none;
+  -webkit-user-select: text;
   box-sizing: border-box !important;
   overflow: hidden;
   height: 100%;
@@ -958,11 +961,16 @@ html, body {
 }
 
 .bz-main {
+  display: flex;
+  flex-direction: column;
+  position: relative;
   min-width: 0;
   height: 100%;
   overflow: hidden;
   background: var(--bz-canvas);
 }
+
+.bz-main__workspace { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 
 .bz-tab-shell {
   display: flex;
@@ -985,6 +993,7 @@ html, body {
 }
 
 .bz-sidebar__brand {
+  border-bottom: 1px solid var(--bz-border);
   padding: var(--bz-space-5) var(--bz-space-5) var(--bz-space-4);
   display: flex;
   flex-direction: column;
@@ -998,7 +1007,7 @@ html, body {
   font-weight: 900;
   font-style: italic;
   font-size: 18px;
-  color: var(--bz-purple-300);
+  color: var(--bz-wordmark-color);
   letter-spacing: -0.01em;
 }
 
@@ -1010,6 +1019,10 @@ html, body {
   white-space: nowrap;
 }
 .bz-sidebar__auth-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  min-height: 36px;
   color: var(--bz-fg-low);
   font-size: var(--bz-size-meta);
   white-space: nowrap;
@@ -1202,7 +1215,7 @@ html, body {
   }
 
   .bz-sidebar__item {
-    min-height: 24px;
+    min-height: 44px;
     gap: 6px;
     padding: 2px var(--bz-space-2);
     font-size: var(--bz-size-meta);
@@ -1215,7 +1228,7 @@ html, body {
 
   .bz-sidebar__group--settings {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     margin-top: 0;
   }
 
@@ -1251,7 +1264,7 @@ html, body {
     font-size: 9px;
   }
   .bz-sidebar__item {
-    min-height: 22px;
+    min-height: 44px;
     padding-block: 1px;
     font-size: var(--bz-size-micro);
   }
@@ -1686,6 +1699,22 @@ html, body {
   justify-content: center;
   margin-top: 10px;
 }
+.bz-sidebar__auth {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  margin-top: var(--bz-space-2);
+}
+.bz-sidebar__auth-sep { display: none; }
+.bz-sidebar__auth-link {
+  min-width: 0;
+  padding: 3px 0;
+  color: var(--bz-fg-mid);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.bz-sidebar__auth-link:hover { color: var(--bz-purple-300); }
+.bz-sidebar__auth-icon { display: none; font-size: 18px !important; }
 .auth-ok {
   margin: 0;
   color: var(--bz-muted);
@@ -1778,23 +1807,67 @@ html, body {
 }
 
 /* ─── COMPACT VIEWPORT ──────────────────────────────────────────── */
-@media (max-width: 1024px) {
-  #bonzai { grid-template-columns: 72px minmax(0, 1fr); }
-  .bz-sidebar__wordmark { display: none; }
-  .bz-sidebar__brand { padding: var(--bz-space-2); justify-content: center; }
-  .bz-sidebar__label { display: none; }
-  .bz-sidebar__item { justify-content: center; min-height: 25px; padding: 3px; }
-  .bz-sidebar__item-label { display: none; }
-  .bz-sidebar__footer { display: none; }
-  .bz-sidebar__nav { align-items: stretch; gap: 1px; padding: var(--bz-space-1); }
-  .bz-sidebar__group { gap: 0; }
-  .bz-sidebar__group--settings { margin-top: 0; }
-  .bz-sidebar__theme-picker { width: 100%; padding: 1px; }
-  .bz-sidebar__theme-arrow { width: 18px; height: 18px; }
-  .bz-sidebar__theme-display { min-width: 24px; }
-  .bz-sidebar__theme-name { display: none; }
-  .bz-sidebar__language { margin: 0; }
-}
+#bonzai.sidebar-compact { grid-template-columns: 88px minmax(0, 1fr); }
+#bonzai.sidebar-compact .bz-sidebar__wordmark { display: none; }
+#bonzai.sidebar-compact .bz-sidebar__brand { padding: var(--bz-space-2); justify-content: center; }
+#bonzai.sidebar-compact .bz-sidebar__label { display: none; }
+#bonzai.sidebar-compact .bz-sidebar__item { justify-content: center; min-height: 44px; padding: 3px; }
+#bonzai.sidebar-compact .bz-sidebar__item-label { display: none; }
+#bonzai.sidebar-compact .bz-sidebar__footer { display: flex; padding: 4px; }
+#bonzai.sidebar-compact .bz-sidebar__footer-action { justify-content: center; }
+#bonzai.sidebar-compact .bz-sidebar__serve-label, #bonzai.sidebar-compact .bz-sidebar__model-name, #bonzai.sidebar-compact .bz-sidebar__model-lock, #bonzai.sidebar-compact .bz-sidebar__specs { display: none; }
+#bonzai.sidebar-compact .bz-sidebar__nav { align-items: stretch; gap: 1px; padding: var(--bz-space-1); }
+#bonzai.sidebar-compact .bz-sidebar__group { gap: 0; }
+#bonzai.sidebar-compact .bz-sidebar__group--settings { margin-top: 0; }
+#bonzai.sidebar-compact .bz-sidebar__theme-picker { width: 100%; padding: 1px; }
+#bonzai.sidebar-compact .bz-sidebar__theme-arrow { width: 18px; height: 18px; }
+#bonzai.sidebar-compact .bz-sidebar__theme-display { min-width: 24px; }
+#bonzai.sidebar-compact .bz-sidebar .bz-sidebar__theme-name { display: none; }
+#bonzai.sidebar-compact .bz-sidebar__language { margin: 0; }
+#bonzai.sidebar-compact .bz-sidebar__auth {
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    gap: 2px;
+    margin-top: 0;
+  }
+#bonzai.sidebar-compact .bz-sidebar__auth-link {
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--bz-border);
+    border-radius: var(--bz-r-sm);
+    text-decoration: none;
+  }
+#bonzai.sidebar-compact .bz-sidebar__auth-icon { display: block; }
+#bonzai.sidebar-compact .bz-sidebar__auth-label { display: none; }
+
+
+/* Keep compact controls usable at every supported height. */
+.bz-sidebar__item { min-height: 44px; }
+.bz-sidebar__theme-arrow, .bz-sidebar__wallet-btn,
+.bz-sidebar__auth-link, .bz-sidebar__scroll-hint { min-width: 36px; min-height: 36px; flex-shrink: 0; }
+.bz-sidebar__theme-display { min-width: 0; }
+.bz-sidebar__footer-action { min-height: 36px; }
+.bz-sidebar__item.is-active { color: var(--bz-fg); }
+.bz-sidebar button:focus-visible { outline: 2px solid var(--bz-purple-300); outline-offset: -2px; }
+#bonzai.sidebar-compact .bz-sidebar .bz-sidebar__theme-display { display: none; }
+
+
+.bz-sidebar__identity { display: flex; align-items: center; gap: 8px; }
+.bz-sidebar__logo { width: 28px; height: 28px; object-fit: contain; }
+#bonzai.sidebar-compact .bz-sidebar__identity { display: none; }
+.bz-sidebar__brand-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.bz-sidebar__wordmark { font-size: 24px; }
+.bz-sidebar__collapse { flex-shrink: 0; }
+.bz-sidebar__auth { width: 100%; }
+.bz-sidebar__auth-link { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; border: 1px solid var(--bz-border); border-radius: var(--bz-r-sm); text-decoration: none; color: var(--bz-fg); background: var(--bz-panel); }
+.bz-sidebar__auth-icon { display: block; font-size: 18px; }
+#bonzai.sidebar-compact .bz-sidebar__brand-row { justify-content: center; }
+#bonzai.sidebar-compact .bz-sidebar__wallet-info { justify-content: center; }
+#bonzai.sidebar-compact .bz-sidebar__wallet-addr, #bonzai.sidebar-compact .bz-sidebar__balance, #bonzai.sidebar-compact .bz-sidebar__wallet-actions { display: none; }
 
 /* ─── SUPPRESS SCROLLBARS ───────────────────────────────────────── */
 .models__deployment-install { scrollbar-width: none; }

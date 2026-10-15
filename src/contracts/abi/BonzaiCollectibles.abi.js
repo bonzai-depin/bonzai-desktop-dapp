@@ -326,6 +326,31 @@ export const BonzaiCollectiblesABI = [
     "anonymous": false,
     "inputs": [
       {
+        "indexed": true,
+        "internalType": "address",
+        "name": "pool",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint8",
+        "name": "poolIndex",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "PoolFeesRetried",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": false,
         "internalType": "uint256",
         "name": "oldBps",
@@ -720,6 +745,30 @@ export const BonzaiCollectiblesABI = [
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "uint8",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "name": "pendingPoolFees",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "poolBps",
     "outputs": [
@@ -792,6 +841,24 @@ export const BonzaiCollectiblesABI = [
   {
     "inputs": [],
     "name": "renounceOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "pool",
+        "type": "address"
+      },
+      {
+        "internalType": "uint8",
+        "name": "poolIndex",
+        "type": "uint8"
+      }
+    ],
+    "name": "retryPoolFees",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -1062,6 +1129,19 @@ export const BonzaiCollectiblesABI = [
   {
     "inputs": [],
     "name": "totalMinted",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalPendingPoolFees",
     "outputs": [
       {
         "internalType": "uint256",

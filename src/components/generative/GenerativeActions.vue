@@ -7,14 +7,14 @@
       class="bz-gen-action"
       :class="actionClass(a)"
       :disabled="a.disabled"
-      :title="a.title || a.label"
-      :aria-label="a.label"
+      :title="$ui(a.title || a.label)"
+      :aria-label="$ui(a.label || a.title || a.id)"
       @click="$emit('action', a.id)"
     >
       <span class="material-symbols-outlined" aria-hidden="true">
         {{ a.icon }}
       </span>
-      <span v-if="!isIconOnly(a)" class="bz-gen-action__label">{{ a.label }}</span>
+      <span v-if="!isIconOnly(a)" class="bz-gen-action__label">{{ $ui(a.label) }}</span>
     </button>
     <slot />
   </div>
@@ -60,7 +60,7 @@ function isIconOnly(a) {
 
 .bz-gen-actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   min-width: 0;
@@ -75,13 +75,14 @@ function isIconOnly(a) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: max-content;
   height: 32px;
   padding: 0 10px;
-  background: transparent;
+  background: var(--bz-card);
   border: 1px solid var(--bz-border);
   border-radius: var(--bz-r-sm);
-  color: var(--bz-fg-mid);
+  color: var(--bz-fg);
   font-family: var(--bz-font-body);
   font-size: var(--bz-size-meta);
   cursor: pointer;
@@ -113,39 +114,28 @@ function isIconOnly(a) {
 }
 .bz-gen-action--icon-only .bz-gen-action__label { display: none; }
 
-/* Variants — lean into colour for state, never as a button */
-.bz-gen-action--primary {
-  background: var(--bz-purple-500);
-  border-color: var(--bz-purple-500);
-  color: var(--bz-on-accent);
-}
+/* Paired opaque colors stay readable over any generated media. */
+.bz-gen-action--primary,
 .bz-gen-action--primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-  background: var(--bz-purple-500);
-  color: var(--bz-on-accent);
+  background: var(--bz-control-selected-bg);
+  border-color: var(--bz-control-selected-border);
+  color: var(--bz-control-selected-fg);
 }
-.bz-gen-action--success {
-  color: var(--bz-emerald-500);
-  border-color: var(--bz-emerald-soft);
-  background: var(--bz-emerald-soft);
-}
-.bz-gen-action--success:hover:not(:disabled) {
-  color: var(--bz-emerald-700);
-  border-color: var(--bz-emerald-500);
-}
-.bz-gen-action--warning {
-  color: var(--bz-warning);
-  border-color: var(--bz-warning-soft);
-}
-.bz-gen-action--warning:hover:not(:disabled) {
-  background: var(--bz-warning-soft);
-}
-.bz-gen-action--destructive {
-  color: var(--bz-fg-low);
-}
+.bz-gen-action--success { border-color: var(--bz-emerald-500); }
+.bz-gen-action--warning { border-color: var(--bz-warning); }
 .bz-gen-action--destructive:hover:not(:disabled) {
-  color: var(--bz-danger);
-  border-color: var(--bz-danger-soft);
-  background: var(--bz-danger-soft);
+  background: var(--bz-danger);
+  border-color: var(--bz-danger);
+  color: var(--bz-on-danger);
+}
+.bz-gen-action:disabled {
+  opacity: 1;
+  background: var(--bz-raised);
+  color: var(--bz-fg-mid);
+  border-color: var(--bz-border-strong);
+}
+.bz-gen-action:focus-visible {
+  outline: 2px solid var(--bz-fg);
+  outline-offset: -3px;
 }
 </style>

@@ -65,6 +65,14 @@ describe("CompanionTokenFactory", function () {
     };
   }
 
+  it('pins the smart-agent registry after issuance so numeric IDs cannot acquire a different meaning', async function () {
+    const fixture = await loadFixture(deployCompanionTokenFactory);
+    await mintAndLaunch(fixture);
+    const anotherRegistry = await (await ethers.getContractFactory('MockBonzaiCompanions')).deploy();
+    await expect(fixture.factory.setCompanionContract(await anotherRegistry.getAddress())).to.be.revertedWith('Registry frozen after issuance');
+    await fixture.factory.setCompanionContract(await fixture.mockCompanions.getAddress());
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // DEPLOYMENT
   // ═══════════════════════════════════════════════════════════════════════════

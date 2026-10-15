@@ -33,6 +33,9 @@ export default {
 
     // Ignore large build artifacts (anchored to root to not match .vite/build)
     ignore: [
+      /^[/\\]\.local-release-archive$/,
+      /^[/\\]\.chart-data-[^/\\]*$/,
+      /^[/\\]\.codex-(presentation-build|finalizer)$/,
       /^[/\\]dist$/,
       /^[/\\]build$/,
       /^[/\\]bonzai$/,

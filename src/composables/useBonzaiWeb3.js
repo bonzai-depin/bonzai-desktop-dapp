@@ -18,6 +18,7 @@ import { computed, onMounted } from "vue";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { CONFIG } from "../config/web3.config.js";
 import { web3Service } from "../services/web3.service.js";
+import { requestConnection } from "../services/connectionDialog.service.js";
 
 /**
  * Level key constants
@@ -174,7 +175,7 @@ export function useBonzaiWeb3(options = {}) {
   // ═══════════════════════════════════════════════════════════════════════════
 
   // Wallet
-  const connect = async () => store.connect();
+  const connect = async () => requestConnection();
   const connectWithPrivy = async (options) => store.connectWithPrivy(options);
   const disconnect = async () => store.disconnect();
   const refresh = async () => store.refreshAll();

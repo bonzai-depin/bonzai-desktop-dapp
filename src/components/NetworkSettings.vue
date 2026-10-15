@@ -661,13 +661,13 @@
         <div class="service-time-hero">
           <div>
             <p class="bz-eyebrow">Provider contribution</p>
-            <p class="service-time-copy">
-              Served seconds are queued locally, then submitted to BonzaiServiceTime for epoch rewards when the contract is available.
+            <p class="service-time-copy" data-i18n-skip>
+              {{ $t('rc.economy.receiptsRequired') }}
             </p>
           </div>
-          <span class="service-time-pill" :class="serviceTimeReady ? 'is-ready' : 'is-pending'">
-            <span class="material-symbols-outlined">{{ serviceTimeReady ? "verified" : "pending" }}</span>
-            {{ serviceTimeReady ? "Contract ready" : "Awaiting deploy" }}
+          <span class="service-time-pill is-pending" data-i18n-skip>
+            <span class="material-symbols-outlined" aria-hidden="true">pending</span>
+            {{ $t('rc.economy.providerRewardsUnavailable') }}
           </span>
         </div>
 
@@ -684,11 +684,6 @@
             <span class="service-time-stat__label">Ledger size</span>
             <strong>{{ (((serviceTimePending?.bytes || 0) / 1024).toFixed(1)) }} KB</strong>
           </div>
-        </div>
-
-        <div v-if="!serviceTimeReady" class="bz-notice bz-notice--warning mt-3">
-          <strong>Pending audit deploy.</strong>
-          Sessions still accumulate locally and can be submitted once the contract address is populated.
         </div>
 
         <div v-if="serviceTimePending && serviceTimePending.rows > 0" class="pending-summary mt-3">
@@ -714,16 +709,6 @@
 
         <div class="service-time-actions mt-4">
           <button
-            class="bz-btn bz-btn--primary"
-            :disabled="!serviceTimeReady || serviceTimeFlushing || !serviceTimePending?.rows"
-            @click="flushServiceTime"
-            :title="serviceTimeEligibility?.ok ? 'Submit pending service time' : (serviceTimeEligibility?.balance >= 0n ? 'Need 1000 BONZAI to submit provider time' : 'Connect wallet to check eligibility')"
-          >
-            <span class="material-symbols-outlined mr-2">cloud_upload</span>
-            <span v-if="serviceTimeFlushing">Submitting…</span>
-            <span v-else>Submit Pending</span>
-          </button>
-          <button
             class="bz-btn bz-btn--ghost"
             @click="refreshServiceTime"
             :disabled="serviceTimeFlushing"
@@ -747,6 +732,7 @@
 </template>
 
 <script setup>
+import meshStore from "../stores/meshStore.js";
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { getProviderPerformanceStats } from "../stores/inferenceStore.js";
 import PipelineStatus from "./PipelineStatus.vue";
@@ -1031,7 +1017,7 @@ const flushServiceTime = async () => {
   try {
     const result = await serviceTimeFlush();
     if (result.skipped) {
-      serviceTimeFlushError.value = `Skipped: ${result.skipped}`;
+      serviceTimeFlushError.value = result.message || `Skipped: ${result.skipped}`;
     } else {
       serviceTimeFlushResult.value = result;
       // Reload pending — successful flush truncates the ledger.
@@ -1389,6 +1375,7 @@ const loadSettings = async () => {
 // Save network mode when changed
 watch(networkMode, async (newMode) => {
   await window.electronAPI.store.set("p2p.networkMode", newMode);
+  meshStore.setMode(newMode);
   // Refresh the bottom bar's pipeline tag without waiting for next swap.
   await window.electronAPI.broadcastModelState?.();
 
@@ -1444,7 +1431,7 @@ onMounted(async () => {
   // scroll position. We watch each section heading; the first one
   // crossing the top quarter of the pane wins. Margins keep the
   // active highlight from flickering on small scroll deltas.
-  const targets = sections
+  const targets = sections.value
     .map((s) => document.getElementById(s.id))
     .filter(Boolean);
   if (targets.length && "IntersectionObserver" in window) {

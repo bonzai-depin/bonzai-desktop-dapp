@@ -3,6 +3,7 @@
     <Transition name="bz-modal">
       <div
         v-if="modelPicker.state.open"
+        ref="dialogRef"
         class="bz-picker"
         role="dialog"
         aria-modal="true"
@@ -139,7 +140,7 @@
 
                   <!-- Title block -->
                   <div class="bz-row__title">
-                    <span class="bz-h3">{{ model.modelname }}</span>
+                    <span class="bz-h3" :class="{ 'bz-row__download-name': !availability[model.filename] }">{{ !availability[model.filename] ? model.modelname.toLowerCase() : model.modelname }}</span>
                     <span class="bz-row__meta bz-mono bz-meta">
                       {{ shortFilename(model.filename) }}
                     </span>
@@ -149,15 +150,15 @@
                   <div class="bz-row__stats">
                     <span class="bz-stat">
                       <span class="bz-eyebrow">Disk</span>
-                      <span class="bz-mono">{{ model.filesize || "—" }}</span>
+                      <span class="bz-mono bz-metric">{{ model.filesize || "—" }}</span>
                     </span>
                     <span class="bz-stat">
                       <span class="bz-eyebrow">VRAM</span>
-                      <span class="bz-mono">{{ vramOf(model) }}</span>
+                      <span class="bz-mono bz-metric">{{ vramOf(model) }}</span>
                     </span>
                     <span class="bz-stat" v-if="model.isMoE">
                       <span class="bz-eyebrow">Active</span>
-                      <span class="bz-mono">{{ activeBn(model) }} B</span>
+                      <span class="bz-mono bz-metric">{{ activeBn(model) }} B</span>
                     </span>
                   </div>
 
@@ -180,7 +181,7 @@
                       @click.stop="downloading[model.filename] != null ? onCancelDownload(model) : onDownload(model)"
                     >
                       <template v-if="downloading[model.filename] != null">
-                        <span class="bz-mono">{{ downloading[model.filename] }}%</span>
+                        <span class="bz-mono bz-metric">{{ downloading[model.filename] }}%</span>
                         <span class="bz-btn__progress bz-generating"></span>
                         <span>Cancel</span>
                       </template>
@@ -233,9 +234,13 @@
 </template>
 
 <script setup>
+import { useModalAccessibility } from '../composables/useModalAccessibility.js';
+const dialogRef = ref(null);
+useModalAccessibility(dialogRef, { onClose: close });
 import { ref, computed, nextTick, onMounted, onUnmounted, watch, reactive } from "vue";
 import { listAllLLMs } from "../skills/flagship.js";
 import { modelStore } from "../stores/modelStore.js";
+import { selectPreferredModel } from "../config/modelDefaults.js";
 import { modelPicker } from "../services/modelPicker.service.js";
 import {
   computeMemoryRequirements,
@@ -454,6 +459,7 @@ async function onDownload(model) {
     downloadErrors[model.filename] = "This model is local-only. Re-import it if the file is missing.";
     return;
   }
+  modelStore.setPreferred(model);
   downloading[model.filename] = 0;
   delete downloadErrors[model.filename];
   try {
@@ -515,6 +521,7 @@ async function onLoad(model) {
       license: model.license || null,
       licenseUrl: model.licenseUrl || null,
     });
+    modelStore.setPreferred(model);
     modelStore.setCurrent(model);
     modelPicker._resolve(model);
   } catch (e) {
@@ -587,7 +594,8 @@ watch(
     fetchSysInfo();
     setTimeout(fetchSysInfo, 1500);
     refreshAvailability();
-    activeIndex.value = 0;
+    const preferred = selectPreferredModel(visibleModels.value, currentFilename.value || modelStore.state.preferredFilename);
+    activeIndex.value = Math.max(0, visibleModels.value.findIndex(model => model.filename === preferred?.filename));
     nextTick(() => searchInputRef.value?.focus?.());
   },
 );

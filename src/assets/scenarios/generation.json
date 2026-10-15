@@ -1,0 +1,71 @@
+{
+  "date": "2026-09-28",
+  "method": "Built-in image generation; WebP conversion at quality 88",
+  "images": [
+    {
+      "id": "art_gallery_after_dark",
+      "file": "art_gallery_after_dark.webp",
+      "prompt": "Generate one polished cinematic photorealistic environment image for BonzAI's Roleplay stage selector. Landscape 16:9, no text or logos, no people. Scene: The Midnight Installation — contemporary art gallery during overnight exhibition setup, open wooden crates, sculpture, lighting tests, conservation tables, rooftop city view. Cool moonlight mixed with warm spotlights, refined architectural detail. Save the generated image locally for project use."
+    },
+    {
+      "id": "private_kitchen",
+      "file": "private_kitchen.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: professional culinary test kitchen, daylight, chefs developing a menu, fresh ingredients, refined documentary photography. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "jungle_retreat",
+      "file": "jungle_retreat.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: rainforest field station, conservation researchers, canopy walkway, field notebooks, lush Costa Rica, cinematic natural light. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "university_study",
+      "file": "university_study.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: university archive reading room, archival boxes, researchers, rain at tall windows, warm task lighting, cinematic realism. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "neon_apartment",
+      "file": "neon_apartment.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: Tokyo apartment design studio at night, prototypes, projection wall, city lights, focused creative team, refined cinematic photography. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "tuscan_villa",
+      "file": "tuscan_villa.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: Tuscan olive estate during harvest, stone mill, workers and designers, autumn sunlight, elegant documentary film still. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "recording_studio",
+      "file": "recording_studio.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: analog recording studio live session, musicians, tape machine, warm practical lights, cinematic documentary frame. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "fashion_atelier",
+      "file": "fashion_atelier.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: Paris sustainable fashion atelier, reclaimed textiles, dress forms, artisans working, natural daylight, editorial realism. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "shanghai_penthouse",
+      "file": "shanghai_penthouse.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: Shanghai skyline strategy workshop, city maps, physical models, diverse professional team, refined evening light. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "mumbai_monsoon",
+      "file": "mumbai_monsoon.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: Mumbai monsoon documentary production, rain-washed streets, film crew, community contributors, vivid cinematic realism. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "urban_studio",
+      "file": "urban_studio.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: small business automation sprint, process maps, working prototype, focused diverse team, clean urban studio, cinematic realism. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "rio_beach_studio",
+      "file": "rio_beach_studio.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: Rio coastal research and campaign studio, water maps, community team, bright natural light, documentary film still. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    },
+    {
+      "id": "bollywood_set",
+      "file": "bollywood_set.webp",
+      "prompt": "Generate one cinematic photorealistic environment asset for BonzAI Roleplay stage selector. Landscape 16:9, detailed architectural/environmental photography, polished natural materials and lighting, believable spaces, no text, no logos. Scene concept: major Indian film soundstage, musical production, camera crane, performers and crew, colorful practical set, cinematic realism. Depict the environment ready for the activity; omit all people and characters so the user's companion can inhabit it. No UI, no collage, one image."
+    }
+  ]
+}

@@ -46,6 +46,7 @@ contract BonzaiDatasetRegistry is Ownable, ReentrancyGuard, Pausable {
         bool royaltyBearing,
         bytes32[] calldata contributionIds
     ) external nonReentrant whenNotPaused returns (bytes32 datasetId) {
+        require(contentHash != bytes32(0), "Content hash required");
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
         if (bytes(licenseURI).length == 0) revert EmptyLicenseURI();
 
@@ -78,6 +79,11 @@ contract BonzaiDatasetRegistry is Ownable, ReentrancyGuard, Pausable {
         if (dataset.createdAt == 0) revert DatasetNotFound(datasetId);
         if (dataset.owner != msg.sender) revert NotDatasetOwner(msg.sender, dataset.owner);
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
+        // A verification attests to the reviewed metadata, not future edits.
+        if (dataset.verified) {
+            dataset.verified = false;
+            emit DatasetVerificationChanged(datasetId, false, block.timestamp);
+        }
         dataset.metadataURI = metadataURI;
         dataset.active = active;
         dataset.updatedAt = block.timestamp;

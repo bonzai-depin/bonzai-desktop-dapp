@@ -2,7 +2,7 @@
   <div
     ref="roleplayChatRef"
     class="roleplay-chat"
-    :class="{ 'is-fullscreen': isFullscreen }"
+    :class="{ 'is-fullscreen': isFullscreen, 'is-agent-management': managementOnly }"
   >
     <!-- Setup Phase -->
     <div v-if="phase === 'setup'" class="setup-phase">
@@ -22,26 +22,33 @@
         @change="handleScenarioImport"
       />
 
+      <div v-if="rosterLoadError" class="bz-notice bz-notice--danger" role="alert">
+        <p>{{ rosterLoadError }}</p>
+        <button class="bz-btn bz-btn--ghost" :disabled="rosterLoading" @click="loadCompanions">Retry loading agents</button>
+      </div>
+      <p v-if="rosterSaveError" class="bz-notice bz-notice--danger" role="alert">{{ rosterSaveError }}</p>
       <!-- Companion Selection -->
       <div class="models__activity--payouts mb-5">
-        <div class="section-header">
+        <div v-if="!managementOnly" class="section-header">
           <h3
+            v-if="!managementOnly"
             class="fira-sans-condensed-black-italic has-text-white has-text-left is-size-3 mb-4"
           >
             <span class="material-symbols-outlined mr-2 is-size-1">
               person_pin
             </span>
-            Select Companion
+            {{ managementOnly ? "Smart agents" : "Select Companion" }}
           </h3>
           <div class="import-export-buttons">
             <!-- Create button always visible - generation is gated -->
             <button
-              class="bz-iconbtn"
+              :class="managementOnly ? 'bz-btn bz-btn--primary' : 'bz-iconbtn'"
               @click="openCustomCompanion"
-              title="Create companion"
-              aria-label="Create companion"
+              :title="managementOnly ? 'Create smart agent' : 'Create companion'"
+              :aria-label="managementOnly ? 'Create smart agent' : 'Create companion'"
             >
               <span class="material-symbols-outlined">add</span>
+              <span v-if="managementOnly">Create smart agent</span>
             </button>
             <button
               class="bz-iconbtn"
@@ -62,103 +69,44 @@
           </div>
         </div>
 
-        <!-- Companion Minting Guide -->
-        <div class="mint-guide mt-4 mb-4">
-          <h4 class="fira-sans-condensed-black-italic is-size-4">
-            <span class="has-text-brand">Minting Event in Progress</span>
-          </h4>
-          <hr />
-          <div class="mint-guide-steps has-text-left">
-            <div class="mint-guide-step">
-              <span
-                class="material-symbols-outlined mint-guide-icon has-text-success"
-              >
-                add_circle
-              </span>
-              <div>
-                <strong class="has-text-white fira-sans-condensed-black-italic">
-                  Create
-                </strong>
-                <span class="has-text-grey-light">
-                  Generate a custom companion with unique traits.
-                </span>
-              </div>
-            </div>
-            <span
-              class="material-symbols-outlined mint-guide-arrow has-text-grey"
-            >
-              arrow_forward
-            </span>
-            <div class="mint-guide-step">
-              <span
-                class="material-symbols-outlined mint-guide-icon has-text-warning"
-              >
-                token
-              </span>
-              <div>
-                <strong class="has-text-white fira-sans-condensed-black-italic">
-                  Mint
-                </strong>
-                <span class="has-text-grey-light">
-                  Turn your companion into a tradeable collectible.
-                </span>
-              </div>
-            </div>
-            <span
-              class="material-symbols-outlined mint-guide-arrow has-text-grey"
-            >
-              arrow_forward
-            </span>
-            <div class="mint-guide-step">
-              <span
-                class="material-symbols-outlined mint-guide-icon has-text-info"
-              >
-                fingerprint
-              </span>
-              <div>
-                <strong class="has-text-white fira-sans-condensed-black-italic">
-                  Identify
-                </strong>
-                <span class="has-text-grey-light">
-                  Deploy a Universal Profile for your companion.
-                </span>
-              </div>
-            </div>
-            <span
-              class="material-symbols-outlined mint-guide-arrow has-text-grey"
-            >
-              arrow_forward
-            </span>
-            <div class="mint-guide-step">
-              <span
-                class="material-symbols-outlined mint-guide-icon has-text-primary"
-              >
-                rocket_launch
-              </span>
-              <div>
-                <strong class="has-text-white fira-sans-condensed-black-italic">
-                  Monetize
-                </strong>
-                <span class="has-text-grey-light">
-                  Issue a companion token and earn passive income.
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <hr />
+        <hr v-if="!managementOnly" />
         <!-- Companions (unified list - all user-created) -->
-        <div v-if="!showCustomCompanion" class="companion-grid mt-5 pt-5">
+        <section v-if="!managementOnly && !showCustomCompanion" class="companion-selector" aria-label="Companion selector" aria-roledescription="carousel">
+          <header class="companion-selector__header">
+            <div><span class="bz-eyebrow">YOUR CAST</span></div>
+            <div class="companion-selector__navigation">
+              <span class="bz-metric">{{ companions.length ? carouselIndex + 1 : 0 }} / {{ companions.length }}</span>
+              <button class="bz-iconbtn" aria-label="Previous companion" :disabled="companions.length < 2" @click="moveCarousel(-1)"><span class="material-symbols-outlined">arrow_back</span></button>
+              <button class="bz-iconbtn" aria-label="Next companion" :disabled="companions.length < 2" @click="moveCarousel(1)"><span class="material-symbols-outlined">arrow_forward</span></button>
+            </div>
+          </header>
+          <div v-if="companions.length" class="companion-selector__roster" aria-label="Companion roster">
+            <button v-for="(companion, index) in companions" :key="companion.id" :ref="el => { if (el) carouselButtons[companion.id] = el; }"
+              class="companion-selector__portrait" :class="{ 'is-active': featuredCompanion?.id === companion.id }"
+              :aria-label="companion.name" :aria-pressed="featuredCompanion?.id === companion.id" :tabindex="carouselIndex === index ? 0 : -1"
+              @click="focusCompanion(companion.id)" @keydown.right.prevent="moveCarousel(1, true)" @keydown.left.prevent="moveCarousel(-1, true)"
+              @keydown.home.prevent="focusCompanion(companions[0].id, true)" @keydown.end.prevent="focusCompanion(companions[companions.length - 1].id, true)">
+              <img v-if="companion.image" :src="getImageSrc(companion.image)" alt="" loading="lazy" />
+              <span v-else class="material-symbols-outlined" aria-hidden="true">person</span>
+              <span class="companion-selector__portrait-name">{{ companion.firstName || companion.name }}</span>
+              <span v-if="selectedCompanion?.id === companion.id" class="companion-selector__chosen material-symbols-outlined" aria-label="Selected">check_circle</span>
+            </button>
+          </div>
+          <p v-else class="companion-selector__empty">No companions yet. Import a companion or create a smart agent in Agents.</p>
+          <div class="companion-selector__stage" aria-live="polite">
+          <div v-if="featuredCompanion" class="companion-selector__selection">
+            <span>{{ selectedCompanion?.id === featuredCompanion.id ? 'Selected companion' : 'Ready to join your story' }}</span>
+            <button class="bz-btn bz-btn--primary" @click="selectCompanion(featuredCompanion)">{{ selectedCompanion?.id === featuredCompanion.id ? 'Selected' : 'Choose companion' }}<span class="material-symbols-outlined" aria-hidden="true">{{ selectedCompanion?.id === featuredCompanion.id ? 'check' : 'arrow_forward' }}</span></button>
+          </div>
+          <div class="companion-grid companion-selector__featured">
           <div
-            v-for="companion in companions"
+            v-for="companion in featuredCompanions"
             :key="companion.id"
             class="companion-card has-text-left"
             :class="{
               'is-selected': selectedCompanion?.id === companion.id,
               'has-session': getSessionInfo(companion),
             }"
-            @click="selectCompanion(companion)"
           >
             <!-- Export button (top left) -->
             <button
@@ -191,7 +139,7 @@
                       ? "male"
                       : companion.gender === "female"
                         ? "female"
-                        : "smart_toy"
+                        : "person"
                   }}
                 </span>
                 <span class="has-text-brand">
@@ -224,7 +172,7 @@
                         ? "male"
                         : companion.gender === "female"
                           ? "female"
-                          : "smart_toy"
+                          : "person"
                     }}
                   </span>
                 </div>
@@ -334,8 +282,8 @@
                     }
                   "
                   :id="'spending-chart-' + companion.id"
-                  width="320"
-                  height="320"
+                  width="640"
+                  height="640"
                 ></canvas>
               </div>
               <hr />
@@ -356,6 +304,12 @@
                 </transition>
               </div>
 
+
+              <button v-if="managementOnly" class="bz-btn bz-btn--ghost skill-fullwidth mt-3" @click.stop="emitHireAgent(companion)">
+                <span class="material-symbols-outlined mr-1">group_add</span>
+                Add to company
+              </button>
+
               <!-- NFT Mint Button (Custom Companions Only, requires access) -->
               <div
                 v-if="companion.isCustom && hasAccess"
@@ -364,7 +318,7 @@
                 <hr />
                 <!-- Already minted - show network badge -->
                 <button
-                  v-if="companion.tokenId"
+                  v-if="isCompanionMinted(companion)"
                   class="bz-btn bz-btn--ghost skill-fullwidth mb-3"
                   :class="getMintedBadgeClass(companion)"
                   :title="getMintedBadgeTitle(companion)"
@@ -373,7 +327,7 @@
                   <span class="material-symbols-outlined mr-1">
                     {{
                       companion.standard === "ERC-8004"
-                        ? "smart_toy"
+                        ? "person"
                         : "verified"
                     }}
                   </span>
@@ -417,7 +371,7 @@
                   </a>
                 </div>
                 <button
-                  v-else-if="companion.tokenId"
+                  v-else-if="isCompanionMinted(companion) && !managementOnly"
                   class="bz-btn bz-btn--sm is-link bz-btn--ghost mt-1"
                   @click.stop="deployUPForCompanion(companion)"
                   :disabled="deployingUPForCompanionId === companion.id"
@@ -429,14 +383,18 @@
                   }}
                 </button>
 
-                <!-- Launch Token Section (only for minted companions with agentWallet) -->
+                <div v-if="companion.tokenLaunchStatus === 'pending'" class="companion-launch-status">
+                  <p role="status">Token issuance submitted.</p>
+                  <button class="bz-btn bz-btn--secondary" @click.stop="refreshTokenIssuance(companion)">Check issuance</button>
+                </div>
+                <!-- Issuance is available only for verified minted companions. -->
                 <div
-                  v-if="companion.tokenId && companion.agentWallet"
+                  v-else-if="isCompanionMinted(companion) && companion.agentWallet"
                   class="token-launch-section mt-3"
                 >
                   <!-- Token already launched - show token info -->
                   <div
-                    v-if="companion.tokenAddress"
+                    v-if="verifiedAgentToken(companion)"
                     class="bz-notice bz-notice--success p-3"
                   >
                     <div
@@ -456,7 +414,7 @@
                           class="bz-btn bz-btn--sm is-info"
                           @click.stop="
                             openExternal(
-                              getUniswapTradeUrl(companion.tokenAddress),
+                              getUniswapTradeUrl(verifiedAgentToken(companion)),
                             )
                           "
                           title="Trade on Uniswap"
@@ -471,9 +429,9 @@
                         <button
                           class="bz-btn bz-btn--sm is-dark"
                           @click.stop="
-                            openExternal(getBaseScanUrl(companion.tokenAddress))
+                            openExternal(getBaseScanUrl(verifiedAgentToken(companion)))
                           "
-                          title="View on BaseScan"
+                          :title="`View on ${economyNetwork.name} explorer`"
                         >
                           <span
                             class="material-symbols-outlined"
@@ -487,19 +445,10 @@
                   </div>
 
                   <!-- Token not launched - show launch button -->
+                  <div v-else-if="companion.tokenLaunchStatus === 'pending'">
+                    <button class="bz-btn bz-btn--secondary" @click.stop="refreshTokenIssuance(companion)">Check issuance</button>
+                  </div>
                   <div v-else class="field has-addons">
-                    <div class="control">
-                      <input
-                        v-model="tokenLaunchEthAmounts[companion.id]"
-                        class="input is-small"
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        placeholder="ETH"
-                        style="width: 80px"
-                        @click.stop
-                      />
-                    </div>
                     <div class="control is-expanded">
                       <button
                         class="bz-btn bz-btn--agent-cta is-small skill-fullwidth"
@@ -508,9 +457,9 @@
                             isLaunchingToken &&
                             launchingTokenCompanionId === companion.id,
                         }"
-                        @click.stop="launchCompanionToken(companion)"
-                        :disabled="isLaunchingToken"
-                        :title="`Launch $${companion.firstName?.toUpperCase() || 'TOKEN'} with Uniswap V2 liquidity`"
+                        @click.stop="agentNeedsPersonalization(companion) ? publishAgentIdentity(companion) : launchCompanionToken(companion)"
+                        :disabled="isLaunchingToken || !canIssueAgentToken(companion)"
+                        :title="`Issue $${companion.firstName?.toUpperCase() || 'TOKEN'} with Uniswap V4 liquidity`"
                       >
                         <span
                           v-if="
@@ -524,83 +473,76 @@
                         >
                           rocket_launch
                         </span>
-                        Launch ${{
-                          companion.firstName?.toUpperCase() || "TOKEN"
-                        }}
+                        {{ agentNeedsPersonalization(companion) ? "Publish agent metadata" : "Review token issuance" }}
                       </button>
                     </div>
                   </div>
                   <p
-                    v-if="!companion.tokenAddress"
+                    v-if="!verifiedAgentToken(companion)"
                     class="help has-text-grey-light mt-1"
                   >
-                    1B supply. LP burned (unruggable). Burnable token.
+                    Social token with permanent Uniswap V4 liquidity.
                   </p>
                 </div>
 
+                <div v-else-if="companion.launchStatus === 'pending'" class="companion-launch-status">
+                  <p class="help">Issuance submitted. Check its status before trying again.</p>
+                  <button class="bz-btn bz-btn--ghost skill-fullwidth mt-2" :disabled="refreshingLaunchId === companion.id" @click.stop="refreshCompanionLaunch(companion)">
+                    {{ refreshingLaunchId === companion.id ? "Checking…" : "Check issuance" }}
+                  </button>
+                  <button class="bz-btn bz-btn--ghost skill-fullwidth mt-2" @click.stop="openExternal(getMintedExplorerUrl(companion))">View transaction</button>
+                </div>
+                <p v-else-if="isCompanionMinted(companion)" class="help">Agent wallet unavailable. Restore the agent wallet to manage token issuance.</p>
                 <!-- Not minted - mint button or connect wallet -->
                 <div v-else>
-                  <!-- Connect Wallet first if not connected -->
-                  <button
-                    v-if="!isConnected"
-                    class="bz-btn bz-btn--agent-cta is-medium skill-fullwidth"
-                    @click.stop="connectWallet"
-                    title="Connect wallet to mint"
-                  >
-                    <span class="material-symbols-outlined mr-1">wallet</span>
-                    Connect Wallet
-                  </button>
-                  <!-- Mint Button (always Base) -->
-                  <button
-                    v-else
-                    class="bz-btn bz-btn--agent-cta is-medium skill-fullwidth"
-                    :class="{
-                      'bz-btn--running':
-                        isMintingNFT && mintingCompanionId === companion.id,
-                    }"
-                    @click.stop="mintCompanionNFT(companion)"
-                    :disabled="
-                      isMintingNFT && mintingCompanionId === companion.id
-                    "
-                    title="Mint companion NFT on Base"
-                  >
-                    <span
-                      v-if="
-                        !(isMintingNFT && mintingCompanionId === companion.id)
-                      "
-                      class="material-symbols-outlined mr-1"
-                    >
-                      token
-                    </span>
-                    Mint + launch token · 0.30 ETH
-                  </button>
+                  <p class="help">Mint an agent slot through the scheduled drop before issuing a social token. Local chat and company workflows remain available.</p>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
+          </div>
+        </section>
+
+        <div v-if="managementOnly" class="agent-creation-requirements"><slot name="requirements" /></div>
+
         <!-- Custom Companion Generator -->
-        <div v-if="showCustomCompanion" class="custom-companion-form mt-5 p-5">
+        <div v-if="managementOnly || showCustomCompanion" class="custom-companion-form" :class="managementOnly ? 'agent-creation-layout' : 'mt-5 p-5'">
+          <div class="companion-creation-editor">
+          <header v-if="managementOnly" class="agent-creation-heading">
+            <span class="agent-stage-label">01 / CREATE</span>
+            <h2 class="fira-sans-condensed-black-italic">Give it a purpose.</h2>
+            <p>Start with a role. Generate its identity, portrait and personality.</p>
+          </header>
           <div class="field">
+            <label v-if="managementOnly" class="agent-creation-label" for="agent-creation-prompt">Describe your agent</label>
             <div class="control">
               <textarea
                 v-model="customCompanionPrompt"
+                :id="managementOnly ? 'agent-creation-prompt' : undefined"
+                :disabled="isGenerating"
                 class="textarea is-large"
-                placeholder="Describe your ideal companion..."
-                rows="3"
+                :placeholder="managementOnly ? 'A creative director who turns product ideas into thoughtful campaigns. Curious, precise, and warm.' : 'Describe your ideal companion...'"
+                :aria-label="managementOnly ? 'Describe your smart agent' : 'Describe your companion'"
+                :rows="managementOnly ? 4 : 3"
               ></textarea>
             </div>
           </div>
-          <div class="buttons">
+          <div class="buttons" :class="{ 'agent-creation-controls': managementOnly }">
+            <div class="agent-identity-control">
+            <label v-if="managementOnly" class="agent-creation-label" for="agent-creation-gender">Gender</label>
             <div class="select is-medium mr-5">
-              <select v-model="customCompanionGender">
+              <select v-model="customCompanionGender" :id="managementOnly ? 'agent-creation-gender' : undefined" aria-label="Agent gender" :disabled="isGenerating">
                 <option value="female">Female</option>
                 <option value="male">Male</option>
               </select>
             </div>
+            </div>
+            <div class="agent-identity-control">
+            <label v-if="managementOnly" class="agent-creation-label" for="agent-creation-style">Personality</label>
             <div class="select is-medium mr-5">
-              <select v-model="customCompanionStyle">
+              <select v-model="customCompanionStyle" :id="managementOnly ? 'agent-creation-style' : undefined" aria-label="Personality style" :disabled="isGenerating">
                 <option value="openness">Openness</option>
                 <option value="conscientiousness">Conscientiousness</option>
                 <option value="extraversion">Extraversion</option>
@@ -608,12 +550,15 @@
                 <option value="neuroticism">Neuroticism</option>
               </select>
             </div>
+            </div>
+            <div class="agent-generate-actions">
             <!-- Generate button - gated by access level -->
             <template v-if="hasAccess">
               <button
                 class="bz-btn bz-btn--agent-cta is-medium mt-2 mr-5"
                 @click="generateCustomCompanion"
-                :disabled="!customCompanionPrompt || isGenerating"
+                :disabled="!customCompanionPrompt.trim() || isGenerating || (managementOnly && !canGenerateCompanion)"
+                :title="managementOnly && !canGenerateCompanion ? 'Download the required models to generate your agent' : undefined"
               >
                 <span
                   v-if="isGenerating"
@@ -649,11 +594,13 @@
               </span>
             </button>
             <button
-              class="bz-btn bz-btn--destructive is-medium mt-2 skill-float-right"
+              v-if="!managementOnly || isGenerating || customCompanion || customCompanionPrompt"
+              class="bz-btn bz-btn--ghost is-medium mt-2 skill-float-right"
               @click="cancelCustomCompanion"
             >
-              Cancel
+              {{ managementOnly ? (isGenerating ? 'Stop' : 'Reset') : 'Cancel' }}
             </button>
+            </div>
           </div>
           <!-- Generation Error -->
           <div v-if="generationError" class="bz-notice bz-notice--danger mt-4 mb-0">
@@ -668,11 +615,31 @@
               {{ generationError }}
             </p>
           </div>
-          <!-- Generated Custom Companion Preview (Progressive) -->
+          <div v-if="managementOnly && managedCompanions.length" class="agent-saved-picker">
+            <label class="agent-creation-label" for="saved-smart-agents">Your saved agents</label>
+            <select id="saved-smart-agents" aria-label="Saved smart agents" :value="managementSavedCompanion?.id || ''" :disabled="isGenerating" @change="selectManagedCompanion($event.target.value)">
+              <option value="">New agent</option>
+              <option v-for="agent in managedCompanions" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </div>
+
+          </div>
+          <!-- The existing progressive preview is also the initial placeholder. -->
           <div
-            v-if="customCompanion || isGenerating"
-            class="custom-companion-preview mt-4 has-text-left"
+            v-if="managementOnly || customCompanion || isGenerating"
+            class="custom-companion-preview has-text-left"
+            :class="{ 'agent-preview-placeholder': managementOnly && !customCompanion, 'mt-4': !managementOnly }"
+            :aria-busy="isGenerating"
           >
+            <span v-if="managementOnly" class="agent-stage-label">02 / PREVIEW</span>
+            <div v-if="managementOnly" class="agent-preview-heading">
+              <h3 class="companion-name fira-sans-condensed-black-italic" :aria-label="customCompanion?.name ? undefined : 'Agent name preview'">
+                <span class="material-symbols-outlined" aria-hidden="true">{{ customCompanion?.gender || 'person' }}</span>
+                <span v-if="customCompanion?.name" class="has-text-brand">{{ customCompanion.name }}</span>
+                <span v-else class="agent-placeholder-line agent-placeholder-line--name" aria-hidden="true"></span>
+              </h3>
+              <span class="agent-preview-state">{{ isGenerating ? 'Generating' : isSavingCompanion ? 'Saving…' : managementSavedCompanion ? 'Saved on this device' : 'Preview' }}</span>
+            </div>
             <!-- Progress Status -->
             <div
               v-if="isGenerating && typingStatus"
@@ -690,7 +657,7 @@
             <div class="columns is-vcentered p-5">
               <!-- Portrait image -->
               <div class="column is-narrow">
-                <div class="custom-preview-portrait">
+                <div class="custom-preview-portrait" :class="{ 'agent-polaroid': managementOnly }">
                   <img
                     v-if="customCompanion?.image"
                     :src="getImageSrc(customCompanion.image)"
@@ -718,12 +685,13 @@
                       }}
                     </span>
                   </div>
+                  <span v-if="managementOnly" class="agent-polaroid-caption fira-sans-condensed-black-italic">{{ customCompanion?.name ? 'Smart agent' : 'Your next smart agent' }}</span>
                 </div>
               </div>
               <!-- Info -->
               <div class="column p-4">
                 <!-- Name -->
-                <h5 class="fira-sans-condensed-black-italic is-size-4">
+                <h5 v-if="!managementOnly && (customCompanion?.name || isGenerating)" class="fira-sans-condensed-black-italic is-size-4">
                   <span v-if="customCompanion?.name" class="has-text-brand">
                     {{ customCompanion.name }}
                   </span>
@@ -735,13 +703,18 @@
                 </h5>
 
                 <!-- Description -->
-                <div class="mt-2">
+                <div class="agent-preview-bio" :class="{ 'mt-2': !managementOnly }">
                   <p
-                    v-if="customCompanion?.description"
+                    v-if="customCompanion?.shortBio || customCompanion?.description"
                     class="is-size-6 has-text-grey-light"
                   >
-                    {{ customCompanion.description }}
+                    {{ managementOnly ? (customCompanion.shortBio || customCompanion.description) : customCompanion.description }}
                   </p>
+                  <div v-else-if="managementOnly" class="agent-placeholder-bio" aria-label="Agent biography preview">
+                    <span class="agent-placeholder-line" aria-hidden="true"></span>
+                    <span class="agent-placeholder-line" aria-hidden="true"></span>
+                    <span class="agent-placeholder-line" aria-hidden="true"></span>
+                  </div>
                   <div v-else-if="isGenerating" class="skeleton-lines">
                     <span
                       class="skeleton-text"
@@ -753,6 +726,13 @@
                     ></span>
                   </div>
                 </div>
+
+                <figure v-if="managementOnly" class="agent-preview-spending" :data-profile="previewSpendingHabits ? 'generated' : 'placeholder'">
+                  <figcaption>Spending profile</figcaption>
+                  <div class="spending-chart-container">
+                    <canvas ref="previewSpendingChart" width="320" height="320" role="img" :aria-label="previewSpendingHabits ? 'Agent spending profile' : 'Spending profile preview — generated interests will appear here'"></canvas>
+                  </div>
+                </figure>
 
                 <!-- Personality Tags -->
                 <div class="tags mt-3">
@@ -774,6 +754,9 @@
                       +{{ customCompanion.personality.split(",").length - 5 }}
                       more
                     </span>
+                  </template>
+                  <template v-else-if="managementOnly">
+                    <span v-for="index in 3" :key="index" class="agent-placeholder-line agent-placeholder-line--trait" aria-hidden="true"></span>
                   </template>
                   <template v-else-if="isGenerating">
                     <span
@@ -823,6 +806,8 @@
                   </p>
                 </details>
 
+
+
                 <!-- Action Buttons (only when generation complete) -->
                 <div
                   v-if="!isGenerating && customCompanion?.name"
@@ -830,6 +815,7 @@
                 >
                   <button
                     class="bz-btn bz-btn--agent-cta is-medium mr-3"
+                    v-if="!managementOnly"
                     @click="useCustomCompanion"
                   >
                     <span class="material-symbols-outlined mr-2">check</span>
@@ -838,11 +824,13 @@
                   <button
                     class="bz-btn bz-btn--primary is-medium mr-3"
                     @click="saveCustomCompanionToStore"
-                    :disabled="isCompanionAlreadySaved(customCompanion)"
+                    :disabled="isSavingCompanion || isCompanionAlreadySaved(customCompanion) || (managementOnly && !companionsLoaded)"
                   >
                     <span class="material-symbols-outlined mr-2">save</span>
                     {{
-                      isCompanionAlreadySaved(customCompanion)
+                      isSavingCompanion
+                        ? "Saving…"
+                        : isCompanionAlreadySaved(customCompanion)
                         ? "Saved"
                         : "Save"
                     }}
@@ -868,12 +856,28 @@
                     Portrait
                   </button>
                 </div>
+
               </div>
             </div>
           </div>
+          <AgentLaunchStep v-if="managementOnly"
+            :agent="managementSavedCompanion" :network="economyNetwork.name" :symbol="agentLaunchSymbol"
+            :attached="hasMintReference(managementSavedCompanion)" :owned="canIssueAgentToken(managementSavedCompanion)"
+            :ready="isCompanionMinted(managementSavedCompanion) && !agentNeedsPersonalization(managementSavedCompanion)"
+            :token="verifiedAgentToken(managementSavedCompanion)" :pending="managementSavedCompanion?.tokenLaunchStatus === 'pending'"
+            :configured="agentLaunchConfigured" :launching="isLaunchingToken" :generating="isGenerating || isSavingCompanion"
+            :connected="!!walletAddress" :connect="connectWallet" :attach="attachGeneratedAgentSlot" :publish="publishAgentIdentity" :launch="launchCompanionToken"
+            :check="refreshTokenIssuance" :start-roleplay="startGeneratedRoleplay" />
         </div>
       </div>
 
+      <div v-if="!managementOnly" class="roleplay-audience" role="group" aria-label="Session audience">
+        <button class="bz-btn" :class="sessionAudience === 'local' ? 'bz-btn--primary' : 'bz-btn--secondary'" :aria-pressed="sessionAudience === 'local'" @click="sessionAudience = 'local'"><span class="material-symbols-outlined">chat_bubble</span>One-to-one · Local</button>
+        <button class="bz-btn" :class="sessionAudience === 'x' ? 'bz-btn--primary' : 'bz-btn--secondary'" :aria-pressed="sessionAudience === 'x'" @click="sessionAudience = 'x'"><span class="material-symbols-outlined">public</span>One-to-many · X</button>
+      </div>
+      <PublicAgentSession v-if="!managementOnly && sessionAudience === 'x' && selectedCompanion" :agent="selectedCompanion" :catalog="availableWorkflows" />
+      <p v-else-if="!managementOnly && sessionAudience === 'x'" class="bz-notice">Choose a companion to configure its public session.</p>
+      <template v-if="!managementOnly && sessionAudience === 'local'">
       <!-- Saved Sessions & Import/Export (only shown when user has access) -->
       <div
         v-if="selectedCompanion && hasAccess"
@@ -1022,16 +1026,34 @@
         </div>
         <hr />
         <!-- Scenarios (unified list - all user-created) -->
-        <div v-if="!showCustomScenario" class="scenario-grid">
+        <p v-if="scenarioImageError" class="bz-notice bz-notice--danger" role="alert">{{ scenarioImageError }}</p>
+        <section v-if="!showCustomScenario" class="stage-selector" aria-label="Scenario selector" aria-roledescription="carousel">
+          <div class="stage-selector__nav">
+            <div><span class="bz-eyebrow">YOUR STAGE</span></div>
+            <div class="companion-selector__navigation">
+              <span class="bz-metric">{{ scenarios.length ? stageIndex + 1 : 0 }} / {{ scenarios.length }}</span>
+              <button class="bz-iconbtn" aria-label="Previous scenario" :disabled="scenarios.length < 2" @click="moveStage(-1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span></button>
+              <button class="bz-iconbtn" aria-label="Next scenario" :disabled="scenarios.length < 2" @click="moveStage(1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button>
+            </div>
+          </div>
+          <div class="stage-selector__roster">
+            <button v-for="(stage, index) in scenarios" :key="stage.id" :ref="el => { if (el) stageButtons[stage.id] = el; }" class="stage-tile" :class="{ 'is-active': stageIndex === index }" :aria-label="stage.name" :aria-pressed="stageIndex === index" :tabindex="stageIndex === index ? 0 : -1" @click="focusStage(stage.id)" @keydown.right.prevent="moveStage(1, true)" @keydown.left.prevent="moveStage(-1, true)" @keydown.home.prevent="focusStage(scenarios[0].id, true)" @keydown.end.prevent="focusStage(scenarios[scenarios.length - 1].id, true)">
+              <img v-if="stage.image" :src="getImageSrc(stage.image)" alt="" loading="lazy" />
+              <span v-else class="material-symbols-outlined" aria-hidden="true">landscape</span>
+              <span class="stage-tile__name">{{ stage.name }}</span>
+              <span v-if="selectedScenario?.id === stage.id" class="stage-tile__selected" aria-label="Selected">✓</span>
+            </button>
+          </div>
+          <p v-if="!scenarios.length" class="companion-selector__empty">Create or import a scenario to set the scene.</p>
+          <div class="scenario-grid stage-selector__featured">
           <div
-            v-for="scenario in scenarios"
+            v-for="scenario in featuredScenarios"
             :key="scenario.id"
             class="scenario-card"
             :class="{
               'is-selected': selectedScenario?.id === scenario.id,
               'has-image': scenario.image,
             }"
-            @click="selectScenario(scenario)"
           >
             <!-- Scenario background image -->
             <div
@@ -1150,6 +1172,7 @@
               <p class="scenario-desc">
                 {{ scenario.description }}
               </p>
+              <button class="bz-btn bz-btn--primary stage-selector__choose" @click="selectScenario(scenario)">{{ selectedScenario?.id === scenario.id ? 'Selected stage' : 'Choose stage' }}</button>
               <!-- Animated keyword cycling for mood -->
               <div class="keyword-cycler scenario-mood">
                 <transition name="keyword-fade" mode="out-in">
@@ -1165,6 +1188,7 @@
           </div>
         </div>
 
+        </section>
         <!-- Custom Scenario Generator -->
         <div v-if="showCustomScenario" class="custom-scenario-form mt-5 p-5">
           <div class="field">
@@ -1402,6 +1426,7 @@
 
       <!-- Settings -->
       <div class="models__activity--payouts roleplay-settings mb-5">
+        <header class="roleplay-settings__heading"><span class="bz-eyebrow">YOUR EXPERIENCE</span><h3 class="fira-sans-condensed-black-italic">Make it yours.</h3></header>
         <div class="columns roleplay-settings__grid">
           <div class="column is-6">
             <div class="field has-text-left roleplay-settings__panel">
@@ -1415,7 +1440,8 @@
               </label>
               <hr />
               <div class="control content-level-selector">
-                <div
+                <button type="button"
+                  :aria-pressed="settings.contentLevel === level"
                   v-for="(config, level) in contentLevels"
                   :key="level"
                   class="content-level-option"
@@ -1424,7 +1450,7 @@
                 >
                   <span
                     v-if="config.icon"
-                    class="material-symbols-outlined content-level-icon"
+                    class="material-symbols-outlined content-level-icon" aria-hidden="true"
                   >
                     {{ config.icon }}
                   </span>
@@ -1432,7 +1458,7 @@
                     <strong>{{ config.label }}</strong>
                     <p class="is-size-7">{{ config.description }}</p>
                   </div>
-                </div>
+                </button>
               </div>
             </div>
           </div>
@@ -1448,130 +1474,16 @@
                 Media Support
               </label>
               <hr />
+              <p class="media-download-intro">Images bring your scenes to life. Add voice, video or vision whenever you want.</p>
               <div class="control media-selector">
-                <div
-                  class="media-option"
-                  :class="{
-                    'is-selected': settings.enableImage,
-                    'is-unavailable': !isModelAvailable('image_turbo'),
-                  }"
-                  @click="toggleMediaOption('enableImage', 'image_turbo')"
-                >
-                  <span class="material-symbols-outlined media-icon">
-                    image
-                  </span>
-                  <div class="media-option-content">
-                    <strong>Image</strong>
-                    <p class="is-size-7">Generate scene illustrations</p>
-                  </div>
-                  <span
-                    v-if="
-                      !isModelAvailable('image_turbo') &&
-                      downloadingPipelineKey !== 'image_turbo'
-                    "
-                    class="skill-chip skill-chip--warning"
-                  >
-                    Download
-                  </span>
-                  <span
-                    v-if="downloadingPipelineKey === 'image_turbo'"
-                    class="skill-chip skill-chip--info"
-                  >
-                    {{ downloadProgress }}%
-                  </span>
-                </div>
-                <div
-                  class="media-option"
-                  :class="{
-                    'is-selected': settings.enableAudio,
-                    'is-unavailable': !isModelAvailable('audio_quality'),
-                  }"
-                  @click="toggleMediaOption('enableAudio', 'audio_quality')"
-                >
-                  <span class="material-symbols-outlined media-icon">
-                    headphones
-                  </span>
-                  <div class="media-option-content">
-                    <strong>Voice</strong>
-                    <p class="is-size-7">Companion speaks responses</p>
-                  </div>
-                  <span
-                    v-if="
-                      !isModelAvailable('audio_quality') &&
-                      downloadingPipelineKey !== 'audio_quality'
-                    "
-                    class="skill-chip skill-chip--warning"
-                  >
-                    Download
-                  </span>
-                  <span
-                    v-if="downloadingPipelineKey === 'audio_quality'"
-                    class="skill-chip skill-chip--info"
-                  >
-                    {{ downloadProgress }}%
-                  </span>
-                </div>
-                <div
-                  class="media-option"
-                  :class="{
-                    'is-selected': settings.enableVideo,
-                    'is-unavailable': !isModelAvailable('video_quality'),
-                  }"
-                  @click="toggleMediaOption('enableVideo', 'video_quality')"
-                >
-                  <span class="material-symbols-outlined media-icon">
-                    movie
-                  </span>
-                  <div class="media-option-content">
-                    <strong>Video</strong>
-                    <p class="is-size-7">Animate peak emotions</p>
-                  </div>
-                  <span
-                    v-if="
-                      !isModelAvailable('video_quality') &&
-                      downloadingPipelineKey !== 'video_quality'
-                    "
-                    class="skill-chip skill-chip--warning"
-                  >
-                    Download
-                  </span>
-                  <span
-                    v-if="downloadingPipelineKey === 'video_quality'"
-                    class="skill-chip skill-chip--info"
-                  >
-                    {{ downloadProgress }}%
-                  </span>
-                </div>
-                <div
-                  class="media-option"
-                  :class="{
-                    'is-selected': settings.enableVision,
-                    'is-unavailable': !isModelAvailable('vision'),
-                  }"
-                  @click="toggleMediaOption('enableVision', 'vision')"
-                >
-                  <span class="material-symbols-outlined media-icon">
-                    visibility
-                  </span>
-                  <div class="media-option-content">
-                    <strong>Vision</strong>
-                    <p class="is-size-7">Upload images for context</p>
-                  </div>
-                  <span
-                    v-if="
-                      !isModelAvailable('vision') &&
-                      downloadingPipelineKey !== 'vision'
-                    "
-                    class="skill-chip skill-chip--warning"
-                  >
-                    Download
-                  </span>
-                  <span
-                    v-if="downloadingPipelineKey === 'vision'"
-                    class="skill-chip skill-chip--info"
-                  >
-                    {{ downloadProgress }}%
-                  </span>
+                <div v-for="media in roleplayMedia" :key="media.key" class="roleplay-media-item">
+                  <button type="button" class="media-option" :class="{ 'is-selected': settings[media.key] && isModelAvailable(media.model) }" :aria-pressed="settings[media.key] && isModelAvailable(media.model)" :disabled="!isModelAvailable(media.model)" @click="toggleMediaOption(media.key, media.model)">
+                    <span class="material-symbols-outlined media-icon" aria-hidden="true">{{ media.icon }}</span>
+                    <span class="media-option-content"><strong>{{ media.name }}</strong><span class="media-option-description">{{ media.description }}</span></span>
+                    <span class="media-option-state">{{ !isModelAvailable(media.model) ? media.key === 'enableImage' ? 'Recommended' : 'Optional' : settings[media.key] ? 'On' : 'Off' }}</span>
+                  </button>
+                  <button v-if="!isModelAvailable(media.model) && media.key !== 'enableImage' && mediaDownloadKey !== media.model" type="button" class="bz-btn bz-btn--ghost bz-btn--sm media-install-action" :disabled="isDownloadingPipeline" @click="downloadMedia(media)"><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>download {{ media.category }}<span class="media-download-size">{{ getModelInfo(media.model).size }}</span></button>
+                  <DownloadRequirement v-if="!isModelAvailable(media.model) && (media.key === 'enableImage' || mediaDownloadKey === media.model)" :category="media.category" :items="[{ category: media.category, size: getModelInfo(media.model).size }]" :title="media.key === 'enableImage' ? 'Enable scene images' : 'Add ' + media.name.toLowerCase()" :active="isDownloadingPipeline && downloadingPipelineKey === media.model" :progress="downloadProgress" :cancellable="!!mediaPipelineId" :disabled="isDownloadingPipeline" :error="mediaDownloadKey === media.model ? mediaDownloadError : ''" @download="downloadMedia(media)" @cancel="cancelMediaDownload" />
                 </div>
               </div>
             </div>
@@ -1582,22 +1494,22 @@
         <div class="user-profile-section roleplay-settings__panel mt-4">
           <h4 class="roleplay-settings__label fira-sans-condensed-black-italic mb-4">
             <span class="material-symbols-outlined mr-2 is-size-2">badge</span>
-            <span>Your Profile</span>
+            <span>Your role</span>
           </h4>
-          <!-- User Info -->
-          <div class="user-info">
-            <div class="field">
-              <div class="control">
-                <textarea
-                  v-model="userProfile.userDescription"
-                  class="textarea"
-                  placeholder="Describe yourself for scene images..."
-                  rows="3"
-                  @blur="saveUserProfile()"
-                ></textarea>
-              </div>
-            </div>
+          <p class="role-profile-intro">Step into a character of your own. These details shape how your companion addresses you, remembers your story and responds to you. Every field is optional.</p>
+          <div class="role-profile-grid">
+            <label v-for="field in roleProfileFields" :key="field.key" class="role-profile-field">
+              <span>{{ field.label }}</span>
+              <textarea v-if="field.multiline" v-model="userProfile[field.key]" :disabled="!profileLoaded" class="textarea" :placeholder="field.placeholder" rows="3" maxlength="2000" @blur="saveUserProfile()"></textarea>
+              <input v-else v-model="userProfile[field.key]" :disabled="!profileLoaded" class="input" :placeholder="field.placeholder" maxlength="160" @blur="saveUserProfile()" />
+            </label>
+            <label class="role-profile-field role-profile-field--wide">
+              <span>Appearance and clothing</span>
+              <textarea v-model="userProfile.userDescription" :disabled="!profileLoaded" class="textarea" aria-label="Your role in the story" placeholder="Describe your appearance, clothing and distinctive details for scene images…" rows="3" maxlength="2000" @blur="saveUserProfile()"></textarea>
+            </label>
           </div>
+          <p class="role-profile-note">Saved on this device and shared across your roleplay sessions. You can use a fictional identity.</p>
+          <p v-if="profileSaveError" class="bz-notice bz-notice--danger" role="alert">{{ profileSaveError }}</p>
         </div>
       </div>
 
@@ -2481,6 +2393,7 @@
           </div>
         </div>
       </div>
+      </template>
     </div>
 
     <!-- Chat Phase -->
@@ -2678,6 +2591,7 @@
                 </span>
                 <time v-if="msg.timestamp" class="message-time">{{ formatMessageTime(msg.timestamp) }}</time>
               </div>
+              <ChatWorkflowResult v-if="msg.workflowResult" :result="msg.workflowResult" />
               <div class="message-text">
                 <!-- Loading placeholder when waiting for text -->
                 <div
@@ -2738,6 +2652,7 @@
                 </div>
               </div>
 
+              <p v-for="(error, errorIndex) in msg.mediaErrors || []" :key="errorIndex" class="bz-notice bz-notice--warning" role="status">{{ error }}</p>
               <!-- Image -->
               <div v-if="msg.image" class="message-image mt-3">
                 <img :src="getImageSrc(msg.image)" alt="Scene" />
@@ -2840,15 +2755,10 @@
 
               <!-- Video (for peak emotion scenes) -->
               <div v-if="msg.video" class="message-video mt-3">
-                <video
-                  controls
-                  autoplay
-                  muted
-                  loop
-                  playsinline
-                  :src="getVideoSrc(msg.video)"
+                <RoleplayVideoPlayer
+                  :source="msg.video"
                   :poster="msg.image ? getImageSrc(msg.image) : undefined"
-                ></video>
+                />
                 <div class="video-actions">
                   <button
                     class="media-action-btn delete-btn"
@@ -3036,14 +2946,13 @@
       <!-- Suggested Responses -->
       <div
         v-if="suggestedResponses.length > 0 && !isTyping"
-        class="suggested-responses mb-3 p-0"
+        class="suggested-responses" aria-label="Suggested replies"
       >
         <button
           v-for="(suggestion, idx) in suggestedResponses"
           :key="idx"
-          class="bz-btn bz-btn--primary bz-btn--ghost skill-fullwidth mb-5 mt-5 is-size-7 p-5"
+          class="roleplay-suggestion"
           @click="sendMessage(suggestion)"
-          style="box-shadow: none"
         >
           {{ suggestion }}
         </button>
@@ -3085,6 +2994,17 @@
 
       <!-- Chat Input -->
       <div class="chat-input">
+        <div class="chat-capability-tools" aria-label="Create in chat">
+          <details class="roleplay-create-menu"><summary><span class="material-symbols-outlined" aria-hidden="true">add_circle</span>{{ $ui('Create') }}<span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary>
+            <div class="chat-capability-workflows"><button v-for="capability in CHAT_MEDIA" :key="capability" type="button" :disabled="isInitializingSession || isProcessingMessage" @click="prepareChatCommand(capability); $event.currentTarget.closest('details').open = false"><span class="material-symbols-outlined" aria-hidden="true">{{ ({image:'image',audio:'mic',music:'music_note',video:'movie','3d':'deployed_code',vision:'visibility'})[capability] }}</span>{{ $ui(capability === '3d' ? '3D' : capability.charAt(0).toUpperCase() + capability.slice(1)) }}</button></div>
+          </details>
+          <details v-if="assignedChatWorkflows.length" class="roleplay-create-menu"><summary><span class="material-symbols-outlined" aria-hidden="true">account_tree</span>{{ $ui('Workflows') }}<span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary><div class="chat-capability-workflows"><button v-for="workflow in assignedChatWorkflows" :key="workflow.id" type="button" @click="prepareWorkflowCommand(workflow); $event.currentTarget.closest('details').open = false">{{ workflow.name }}</button></div></details>
+        </div>
+        <div v-if="selectedCreation" class="chat-creation-selection" role="status">
+          <span>{{ $ui('Create') }} · {{ $ui(selectedCreation === '3d' ? '3D' : selectedCreation.charAt(0).toUpperCase() + selectedCreation.slice(1)) }}</span>
+          <span>{{ $ui('Describe what you want, then send your message.') }}</span>
+          <button type="button" class="bz-iconbtn bz-iconbtn--sm" :aria-label="$t('common.cancel')" @click="selectedCreation = null"><span class="material-symbols-outlined">close</span></button>
+        </div>
         <div class="field has-addons">
           <!-- Image Upload Button -->
           <div class="control">
@@ -3094,8 +3014,7 @@
               :disabled="isAnalyzingImage"
               :class="{ 'bz-btn--primary': uploadedImage }"
               title="Upload an image for vision analysis"
-              style="box-shadow: none"
-            >
+                >
               <span class="material-symbols-outlined is-size-1">
                 add_photo_alternate
               </span>
@@ -3135,8 +3054,7 @@
                 isInitializingSession || (!userMessage.trim() && !uploadedImage)
               "
               :class="{ 'bz-btn--running': isProcessingMessage && pendingMessage }"
-              style="box-shadow: none"
-              :title="
+                  :title="
                 isProcessingMessage ? 'Message will be queued' : 'Send message'
               "
             >
@@ -3154,7 +3072,7 @@
           class="is-flex is-align-items-center is-justify-content-space-between"
           style="gap: 8px"
         >
-          <div class="tags has-addons mb-0" style="text-transform: uppercase">
+          <div class="roleplay-session-status">
             <span class="skill-chip skill-chip--info is-small">
               <span
                 class="material-symbols-outlined mr-1"
@@ -3217,7 +3135,7 @@
         <!-- Inline appearance editor -->
         <div v-if="showAppearanceEditor" class="appearance-editor">
           <textarea
-            v-model="userProfile.userDescription"
+            v-model="userProfile.userDescription" :disabled="!profileLoaded"
             class="textarea is-small"
             placeholder="Describe your appearance for scene images, e.g.: tall man with dark wavy hair, strong jawline, athletic build, tanned skin, brown eyes"
             rows="2"
@@ -3402,6 +3320,16 @@
 </template>
 
 <script>
+import RoleplayVideoPlayer from './RoleplayVideoPlayer.vue';
+import AgentLaunchStep from '../AgentLaunchStep.vue';
+import PublicAgentSession from '../chat/PublicAgentSession.vue';
+import ChatWorkflowResult from '../chat/ChatWorkflowResult.vue';
+import { CHAT_MEDIA, chatRequest, runChatCapability } from '../../services/chat/capabilities.js';
+import DownloadRequirement from '../DownloadRequirement.vue';
+import { roleProfileFields, normalizeRoleplayProfile, roleplayParticipantContext } from '../../services/roleplayProfile.js';
+import { mergeRoleplayScenarios } from '../../services/roleplayScenarios.js';
+import { cancelLocalDownloads } from '../../services/downloadCancellation.js';
+
 import {
   ref,
   computed,
@@ -3423,16 +3351,19 @@ import {
   validateCompanionAge,
   sanitizeCompanionAge,
   regenerateMessageMedia,
+  resolvePortraitReference,
   generateSpendingProfile,
   isDefaultSpendingProfile,
 } from "../../skills/flagship.js";
 import { useSkillStore } from "../../stores/skillStore.js";
 import * as roleplayStore from "../../services/roleplayStore.service.js";
+import { themeService } from "../../services/theme.service.js";
 import { moltbookService } from "../../services/moltbook.service.js";
 import BzCloseButton from "../BzCloseButton.vue";
 import BonzaiWaveform from "../BonzaiWaveform.vue";
 import { companionService, Gender } from "../../services/companion.service.js";
-import { CONFIG } from "../../config/web3.config.js";
+import { CONFIG, ECONOMY_NETWORK_KEY } from "../../config/web3.config.js";
+import { getAvailableAgentWorkflows, normalizeAssignedWorkflowIds, getAgentWorkflowIds } from "../../services/agentWorkflows.js";
 import { io } from "socket.io-client";
 import { ethers } from "ethers";
 import { agentWalletService } from "../../services/agentWallet.service.js";
@@ -3441,6 +3372,7 @@ import { purchaseExecutorService } from "../../services/purchaseExecutor.service
 import { sellerRegistryService } from "../../services/sellerRegistry.service.js";
 import { useBonzaiWeb3 } from "../../composables/useBonzaiWeb3.js";
 import { requestOpenLevelModal } from "../../services/level.service.js";
+import { hasMintReference } from "../../services/agentMintEligibility.js";
 import { companionTokenService } from "../../services/companionToken.service.js";
 import { storageService } from "../../services/storage.service.js";
 import { memoryService } from "../../services/memory.service.js";
@@ -3487,19 +3419,68 @@ function resolveBundledAsset(defaultImage) {
 export default {
   name: "RoleplayChat",
   components: {
+    RoleplayVideoPlayer,
+    AgentLaunchStep, PublicAgentSession, ChatWorkflowResult,
+    DownloadRequirement,
     BzCloseButton,
     BonzaiWaveform,
   },
   props: {
+    initialCompanion: { type: Object, default: null },
     skill: {
       type: Object,
       required: true,
     },
+    managementOnly: {
+      type: Boolean,
+      default: false,
+    },
   },
-  emits: ["charge-fee"],
-  setup(props, { emit }) {
+  emits: ["charge-fee", "companion-selected", "companions-changed", "hire-agent", "start-roleplay"],
+  setup(props, { emit, expose }) {
     // Skill store for autonomous mode (global state)
     const skillStore = useSkillStore();
+    const economyNetwork = CONFIG.networks[ECONOMY_NETWORK_KEY];
+    const availableWorkflows = ref([]);
+    const sessionAudience = ref('local');
+    const assignedChatWorkflows = computed(() => availableWorkflows.value.filter(item => getAgentWorkflowIds(selectedCompanion.value, availableWorkflows.value).includes(item.id)));
+    const selectedCreation = ref(null);
+    const prepareChatCommand = (pipeline) => {
+      selectedCreation.value = pipeline;
+      nextTick(() => chatInput.value?.focus());
+    };
+    const prepareWorkflowCommand = (workflow) => {
+      selectedCreation.value = null;
+      const inputs = Object.fromEntries(Object.entries(workflow.inputs || {}).map(([key, field]) => [key, field.default ?? '']));
+      userMessage.value = `/workflow ${workflow.id} ${JSON.stringify(inputs)}`;
+      nextTick(() => chatInput.value?.focus());
+    };
+    const workflowLoadError = ref("");
+    const rosterSaveError = ref("");
+    const rosterLoadError = ref("");
+    const rosterLoading = ref(false);
+    const companionsLoaded = ref(false);
+    const isSavingCompanion = ref(false);
+    const loadAgentWorkflows = async () => {
+      try {
+        availableWorkflows.value = await getAvailableAgentWorkflows();
+      } catch (error) {
+        workflowLoadError.value = error.message || "Unable to load agentic workflows.";
+      }
+    };
+    const setCompanionWorkflow = async (companion, workflowId, selected) => {
+      if (props.managementOnly && !companionsLoaded.value) return;
+      const previous = companion.assignedWorkflowIds;
+      const assigned = new Set(getAgentWorkflowIds(companion));
+      if (selected) assigned.add(workflowId);
+      else assigned.delete(workflowId);
+      companion.assignedWorkflowIds = normalizeAssignedWorkflowIds([...assigned]);
+      if (companions.value.some((entry) => entry.id === companion.id)) {
+        try { await saveCompanions(); }
+        catch { companion.assignedWorkflowIds = previous; }
+      }
+    };
+    const emitHireAgent = (companion) => emit("hire-agent", roleplayStore.serializeCompanionData(companion));
 
     // Access checking - Roleplay Companion requires LVL4
     const {
@@ -3532,7 +3513,7 @@ export default {
     // Setup state
     const selectedCompanion = ref(null);
     const selectedScenario = ref(null);
-    const showCustomCompanion = ref(false);
+    const showCustomCompanion = ref(props.managementOnly);
     const showCustomScenario = ref(false);
     const customCompanionPrompt = ref("");
     const customCompanionStyle = ref("openness");
@@ -3544,6 +3525,7 @@ export default {
     const isGenerating = ref(false);
     const generationError = ref(null);
     const generationCancelled = ref(false);
+    let companionGenerationRevision = 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // KEYWORD CYCLING ANIMATION
@@ -3703,7 +3685,8 @@ export default {
     const companionPaymentsEnabled = false;
 
     // Message queue for handling messages during generation
-    const pendingMessage = ref(null); // Stores the latest pending message (only keeps one)
+    const pendingMessages = ref([]);
+    const pendingMessage = computed(() => pendingMessages.value[0] || null);
     const isProcessingMessage = ref(false); // True while generating response
 
     // Build responseMode string from checkbox settings (for backward compatibility)
@@ -3714,6 +3697,15 @@ export default {
       if (settings.value.enableVideo) parts.push("video");
       if (settings.value.enableVision) parts.push("vision");
       return parts.join("+");
+    });
+
+    watch(() => [settings.value.enableImage, settings.value.enableAudio, settings.value.enableVideo, settings.value.enableVision], () => {
+      if (currentSessionKey.value && skillStore.autonomousSession.settings && skillStore.autonomousSession.sessionKey === currentSessionKey.value) {
+        Object.assign(skillStore.autonomousSession.settings, {
+          enableImage: settings.value.enableImage, enableAudio: settings.value.enableAudio,
+          enableVideo: settings.value.enableVideo, enableVision: settings.value.enableVision,
+        });
+      }
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -3729,6 +3721,24 @@ export default {
     const isDownloadingPipeline = ref(false);
     const downloadingPipelineKey = ref(null);
     const downloadProgress = ref(0);
+    const mediaPipelineId = ref(null);
+    const mediaDownloadError = ref('');
+    const mediaDownloadKey = ref(null);
+    const pendingMediaOption = ref(null);
+    const downloadMedia = async (media) => {
+      if (isDownloadingPipeline.value) return;
+      pendingMediaOption.value = media.key;
+      await downloadPipeline(media.model);
+    };
+    const cancelMediaDownload = async () => {
+      try {
+        await cancelLocalDownloads({ pipelineIds: [mediaPipelineId.value], apiBase: `http://localhost:${window.BONZAI_SERVER_PORT || 65000}` });
+        isDownloadingPipeline.value = false;
+        downloadingPipelineKey.value = null;
+        mediaPipelineId.value = null;
+        pendingMediaOption.value = null;
+      } catch (error) { mediaDownloadError.value = error.message; }
+    };
 
     // Pipeline mapping (also used in checkModelAvailability)
     const PIPELINE_MAP = {
@@ -3739,7 +3749,7 @@ export default {
       audio_quality: "audio_quality_persona",
       video_fast: "video_fast",
       video_quality: "video_quality",
-      vision: "qwen3_vision",
+      vision: "vision",
     };
 
     // Required LLM for roleplay
@@ -3756,7 +3766,7 @@ export default {
     // Mandatory models — must be downloaded to start a session and mint companions
     // LLM: roleplay text, image_quality: companion avatars, image_turbo: scene illustration
     const mandatoryModels = computed(() => {
-      return [REQUIRED_LLM, "image_quality", "image_turbo"];
+      return props.managementOnly ? [REQUIRED_LLM, "image_quality"] : [REQUIRED_LLM, "image_turbo"];
     });
 
     // Optional selected models — downloadable but don't block session start
@@ -3817,6 +3827,8 @@ export default {
       return missingMandatory.value.length === 0;
     });
 
+    const canGenerateCompanion = computed(() => modelAvailabilityChecked.value && isModelAvailable(REQUIRED_LLM) && isModelAvailable("image_quality"));
+
     // Check all model availability
     const checkModelAvailability = async () => {
       console.log("[RoleplayChat] Checking model availability...");
@@ -3876,6 +3888,9 @@ export default {
      * @param {string} modelKey - The model key (e.g., 'audio_quality', 'image_turbo')
      */
     const downloadPipeline = async (modelKey) => {
+      if (isDownloadingPipeline.value) return;
+      mediaDownloadError.value = '';
+      mediaDownloadKey.value = modelKey;
       const pipeline = PIPELINE_MAP[modelKey];
       if (!pipeline) {
         console.error(
@@ -3906,6 +3921,7 @@ export default {
         console.log(`[RoleplayChat] Prefetch response:`, data);
 
         if (response.status === 202 && data.pipeline_id) {
+          mediaPipelineId.value = data.pipeline_id;
           // Subscribe to download progress for this pipeline
           if (downloadsSocket.value) {
             downloadsSocket.value.emit("subscribe", {
@@ -3916,15 +3932,21 @@ export default {
         } else if (response.status === 200) {
           // Already downloaded
           modelAvailability[modelKey] = true;
+          if (pendingMediaOption.value) settings.value[pendingMediaOption.value] = true;
+          pendingMediaOption.value = null;
           isDownloadingPipeline.value = false;
           downloadingPipelineKey.value = null;
           console.log(`[RoleplayChat] ${modelKey} already downloaded`);
         } else {
+          mediaDownloadError.value = data.error || "Download failed. Please retry.";
+          pendingMediaOption.value = null;
           console.error(`[RoleplayChat] Prefetch failed:`, data);
           isDownloadingPipeline.value = false;
           downloadingPipelineKey.value = null;
         }
       } catch (e) {
+        mediaDownloadError.value = "Could not reach the local download service. Open BonzAI Desktop and retry.";
+        pendingMediaOption.value = null;
         console.error(`[RoleplayChat] Download error for ${modelKey}:`, e);
         isDownloadingPipeline.value = false;
         downloadingPipelineKey.value = null;
@@ -3953,7 +3975,7 @@ export default {
 
         // Listen for download progress events
         downloadsSocket.value.on("download_progress", ({ pipeline }) => {
-          if (!pipeline) return;
+          if (!pipeline || !mediaPipelineId.value || pipeline.pipeline_id !== mediaPipelineId.value) return;
 
           // Track download progress
           if (
@@ -3971,8 +3993,17 @@ export default {
             isDownloadingPipeline.value = false;
             downloadingPipelineKey.value = null;
             downloadProgress.value = 0;
-            checkModelAvailability();
-          } else if (pipeline.status === "failed") {
+            mediaPipelineId.value = null;
+            const completedOption = pendingMediaOption.value;
+            const completedKey = mediaDownloadKey.value;
+            pendingMediaOption.value = null;
+            checkModelAvailability().then(() => {
+              if (completedOption && modelAvailability[completedKey]) settings.value[completedOption] = true;
+            });
+          } else if (["failed", "cancelled"].includes(pipeline.status)) {
+            mediaDownloadError.value = pipeline.status === "failed" ? "Download failed. Please retry." : "";
+            pendingMediaOption.value = null;
+            mediaPipelineId.value = null;
             console.error("[RoleplayChat] Download failed:", pipeline);
             isDownloadingPipeline.value = false;
             downloadingPipelineKey.value = null;
@@ -4177,7 +4208,7 @@ export default {
     const isMintingNFT = ref(false);
     const mintingCompanionId = ref(null); // ID of companion being minted
     const mintResult = ref(null); // { success, tokenId, txHash, error }
-    const mintNetwork = ref("base"); // Companions always mint on Base
+    const mintNetwork = ref(ECONOMY_NETWORK_KEY);
     const deployingUPForCompanionId = ref(null); // Track UP deployment per companion
 
     // Companion Token Launch state
@@ -4185,6 +4216,7 @@ export default {
     const launchingTokenCompanionId = ref(null);
     const tokenLaunchEthAmounts = ref({}); // { companionId: ethAmount }
     const tokenLaunchResult = ref(null); // { success, tokenAddress, pairAddress, error }
+    const refreshingLaunchId = ref(null);
 
     // x402 Agent Wallet state (ETH-only)
     const agentWalletAddress = ref(null);
@@ -4277,6 +4309,16 @@ export default {
       }
     };
 
+    const verifiedMints = ref({});
+    const mintVerificationRetry = ref(0);
+    const mintReferenceKey = c => `${c?.chainId}:${c?.contractAddress?.toLowerCase()}:${c?.tokenId}`;
+    const agentNeedsPersonalization = c => Boolean(c?.needsSetup) || verifiedMints.value[mintReferenceKey(c)]?.ready === false;
+    const verifiedAgentToken = c => verifiedMints.value[mintReferenceKey(c)]?.tokenAddress || null;
+    const isCompanionMinted = c => Boolean(verifiedMints.value[mintReferenceKey(c)]);
+    const canIssueAgentToken = c => isCompanionMinted(c) && agentLaunchConfigured.value &&
+      c.contractAddress?.toLowerCase() === CONFIG.smartAgentIssuance.contractAddress.toLowerCase() &&
+      verifiedMints.value[mintReferenceKey(c)].owner.toLowerCase() === walletAddress.value?.toLowerCase();
+
     // Helper functions for minted badge display
     const getMintedBadgeClass = (companion) => {
       switch (companion.network) {
@@ -4333,8 +4375,10 @@ export default {
           return `https://basescan.org/tx/${companion.txHash}`;
         case "lukso":
           return `https://explorer.lukso.network/tx/${companion.txHash}`;
-        default:
-          return `https://arbiscan.io/tx/${companion.txHash}`;
+        default: {
+          const network = CONFIG.networks[companion.network || ECONOMY_NETWORK_KEY] || economyNetwork;
+          return `${network.explorer}/tx/${companion.txHash}`;
+        }
       }
     };
 
@@ -4390,11 +4434,9 @@ export default {
 
     // Global user profile (shared across all companions and sessions)
     const USER_PROFILE_KEY = "roleplayUserProfile";
-    const userProfile = ref({
-      userName: "",
-      userDescription: "",
-      userImage: null,
-    });
+    const userProfile = ref(normalizeRoleplayProfile());
+    const profileSaveError = ref('');
+    const profileLoaded = ref(false);
 
     // Session persistence
     const STORAGE_KEY = "roleplaySessions";
@@ -4565,51 +4607,34 @@ export default {
     // Load global user profile from storage (with migration from old per-session data)
     const loadUserProfile = async () => {
       try {
-        if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(
-            USER_PROFILE_KEY,
-            null,
-          );
-          if (stored) {
-            userProfile.value = {
-              userName: stored.userName || "",
-              userDescription: stored.userDescription || "",
-              userImage: stored.userImage || null,
-            };
-            console.log("[Roleplay] Loaded global user profile");
-          } else {
-            // Migrate from first existing session that has userDescription
-            const sessions = savedSessions.value || {};
-            for (const key of Object.keys(sessions)) {
-              const s = sessions[key]?.settings;
-              if (s?.userDescription) {
-                userProfile.value.userName = s.userName || "";
-                userProfile.value.userDescription = s.userDescription || "";
-                userProfile.value.userImage = s.userImage || null;
-                await saveUserProfile();
-                console.log(
-                  "[Roleplay] Migrated user profile from session:",
-                  key,
-                );
-                break;
-              }
-            }
+        const stored = window.electronAPI?.store?.get
+          ? await window.electronAPI.store.get(USER_PROFILE_KEY, null)
+          : JSON.parse(localStorage.getItem(USER_PROFILE_KEY) || 'null');
+        profileLoaded.value = true;
+        if (stored) userProfile.value = normalizeRoleplayProfile(stored);
+        else {
+          const previous = Object.values(savedSessions.value || {}).find(session => session?.settings?.userDescription);
+          if (previous) {
+            userProfile.value = normalizeRoleplayProfile(previous.settings);
+            await saveUserProfile();
           }
         }
-      } catch (e) {
-        console.error("[Roleplay] Failed to load user profile:", e);
+      } catch (error) {
+        profileSaveError.value = 'Your saved profile could not be loaded. Reload before editing it.';
+        console.error('[Roleplay] Failed to load user profile:', error);
       }
     };
 
-    // Save global user profile to storage
     const saveUserProfile = async () => {
+      if (!profileLoaded.value) return;
       try {
-        if (window.electronAPI?.store?.set) {
-          const plain = structuredClone(toRaw(userProfile.value));
-          await window.electronAPI.store.set(USER_PROFILE_KEY, plain);
-        }
-      } catch (e) {
-        console.error("[Roleplay] Failed to save user profile:", e);
+        const plain = normalizeRoleplayProfile(toRaw(userProfile.value));
+        if (window.electronAPI?.store?.set) await window.electronAPI.store.set(USER_PROFILE_KEY, plain);
+        else localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(plain));
+        profileSaveError.value = '';
+      } catch (error) {
+        profileSaveError.value = 'Your profile could not be saved. Your edits are still here; try again.';
+        console.error('[Roleplay] Failed to save user profile:', error);
       }
     };
 
@@ -4796,7 +4821,8 @@ export default {
 
     // Save a generated custom companion to the store
     const saveCustomCompanionToStore = async () => {
-      if (!customCompanion.value) return;
+      if (!customCompanion.value || isSavingCompanion.value || (props.managementOnly && !companionsLoaded.value)) return;
+      const savedPreview = customCompanion.value;
 
       // Final age validation safeguard
       const ageValidation = validateCompanionAge(customCompanion.value);
@@ -4807,7 +4833,7 @@ export default {
 
       // Generate a unique ID if not present
       const companionToSave = {
-        ...structuredClone(toRaw(customCompanion.value)),
+        ...roleplayStore.serializeCompanionData(customCompanion.value),
         id: customCompanion.value.id || `companion_${Date.now()}`,
         createdAt: Date.now(),
         isCustom: true,
@@ -4837,26 +4863,34 @@ export default {
         }
       }
 
-      // Check if already saved (by name)
-      const existingIdx = companions.value.findIndex(
-        (c) => c.name.toLowerCase() === companionToSave.name.toLowerCase(),
-      );
-
-      if (existingIdx >= 0) {
-        // Update existing
-        companions.value[existingIdx] = companionToSave;
-      } else {
-        // Add new
-        companions.value.push(companionToSave);
+      // A new agent may share a name with an issued identity. Only its stable
+      // companion ID can select an existing record for an update.
+      const existingIdx = companions.value.findIndex((c) => c.id === companionToSave.id);
+      const previous = existingIdx >= 0 ? companions.value[existingIdx] : null;
+      if (previous) companionToSave.createdAt = previous.createdAt || companionToSave.createdAt;
+      isSavingCompanion.value = true;
+      if (existingIdx >= 0) companions.value[existingIdx] = companionToSave;
+      else companions.value.push(companionToSave);
+      try {
+        await saveCompanions();
+      } catch {
+        if (existingIdx >= 0) companions.value[existingIdx] = previous;
+        else companions.value = companions.value.filter(c => c.id !== companionToSave.id);
+        return;
+      } finally {
+        isSavingCompanion.value = false;
       }
-
-      await saveCompanions();
-      console.log(`[Roleplay] Companion saved: ${companionToSave.name}`);
-
-      // Select the saved companion and close the form
-      selectedCompanion.value = companionToSave;
-      showCustomCompanion.value = false;
-      customCompanion.value = null;
+      // Saving is durable even if the user resets or switches drafts while
+      // storage is busy. Do not reopen that previous preview afterward.
+      if (customCompanion.value !== savedPreview) return;
+      selectedCompanion.value = companions.value.find(c => c.id === companionToSave.id);
+      if (props.managementOnly) {
+        customCompanion.value = selectedCompanion.value;
+        showCustomCompanion.value = true;
+      } else {
+        showCustomCompanion.value = false;
+        customCompanion.value = null;
+      }
     };
 
     // Delete a companion (NFT companions cannot be deleted — ownership is on-chain)
@@ -4883,9 +4917,7 @@ export default {
     // Check if a companion name already exists
     const isCompanionAlreadySaved = (companion) => {
       if (!companion?.name) return false;
-      return companions.value.some(
-        (c) => c.name?.toLowerCase() === companion.name.toLowerCase(),
-      );
+      return Boolean(companion.id && companions.value.some((c) => c.id === companion.id));
     };
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -5573,229 +5605,29 @@ export default {
      * Uploads metadata to IPFS via Pinata and mints on the companion contract
      * @param {Object} companion - The companion to mint
      */
-    const mintCompanionNFT = async (companion) => {
-      if (!companion) return;
-
-      // Only custom companions can be minted
-      if (!companion.isCustom) {
-        alert(
-          `${companion.name} is a built-in companion and cannot be minted as an NFT.`,
-        );
-        return;
+    const recordCompanionLaunch = async (companion, result, quote = {}) => {
+      for (const key of ["txHash", "tokenId", "tokenAddress", "poolId", "tokenSymbol", "agentWallet", "agentWalletProvider", "standard", "spendingHabits"]) {
+        if (result[key] != null) companion[key] = result[key];
       }
+      companion.network = result.network || companion.network || ECONOMY_NETWORK_KEY;
+      companion.chainId = quote.chainId || companion.chainId || economyNetwork.chainId;
+      companion.contractAddress = quote.contractAddress || result.launchContract || companion.contractAddress;
+      companion.launchStatus = result.success ? "confirmed" : result.reverted ? "reverted" : "pending";
+      companion.x402Support = false;
+      await saveCompanions();
+    };
 
-      const selectedNetwork = "base";
-
-      // Validate contract address
-      const contractAddress = CONFIG.companionNFT_BASE?.contractAddress;
-      if (!contractAddress) {
-        alert(
-          "Base ERC-8004 companion contract not deployed yet. Coming soon!",
-        );
-        return;
-      }
-
-      // Local wallets are used - no CDP credentials needed
-
-      isMintingNFT.value = true;
-      mintingCompanionId.value = companion.id;
-      mintResult.value = null;
-
+    const refreshCompanionLaunch = async (companion) => {
+      if (!companion.txHash || refreshingLaunchId.value) return;
+      refreshingLaunchId.value = companion.id;
       try {
-        // Initialize storage with connected wallet
-        const provider = getEip1193Provider();
-        if (!provider)
-          throw new Error(
-            "Wallet not connected. Please connect your wallet first.",
-          );
-        await storageService.getStorage(provider);
-
-        // Upload companion image to decentralized storage
-        let imageUri = companion.image || "";
-        if (imageUri && imageUri.startsWith("data:image")) {
-          console.log(
-            "[NFT Mint] Uploading companion image to storage...",
-          );
-
-          // Check balance for image upload (metadata is free <100KB)
-          const imageBytes = Math.ceil(imageUri.length * 0.75); // base64 → bytes estimate
-          const cost = await storageService.estimateCost(imageBytes);
-          const balance = await storageService.getBalance();
-          if (parseFloat(balance) < parseFloat(cost)) {
-            const needed = (
-              parseFloat(cost) -
-              parseFloat(balance) +
-              0.0001
-            ).toFixed(6);
-            const ok = confirm(
-              `Storage balance too low for image upload.\n\nCost: ~${cost} ETH\nBalance: ${balance} ETH\n\nFund ${needed} ETH to proceed?`,
-            );
-            if (!ok)
-              throw new Error("Upload cancelled — insufficient storage balance.");
-            await storageService.fund(needed);
-          }
-
-          const imageReceipt = await storageService.uploadBase64({
-            base64Data: imageUri,
-            contentType: "image/webp",
-          });
-          imageUri = imageReceipt.gatewayUrl;
-          console.log("[NFT Mint] Image uploaded:", imageUri);
-        }
-
-        // Pack spending habits for on-chain + OASF domain computation
-        const spendingHabits =
-          companion.spendingHabits ||
-          companionService.generateSpendingProfile(companion);
-
-        // Build ERC-8004 + OASF v0.8.0 registration JSON (replaces simple OpenSea metadata)
-        const registration =
-          companionService.buildERC8004RegistrationWithSpending(
-            {
-              name: companion.name,
-              firstName: companion.firstName,
-              familyName: companion.familyName,
-              shortBio: companion.shortBio,
-              description: companion.description,
-              imageUri,
-              personality: companion.personality,
-              appearance: companion.appearance,
-              background: companion.background,
-              voiceStyle: companion.voiceStyle,
-              firstMessage: companion.firstMessage,
-              style: companion.style,
-              gender:
-                companion.gender === "female"
-                  ? 1
-                  : companion.gender === "male"
-                    ? 2
-                    : 0,
-              age: companion.age,
-              voiceId: companion.voiceId,
-            },
-            spendingHabits,
-          );
-
-        console.log(
-          "[NFT Mint] Registration JSON:",
-          JSON.stringify(registration, null, 2),
-        );
-
-        // Upload registration JSON to decentralized storage (free — under 100KB)
-        console.log(
-          "[NFT Mint] Uploading ERC-8004 registration to storage...",
-        );
-        const metadataReceipt = await storageService.uploadMetadata(registration);
-        const metadataUri = metadataReceipt.gatewayUrl;
-        console.log("[NFT Mint] Registration uploaded:", metadataUri);
-
-        // Create personality hash from personality traits
-        const personalityHash = companion.personality || companion.name;
-
-        // Determine gender from companion data
-        let genderValue = Gender.Neutral;
-        if (companion.gender) {
-          genderValue =
-            companion.gender === "female"
-              ? Gender.Female
-              : companion.gender === "male"
-                ? Gender.Male
-                : Gender.Neutral;
-        }
-
-        console.log(`[NFT Mint] Minting on ${selectedNetwork}...`);
-
-        const result = await companionService.mintCompanionMultiNetwork(
-          {
-            metadataURI: metadataUri,
-            companionId: companion.id, // For agent wallet generation
-            name: companion.name,
-            description: companion.description,
-            personality: personalityHash,
-            personalityHash: personalityHash,
-            imageUri: imageUri,
-            spendingHabits,
-            gender: genderValue,
-            style: companion.style,
-            age: companion.age,
-            voiceId: companion.voiceId,
-            firstName: companion.firstName,
-            familyName: companion.familyName,
-            appearance: companion.appearance,
-            background: companion.background,
-            voiceStyle: companion.voiceStyle,
-            firstMessage: companion.firstMessage,
-          },
-          selectedNetwork,
-        );
-
-        mintResult.value = result;
-
-        if (result.success) {
-          console.log(
-            `[NFT Mint] Success! Token ID: ${result.tokenId}, TX: ${result.txHash}`,
-          );
-
-          // Update companion with token ID and Base-specific data
-          companion.tokenId = result.tokenId;
-          companion.txHash = result.txHash;
-          companion.network = "base";
-          companion.standard = result.standard || "ERC-8004";
-          companion.tokenAddress = result.tokenAddress;
-          companion.poolId = result.poolId;
-          companion.tokenSymbol = result.tokenSymbol;
-
-          // Store agent wallet info for ERC-8004 mints
-          if (result.agentWallet) {
-            companion.agentWallet = result.agentWallet;
-            companion.x402Support = false;
-            companion.agentWalletProvider =
-              result.agentWalletProvider || "local";
-            console.log(
-              `[NFT Mint] Agent wallet: ${result.agentWallet} (${companion.agentWalletProvider})`,
-            );
-          }
-
-          // Store spending habits if generated (Base mints)
-          if (result.spendingHabits) {
-            companion.spendingHabits = result.spendingHabits;
-            console.log(`[NFT Mint] Spending habits generated for companion`);
-          }
-
-          // Update in companions array
-          const idx = companions.value.findIndex((c) => c.id === companion.id);
-          if (idx !== -1) {
-            companions.value[idx].tokenId = result.tokenId;
-            companions.value[idx].txHash = result.txHash;
-            companions.value[idx].network = "base";
-            companions.value[idx].standard = companion.standard;
-            companions.value[idx].tokenAddress = result.tokenAddress;
-            companions.value[idx].poolId = result.poolId;
-            companions.value[idx].tokenSymbol = result.tokenSymbol;
-            if (result.agentWallet) {
-              companions.value[idx].agentWallet = result.agentWallet;
-              companions.value[idx].x402Support = false;
-              companions.value[idx].agentWalletProvider =
-                result.agentWalletProvider || "local";
-            }
-            if (result.spendingHabits) {
-              companions.value[idx].spendingHabits = result.spendingHabits;
-            }
-          }
-
-          // Save updated companion to storage
-          await saveCompanions();
-        } else {
-          console.error("[NFT Mint] Failed:", result.error);
-          alert(`Minting failed: ${result.error}`);
-        }
-      } catch (e) {
-        console.error("[NFT Mint] Error:", e.message);
-        mintResult.value = { success: false, error: e.message };
-        alert(`Minting failed: ${e.message}`);
+        const result = await companionService.getLaunchResult(companion.txHash, companion.contractAddress);
+        await recordCompanionLaunch(companion, result);
+        if (result.error) alert(result.error);
+      } catch (error) {
+        alert(error.message || "Unable to check issuance.");
       } finally {
-        isMintingNFT.value = false;
-        mintingCompanionId.value = null;
+        refreshingLaunchId.value = null;
       }
     };
 
@@ -5847,99 +5679,53 @@ export default {
     };
 
     /**
-     * Launch a companion token on Base with Uniswap V2 liquidity
+     * Issue a token from the verified minted slot’s reserve
      * @param {Object} companion - The companion to launch token for
      */
-    const launchCompanionToken = async (companion) => {
-      if (!companion) return;
-
-      // Validation
-      if (!companion.tokenId) {
-        alert("Companion must be minted as an NFT first.");
-        return;
-      }
-
-      if (!companion.agentWallet) {
-        alert("Companion must have an agentWallet to receive LP tokens.");
-        return;
-      }
-
-      if (companion.tokenAddress) {
-        alert(
-          `Token already launched: $${companion.tokenSymbol || companion.firstName?.toUpperCase()}`,
-        );
-        return;
-      }
-
-      // Check if factory is configured
-      if (!CONFIG.companionTokenFactory?.contractAddress) {
-        alert("Companion token factory not deployed yet. Coming soon!");
-        return;
-      }
-
-      const ethAmount = tokenLaunchEthAmounts.value[companion.id] || "0.01";
-      if (parseFloat(ethAmount) < 0.01) {
-        alert("Minimum 0.01 ETH required for liquidity.");
-        return;
-      }
-
-      isLaunchingToken.value = true;
-      launchingTokenCompanionId.value = companion.id;
-      tokenLaunchResult.value = null;
-
+    const refreshTokenIssuance = async companion => {
       try {
-        console.log(
-          `[Token Launch] Launching $${companion.firstName?.toUpperCase()} for ${companion.name}...`,
-        );
+        const result = await companionTokenService.refreshIssuance(companion);
+        Object.assign(companion, result.success ? { tokenAddress: result.tokenAddress, poolId: result.poolId, tokenLaunchStatus: result.tokenLaunchStatus } : { tokenLaunchStatus: result.tokenLaunchStatus });
+        await saveCompanions();
+        mintVerificationRetry.value++;
+        if (result.error) alert(result.error);
+      } catch (error) { alert(error.message); }
+    };
 
-        const result = await companionTokenService.launchToken(
-          companion,
-          ethAmount,
-        );
-        tokenLaunchResult.value = result;
+    const publishAgentIdentity = async companion => {
+      if (!canIssueAgentToken(companion) || isLaunchingToken.value) return;
+      if (!confirm('Publish this minted agent’s profile and portrait? Public storage fees and network gas may apply. Token issuance remains a separate action.')) return;
+      isLaunchingToken.value = true;
+      try {
+        const result = await companionTokenService.personalizeAgent(roleplayStore.serializeCompanionData(companion));
+        Object.assign(companion, result);
+        await saveCompanions();
+        mintVerificationRetry.value++;
+      } catch (error) { alert(error.message); }
+      finally { isLaunchingToken.value = false; }
+    };
 
-        if (result.success) {
-          console.log(
-            `[Token Launch] Success! Token: ${result.tokenAddress}, Pair: ${result.pairAddress}`,
-          );
-
-          // Update companion with token data
-          companion.tokenAddress = result.tokenAddress;
-          companion.pairAddress = result.pairAddress;
-          companion.tokenSymbol = result.symbol;
-          companion.tokenLaunchTx = result.txHash;
-          companion.tokenLaunchDate = Date.now();
-          companion.tokenLaunchEth = ethAmount;
-
-          // Update in companions array
-          const idx = companions.value.findIndex((c) => c.id === companion.id);
-          if (idx !== -1) {
-            companions.value[idx].tokenAddress = result.tokenAddress;
-            companions.value[idx].pairAddress = result.pairAddress;
-            companions.value[idx].tokenSymbol = result.symbol;
-            companions.value[idx].tokenLaunchTx = result.txHash;
-            companions.value[idx].tokenLaunchDate = Date.now();
-            companions.value[idx].tokenLaunchEth = ethAmount;
-          }
-
-          // Save updated companion to storage
-          await saveCompanions();
-
-          alert(
-            `$${result.symbol} launched! LP burned (unruggable). Trading live on Uniswap V2.`,
-          );
-        } else {
-          console.error("[Token Launch] Failed:", result.error);
-          alert(`Token launch failed: ${result.error}`);
-        }
-      } catch (e) {
-        console.error("[Token Launch] Error:", e.message);
-        tokenLaunchResult.value = { success: false, error: e.message };
-        alert(`Token launch failed: ${e.message}`);
-      } finally {
-        isLaunchingToken.value = false;
-        launchingTokenCompanionId.value = null;
-      }
+    const launchCompanionToken = async companion => {
+      if (!canIssueAgentToken(companion) || isLaunchingToken.value) return;
+      isLaunchingToken.value = true; launchingTokenCompanionId.value = companion.id;
+      try {
+        const terms = await companionTokenService.getIssuanceTerms(companion);
+        const minimum = prompt('Minimum NVDA to receive for the reserved 1 ETH (use a current swap quote):');
+        if (minimum == null) return;
+        const minNvdaOut = ethers.parseUnits(minimum.trim(), terms.decimals);
+        if (minNvdaOut <= 0n) throw new Error('Enter a positive minimum NVDA amount.');
+        if (!confirm(`Issue ${terms.name} (${terms.symbol})?\n\nUse the slot’s reserved 1 ETH to purchase at least ${minimum} NVDA. Allocate 96% of supply to permanent liquidity and 4% to ${terms.wallet}. Zero LP trading fees. Your wallet pays network gas only.`)) return;
+        const result = await companionTokenService.launchToken(companion, {
+          reviewedIdentity: terms, minNvdaOut: minNvdaOut.toString(), deadline: Math.floor(Date.now()/1000) + 600,
+          onSubmitted: async () => saveCompanions(),
+        });
+        if (result.success) Object.assign(companion, { tokenAddress: result.tokenAddress, poolId: result.poolId, tokenSymbol: terms.symbol, tokenLaunchTx: result.txHash, tokenLaunchStatus: 'confirmed' });
+        else if (result.tokenLaunchStatus) companion.tokenLaunchStatus = result.tokenLaunchStatus;
+        await saveCompanions();
+        mintVerificationRetry.value++;
+        if (result.error) alert(result.error);
+      } catch (error) { alert(error.message); }
+      finally { isLaunchingToken.value = false; launchingTokenCompanionId.value = null; }
     };
 
     /**
@@ -6153,7 +5939,7 @@ export default {
     const exportAllSessions = () => {
       const exportData = {
         sessions: structuredClone(toRaw(savedSessions.value)),
-        customCompanions: structuredClone(toRaw(companions.value)),
+        customCompanions: roleplayStore.serializeCompanionData(companions.value),
         exportedAt: new Date().toISOString(),
         version: "1.0",
       };
@@ -6216,18 +6002,107 @@ export default {
 
     // Reactive lists
     const companions = ref([]);
+    let mintVerificationRevision = 0;
+    watch(() => [mintVerificationRetry.value, walletAddress.value, web3Service.state.currentChainId,
+      ...companions.value.map(mintReferenceKey)], async () => {
+      const revision = ++mintVerificationRevision;
+      verifiedMints.value = {};
+      const verified = {};
+      await Promise.all(companions.value.filter(hasMintReference).map(async companion => {
+        try { verified[mintReferenceKey(companion)] = await companionTokenService.verifyMint(companion); }
+        catch { /* Unavailable RPC and unverified imports never grant issuance access. */ }
+      }));
+      if (revision === mintVerificationRevision) verifiedMints.value = verified;
+    }, { immediate: true });
+    const carouselId = ref(null);
+    const carouselButtons = ref({});
+    const carouselIndex = computed(() => Math.max(0, companions.value.findIndex(c => c.id === carouselId.value)));
+    const featuredCompanion = computed(() => companions.value[carouselIndex.value] || null);
+    const featuredCompanions = computed(() => featuredCompanion.value ? [featuredCompanion.value] : []);
+    const focusCompanion = async (id, keyboard = false) => {
+      carouselId.value = id;
+      await nextTick();
+      const button = carouselButtons.value[id];
+      button?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+      if (keyboard) button?.focus({ preventScroll: true });
+    };
+    const moveCarousel = (direction, keyboard = false) => {
+      if (!companions.value.length) return;
+      const index = (carouselIndex.value + direction + companions.value.length) % companions.value.length;
+      focusCompanion(companions.value[index].id, keyboard);
+    };
+    watch(selectedCompanion, companion => { if (companion) carouselId.value = companion.id; });
+
+    const managedCompanions = computed(() => companions.value.filter(companion => !companion.isDefault && !DEFAULT_COMPANIONS.some(builtIn => builtIn.id === companion.id)));
+    const agentLaunchConfigured = computed(() => Boolean(CONFIG.smartAgentIssuance?.contractAddress && CONFIG.smartAgentIssuance?.factoryAddress));
+    const agentLaunchSymbol = computed(() => customCompanion.value?.tokenSymbol || String(customCompanion.value?.name || '').trim().split(/\s+/)[0].toUpperCase().replace(/[^A-Z0-9]/g, ''));
+    const managementSavedCompanion = computed(() => customCompanion.value?.id ? companions.value.find(companion => companion.id === customCompanion.value.id) : null);
+    const attachGeneratedAgentSlot = async tokenId => {
+      const companion = managementSavedCompanion.value;
+      if (!companion || hasMintReference(companion)) throw new Error('Choose a saved local agent without an attached slot.');
+      const slot = (await companionTokenService.getOwnedAgentSlots()).find(item => item.tokenId === tokenId);
+      if (!slot) throw new Error('This slot is no longer available in your wallet.');
+      const duplicate = companions.value.find(item => item.id !== companion.id && mintReferenceKey(item) === mintReferenceKey(slot));
+      if (duplicate && !duplicate.isBare && !duplicate.needsSetup) throw new Error('This slot is already attached to another local agent. Select that agent to update its identity.');
+      const previous = [...companions.value], original = { ...companion };
+      Object.assign(companion, { tokenId: slot.tokenId, contractAddress: slot.contractAddress, chainId: slot.chainId, network: ECONOMY_NETWORK_KEY, isNFT: true, needsSetup: true });
+      if (duplicate) companions.value = companions.value.filter(item => item !== duplicate);
+      try { await saveCompanions(); }
+      catch (error) { for (const key of Object.keys(companion)) delete companion[key]; Object.assign(companion, original); companions.value = previous; throw error; }
+      mintVerificationRetry.value++;
+    };
+    const startGeneratedRoleplay = async () => {
+      const companion = managementSavedCompanion.value;
+      if (!companion) throw new Error('Save your generated agent first.');
+      emit('start-roleplay', roleplayStore.serializeCompanionData(companion));
+    };
+    const selectManagedCompanion = (id) => {
+      if (!id) { cancelCustomCompanion(); return; }
+      const companion = managedCompanions.value.find(entry => entry.id === id);
+      if (!companion) return;
+      customCompanion.value = companion;
+      customCompanionPrompt.value = '';
+      customCompanionGender.value = companion.gender || 'female';
+      customCompanionStyle.value = companion.style || 'openness';
+      generationError.value = null;
+      rosterSaveError.value = '';
+    };
     const isLoadingNFTCompanions = ref(false);
     const scenarios = ref([]);
+    const stageId = ref(null);
+    const scenarioImageError = ref('');
+    const stageButtons = ref({});
+    const stageIndex = computed(() => Math.max(0, scenarios.value.findIndex(stage => stage.id === stageId.value)));
+    const featuredScenarios = computed(() => scenarios.value.length ? [scenarios.value[stageIndex.value]] : []);
+    const focusStage = async (id, keyboard = false) => {
+      stageId.value = id;
+      await nextTick();
+      stageButtons.value[id]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      if (keyboard) stageButtons.value[id]?.focus({ preventScroll: true });
+    };
+    const moveStage = (direction, keyboard = false) => {
+      if (scenarios.value.length) focusStage(scenarios.value[(stageIndex.value + direction + scenarios.value.length) % scenarios.value.length].id, keyboard);
+    };
+    watch(selectedScenario, stage => { if (stage) stageId.value = stage.id; });
     const contentLevels = CONTENT_LEVELS;
 
     // Load companions from storage, seeding defaults on first run or after update
     const loadCompanions = async () => {
+      if (rosterLoading.value) return;
+      rosterLoading.value = true;
       try {
         // Phase 4b: route through the SQLite-backed roleplay store
         // (defaults + custom in one indexed query). Falls back to
         // electron-store automatically when the data layer is down.
-        if (window.electronAPI?.store?.get) {
+        {
           const stored = await roleplayStore.loadCompanions();
+          companionsLoaded.value = true;
+          rosterLoadError.value = '';
+          // Creation does not seed, shuffle, or rewrite the roleplay roster.
+          if (props.managementOnly) {
+            companions.value = stored || [];
+            return;
+          }
 
           // Get default companion IDs for migration check
           const defaultIds = DEFAULT_COMPANIONS.map((c) => c.id);
@@ -6430,7 +6305,7 @@ export default {
 
             // Hydrate Universal Profile addresses from Electron store
             for (const c of companions.value) {
-              if (c.tokenId && !c.universalProfile) {
+              if (isCompanionMinted(c) && !c.universalProfile) {
                 try {
                   const upData = await agentWalletService.getCompanionUP(c.id);
                   if (upData?.upAddress) c.universalProfile = upData.upAddress;
@@ -6456,28 +6331,29 @@ export default {
             // Shuffle companions for random order
             shuffleCompanions();
           }
-        } else {
-          companions.value = DEFAULT_COMPANIONS.map((c) => ({
-            ...c,
-            image: resolveBundledAsset(c.defaultImage),
-            isCustom: false, // Default companions are not custom
-          }));
-          shuffleCompanions();
         }
       } catch (e) {
         console.error("[Roleplay] Failed to load companions:", e);
+        if (props.managementOnly) {
+          companionsLoaded.value = false;
+          rosterLoadError.value = 'Unable to load your saved agents. Retry before saving new changes.';
+          return;
+        }
         companions.value = DEFAULT_COMPANIONS.map((c) => ({
           ...c,
           image: resolveBundledAsset(c.defaultImage),
           isCustom: false, // Default companions are not custom
         }));
         shuffleCompanions();
+      } finally {
+        rosterLoading.value = false;
       }
     };
 
     // Load NFT companions owned by the connected wallet
     const loadNFTCompanions = async () => {
-      if (!walletAddress.value || !CONFIG.companionNFT_BASE?.contractAddress)
+      if (props.managementOnly && !companionsLoaded.value) return;
+      if (!walletAddress.value || !(CONFIG.companionNFT_BASE?.contractAddress || CONFIG.smartAgentIssuance?.contractAddress))
         return;
 
       try {
@@ -6491,11 +6367,11 @@ export default {
         const existingTokenIds = new Set(
           companions.value
             .filter((c) => c.tokenId != null)
-            .map((c) => c.tokenId),
+            .map(mintReferenceKey),
         );
 
         const newCompanions = nftCompanions.filter((c) =>
-          !existingTokenIds.has(c.tokenId) && validateCompanionAge(c).valid,
+          !existingTokenIds.has(mintReferenceKey(c)) && validateCompanionAge(c).valid,
         );
 
         if (newCompanions.length > 0) {
@@ -6533,86 +6409,37 @@ export default {
     // Load scenarios from storage, seeding defaults on first run or after update
     const loadScenarios = async () => {
       try {
-        if (window.electronAPI?.store?.get) {
-          const stored = await window.electronAPI.store.get(
-            SCENARIOS_KEY,
-            null,
-          );
-
-          // Get default scenario IDs for migration check
-          const defaultIds = DEFAULT_SCENARIOS.map((s) => s.id);
-
-          if (stored && stored.length > 0) {
-            const customScenarios = stored.filter((s) => !defaultIds.includes(s.id));
-            scenarios.value = [
-              ...DEFAULT_SCENARIOS.map((s) => ({
-                ...s,
-                image: resolveBundledAsset(s.defaultImage),
-              })),
-              ...customScenarios,
-            ];
-            await saveScenarios();
-
-            console.log(
-              `[Roleplay] Loaded ${scenarios.value.length} scenarios`,
-            );
-          } else {
-            // First run - seed with defaults
-            scenarios.value = DEFAULT_SCENARIOS.map((s) => ({
-              ...s,
-              image: resolveBundledAsset(s.defaultImage),
-            }));
-            await saveScenarios();
-            console.log(
-              `[Roleplay] Seeded ${scenarios.value.length} default scenarios`,
-            );
-          }
-        } else {
-          scenarios.value = DEFAULT_SCENARIOS.map((s) => ({
-            ...s,
-            image: resolveBundledAsset(s.defaultImage),
-          }));
-        }
-      } catch (e) {
-        console.error("[Roleplay] Failed to load scenarios:", e);
-        scenarios.value = DEFAULT_SCENARIOS.map((s) => ({
-          ...s,
-          image: resolveBundledAsset(s.defaultImage),
-        }));
+        const stored = window.electronAPI?.store?.get
+          ? await window.electronAPI.store.get(SCENARIOS_KEY, null)
+          : JSON.parse(localStorage.getItem(SCENARIOS_KEY) || 'null');
+        scenarios.value = mergeRoleplayScenarios(DEFAULT_SCENARIOS, stored, resolveBundledAsset);
+      } catch (error) {
+        console.error('[Roleplay] Failed to load scenarios:', error);
+        scenarios.value = mergeRoleplayScenarios(DEFAULT_SCENARIOS, null, resolveBundledAsset);
       }
     };
 
-    // Save companions to storage (exclude NFT companions — loaded fresh from chain)
+    // Keep local profile settings for every companion, including NFT imports.
+    // On-chain ownership is still verified by each financial service.
     const saveCompanions = async () => {
+      rosterSaveError.value = "";
       try {
-        if (window.electronAPI?.store?.set) {
-          const localCompanions = companions.value.filter((c) => !c.isNFT);
-          // Phase 4b: SQLite-backed bulk upsert. The service mirrors
-          // back to the legacy electron-store key during the migration
-          // window so any code path still reading from there stays in sync.
-          await roleplayStore.saveCompanions(structuredClone(toRaw(localCompanions)));
-          console.log(
-            `[Roleplay] Saved ${localCompanions.length} companions (${companions.value.length - localCompanions.length} NFT excluded)`,
-          );
-        }
-      } catch (e) {
-        console.error("[Roleplay] Failed to save companions:", e);
+        if (props.managementOnly && !companionsLoaded.value) throw new Error('Load your saved agents before saving new changes.');
+        const roster = roleplayStore.serializeCompanionData(companions.value);
+        await roleplayStore.saveCompanions(roster);
+        emit("companions-changed", roster);
+      } catch (error) {
+        rosterSaveError.value = `Unable to save smart agents: ${error.message || "local storage is unavailable"}`;
+        console.error("[Roleplay] Failed to save companions:", error);
+        throw error;
       }
     };
 
     // Save scenarios to storage
     const saveScenarios = async () => {
-      try {
-        if (window.electronAPI?.store?.set) {
-          await window.electronAPI.store.set(
-            SCENARIOS_KEY,
-            structuredClone(toRaw(scenarios.value)),
-          );
-          console.log(`[Roleplay] Saved ${scenarios.value.length} scenarios`);
-        }
-      } catch (e) {
-        console.error("[Roleplay] Failed to save scenarios:", e);
-      }
+      const data = structuredClone(toRaw(scenarios.value));
+      if (window.electronAPI?.store?.set) await window.electronAPI.store.set(SCENARIOS_KEY, data);
+      else localStorage.setItem(SCENARIOS_KEY, JSON.stringify(data));
     };
 
     // Computed
@@ -6753,7 +6580,9 @@ export default {
       }
 
       selectedCompanion.value = companion;
+      emit("companion-selected", roleplayStore.serializeCompanionData(companion));
       showCustomCompanion.value = false;
+      if (props.managementOnly) return;
       // Sessions are now shown via companionSessions computed property
 
       // Reset Moltbook/social state when switching companions
@@ -6775,19 +6604,23 @@ export default {
     };
 
     const openCustomCompanion = () => {
+      phase.value = "setup";
       showCustomCompanion.value = true;
     };
+    expose({ openCustomCompanion, refreshModelAvailability: checkModelAvailability });
 
     const openCustomScenario = () => {
       showCustomScenario.value = true;
     };
 
     const cancelCustomCompanion = () => {
+      companionGenerationRevision++;
       generationCancelled.value = true;
       isGenerating.value = false;
       typingStatus.value = "";
       customCompanion.value = null;
-      showCustomCompanion.value = false;
+      showCustomCompanion.value = props.managementOnly;
+      if (props.managementOnly) customCompanionPrompt.value = '';
       generationError.value = null;
     };
 
@@ -6801,7 +6634,11 @@ export default {
     };
 
     const generateCustomCompanion = async () => {
-      if (!customCompanionPrompt.value || isGenerating.value) return;
+      if (!customCompanionPrompt.value.trim() || isGenerating.value || (props.managementOnly && !canGenerateCompanion.value)) return;
+      const selectedSlot = customCompanion.value && canIssueAgentToken(customCompanion.value) && agentNeedsPersonalization(customCompanion.value)
+        ? roleplayStore.serializeCompanionData(customCompanion.value) : null;
+      const generationRevision = ++companionGenerationRevision;
+      const isCurrentGeneration = () => generationRevision === companionGenerationRevision && !generationCancelled.value;
       isGenerating.value = true;
       generationError.value = null;
       generationCancelled.value = false;
@@ -6816,6 +6653,12 @@ export default {
               style: customCompanionStyle.value,
               gender: customCompanionGender.value,
               onProgress: (update) => {
+                if (!isCurrentGeneration()) {
+                  // The generator reports errors before releasing its LLM.
+                  // Let that final callback return so cancellation cleans up.
+                  if (update.phase === 'error') return;
+                  throw new Error("Generation cancelled");
+                }
                 console.log(
                   "[Roleplay] Progress:",
                   update.phase,
@@ -6829,7 +6672,7 @@ export default {
                 }
 
                 // Check for cancellation
-                if (generationCancelled.value) {
+                if (!isCurrentGeneration()) {
                   throw new Error("Generation cancelled");
                 }
               },
@@ -6837,7 +6680,7 @@ export default {
             { updateStatus: (s) => console.log("[Roleplay]", s) },
           );
 
-        if (generationCancelled.value) return;
+        if (!isCurrentGeneration()) return;
 
         // Sanitize generated text to remove blocked terms before validation
         // LLMs may generate these words despite prompt instructions
@@ -6880,9 +6723,10 @@ export default {
 
         // Generate companion portrait image using /image/quality (square)
         try {
-          if (generationCancelled.value) return;
+          if (!isCurrentGeneration()) return;
           const { generateCompanionPicture } =
             await import("../../skills/flagship.js");
+          if (!isCurrentGeneration()) return;
           typingStatus.value = "Generating portrait...";
 
           const imageResult = await generateCompanionPicture(result, {
@@ -6891,10 +6735,11 @@ export default {
             style: "professional portrait photography",
           });
 
-          if (generationCancelled.value) return;
+          if (!isCurrentGeneration()) return;
 
           if (imageResult.success && imageResult.image) {
             result.image = imageResult.image;
+            result.imageGeneration = imageResult.generation;
             console.log(`[Roleplay] Generated portrait for ${result.name}`);
           }
         } catch (imgErr) {
@@ -6904,16 +6749,25 @@ export default {
           );
         }
 
-        if (generationCancelled.value) return;
+        if (!isCurrentGeneration()) return;
+        if (selectedSlot) {
+          for (const key of ['id', 'tokenId', 'chainId', 'contractAddress', 'network', 'standard', 'txHash', 'launchStatus', 'agentWallet']) {
+            result[key] = selectedSlot[key];
+          }
+          result.isBare = true; result.needsSetup = true;
+        }
         customCompanion.value = result;
       } catch (e) {
         console.error("[Roleplay] Failed to generate companion:", e);
-        if (!generationCancelled.value) {
+        if (isCurrentGeneration()) {
           generationError.value = `Failed to generate companion: ${e.message}`;
+          customCompanion.value = null;
         }
       } finally {
-        isGenerating.value = false;
-        typingStatus.value = "";
+        if (generationRevision === companionGenerationRevision) {
+          isGenerating.value = false;
+          typingStatus.value = "";
+        }
       }
     };
 
@@ -7046,14 +6900,24 @@ export default {
 
     // Spending chart canvas refs
     const spendingChartRefs = ref({});
+    const previewSpendingChart = ref(null);
+    const previewSpendingHabits = computed(() => {
+      const companion = customCompanion.value;
+      if (!companion?.name || isGenerating.value) return null;
+      return companion.spendingHabits || generateSpendingProfile(companion);
+    });
 
     // Draw spider/radar chart for spending habits
     const drawSpendingChart = (canvas, spendingHabits) => {
-      if (!canvas || !spendingHabits) return;
+      if (!canvas) return;
 
       const ctx = canvas.getContext("2d");
-      const width = canvas.width;
-      const height = canvas.height;
+      if (!ctx) return;
+      const style = getComputedStyle(canvas);
+      const color = (token, fallback) => style.getPropertyValue(token).trim() || fallback;
+      ctx.setTransform(canvas.width / 320, 0, 0, canvas.height / 320, 0, 0);
+      const width = 320;
+      const height = 320;
       const centerX = width / 2;
       const centerY = height / 2;
       const radius = Math.min(width, height) / 2 - 65; // More padding for labels
@@ -7081,7 +6945,7 @@ export default {
       ctx.clearRect(0, 0, width, height);
 
       // Draw background grid (concentric circles)
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+      ctx.strokeStyle = color('--bz-border-strong', '#687080');
       ctx.lineWidth = 1;
       for (let i = 1; i <= 5; i++) {
         ctx.beginPath();
@@ -7090,9 +6954,9 @@ export default {
       }
 
       // Draw axis lines and labels
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-      ctx.font = "bold 11px sans-serif";
+      ctx.strokeStyle = color('--bz-border-strong', '#687080');
+      ctx.fillStyle = color('--bz-fg-mid', '#a0a8b8');
+      ctx.font = `500 12px ${style.fontFamily}`;
       ctx.textBaseline = "middle";
 
       for (let i = 0; i < numCategories; i++) {
@@ -7123,15 +6987,18 @@ export default {
         ctx.fillText(categories[i].label, labelX, labelY);
       }
 
+      // Empty previews retain the real chart axes without inventing values.
+      if (!spendingHabits) return;
+
       // Draw data polygon
       ctx.beginPath();
-      ctx.fillStyle = "rgba(138, 43, 226, 0.3)";
-      ctx.strokeStyle = "rgba(138, 43, 226, 0.8)";
+      ctx.fillStyle = color('--bz-purple-soft', 'rgba(155, 109, 200, 0.2)');
+      ctx.strokeStyle = color('--bz-accent', '#9b6dc8');
       ctx.lineWidth = 1;
 
       for (let i = 0; i < numCategories; i++) {
-        const value = spendingHabits[categories[i].key] || 5;
-        const normalizedValue = value / 10; // Values are 1-10
+        const value = spendingHabits[categories[i].key] ?? 5;
+        const normalizedValue = Math.max(0, Math.min(10, Number(value) || 0)) / 10;
         const angle = i * angleStep - Math.PI / 2;
         const x = centerX + radius * normalizedValue * Math.cos(angle);
         const y = centerY + radius * normalizedValue * Math.sin(angle);
@@ -7148,10 +7015,10 @@ export default {
       ctx.stroke();
 
       // Draw data points
-      ctx.fillStyle = "rgba(138, 43, 226, 1)";
+      ctx.fillStyle = color('--bz-accent', '#9b6dc8');
       for (let i = 0; i < numCategories; i++) {
-        const value = spendingHabits[categories[i].key] || 5;
-        const normalizedValue = value / 10;
+        const value = spendingHabits[categories[i].key] ?? 5;
+        const normalizedValue = Math.max(0, Math.min(10, Number(value) || 0)) / 10;
         const angle = i * angleStep - Math.PI / 2;
         const x = centerX + radius * normalizedValue * Math.cos(angle);
         const y = centerY + radius * normalizedValue * Math.sin(angle);
@@ -7179,6 +7046,12 @@ export default {
       });
     };
 
+    watch([previewSpendingChart, previewSpendingHabits, () => themeService.state.current], () => {
+      drawSpendingChart(previewSpendingChart.value, previewSpendingHabits.value);
+    }, { deep: true, flush: 'post' });
+    watch(() => themeService.state.current, renderSpendingCharts, { flush: 'post' });
+    watch(featuredCompanion, () => nextTick(renderSpendingCharts), { flush: 'post' });
+
     /**
      * Regenerate companion portrait image (uses /image/quality)
      */
@@ -7199,11 +7072,13 @@ export default {
 
         if (imageResult.success && imageResult.image) {
           companion.image = imageResult.image;
+          companion.imageGeneration = imageResult.generation;
 
           // Update in companions list
           const idx = companions.value.findIndex((c) => c.id === companion.id);
           if (idx >= 0) {
             companions.value[idx].image = imageResult.image;
+            companions.value[idx].imageGeneration = imageResult.generation;
             await saveCompanions();
           }
 
@@ -7262,6 +7137,7 @@ export default {
      */
     const regenerateScenarioImage = async (scenario) => {
       if (!scenario || isRegeneratingImage.value) return;
+      scenarioImageError.value = "";
       isRegeneratingImage.value = true;
       regeneratingId.value = scenario.id;
 
@@ -7275,6 +7151,7 @@ export default {
           style: "cinematic environment",
         });
 
+        if (!imageResult.success || !imageResult.image) throw new Error(imageResult.error || "No image was returned.");
         if (imageResult.success && imageResult.image) {
           scenario.image = imageResult.image;
 
@@ -7282,6 +7159,7 @@ export default {
           const idx = scenarios.value.findIndex((s) => s.id === scenario.id);
           if (idx >= 0) {
             scenarios.value[idx].image = imageResult.image;
+            scenarios.value[idx].imageRegenerated = true;
             await saveScenarios();
           }
 
@@ -7293,6 +7171,7 @@ export default {
           console.log(`[Roleplay] Regenerated scene for ${scenario.name}`);
         }
       } catch (e) {
+        scenarioImageError.value = `Unable to generate or save this scene: ${e.message}`;
         console.error("[Roleplay] Failed to regenerate scenario image:", e);
       } finally {
         isRegeneratingImage.value = false;
@@ -7305,7 +7184,7 @@ export default {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Generate a voice sample for a companion using Qwen3-TTS voice design
+     * Generate a voice sample for a companion using Chatterbox V3 persona design
      * The sample is stored with the companion and reused to initialize voice for each session
      */
     const generateCompanionVoice = async (companion) => {
@@ -8194,19 +8073,6 @@ export default {
       messageAudioProgress.value = { ...messageAudioProgress.value, [id]: clamped };
     };
 
-    const getVideoSrc = (video) => {
-      if (!video) return "";
-      if (video.startsWith("data:")) return video;
-      if (video.startsWith("bonzai-blob://")) return video;
-      if (video.startsWith("http")) return video;
-      // Local file path - use Flask media stream endpoint
-      if (video.startsWith("/")) {
-        const port = window.BONZAI_SERVER_PORT || 65000;
-        return `http://localhost:${port}/media/stream?path=${encodeURIComponent(video)}`;
-      }
-      return video;
-    };
-
     // Download image to user's device
     const downloadImage = async (image, idx) => {
       try {
@@ -8562,6 +8428,35 @@ export default {
     // Process a single message (internal function)
     const processMessage = async (messageData) => {
       const { messageContent, visionData } = messageData;
+      let capability;
+      try { capability = chatRequest(messageContent, availableWorkflows.value); }
+      catch (error) { chatHistory.value.push({ id: _msgId(), ts: Date.now(), role: 'assistant', content: error.message }); await saveSession(); return; }
+      if (capability) {
+        isTyping.value = true;
+        typingStatus.value = 'Creating locally…';
+        try {
+          const result = await runChatCapability(capability, {
+            agent: selectedCompanion.value, channel: 'local',
+            image: visionData?.imageBase64 || (capability.pipeline === 'video'
+              ? await resolvePortraitReference([...chatHistory.value].reverse().find(message => message.image)?.image || selectedCompanion.value.image)
+              : undefined),
+            referenceImage: capability.pipeline === 'image' && selectedCompanion.value.image
+              ? await resolvePortraitReference(selectedCompanion.value.image) : undefined,
+            mediaModes: { video: 'quality' },
+            enabledMedia: messageContent.trim().startsWith('/') ? CHAT_MEDIA : [
+              ...(settings.value.enableImage ? ['image'] : []),
+              ...(settings.value.enableAudio ? ['audio'] : []),
+              ...(settings.value.enableVideo ? ['video'] : []),
+              ...(settings.value.enableVision ? ['vision'] : []), 'music', '3d',
+            ],
+            updateStatus: status => { typingStatus.value = status; },
+          });
+          chatHistory.value.push({ id: _msgId(), ts: Date.now(), role: 'assistant', content: '', workflowResult: result });
+        } catch (error) {
+          chatHistory.value.push({ id: _msgId(), ts: Date.now(), role: 'assistant', content: `Creation could not be completed: ${error.message}` });
+        } finally { isTyping.value = false; typingStatus.value = ''; await saveSession(); scrollToBottom(); }
+        return;
+      }
       const recalledMemory = await memoryService.buildRecallContext(messageContent, {
         companion: selectedCompanion.value,
         includeUser: true,
@@ -8611,6 +8506,7 @@ export default {
             sceneState: {
               ...sceneState.value,
               userAppearance: userProfile.value.userDescription || "a man",
+              participantContext: roleplayParticipantContext(userProfile.value),
               memorySummary: [sceneState.value.memorySummary, recalledMemory].filter(Boolean).join("\n\n"),
             },
             visionData, // Pass vision analysis to LLM
@@ -8625,7 +8521,10 @@ export default {
               if (!msg) return;
 
               // Update the message with new content
-              if (progress.type === "text") {
+              if (progress.type === "text-delta") {
+                msg.content = cleanMessageContent(progress.response?.response);
+                scrollToBottom();
+              } else if (progress.type === "text") {
                 const responseText = cleanMessageContent(
                   progress.response?.response,
                 );
@@ -8711,6 +8610,8 @@ export default {
             msg.image = result.response.image;
             msg.audio = result.response.audio;
             msg.video = result.response.video;
+
+            msg.mediaErrors = result.response.mediaErrors || [];
             // Store environment state changes in message for session recovery
             if (result.response.timeOfDay)
               msg.timeOfDay = result.response.timeOfDay;
@@ -8866,16 +8767,19 @@ export default {
     const processMessageQueue = async () => {
       if (isProcessingMessage.value) return;
 
-      while (pendingMessage.value) {
-        isProcessingMessage.value = true;
-        const messageToProcess = pendingMessage.value;
-        pendingMessage.value = null; // Clear the pending message
-
-        await processMessage(messageToProcess);
-
+      isProcessingMessage.value = true;
+      skillStore.foregroundRoleplayBusy = true;
+      try {
+        while (skillStore.isGeneratingAutonomous) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        while (pendingMessage.value) {
+          await processMessage(pendingMessages.value.shift());
+        }
+      } finally {
+        skillStore.foregroundRoleplayBusy = false;
         isProcessingMessage.value = false;
       }
-
       // Focus input after all messages processed
       nextTick(() => {
         chatInput.value?.focus();
@@ -8905,7 +8809,10 @@ export default {
         : null;
 
       // Build user message content
-      const messageContent = msg || (hasImage ? "*shares an image*" : "");
+      const messageContent = selectedCreation.value
+        ? `/${selectedCreation.value} ${msg || "Describe this image"}`
+        : msg || (hasImage ? "*shares an image*" : "");
+      selectedCreation.value = null;
 
       // Add user message to chat immediately (include image if present)
       chatHistory.value.push({
@@ -8923,35 +8830,39 @@ export default {
       // Create message data object
       const messageData = { messageContent, visionData };
 
-      // If currently processing, queue this message (replaces any existing pending)
-      if (isProcessingMessage.value) {
-        console.log(
-          "[Roleplay] Message queued while generating:",
-          messageContent.substring(0, 50),
-        );
-        pendingMessage.value = messageData;
-        return;
-      }
-
-      // Process immediately
-      pendingMessage.value = messageData;
+      // Preserve every request while an earlier creation is still running.
+      pendingMessages.value.push(messageData);
       await processMessageQueue();
     };
 
     // Load sessions, companions, scenarios, and check model availability on mount
     onMounted(async () => {
       await Promise.all([
-        loadSessions(),
         loadCompanions(),
-        loadScenarios(),
+        loadAgentWorkflows(),
         checkModelAvailability(),
+        ...(!props.managementOnly ? [loadSessions(), loadScenarios()] : []),
       ]);
+      if (props.managementOnly) {
+        await loadNFTCompanions();
+        await nextTick();
+        renderSpendingCharts();
+        setupDownloadsSocket();
+        return;
+      }
 
       // Load global user profile (after sessions so migration can work)
       await loadUserProfile();
 
       // Load NFT companions after local companions are ready
       await loadNFTCompanions();
+
+      if (props.initialCompanion) {
+        selectedCompanion.value = companions.value.find(c => c.id === props.initialCompanion.id) || props.initialCompanion;
+        selectedScenario.value ||= scenarios.value[0] || null;
+        await nextTick();
+        if (canStart.value && modelAvailabilityChecked.value && missingMandatory.value.length === 0) await startNewChat();
+      }
 
       // Deterministic, synthetic state used only by the local product-film harness.
       if (new URLSearchParams(window.location.search).get("demo") === "companion-chat") {
@@ -9115,6 +9026,11 @@ export default {
       messageAudioElements.clear();
       // Disconnect downloads socket
       disconnectDownloadsSocket();
+      if (props.managementOnly) {
+        companionGenerationRevision++;
+        generationCancelled.value = true;
+        return;
+      }
 
       // Always save the current session before cleanup
       // This captures any in-flight changes (background updates, partial messages, etc.)
@@ -9192,13 +9108,43 @@ export default {
     watch(walletAddress, async (newAddr, oldAddr) => {
       if (newAddr && newAddr !== oldAddr) {
         await loadNFTCompanions();
-      } else if (!newAddr && oldAddr) {
-        // Wallet disconnected — remove NFT companions
-        companions.value = companions.value.filter((c) => !c.isNFT);
       }
+      // Disconnecting a wallet does not delete local profiles or their skills.
     });
 
     return {
+      sessionAudience, selectedCreation, CHAT_MEDIA, assignedChatWorkflows, prepareChatCommand, prepareWorkflowCommand,
+      mediaPipelineId, mediaDownloadError, mediaDownloadKey, downloadMedia, cancelMediaDownload,
+      roleplayMedia: [
+        { key: 'enableImage', category: 'image', model: 'image_turbo', icon: 'image', name: 'Images', description: 'Illustrate the scene' },
+        { key: 'enableAudio', category: 'audio', model: 'audio_quality', icon: 'headphones', name: 'Voice', description: 'Hear your companion' },
+        { key: 'enableVideo', category: 'video', model: 'video_quality', icon: 'movie', name: 'Video', description: 'Animate key moments' },
+        { key: 'enableVision', category: 'vision', model: 'vision', icon: 'visibility', name: 'Vision', description: 'Share images for context' },
+      ],
+      scenarioImageError, stageIndex, stageButtons, featuredScenarios, focusStage, moveStage,
+      carouselIndex, carouselButtons, featuredCompanion, featuredCompanions, focusCompanion, moveCarousel,
+      economyNetwork,
+      isCompanionMinted,
+      canIssueAgentToken,
+      verifiedAgentToken,
+      agentNeedsPersonalization,
+      publishAgentIdentity,
+      hasMintReference,
+      mintVerificationRetry,
+      refreshTokenIssuance,
+      refreshingLaunchId,
+      refreshCompanionLaunch,
+      availableWorkflows,
+      workflowLoadError,
+      rosterSaveError,
+      rosterLoadError,
+      rosterLoading,
+      companionsLoaded,
+      isSavingCompanion,
+      loadCompanions,
+      setCompanionWorkflow,
+      getAgentWorkflowIds,
+      emitHireAgent,
       // Access control
       hasAccess,
       isConnected,
@@ -9217,6 +9163,14 @@ export default {
       customScenarioPrompt,
       customScenarioMood,
       customCompanion,
+      managedCompanions,
+      managementSavedCompanion,
+      attachGeneratedAgentSlot,
+      startGeneratedRoleplay,
+      agentLaunchSymbol,
+      agentLaunchConfigured,
+      selectManagedCompanion,
+      canGenerateCompanion,
       customScenario,
       isGenerating,
       settings,
@@ -9242,7 +9196,7 @@ export default {
       sceneState,
       rebuildSceneState,
       // Global user profile
-      userProfile,
+      roleProfileFields, profileSaveError, profileLoaded, userProfile,
       saveUserProfile,
       // Session persistence
       savedSessions,
@@ -9334,7 +9288,6 @@ export default {
       mintingCompanionId,
       mintResult,
       mintNetwork,
-      mintCompanionNFT,
       deployUPForCompanion,
       deployingUPForCompanionId,
       openExternal,
@@ -9411,11 +9364,12 @@ export default {
       regenerateSpendingProfile,
       // Spending profile charts
       spendingChartRefs,
+      previewSpendingChart,
+      previewSpendingHabits,
       formatResponseMode,
       endChat,
       getImageSrc,
       getAudioSrc,
-      getVideoSrc,
       activeMessageAudioId,
       messageAudioProgress,
       messageAudioId,
@@ -9468,6 +9422,12 @@ export default {
 </script>
 
 <style scoped>
+.roleplay-audience { display:flex; flex-wrap:wrap; gap:12px; padding-block:12px 24px; }
+.chat-capability-tools { display:flex; flex-wrap:wrap; gap:4px; padding-bottom:8px; }
+.chat-capability-tools .bz-btn { font-size:12px; padding:6px 10px; min-height:30px; }
+.chat-capability-tools details { position:relative; }
+.chat-capability-workflows { position:absolute; bottom:100%; right:0; display:grid; gap:8px; padding:12px; min-width:220px; max-height:280px; overflow:auto; background:var(--bz-card); border:1px solid var(--bz-border); border-radius:var(--bz-r-md); z-index:20; }
+
 .roleplay-chat {
   width: 100%;
 }
@@ -9727,6 +9687,32 @@ export default {
     text;
 }
 
+.companion-workflow-skills {
+  margin: 1rem 0 0;
+  padding: 0.75rem 0;
+  border: 0;
+  border-top: 1px solid var(--bz-border);
+  color: var(--bz-fg);
+  font-size: var(--bz-text-sm, 0.875rem);
+}
+.companion-workflow-skills summary { cursor: pointer; font-weight: 600; }
+.companion-workflow-skills summary span { color: var(--bz-fg-muted); margin-left: 0.35rem; }
+.companion-workflow-options { display: grid; gap: 0.75rem; margin-top: 0.75rem; max-height: 18rem; overflow-y: auto; }
+.companion-workflow-option { display: flex; align-items: start; gap: 0.5rem; cursor: pointer; }
+.companion-workflow-option input { margin-top: 0.25rem; flex-shrink: 0; accent-color: var(--bz-purple); }
+.companion-workflow-option span { min-width: 0; }
+.companion-workflow-option strong { display: block; font-size: inherit; overflow-wrap: anywhere; }
+.companion-workflow-option small { display: block; color: var(--bz-fg-muted); line-height: 1.4; overflow-wrap: anywhere; }
+
+.is-agent-management .section-header { justify-content: flex-start; }
+.is-agent-management .companion-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-top: 1rem !important; padding-top: 0 !important; }
+.is-agent-management .models__activity--payouts { background: transparent; border: 0; padding: 0; }
+.is-agent-management .custom-companion-form { background: var(--bz-panel); border: 1px solid var(--bz-border); border-radius: var(--bz-r-md); }
+.is-agent-management .custom-companion-form .textarea,
+.is-agent-management .custom-companion-form select { background: var(--bz-card); border-color: var(--bz-border-strong); color: var(--bz-fg); }
+.is-agent-management .custom-companion-form .textarea::placeholder { color: var(--bz-fg-muted); opacity: 1; }
+.is-agent-management .custom-companion-form :is(textarea, select):focus-visible { outline: 2px solid var(--bz-border-brand); outline-offset: 2px; }
+
 /* Setup Phase */
 .companion-grid {
   display: grid;
@@ -9774,7 +9760,8 @@ export default {
 /* Card action buttons (top left/right) */
 .card-action-btn {
   position: absolute;
-  background: rgba(50, 115, 220, 0.9);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
   border: none;
   border-radius: 50%;
   width: 28px;
@@ -9785,7 +9772,6 @@ export default {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: var(--bz-fg);
   z-index: 5;
 }
 
@@ -9797,7 +9783,8 @@ export default {
 .card-action-btn.top-left-second {
   top: -14px;
   right: 14px;
-  background: rgba(255, 56, 96, 0.9);
+  background: var(--bz-danger);
+  color: var(--bz-on-danger);
 }
 
 .companion-card:hover .card-action-btn,
@@ -9811,7 +9798,8 @@ export default {
 }
 
 .card-action-btn.top-left-second:hover {
-  background: rgba(255, 56, 96, 1);
+  background: var(--bz-danger);
+  color: var(--bz-on-danger);
 }
 
 /* Gender icon prefix */
@@ -9858,7 +9846,8 @@ export default {
   position: absolute;
   bottom: 8px;
   right: 8px;
-  background: rgba(138, 43, 226, 0.9);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
   border: none;
   border-radius: 50%;
   width: 28px;
@@ -9869,7 +9858,6 @@ export default {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: var(--bz-fg);
 }
 
 .regenerate-portrait-btn:hover {
@@ -9881,7 +9869,8 @@ export default {
 }
 
 .regenerate-portrait-btn:hover {
-  background: rgba(138, 43, 226, 1);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 /* NFT badge on companion card */
@@ -9904,7 +9893,8 @@ export default {
   position: absolute;
   bottom: 8px;
   right: 42px;
-  background: rgba(138, 43, 226, 0.9);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
   border: none;
   border-radius: 50%;
   width: 28px;
@@ -9915,12 +9905,12 @@ export default {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: var(--bz-fg);
 }
 
 .regenerate-voice-btn:hover {
   transform: scale(1.1);
-  background: rgba(138, 43, 226, 1);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 .companion-portrait-container:hover .regenerate-voice-btn {
@@ -9932,7 +9922,8 @@ export default {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: rgba(138, 43, 226, 0.9);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
   border: none;
   border-radius: 50%;
   width: 22px;
@@ -9941,13 +9932,13 @@ export default {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: var(--bz-fg);
   z-index: 4;
 }
 
 .voice-indicator:hover {
   transform: scale(1.1);
-  background: rgba(138, 43, 226, 1);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 .session-badge {
@@ -9974,8 +9965,8 @@ export default {
   position: absolute;
   top: 8px;
   right: 36px;
-  background: rgba(50, 115, 220, 0.9);
-  color: var(--bz-fg);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
   min-width: 20px;
   height: 20px;
   border-radius: 10px;
@@ -10069,7 +10060,8 @@ export default {
   position: absolute;
   top: 4px;
   right: 4px;
-  background: rgba(255, 56, 96, 0.9);
+  background: var(--bz-danger);
+  color: var(--bz-on-danger);
   border: none;
   border-radius: 50%;
   width: 24px;
@@ -10078,7 +10070,6 @@ export default {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: var(--bz-fg);
   opacity: 0;
   transition: opacity 0.2s;
 }
@@ -10088,7 +10079,8 @@ export default {
 }
 
 .clear-image-btn:hover {
-  background: rgba(255, 56, 96, 1);
+  background: var(--bz-danger);
+  color: var(--bz-on-danger);
 }
 
 .user-info {
@@ -10337,7 +10329,8 @@ export default {
   position: absolute;
   top: 8px;
   right: 8px;
-  background: rgba(255, 56, 96, 0.9);
+  background: var(--bz-danger);
+  color: var(--bz-on-danger);
   border: none;
   border-radius: 50%;
   width: 28px;
@@ -10348,7 +10341,6 @@ export default {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: var(--bz-fg);
   z-index: 5;
 }
 
@@ -10357,7 +10349,8 @@ export default {
 }
 
 .delete-scenario-btn:hover {
-  background: rgba(255, 56, 96, 1);
+  background: var(--bz-danger);
+  color: var(--bz-on-danger);
 }
 
 /* Export single button for companion/scenario cards */
@@ -10365,7 +10358,8 @@ export default {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: rgba(50, 115, 220, 0.9);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
   border: none;
   border-radius: 50%;
   width: 28px;
@@ -10376,7 +10370,6 @@ export default {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: var(--bz-fg);
   z-index: 5;
 }
 
@@ -10386,7 +10379,8 @@ export default {
 }
 
 .export-single-btn:hover {
-  background: rgba(50, 115, 220, 1);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 /* Export button for predefined companion cards */
@@ -10394,7 +10388,8 @@ export default {
   position: absolute;
   bottom: 8px;
   left: 8px;
-  background: rgba(50, 115, 220, 0.9);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
   border: none;
   border-radius: 50%;
   width: 28px;
@@ -10405,7 +10400,6 @@ export default {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s;
-  color: var(--bz-fg);
   z-index: 5;
 }
 
@@ -10414,7 +10408,8 @@ export default {
 }
 
 .export-predefined-btn:hover {
-  background: rgba(50, 115, 220, 1);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 /* Saved Sessions List */
@@ -10653,7 +10648,8 @@ hr {
 }
 
 .regenerate-image-btn:hover {
-  background: rgba(138, 87, 197, 1);
+  background: var(--bz-control-selected-bg);
+  color: var(--bz-control-selected-fg);
 }
 
 .regenerate-image-btn:disabled {
@@ -11347,7 +11343,7 @@ hr {
   opacity: 1;
 }
 
-/* Video actions overlay */
+/* Keep video actions outside playback and its native controls. */
 .message-video {
   position: relative;
   animation: mediaFadeIn 0.5s ease-out forwards;
@@ -11355,17 +11351,12 @@ hr {
 }
 
 .video-actions {
-  position: absolute;
-  top: var(--bz-space-2);
-  right: var(--bz-space-2);
   display: flex;
-  gap: var(--bz-space-1);
-  opacity: 0.96;
-  transition: opacity var(--bz-dur-fast) var(--bz-ease-out);
-}
-
-.message-video:hover .video-actions {
-  opacity: 1;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: var(--bz-space-2);
+  padding: var(--bz-space-2) 0;
+  overflow-x: auto;
 }
 
 /* Purchase Intent Card */
@@ -12270,4 +12261,301 @@ hr {
   color: var(--bz-fg);
   border-color: var(--bz-border-strong);
 }
+
+/* Agent creation uses the existing generator and progressive preview. */
+.is-agent-management .agent-launch-section { margin-top: var(--bz-space-6); padding-top: var(--bz-space-5); border-top: 1px solid var(--bz-border-strong); }
+.is-agent-management .agent-launch-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.is-agent-management .agent-launch-heading h2 { margin: 0; font-size: 21px; color: var(--bz-fg); }
+.is-agent-management .agent-launch-details { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin: 20px 0 16px; }
+.is-agent-management .agent-launch-details div:last-child { grid-column: 1 / -1; }
+.is-agent-management .agent-launch-details dt { color: var(--bz-fg-mid); font-size: 11px; margin-bottom: 4px; }
+.is-agent-management .agent-launch-details dd { color: var(--bz-fg); margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.is-agent-management .agent-launch-copy, .is-agent-management .agent-launch-hint { color: var(--bz-fg-mid); font-size: 12px; line-height: 1.5; margin: 12px 0 0; }
+.is-agent-management .agent-launch-section .agent-preview-economy { border: 0; padding: 0; }
+
+.is-agent-management { container-type: inline-size; }
+.is-agent-management .custom-companion-form.agent-creation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  align-items: start;
+  gap: var(--bz-space-7, 32px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.is-agent-management .companion-creation-editor { min-width: 0; padding: 0; }
+.is-agent-management .agent-creation-requirements { width: 100%; min-width: 600px; }
+.is-agent-management .agent-creation-requirements:not(:empty) { margin-bottom: var(--bz-space-6); }
+.is-agent-management .agent-creation-requirements :deep(.bz-download-requirement) { margin-top: 0; }
+.is-agent-management .agent-creation-requirements :deep(.bz-meta) { margin: var(--bz-space-2) 0 0; font-size: 12px; line-height: 1.5; color: var(--bz-fg-muted); }
+.is-agent-management .agent-creation-heading { margin: 0 0 var(--bz-space-6); }
+.is-agent-management .agent-creation-heading h2 { margin: 0 0 var(--bz-space-2); font-size: 30px; line-height: 1.15; color: var(--bz-fg); }
+.is-agent-management .agent-creation-heading p { margin: 0; color: var(--bz-fg-muted); font-size: 13px; line-height: 1.5; }
+.is-agent-management .agent-creation-label { display: block; margin: 0 0 var(--bz-space-2); color: var(--bz-fg); font-weight: 500; font-size: 12px; }
+.is-agent-management .custom-companion-form .textarea { width: 100%; min-height: 136px; padding: var(--bz-space-4); font-size: 14px; line-height: 1.65; border-radius: var(--bz-r-md); resize: vertical; }
+.is-agent-management .agent-creation-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: var(--bz-space-4); margin: var(--bz-space-4) 0 0; }
+.is-agent-management .agent-identity-control { min-width: 0; }
+.is-agent-management .agent-identity-control .select { display: block; margin: 0 !important; width: 100%; font-size: 13px; }
+.is-agent-management .agent-identity-control select { width: 100%; height: 40px; border-radius: var(--bz-r-md); }
+.is-agent-management .agent-generate-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--bz-space-3); padding-top: var(--bz-space-2); }
+.is-agent-management .agent-generate-actions .bz-btn { margin: 0 !important; font-size: 13px; min-height: 40px; }
+.is-agent-management .agent-generate-actions .bz-btn--agent-cta { min-width: 160px; padding-inline: var(--bz-space-5); }
+.is-agent-management .agent-generate-actions .bz-btn--ghost { min-width: 80px; }
+.is-agent-management .agent-saved-picker { margin-top: var(--bz-space-6); padding-top: var(--bz-space-5); border-top: 1px solid var(--bz-border); }
+.is-agent-management .agent-saved-picker select { width: 100%; padding: 10px 12px; border: 1px solid var(--bz-border-strong); border-radius: var(--bz-r-md); font: inherit; font-size: 13px; }
+.is-agent-management .custom-companion-preview { min-width: 0; width: 100%; max-width: 340px; margin: 0; padding: 0; border: 0; background: transparent; border-radius: 0; overflow: visible; }
+.is-agent-management .agent-preview-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--bz-space-2); margin-bottom: var(--bz-space-4); }
+.is-agent-management .agent-preview-heading .companion-name { display: flex; align-items: center; gap: var(--bz-space-2); min-width: 0; margin: 0; font-size: 22px; line-height: 1.25; overflow-wrap: anywhere; }
+.is-agent-management .agent-preview-heading .companion-name > .material-symbols-outlined { flex: none; font-size: 20px; color: var(--bz-accent); }
+.is-agent-management .agent-preview-state { font-size: 10px; color: var(--bz-fg-muted); }
+.is-agent-management .custom-companion-preview .columns { display: flex; flex-direction: column; align-items: stretch; padding: 0 !important; margin: 0; }
+.is-agent-management .custom-companion-preview .column { width: 100%; min-width: 0; padding: 0 !important; }
+.is-agent-management .custom-companion-preview .column + .column { margin-top: var(--bz-space-4); }
+/* Match the existing companion polaroid: narrow white edges and a deep caption edge. */
+.is-agent-management .custom-preview-portrait.agent-polaroid { position: relative; display: block; box-sizing: border-box; width: 100%; height: auto; padding: 8px 8px 48px; border: 0; border-radius: 1px; overflow: hidden; background: #fff; }
+.is-agent-management .agent-polaroid img, .is-agent-management .agent-polaroid .no-portrait { display: flex; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 0; }
+.is-agent-management .agent-polaroid .no-portrait { min-height: 0; color: var(--bz-fg-muted); background: var(--bz-card); }
+.is-agent-management .agent-polaroid-caption { position: absolute; bottom: 13px; left: 12px; right: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 18px; line-height: 22px; color: #222; }
+.is-agent-management .no-portrait .material-symbols-outlined { font-size: 48px !important; opacity: 0.6 !important; }
+.is-agent-management .custom-companion-preview h5 { margin: 0; line-height: 1.2; font-size: 24px !important; overflow-wrap: anywhere; }
+.is-agent-management .agent-placeholder-copy { margin: 0; color: var(--bz-fg-muted); font-size: 13px; line-height: 1.5; }
+.is-agent-management .agent-placeholder-line { display: block; height: 8px; border-radius: var(--bz-r-sm); background: var(--bz-border-strong); }
+.is-agent-management .agent-placeholder-line--name { width: 120px; height: 14px; }
+.is-agent-management .agent-placeholder-bio { display: grid; gap: 10px; padding: 4px 0; }
+.is-agent-management .agent-placeholder-bio .agent-placeholder-line:last-child { width: 65%; }
+.is-agent-management .agent-placeholder-line--trait { width: 62px; height: 20px; }
+.is-agent-management .agent-preview-bio { padding-top: var(--bz-space-4); border-top: 1px solid var(--bz-border); }
+.is-agent-management .agent-preview-bio p { margin: 0; }
+.is-agent-management .agent-preview-spending { margin: var(--bz-space-4) 0 0; padding: var(--bz-space-3) 0 0; border-block: 1px solid var(--bz-border); }
+.is-agent-management .agent-preview-spending figcaption { font-size: 11px; font-weight: 500; color: var(--bz-fg-mid); }
+.is-agent-management .agent-preview-spending .spending-chart-container { margin: 0; padding: 0; }
+.is-agent-management .agent-preview-spending canvas { display: block; max-width: 280px; }
+.is-agent-management .custom-companion-preview .is-size-6 { font-size: 13px !important; line-height: 1.55; }
+.is-agent-management .custom-companion-preview .buttons { display: flex; flex-wrap: wrap; gap: var(--bz-space-2); margin-bottom: 0; }
+.is-agent-management .custom-companion-preview .buttons .bz-btn { margin: 0 !important; font-size: 12px; }
+.is-agent-management .agent-preview-economy { display: flex; flex-wrap: wrap; gap: var(--bz-space-2); margin-top: var(--bz-space-4); padding-top: var(--bz-space-4); border-top: 1px solid var(--bz-border); }
+.is-agent-management .agent-preview-economy .bz-btn { font-size: 12px; }
+.is-agent-management .companion-workflow-skills { border-bottom: 1px solid var(--bz-border); }
+.is-agent-management .companion-workflow-option small { display: none; }
+.is-agent-management .generation-status { color: var(--bz-fg); font-size: 12px; }
+/* Three continuous, equal-height stages occupy the full creation workspace. */
+.is-agent-management .agent-creation-layout {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  align-items: stretch !important;
+  gap: var(--bz-space-4) !important;
+  min-height: max(640px, calc(100dvh - 350px));
+  min-width: 600px;
+}
+.is-agent-management .companion-creation-editor,
+.is-agent-management .custom-companion-preview,
+.is-agent-management .agent-launch-section {
+  box-sizing: border-box; min-width: 0; max-width: none; width: 100%;
+  margin: 0; padding: clamp(16px, 2cqw, 28px);
+  border: 1px solid var(--bz-border); border-radius: var(--bz-r-md);
+  background: var(--bz-panel); display: flex; flex-direction: column;
+}
+.is-agent-management .agent-stage-label { display: block; font-size: 10px; font-weight: 600; letter-spacing: .08em; color: var(--bz-accent); margin-bottom: 16px; }
+.is-agent-management .agent-creation-heading h2,
+.is-agent-management .agent-launch-heading h2 { font-size: clamp(23px, 2.4cqw, 32px); line-height: 1.15; }
+.is-agent-management .agent-creation-heading { margin-bottom: 24px; }
+.is-agent-management .companion-creation-editor > .field { display: flex; flex-direction: column; flex: 1; }
+.is-agent-management .companion-creation-editor > .field > .control { display: flex; flex: 1; }
+.is-agent-management .custom-companion-form .textarea { min-height: 220px; resize: vertical; background: var(--bz-canvas); }
+.is-agent-management .agent-creation-controls { gap: 12px; }
+.is-agent-management .agent-generate-actions .bz-btn--agent-cta { width: 100%; min-width: 0; min-height: 44px; }
+.is-agent-management .agent-preview-heading { min-height: 28px; margin-bottom: 20px; }
+.is-agent-management .agent-preview-heading .companion-name > .material-symbols-outlined { display: none; }
+.is-agent-management .agent-polaroid { max-width: 320px; margin-inline: auto; }
+.is-agent-management .agent-preview-spending canvas { max-width: 200px; margin-inline: auto; }
+.is-agent-management .agent-preview-spending .spending-chart-container { display: flex; justify-content: center; }
+.is-agent-management .agent-launch-heading { display: block; }
+.is-agent-management .agent-launch-heading .skill-chip { display: inline-flex; margin-top: 12px; }
+.is-agent-management .agent-token-emblem { width: 100px; height: 100px; margin: 32px auto; display: grid; place-items: center; border: 1px solid var(--bz-border-brand); border-radius: 50%; background: var(--bz-purple-soft); color: var(--bz-accent); }
+.is-agent-management .agent-token-emblem span { font-size: 48px; font-variation-settings: 'wght' 200; }
+.is-agent-management .agent-launch-details { grid-template-columns: 1fr; gap: 0; margin: 0; }
+.is-agent-management .agent-launch-details > div { padding: 14px 0; border-bottom: 1px solid var(--bz-border); }
+.is-agent-management .agent-launch-details dd { font-size: 16px; }
+.is-agent-management .agent-launch-copy { margin-block: 20px; }
+.is-agent-management .agent-launch-section .agent-preview-economy { margin-top: auto; padding-top: 24px; }
+.is-agent-management .agent-preview-economy .bz-btn { width: 100%; min-height: 44px; white-space: normal; }
+@container (max-width: 900px) {
+  .is-agent-management .agent-creation-controls { grid-template-columns: 1fr; }
+  .is-agent-management .agent-polaroid-caption { font-size: 14px; }
+}
+/* Card actions remain readable on photographs and in every theme. */
+:is(.card-action-btn,
+.regenerate-portrait-btn,
+.regenerate-voice-btn,
+.voice-indicator,
+.clear-image-btn,
+.delete-scenario-btn,
+.export-single-btn,
+.export-predefined-btn,
+.regenerate-image-btn) {
+  border: 1px solid var(--bz-control-selected-border);
+}
+:is(.card-action-btn,
+.regenerate-portrait-btn,
+.regenerate-voice-btn,
+.voice-indicator,
+.clear-image-btn,
+.delete-scenario-btn,
+.export-single-btn,
+.export-predefined-btn,
+.regenerate-image-btn):focus-visible { opacity: 1; outline: 2px solid var(--bz-fg); outline-offset: 3px; }
+:is(.companion-card, .scenario-card, .companion-portrait-container):focus-within :is(.card-action-btn,
+.regenerate-portrait-btn,
+.regenerate-voice-btn,
+.voice-indicator,
+.clear-image-btn,
+.delete-scenario-btn,
+.export-single-btn,
+.export-predefined-btn,
+.regenerate-image-btn) { opacity: 1; }
+button:is(.card-action-btn,
+.regenerate-portrait-btn,
+.regenerate-voice-btn,
+.voice-indicator,
+.clear-image-btn,
+.delete-scenario-btn,
+.export-single-btn,
+.export-predefined-btn,
+.regenerate-image-btn):disabled,
+button:is(.card-action-btn,
+.regenerate-portrait-btn,
+.regenerate-voice-btn,
+.voice-indicator,
+.clear-image-btn,
+.delete-scenario-btn,
+.export-single-btn,
+.export-predefined-btn,
+.regenerate-image-btn):disabled:hover {
+  opacity: 1; color: var(--bz-fg-mid); background: var(--bz-raised);
+  border-color: var(--bz-border-strong); cursor: not-allowed; transform: none;
+}
+.card-action-btn.top-left-second, .delete-scenario-btn, .clear-image-btn { border-color: var(--bz-danger); }
+@media (hover: none) { :is(.card-action-btn,
+.regenerate-portrait-btn,
+.regenerate-voice-btn,
+.voice-indicator,
+.clear-image-btn,
+.delete-scenario-btn,
+.export-single-btn,
+.export-predefined-btn,
+.regenerate-image-btn) { opacity: 1; } }
+/* Character-select roster: browsing is separate from committing a companion. */
+.companion-selector { width: 100%; min-width: 0; margin-block: 24px; }
+.companion-selector__header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px; }
+.companion-selector__header h3 { margin:4px 0 0; font-size:clamp(26px,3vw,40px); color:var(--bz-fg); }
+.companion-selector__navigation { display:flex; align-items:center; gap:8px; }
+.companion-selector__navigation > span { margin-right:8px; color:var(--bz-fg-mid); white-space:nowrap; }
+.companion-selector__roster { display:flex; gap:10px; overflow-x:auto; padding:6px 3px 18px; scroll-snap-type:x proximity; }
+.companion-selector__portrait { position:relative; flex:0 0 92px; height:112px; border:2px solid var(--bz-border-strong); border-radius:var(--bz-r-sm); padding:0; overflow:hidden; background:var(--bz-card); color:var(--bz-fg); cursor:pointer; scroll-snap-align:center; }
+.companion-selector__portrait img { width:100%; height:100%; object-fit:cover; object-position:top; }
+.companion-selector__portrait > .material-symbols-outlined { font-size:36px; }
+.companion-selector__portrait-name { position:absolute; bottom:0; left:0; right:0; padding:6px; background:var(--bz-panel); color:var(--bz-fg); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.companion-selector__portrait.is-active { border-color:var(--bz-accent); box-shadow:0 0 0 2px var(--bz-accent-soft); }
+.companion-selector__portrait.is-active .companion-selector__portrait-name { background:var(--bz-control-selected-bg); color:var(--bz-control-selected-fg); }
+.companion-selector__portrait:focus-visible { outline:2px solid var(--bz-fg); outline-offset:2px; }
+.companion-selector__portrait > .companion-selector__chosen { position:absolute; top:4px; right:4px; font-size:18px; background:var(--bz-panel); border-radius:50%; color:var(--bz-accent); }
+.companion-selector__stage { border:1px solid var(--bz-border-strong); border-radius:var(--bz-r-md); background:var(--bz-panel); padding:24px; }
+.companion-selector__selection { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:20px; margin-bottom:12px; border-bottom:1px solid var(--bz-border); color:var(--bz-fg-mid); font-size:12px; }
+.companion-selector__featured.companion-grid { display:block; margin:0; padding:0; }
+.companion-selector__featured .companion-card { width:100%; padding:16px 0 0; margin:0; border:0; background:transparent; box-shadow:none; cursor:default; }
+.companion-selector__featured .companion-info { display:grid; grid-template-columns:minmax(200px,.9fr) minmax(0,1fr); gap:16px 32px; align-items:start; }
+.companion-selector__featured .companion-info > * { grid-column:2; margin:0; }
+.companion-selector__featured .companion-info > .companion-portrait-container { grid-column:1; grid-row:1 / span 7; width:100%; margin:0; }
+.companion-selector__featured .companion-name { font-size:36px!important; line-height:1.15; }
+.companion-selector__featured .companion-name .has-text-brand { background:none; -webkit-text-fill-color:var(--bz-accent); color:var(--bz-accent); }
+.companion-selector__featured .companion-info > hr { display:none; }
+.companion-selector__featured .companion-desc { min-height:0!important; height:auto; font-size:15px; line-height:1.65; color:var(--bz-fg-mid); }
+.companion-selector__featured .spending-chart-container { padding:0; display:flex; justify-content:flex-start; }
+.companion-selector__featured .spending-chart-container canvas { max-width:460px; }
+.companion-selector__featured .keyword-cycler { height:auto; min-height:24px; }
+.companion-selector__featured .card-action-btn { opacity:1; top:0; }
+.companion-selector__featured .card-action-btn.top-left { left:8px; }
+.companion-selector__featured .card-action-btn.top-left-second { right:8px; }
+.companion-selector__empty { color:var(--bz-fg-mid); padding:32px; text-align:center; }
+@media(max-width:720px) {
+  .companion-selector__stage { padding:16px; }
+  .companion-selector__header { align-items:flex-start; }
+  .companion-selector__featured .companion-info { grid-template-columns:minmax(0,1fr); gap:16px; }
+  .companion-selector__featured .companion-info > * { grid-column:1; }
+  .companion-selector__featured .companion-info > .companion-portrait-container { grid-row:auto; max-width:360px; }
+  .companion-selector__selection { flex-wrap:wrap; }
+}
+
+.stage-selector { min-width:0; }
+.stage-selector__nav { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:16px; }
+.stage-selector__nav h3,.roleplay-settings__heading h3 { margin:4px 0 0; font-size:30px; color:var(--bz-fg); }
+.stage-selector__roster { display:flex; gap:12px; overflow-x:auto; padding:4px 2px 20px; }
+.stage-tile { flex:0 0 164px; position:relative; height:112px; overflow:hidden; border:2px solid var(--bz-border-strong); border-radius:var(--bz-r-sm); background:var(--bz-panel); color:var(--bz-fg); cursor:pointer; padding:0; }
+.stage-tile img { width:100%; height:100%; object-fit:cover; }
+.stage-tile__name { position:absolute; inset:auto 0 0; padding:7px; background:var(--bz-panel); font-size:12px; line-height:1.2; text-align:left; }
+.stage-tile.is-active { border-color:var(--bz-accent); }
+.stage-tile.is-active .stage-tile__name { background:var(--bz-control-selected-bg); color:var(--bz-control-selected-fg); }
+.stage-tile__selected { position:absolute; top:5px; right:5px; background:var(--bz-panel); padding:2px 6px; border-radius:50%; }
+.stage-selector__featured { display:block; }
+.stage-selector__featured .scenario-card { display:grid; grid-template-columns:1.25fr 1fr; gap:24px; padding:20px; cursor:default; background:var(--bz-panel); }
+.stage-selector__featured .scenario-image,.stage-selector__featured .scenario-no-image { min-height:300px; height:100%; border-radius:var(--bz-r-sm); }
+.stage-selector__featured .scenario-card > hr { display:none; }
+.stage-selector__featured .scenario-content { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:16px; }
+.stage-selector__featured .scenario-desc { margin:0; font-size:16px; line-height:1.6; }
+.stage-selector__featured .scenario-mood { min-height:30px; height:auto; margin:0; }
+.stage-selector__featured .scenario-name { margin:0; }
+.stage-selector__featured .scenario-card:hover { transform:none; }
+.roleplay-settings { background:transparent; padding:2em; }
+.roleplay-settings__heading { margin-bottom:20px; }
+.roleplay-settings__panel { background:var(--bz-panel); }
+.roleplay-settings .content-level-selector,.roleplay-settings .media-selector { display:grid; grid-template-columns:1fr; gap:8px; }
+.roleplay-settings .content-level-option,.roleplay-settings .media-option { width:100%; min-height:78px; display:flex; align-items:center; text-align:left; font:inherit; color:var(--bz-fg); padding:12px; border:1px solid var(--bz-border-strong); }
+.roleplay-settings .content-level-icon,.roleplay-settings .media-icon { color:var(--bz-fg); margin-right:8px; }
+.media-option-description { display:block; font-size:13px; color:var(--bz-fg-mid); margin-top:4px; }
+.media-option-state { margin-left:auto; font-size:12px; color:var(--bz-fg); }
+.roleplay-settings .is-selected { border-color:var(--bz-accent); background:var(--bz-accent-soft); box-shadow:none; }
+.roleplay-settings .user-profile-section { margin-top:16px!important; }
+.roleplay-settings .textarea { min-height:120px; padding:16px; }
+.stage-tile:focus-visible,.roleplay-settings button:focus-visible { outline:2px solid var(--bz-fg); outline-offset:2px; }
+.companion-selector__featured .spending-chart-container { justify-content:center; }
+@media(max-width:720px) { .stage-selector__featured .scenario-card { grid-template-columns:1fr; } .stage-selector__featured .scenario-image,.stage-selector__featured .scenario-no-image { min-height:220px; } }
+
+.media-install-action { margin-top:8px; }
+.media-download-size { color:inherit; font-size:12px; }
+.media-download-intro { color:var(--bz-fg-mid); font-size:14px; margin:0 0 16px; }
+.roleplay-media-item .bz-download-requirement { margin-top:8px; }
+.roleplay-settings .media-option:disabled { opacity:1; cursor:default; background:var(--bz-panel); }
+.role-profile-intro,.role-profile-note { color:var(--bz-fg-mid); font-size:14px; line-height:1.5; margin:0 0 20px; max-width:80ch; }
+.role-profile-note { margin:16px 0 0; font-size:12px; }
+.role-profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.role-profile-field { display:flex; flex-direction:column; gap:8px; color:var(--bz-fg); font-size:14px; min-width:0; }
+.role-profile-field--wide { grid-column:1 / -1; }
+.role-profile-field .input { min-height:40px; padding:8px 12px; font:inherit; background:var(--bz-panel); color:var(--bz-fg); border:1px solid var(--bz-border-strong); border-radius:var(--bz-r-sm); box-shadow:none; }
+.user-profile-section .roleplay-settings__label { font-size:22px; }
+.role-profile-field .textarea { min-height:112px; font:inherit; line-height:1.5; }
+.role-profile-field .input:focus { border-color:var(--bz-accent); }
+.role-profile-field :is(input,textarea)::placeholder { color:var(--bz-fg-mid); opacity:1; }
+@media(max-width:720px) { .role-profile-grid { grid-template-columns:1fr; } }
+</style>
+
+<style scoped>
+.suggested-responses{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:10px;margin:16px 0;padding:0}
+.roleplay-suggestion{appearance:none;font:inherit;font-size:14px;line-height:1.55;text-align:left;white-space:normal;padding:16px 18px;border:1px solid var(--bz-border-strong);border-radius:12px;background:var(--bz-panel);color:var(--bz-fg);cursor:pointer;transition:border-color .15s,background .15s;overflow-wrap:anywhere}
+.roleplay-suggestion:hover{background:var(--bz-accent-soft);border-color:var(--bz-accent)}.roleplay-suggestion:focus-visible{outline:2px solid var(--bz-accent);outline-offset:3px}
+.chat-input{border-radius:16px;padding:16px;background:var(--bz-panel);margin-top:16px}.chat-input .field.has-addons{margin-block:12px;gap:8px}.chat-input .input,.chat-input .textarea{border-radius:10px!important;color:var(--bz-fg);background:var(--bz-canvas)}
+.chat-capability-tools{display:flex;gap:12px;align-items:center;padding:0;flex-wrap:wrap}.roleplay-create-menu{position:relative}.roleplay-create-menu summary{list-style:none;display:flex;gap:8px;align-items:center;padding:8px 12px;border-radius:8px;color:var(--bz-fg);cursor:pointer;font-size:14px}.roleplay-create-menu summary::-webkit-details-marker{display:none}.roleplay-create-menu summary:hover,.roleplay-create-menu[open] summary{background:var(--bz-accent-soft)}.roleplay-create-menu summary .material-symbols-outlined{font-size:19px;color:var(--bz-fg)}
+.chat-capability-workflows{left:0;right:auto;bottom:calc(100% + 8px);width:min(320px,75vw);min-width:180px;padding:8px;background:var(--bz-panel);border:1px solid var(--bz-border-strong);border-radius:12px;box-shadow:0 8px 24px #0002;gap:4px}.chat-capability-workflows button{display:flex;align-items:center;gap:12px;text-align:left;white-space:normal;padding:10px 12px;border:0;border-radius:8px;background:transparent;color:var(--bz-fg);font:inherit;font-size:14px;cursor:pointer}.chat-capability-workflows button:hover{background:var(--bz-accent-soft)}
+.roleplay-session-status{display:flex;gap:14px;flex-wrap:wrap;align-items:center}.roleplay-session-status .skill-chip{background:transparent!important;border:0!important;padding:0!important;box-shadow:none!important;color:var(--bz-muted)!important;font-size:12px;text-transform:none}
+.message-header{background:transparent!important;color:var(--bz-fg)!important;padding:10px 14px!important}.message-header .skill-chip{background:var(--bz-panel)!important;color:var(--bz-fg)!important;border:1px solid var(--bz-border)!important}.action-text{color:var(--bz-fg-mid)!important;opacity:1;line-height:1.6}
+.roleplay-stage{grid-template-columns:minmax(0,1fr);border-radius:16px;min-width:0;max-width:100%;box-sizing:border-box}.roleplay-stage>*{min-width:0}.chat-phase{min-width:0;max-width:100%}.chat-messages-container{border-radius:12px}.chat-header{flex-wrap:wrap}.roleplay-session-actions{flex-wrap:wrap}.chat-input{box-sizing:border-box;min-width:0;max-width:100%}
+@media(max-width:600px){.roleplay-stage{padding:12px;gap:12px}.chat-messages{padding:16px 12px}.chat-input{padding:12px}.chat-header{gap:12px}.roleplay-session-actions{gap:8px}.chat-message{max-width:100%}}
+</style>
+
+<style scoped>
+.chat-creation-selection { display:flex; align-items:center; gap:12px; padding:10px 14px; margin:8px 0; border:1px solid var(--bz-border); border-radius:12px; color:var(--bz-fg); background:var(--bz-raised); flex-wrap:wrap; }
+.chat-creation-selection .bz-iconbtn { margin-left:auto; }
+
+.is-agent-management .agent-creation-requirements { min-width:0; }
+.is-agent-management .custom-companion-form .textarea { min-height:180px; height:220px; max-height:400px; }
+.is-agent-management .agent-creation-heading h2 { font-family:var(--bz-font-metric); font-weight:900; font-style:italic; }
 </style>

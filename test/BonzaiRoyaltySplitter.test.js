@@ -282,7 +282,7 @@ describe("BonzaiRoyaltySplitter", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("distribute() — pool deposit failure handling", function () {
-    it("should emit PoolDepositFailed and send remainder to treasury on revert", async function () {
+    it("should emit PoolDepositFailed and retain pool obligations on revert", async function () {
       const { splitter, mockPool, owner, treasury } = await loadFixture(deploySplitter);
 
       // Make all pool deposits fail
@@ -299,12 +299,12 @@ describe("BonzaiRoyaltySplitter", function () {
 
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
-      // Treasury receives the treasuryShare + the failed pool slice (creator
-      // share stays in creatorPendingPool — it's not affected by pool reverts).
+      // Failed pool payments stay reserved independently of creator royalties.
       const creatorShare = amount / 3n;
       const treasuryShare = creatorShare;
       const poolShare = amount - creatorShare - treasuryShare;
-      expect(treasuryAfter - treasuryBefore).to.equal(treasuryShare + poolShare);
+      expect(treasuryAfter - treasuryBefore).to.equal(treasuryShare);
+      expect(await splitter.totalPendingPoolFees()).to.equal(poolShare);
       expect(await splitter.creatorPendingPool()).to.equal(creatorShare);
 
       // Should have emitted PoolDepositFailed for each pool

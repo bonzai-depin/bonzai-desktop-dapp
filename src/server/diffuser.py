@@ -15,12 +15,28 @@ from __future__ import annotations
 # eventlet was removed due to incompatibility with PyInstaller + numpy
 
 import os
+import sys
+
+# CI checks the actual frozen runtime without starting services or loading models.
+if __name__ == "__main__" and "--bonzai-runtime-check" in sys.argv:
+    from runtime_check import main as _runtime_check
+    _runtime_check()
+    sys.exit(0)
+
+# A frozen executable cannot launch Python source with sys.executable. Enter
+# the isolated restoration worker before importing Flask or cached pipelines.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--bonzai-seedvr2-worker":
+    from seedvr2_worker import main as _seedvr2_worker_main
+    sys.argv.pop(1)
+    _seedvr2_worker_main()
+    sys.exit(0)
 
 import re
 import io
 import time
 import base64
 import logging
+import math
 import threading
 import hashlib
 import platform
@@ -30,6 +46,7 @@ import gc
 import stat
 import json
 import tempfile
+import types
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, date
@@ -60,56 +77,6 @@ def _patched_torch_load(*args, **kwargs):
 torch.load = _patched_torch_load
 
 import numpy as np
-
-# ============================================================================
-# SOX MONKEY-PATCH: Replace sox binary dependency with pure Python
-# ============================================================================
-# The qwen_tts package uses sox.Transformer for audio normalization to -6dB.
-# Instead of requiring the sox binary, we patch it with numpy-based normalization.
-
-
-class _MockSoxTransformer:
-    """Pure Python replacement for sox.Transformer used by qwen_tts."""
-
-    def __init__(self):
-        self._target_db = -6.0  # Default normalization level
-
-    def norm(self, db_level=-6.0):
-        """Set target normalization level in dB."""
-        self._target_db = db_level
-        return self
-
-    def build_array(self, input_array, sample_rate_in=16000):
-        """Normalize audio array to target dB level (replaces sox norm)."""
-        audio = np.asarray(input_array, dtype=np.float32)
-
-        # Calculate target amplitude from dB
-        target_amplitude = 10 ** (self._target_db / 20.0)
-
-        # Find current peak
-        peak = np.max(np.abs(audio))
-
-        if peak > 1e-8:  # Avoid division by zero
-            # Scale to target amplitude
-            normalized = audio * (target_amplitude / peak)
-        else:
-            normalized = audio
-
-        return normalized.astype(np.float32)
-
-
-class _MockSoxModule:
-    """Mock sox module that provides Transformer class."""
-
-    Transformer = _MockSoxTransformer
-
-
-# Install the mock before qwen_tts imports sox
-import sys
-
-sys.modules["sox"] = _MockSoxModule()
-
-# ============================================================================
 
 import torchaudio as ta
 
@@ -147,6 +114,12 @@ from diffusers import (
 )
 from diffusers.utils import load_image, export_to_video
 from diffusers.hooks import apply_group_offloading
+from finger_frame_workflow import (
+    analyze_video as analyze_finger_frame_video,
+    composite_video as composite_finger_frame_video,
+    materialize_uploaded_video,
+    validate_video_path,
+)
 
 import wave
 
@@ -209,8 +182,15 @@ SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
 SDXL_LORA_NAME = "sdxl-lora.safetensors"
 SDXL_LORA_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/sdxl-lora.safetensors"
 
-# Flux Klein 4B - Fast turbo generation (standard HuggingFace loading)
+# FLUX Klein: retained 4B repository identity and current 9B GGUF Turbo assets
 FLUX_KLEIN_REPO = "black-forest-labs/FLUX.2-klein-4b"
+FLUX_KLEIN_9B_REPO = "black-forest-labs/FLUX.2-klein-9B"
+FLUX_KLEIN_9B_GGUF_NAME = "flux-2-klein-9b-q4_k_m.gguf"
+FLUX_KLEIN_9B_GGUF_URL = "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf"
+FLUX_KLEIN_9B_LORA_NAME = "flux-2-klein-9b-lora.safetensors"
+FLUX_KLEIN_9B_LORA_EXTRA_NAME = "flux-2-klein-9b-lora-extra.safetensors"
+FLUX_KLEIN_9B_LOCK = threading.Lock()
+
 
 Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
 Z_GGUF_NAME = "z-image-turbo-q4_k_m.gguf"
@@ -270,26 +250,52 @@ WAN_LIGHTNING_LOW = "wan_lightning_low_noise.safetensors"
 WAN_LIGHTNING_HIGH_URL = f"https://huggingface.co/{WAN_LIGHTNING_REPO}/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors"
 WAN_LIGHTNING_LOW_URL = f"https://huggingface.co/{WAN_LIGHTNING_REPO}/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors"
 
-# Extra + physics LoRAs (safetensors, ~300 MB each). NOTE: filenames
-# carry a `.gguf` suffix on disk despite being safetensors — diffusers
-# detects format from file content, so the misnaming is harmless. Both
-# loaded by default on top of the dasiwa GGUF; pass `use_extra:false` /
-# `use_physics:false` to opt out for ablation testing.
-WAN_EXTRA_HIGH = "wan2.2_high_extra_Q5.gguf"
-WAN_EXTRA_LOW = "wan2.2_low_extra_Q5.gguf"
-WAN_PHYSICS_HIGH = "wan2.2_high_physics_Q5.gguf"
-WAN_PHYSICS_LOW = "wan2.2_low_physics_Q5.gguf.safetensors"
+# MiniMax H3 joint video/audio generation. The two large neural components
+# stay in GGUF and are loaded in separate phases on memory-constrained
+# machines. Unsloth's standalone VAEs avoid downloading the duplicate 10 GB
+# FP32 VAE shards from the official repository; the official repository still
+# provides the canonical configs, tokenizer, processor, and schedulers.
+MINIMAX_H3_REPO = "MiniMaxAI/MiniMax-H3"
+MINIMAX_H3_GGUF_REPO = "unsloth/MiniMax-H3-GGUF"
+MINIMAX_H3_TRANSFORMER_NAME = "minimax_h3_fl2va_pruned-ud-q2_k_xl.gguf"
+MINIMAX_H3_TEXT_ENCODER_NAME = "qwen3vl_32b_minimax_h3-q2_k_m.gguf"
+MINIMAX_H3_VIDEO_VAE_NAME = "minimax_h3_video_vae_fp16.safetensors"
+MINIMAX_H3_AUDIO_VAE_NAME = "minimax_h3_audio_vae_fp32.safetensors"
+MINIMAX_H3_LORA_NAME = "h3_lora.safetensors"
+MINIMAX_H3_HYBRID_NAME = "h3_hybrid.safetensors"
+# This user-supplied file stays absent from the download plan until BonzAI
+# hosts it. It is required by the backend preset and intentionally not exposed
+# as a separate UI control.
+MINIMAX_H3_LORA_STRENGTH = 0.5
+MINIMAX_H3_SAMPLER = "euler_ancestral"
+MINIMAX_H3_SCHEDULER = "simple"
+MINIMAX_H3_GUIDANCE_SCALE = 1.0
+MINIMAX_H3_VIDEO_SHIFT = 12.0
+MINIMAX_H3_AUDIO_SHIFT = 3.0
+MINIMAX_H3_TRANSFORMER_URL = (
+    f"https://huggingface.co/{MINIMAX_H3_GGUF_REPO}/resolve/main/"
+    "minimax_h3_fl2va_pruned-UD-Q2_K_XL.gguf"
+)
+MINIMAX_H3_TEXT_ENCODER_URL = (
+    f"https://huggingface.co/{MINIMAX_H3_GGUF_REPO}/resolve/main/"
+    "qwen3vl_32b_minimax_h3-Q2_K_M.gguf"
+)
+MINIMAX_H3_VIDEO_VAE_URL = (
+    f"https://huggingface.co/{MINIMAX_H3_GGUF_REPO}/resolve/main/vae/"
+    f"{MINIMAX_H3_VIDEO_VAE_NAME}"
+)
+MINIMAX_H3_AUDIO_VAE_URL = (
+    f"https://huggingface.co/{MINIMAX_H3_GGUF_REPO}/resolve/main/vae/"
+    f"{MINIMAX_H3_AUDIO_VAE_NAME}"
+)
 
-# --- /video/enhance: upscale (Real-ESRGAN x4) + interpolate (RIFE 4x) ---
+# --- /video/enhance: SeedVR2 restoration, optional Real-ESRGAN/interpolation ---
 # Real-ESRGAN x4plus weights for spatial upscaling (~64 MB).
 ESRGAN_X4_NAME = "RealESRGAN_x4plus.pth"
 ESRGAN_X4_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 # Real-ESRGAN-Animevideo for animation-style outputs.
 ESRGAN_X4_ANIME_NAME = "realesr-animevideov3.pth"
 ESRGAN_X4_ANIME_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth"
-# RIFE backend: binary CLI wrapped by `rife-ncnn-vulkan-python`. The
-# package downloads ncnn models on first import; weights live inside
-# the wheel. Nothing for us to manage here.
 
 # --- /video/test (Wan 2.2 I2V — FastDM Lightning merge + Q2 GGUF) ---
 # Used by wan_i2v_video_test() below. Loads Q2_K GGUF transformer weights from
@@ -347,14 +353,14 @@ VISION_GGUF_URL = "https://huggingface.co/meetara-lab/meetara-qwen3.5-0.8b-gguf/
 VISION_MMPROJ_NAME = "meetara-vl-qwen3.5-0.8b.gguf"
 VISION_MMPROJ_URL = "https://huggingface.co/meetara-lab/meetara-qwen3.5-0.8b-gguf/resolve/main/meetara-vl-qwen3.5-0.8b.gguf"
 
-# Qwen3-TTS - High-quality TTS with voice cloning and voice design
-QWEN3_TTS_BASE_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"  # For voice cloning
-QWEN3_TTS_DESIGN_REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"  # For voice design from description
+# Chatterbox Multilingual V3 - quality TTS and zero-shot voice cloning.
+CHATTERBOX_REPO = "ResembleAI/chatterbox"
+CHATTERBOX_T3_MODEL = "t3_mtl23ls_v3.safetensors"
 
-# ACE-Step v1.5 XL Music Generation (handler-based, hybrid LM + DiT architecture)
-# XL Turbo needs BOTH repos: base repo (VAE, embeddings) + XL weights
-ACE_STEP_REPO = "ACE-Step/Ace-Step1.5"            # Base repo (VAE, Qwen3-Embedding, turbo config)
-ACE_STEP_XL_REPO = "ACE-Step/acestep-v15-xl-turbo"  # XL Turbo weights (4B params, 8 steps)
+# Official Diffusers-format ACE-Step 1.5 XL Turbo pipeline. Keeping ACE-Step
+# behind Diffusers avoids installing its full UI/training application and its
+# incompatible Transformers ceiling in BonzAI's shared inference environment.
+ACE_STEP_REPO = "ACE-Step/acestep-v15-xl-turbo-diffusers"
 
 LLAMA_REPOS = {
     "llama-3.2-1b": "meta-llama/Llama-3.2-1B",
@@ -376,9 +382,14 @@ IMAGE_FINETUNE_MODELS = {
 }
 
 EXPECTED_SIZES = {
-    "z-image-turbo-q4_k_m.gguf": 4_650_000_000,
+    # Exact upstream LFS size, not a rounded download/UI estimate.
+    "z-image-turbo-q4_k_m.gguf": 5_017_613_376,
     "umt5-xxl-encoder-q3_k_m.gguf": 5_580_000_000,  # ~5.2GB GGUF text encoder
     "ltx-2-19b-distilled-q3_k_s.gguf": 8_667_234_304, #9_283_503_264,  # 9.28GB Q3_K_S distilled
+    "minimax_h3_fl2va_pruned-ud-q2_k_xl.gguf": 8_063_029_344,
+    "qwen3vl_32b_minimax_h3-q2_k_m.gguf": 13_102_161_024,
+    "minimax_h3_video_vae_fp16.safetensors": 5_207_808_496,
+    "minimax_h3_audio_vae_fp32.safetensors": 605_254_808,
 }
 
 # =============================================================================
@@ -547,6 +558,9 @@ def _encode_audio_to_latents(audio_data: bytes, pipe, target_duration: float, de
 # =============================================================================
 
 app = Flask(__name__)
+from inference_serialization import install_inference_serialization
+from inference_memory import release_idle_caches
+install_inference_serialization(app, lambda path: release_idle_caches(globals(), path))
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
 CORS(app, supports_credentials=True, resources={
     r"/*": {
@@ -1211,21 +1225,27 @@ class GenerationTracker:
     
     def __init__(self):
         self._meta: Dict[str, Dict[str, Any]] = {}
+        self._started = {}
+        self._lock = threading.RLock()
 
     def new(self, kind: str, meta: Optional[Dict[str, Any]] = None, gen_id: Optional[str] = None) -> str:
         gid = gen_id or hashlib.md5(f"{kind}_{time.time()}".encode()).hexdigest()[:16]
-        self._meta[gid] = {"kind": kind, "meta": meta or {}, "ts": time.time(), "stage": "starting"}
+        with self._lock:
+            self._started[gid] = time.perf_counter()
+            self._meta[gid] = {"generation_id": gid, "kind": kind, "ts": time.time(), "stage": "starting", "status": "running"}
         socket_emit("gen_started", {"generation_id": gid, "kind": kind, "meta": meta or {}}, "/generation")
         socket_emit("gen_progress", {"generation_id": gid, "stage": "queued", "step": 0, "total": 1, "pct": 0}, "/generation")
         return gid
 
     def progress(self, generation_id: str, stage: str, step: int, total: int):
         """Report progress. Ensures step <= total and calculates percentage.
-        Stage is normalized to 'Generating...' for consistency across all endpoints,
-        except for terminal 'complete' which is kept as-is."""
+        Preserves the actual pipeline stage for application-wide activity reporting."""
         step = min(step, total)
         pct = round((step / max(total, 1)) * 100.0, 2)
-        display_stage = stage if stage.lower() == "complete" else "Generating..."
+        display_stage = stage
+        with self._lock:
+            if generation_id in self._meta:
+                self._meta[generation_id].update(stage=stage, step=int(step), total=int(total), pct=pct)
         socket_emit("gen_progress", {
             "generation_id": generation_id,
             "stage": display_stage,
@@ -1235,12 +1255,29 @@ class GenerationTracker:
         }, "/generation")
 
     def finish(self, generation_id: str, payload: Optional[Dict[str, Any]] = None):
-        socket_emit("gen_finished", {"generation_id": generation_id, "payload": payload or {}}, "/generation")
-        self._meta.pop(generation_id, None)
+        elapsed_ms = self._end(generation_id, "completed")
+        socket_emit("gen_finished", {"generation_id": generation_id, "elapsed_ms": elapsed_ms,
+                    "payload": {**(payload or {}), "elapsed_ms": elapsed_ms}}, "/generation")
 
     def error(self, generation_id: str, message: str):
-        socket_emit("gen_error", {"generation_id": generation_id, "error": message}, "/generation")
-        self._meta.pop(generation_id, None)
+        elapsed_ms = self._end(generation_id, "failed", message)
+        socket_emit("gen_error", {"generation_id": generation_id, "error": message, "elapsed_ms": elapsed_ms}, "/generation")
+
+    def _end(self, generation_id, status, error=None):
+        with self._lock:
+            started = self._started.pop(generation_id, None)
+            elapsed_ms = round((time.perf_counter() - started) * 1000) if started is not None else None
+            if generation_id in self._meta:
+                self._meta[generation_id].update(status=status, error=error, finished_at=time.time(), elapsed_ms=elapsed_ms)
+            ended = [gid for gid, job in self._meta.items() if job.get("finished_at")]
+            for gid in ended[:-30]:
+                self._meta.pop(gid, None)
+            return elapsed_ms
+
+    def snapshot(self):
+        # Operational metadata only; prompts and generated content stay private.
+        with self._lock:
+            return {"operations": [dict(job) for job in self._meta.values()]}
 
 
 genbus = GenerationTracker()
@@ -1275,6 +1312,12 @@ def dl_disconnect():
 @socketio.on("connect", namespace="/generation")
 def gen_connect():
     emit("connected", _json_sanitize({"message": "Connected to generation progress"}))
+    emit("gen_snapshot", genbus.snapshot())
+
+
+@socketio.on("activity_snapshot", namespace="/generation")
+def activity_snapshot():
+    emit("gen_snapshot", genbus.snapshot())
 
 
 @socketio.on("disconnect", namespace="/generation")
@@ -1432,6 +1475,7 @@ class DownloadManager:
             return
         t.status = "failed"
         t.error_message = msg
+        logger.error("[Download] Pipeline %s task %s failed: %s", pl.pipeline_id, t.name, msg)
         self.emit(pl.pipeline_id)
 
     def mark_cancelled(self, pl: PipelineDownload, tid: str):
@@ -1499,9 +1543,12 @@ def _sdxl_patterns() -> List[str]:
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     if repo_id in (SDXL_BASE_REPO, SDXL_REFINER_REPO):
         return _sdxl_patterns()
+    if repo_id == FLUX_KLEIN_9B_REPO:
+        return ["model_index.json", "scheduler/**", "tokenizer/**", "text_encoder/**",
+                "vae/**", "transformer/config.json"]
     if repo_id == Z_REPO:
         return ["model_index.json", "scheduler/**", "tokenizer/**", "text_encoder/**",
-                "transformer/**", "vae/**", "**/*.safetensors", "**/*.json", "**/*.bin"]
+                "transformer/config.json", "vae/**"]
     if repo_id == LTX2_REPO:
         # Only download subfolders needed for quanto quantization
         # Skip root safetensors files (43GB+)
@@ -1515,20 +1562,70 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
             "vae/**",
             "audio_vae/**",
         ]
+    if repo_id == CHATTERBOX_REPO:
+        # The upstream repository also contains legacy V2 and duplicate `.pt`
+        # checkpoints. Download only the V3 runtime set used by BonzAI.
+        return [
+            "ve.pt",
+            "s3gen.pt",
+            "conds.pt",
+            "grapheme_mtl_merged_expanded_v1.json",
+            "Cangjie5_TC.json",
+            CHATTERBOX_T3_MODEL,
+        ]
+    if repo_id == ACE_STEP_REPO:
+        return [
+            "model_index.json",
+            "silence_latent.pt",
+            "tokenizer/**",
+            "scheduler/**",
+            "text_encoder/**",
+            "condition_encoder/**",
+            "transformer/**",
+            "vae/**",
+        ]
+    if repo_id == MINIMAX_H3_REPO:
+        # Do not fetch the official transformer, text-encoder, or VAE weights.
+        # The matching Q2_K_XL/Q2_K_M GGUFs and compact VAEs come from
+        # unsloth/MiniMax-H3-GGUF. These are only the canonical runtime
+        # configs, tokenizers, and schedulers used by Diffusers.
+        return [
+            "modular_model_index.json",
+            "tokenizer/**",
+            "processor/**",
+            "text_encoder/config.json",
+            "scheduler/**",
+            "audio_scheduler/**",
+            "vae/config.json",
+            "audio_vae/config.json",
+        ]
     return None
 
 
 REPO_SPECS = {
+    FLUX_KLEIN_9B_REPO: {
+        "must_files": ["model_index.json", "transformer/config.json", "vae/config.json",
+                       "text_encoder/config.json", "scheduler/scheduler_config.json"],
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["vae", "text_encoder"],
+    },
     "stabilityai/stable-diffusion-xl-base-1.0": {
         "must_files": ["model_index.json"],
-        "must_weight_dirs": ["unet", "vae"],
+        "must_weight_dirs": ["unet", "vae", "text_encoder", "text_encoder_2"],
         "must_tokenizers": ["tokenizer", "tokenizer_2"],
         "extra_dirs": ["text_encoder", "text_encoder_2", "scheduler"],
     },
     "stabilityai/stable-diffusion-xl-refiner-1.0": {
         "must_files": ["model_index.json"],
-        "must_weight_dirs": ["unet", "vae"],
+        "must_tokenizers": ["tokenizer_2"],
+        "must_weight_dirs": ["unet", "vae", "text_encoder_2"],
         "extra_dirs": ["scheduler"],
+    },
+    "black-forest-labs/FLUX.2-klein-4b": {
+        "must_files": ["model_index.json", "transformer/config.json", "vae/config.json",
+                       "text_encoder/config.json", "scheduler/scheduler_config.json"],
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["transformer", "vae", "text_encoder"],
     },
     "black-forest-labs/FLUX.2-klein-4b-fp8": {
         "must_files": [],
@@ -1537,9 +1634,10 @@ REPO_SPECS = {
         "fallback_any_weights": True,
     },
     "Tongyi-MAI/Z-Image-Turbo": {
-        "must_files": ["model_index.json"],
+        "must_files": ["model_index.json", "transformer/config.json", "vae/config.json",
+                       "text_encoder/config.json", "scheduler/scheduler_config.json"],
         "must_tokenizers": ["tokenizer"],
-        "must_weight_dirs": ["transformer", "vae", "text_encoder"],
+        "must_weight_dirs": ["vae", "text_encoder"],
         "extra_dirs": ["scheduler"],
     },
     # LTX-2: Only download subfolders needed for quanto quantization
@@ -1550,6 +1648,19 @@ REPO_SPECS = {
         "must_weight_dirs": ["transformer", "vae", "audio_vae"],
         "extra_dirs": ["scheduler", "connectors", "vocoder"],
     },
+    "MiniMaxAI/MiniMax-H3": {
+        "must_files": [
+            "modular_model_index.json",
+            "text_encoder/config.json",
+            "vae/config.json",
+            "audio_vae/config.json",
+            "scheduler/scheduler_config.json",
+            "audio_scheduler/scheduler_config.json",
+        ],
+        "must_tokenizers": ["tokenizer", "processor"],
+        "must_weight_dirs": [],
+        "extra_dirs": [],
+    },
     # Qwen3-VL 2B: Transformers vision-language model
     "Qwen/Qwen3-VL-2B-Instruct": {
         "must_files": ["config.json"],
@@ -1558,34 +1669,26 @@ REPO_SPECS = {
         "extra_dirs": [],
         "fallback_any_weights": True,
     },
-    # Qwen3-TTS: Text-to-speech models (no model_index.json, uses config.json)
-    "Qwen/Qwen3-TTS-12Hz-1.7B-Base": {
-        "must_files": ["config.json"],
+    # Chatterbox Multilingual V3 quality TTS and voice cloning.
+    "ResembleAI/chatterbox": {
+        "must_files": [
+            "ve.pt",
+            "s3gen.pt",
+            "conds.pt",
+            "grapheme_mtl_merged_expanded_v1.json",
+            "Cangjie5_TC.json",
+            "t3_mtl23ls_v3.safetensors",
+        ],
         "must_tokenizers": [],
         "must_weight_dirs": [],
-        "extra_dirs": ["speech_tokenizer"],
-        "fallback_any_weights": True,
+        "extra_dirs": [],
     },
-    "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign": {
-        "must_files": ["config.json"],
-        "must_tokenizers": [],
-        "must_weight_dirs": [],
-        "extra_dirs": ["speech_tokenizer"],
-        "fallback_any_weights": True,
-    },
-    # ACE-Step v1.5 base repo: VAE, embeddings, turbo config (shared by all ACE-Step variants)
-    "ACE-Step/Ace-Step1.5": {
-        "must_files": ["config.json"],
-        "must_tokenizers": [],
-        "must_weight_dirs": ["vae"],
-        "extra_dirs": ["acestep-v15-turbo", "Qwen3-Embedding-0.6B"],
-    },
-    # ACE-Step v1.5 XL Turbo weights (4B params, loaded alongside base repo)
-    "ACE-Step/acestep-v15-xl-turbo": {
-        "must_files": ["config.json"],
-        "must_tokenizers": [],
-        "must_weight_dirs": [],
-        "fallback_any_weights": True,
+    # Official all-in-one Diffusers checkpoint for ACE-Step v1.5 XL Turbo.
+    "ACE-Step/acestep-v15-xl-turbo-diffusers": {
+        "must_files": ["model_index.json", "silence_latent.pt"],
+        "must_tokenizers": ["tokenizer"],
+        "must_weight_dirs": ["transformer", "vae", "text_encoder", "condition_encoder"],
+        "extra_dirs": ["scheduler"],
     },
     # Google TimesFM 2.0 (500M): ships as torch_model.ckpt (not safetensors).
     # The default fallback_any_weights check misses .ckpt files, so we
@@ -1619,6 +1722,14 @@ def _is_valid_safetensors(p: Path) -> bool:
         return False
 
 
+def _is_valid_gguf(p: Path) -> bool:
+    try:
+        with p.open("rb") as handle:
+            return handle.read(4) == b"GGUF"
+    except Exception:
+        return False
+
+
 def _nonzero(p: Path) -> bool:
     try:
         return p.exists() and p.stat().st_size > 0
@@ -1641,6 +1752,24 @@ def _tokenizer_ok(root: Path, name: str = "tokenizer") -> bool:
 def _has_any_weights(path: Path) -> bool:
     if not path.exists():
         return False
+    # A single surviving shard is not a complete model. Validate every shard
+    # referenced by the loader's index before accepting this component.
+    indexes = list(path.rglob("*.index.json"))
+    if indexes:
+        try:
+            for index in indexes:
+                shards = set(json.loads(index.read_text())["weight_map"].values())
+                if not shards:
+                    return False
+                for name in shards:
+                    shard = index.parent / name
+                    if not shard.resolve().is_relative_to(path.resolve()):
+                        return False
+                    if not _nonzero(shard) or (shard.suffix == ".safetensors" and not _is_valid_safetensors(shard)):
+                        return False
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        return True
     for x in path.rglob("*.safetensors"):
         if _is_valid_safetensors(x):
             return True
@@ -1686,6 +1815,8 @@ def _repo_completeness(repo_id: str) -> Dict[str, Any]:
             report["missing"].append(f)
         elif required_path.suffix == ".safetensors" and not _is_valid_safetensors(required_path):
             report["missing"].append(f"{f} (invalid weights)")
+        elif required_path.suffix == ".gguf" and not _is_valid_gguf(required_path):
+            report["missing"].append(f"{f} (invalid GGUF)")
     for tok in spec.get("must_tokenizers", []):
         if not _tokenizer_ok(root, tok):
             report["missing"].append(f"{tok} (tokenizer files)")
@@ -1745,11 +1876,8 @@ def _is_pipeline_complete(pipeline: str) -> bool:
                 return False
         # Also check single files
         for sf in plan.get("single_files", []):
-            name = sf.get("name", "")
-            if name:
-                path = MODEL_DIR / name
-                if not path.exists() or path.stat().st_size == 0:
-                    return False
+            if sf.get("name") and not _single_file_status(sf).get("ok", False):
+                return False
         return True
     except Exception:
         return False
@@ -1802,6 +1930,9 @@ _plan_cache: Dict[str, Dict[str, Any]] = {}
 
 
 def _cached_plan_for(pipeline: str) -> Dict[str, Any]:
+    # Local H3 overrides can appear/disappear without restarting the server.
+    if pipeline.strip().lower() in ("video_sota", "minimax_h3"):
+        return _plan_for(pipeline)
     if pipeline in _plan_cache:
         return _plan_cache[pipeline]
     plan = _plan_for(pipeline)
@@ -1812,19 +1943,23 @@ def _cached_plan_for(pipeline: str) -> Dict[str, Any]:
 def _expected_size(name: str, url: Optional[str] = None) -> int:
     # Normalize name for consistent lookups
     normalized_name = normalize_model_filename(name)
+    known_size = int(EXPECTED_SIZES.get(normalized_name, 0) or 0)
+    if known_size > 0:
+        return known_size
     if url:
         headers = {}
         if url.startswith("https://huggingface.co/") and _hf_token():
             headers["Authorization"] = f"Bearer {_hf_token()}"
         try:
             r = requests.head(url, allow_redirects=True, headers=headers, timeout=30)
+            r.raise_for_status()
             size = int(r.headers.get("content-length", "0") or "0")
             if size > 0:
                 EXPECTED_SIZES[normalized_name] = size
                 return size
         except Exception:
             pass
-    return int(EXPECTED_SIZES.get(normalized_name, 0) or 0)
+    return 0
 
 
 def _sf(name, url):
@@ -1839,17 +1974,18 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     - image_turbo: FLUX Klein (fast generation, i2i)
     - image_quality: Z-Image-Turbo (high quality)
     - audio_turbo: Kokoro TTS
-    - audio_quality: Qwen3-TTS
+    - audio_quality: Chatterbox Multilingual V3
     - video_fast: LTX2 GGUF (fast video)
     - vision: Qwen 3 VL (image analysis)
     """
     pipeline = pipeline.strip().lower()
 
     # Image pipelines
+    if pipeline in ("flux_klein_9b_gguf", "image_turbo", "flux_klein"):
+        return {"repos_to_fetch": [FLUX_KLEIN_9B_REPO],
+                "single_files": [_sf(FLUX_KLEIN_9B_GGUF_NAME, FLUX_KLEIN_9B_GGUF_URL)]}
     if pipeline in ("image_standard", "sdxl"):
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": [_sf(SDXL_LORA_NAME, SDXL_LORA_URL)]}
-    if pipeline in ("image_turbo", "flux_klein"):
-        return {"repos_to_fetch": [FLUX_KLEIN_REPO], "single_files": []}
     if pipeline in ("image_quality", "image_advanced", "z_image_turbo"):
         return {"repos_to_fetch": [Z_REPO], "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)]}
 
@@ -1858,17 +1994,15 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     # "audio" is an alias for audio_turbo (used by skill requirements)
     if pipeline in ("audio", "audio_turbo", "kokoro"):
         return {"repos_to_fetch": [], "single_files": []}
-    if pipeline in ("audio_quality_clone", "qwen3_tts_clone"):
-        return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO], "single_files": []}
-    if pipeline in ("audio_quality_design", "qwen3_tts_design"):
-        return {"repos_to_fetch": [QWEN3_TTS_DESIGN_REPO], "single_files": []}
-    if pipeline in ("audio_quality_persona", "qwen3_tts_persona"):
-        # Persona needs both models
-        return {"repos_to_fetch": [QWEN3_TTS_BASE_REPO, QWEN3_TTS_DESIGN_REPO], "single_files": []}
+    if pipeline in (
+        "audio_quality", "audio_quality_clone", "audio_quality_design", "audio_quality_persona",
+        "chatterbox", "chatterbox_clone", "chatterbox_design", "chatterbox_persona",
+        # Legacy aliases keep persisted skills/download state working.
+        "qwen3_tts_clone", "qwen3_tts_design", "qwen3_tts_persona",
+    ):
+        return {"repos_to_fetch": [CHATTERBOX_REPO], "single_files": []}
     if pipeline in ("music", "ace_step"):
-        return {"repos_to_fetch": [ACE_STEP_REPO, ACE_STEP_XL_REPO], "single_files": [
-            _sf("qwen3.5-4b-ud-q4_k_xl.gguf", "https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf"),
-        ]}
+        return {"repos_to_fetch": [ACE_STEP_REPO], "single_files": []}
 
     # Video pipelines
     if pipeline in ("video_fast", "ltx2_video_gguf"):
@@ -1884,10 +2018,11 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             "repos_to_fetch": [LTX2_REPO],
             "single_files": [],
         }
-    if pipeline in ("video_enhance",):
-        # Real-ESRGAN x4 (spatial) + RIFE (temporal). RIFE weights are
-        # bundled inside `rife-ncnn-vulkan-python`; only ESRGAN weights
-        # need pre-flight.
+    if pipeline in ("video_enhance", "video_enhance_seedvr2"):
+        from video_enhance import SEEDVR2_FILES
+        return {"repos_to_fetch": [], "single_files": [dict(f) for f in SEEDVR2_FILES]}
+
+    if pipeline in ("video_enhance_realesrgan",):
         return {
             "repos_to_fetch": [],
             "single_files": [
@@ -1904,6 +2039,19 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             "single_files": [
                 _sf(WAN_GGUF_HIGH, WAN_GGUF_HIGH_URL),
                 _sf(WAN_GGUF_LOW, WAN_GGUF_LOW_URL),
+            ],
+        }
+    if pipeline in ("video_sota", "minimax_h3"):
+        transformer = ({"name": MINIMAX_H3_HYBRID_NAME, "url": ""}
+                       if (MODEL_DIR / MINIMAX_H3_HYBRID_NAME).is_file()
+                       else _sf(MINIMAX_H3_TRANSFORMER_NAME, MINIMAX_H3_TRANSFORMER_URL))
+        return {
+            "repos_to_fetch": [MINIMAX_H3_REPO],
+            "single_files": [
+                transformer,
+                _sf(MINIMAX_H3_TEXT_ENCODER_NAME, MINIMAX_H3_TEXT_ENCODER_URL),
+                _sf(MINIMAX_H3_VIDEO_VAE_NAME, MINIMAX_H3_VIDEO_VAE_URL),
+                _sf(MINIMAX_H3_AUDIO_VAE_NAME, MINIMAX_H3_AUDIO_VAE_URL),
             ],
         }
 
@@ -1932,8 +2080,24 @@ def _single_file_status(entry: Dict[str, Any]) -> Dict[str, Any]:
     exists = p.exists() and p.stat().st_size > 0
     size_on_disk = int(p.stat().st_size) if exists else 0
     expected_size = int(entry.get("size") or 0) or _expected_size(name, url)
-    ok = exists and (expected_size <= 0 or size_on_disk == expected_size)
-    reason = None if ok or not exists else f"size_mismatch:{size_on_disk}!={expected_size}"
+    size_ok = exists and (expected_size <= 0 or size_on_disk == expected_size)
+    integrity_ok = size_ok
+    if size_ok and p.suffix == ".safetensors":
+        integrity_ok = _is_valid_safetensors(p)
+    elif size_ok and p.suffix == ".gguf":
+        integrity_ok = _is_valid_gguf(p)
+    if integrity_ok and entry.get("sha256"):
+        from video_enhance import verify_asset
+        try:
+            verify_asset(p, entry["sha256"])
+        except ValueError:
+            integrity_ok = False
+    ok = bool(size_ok and integrity_ok)
+    reason = None
+    if exists and not size_ok:
+        reason = f"size_mismatch:{size_on_disk}!={expected_size}"
+    elif exists and not integrity_ok:
+        reason = "invalid_file_format"
     return {
         "name": name, "url": url, "path": str(p),
         "exists": bool(exists), "ok": bool(ok),
@@ -1996,7 +2160,14 @@ def _list_required_remote_files(repo_id: str, allow_patterns: Optional[List[str]
     try:
         items = api.list_repo_tree(repo_id=repo_id, repo_type="model", revision="main", recursive=True, expand=True)
         for it in items or []:
-            if getattr(it, "type", None) == "file" and _match(it.path):
+            # Hub 1.x returns RepoFile/RepoFolder objects without the legacy
+            # `.type` discriminator. Accept both representations so byte-size
+            # progress remains accurate after the Hub upgrade.
+            is_file = (
+                getattr(it, "type", None) == "file"
+                or it.__class__.__name__ == "RepoFile"
+            )
+            if is_file and _match(it.path):
                 size = int(getattr(it, "size", 0) or 0)
                 files.append({"path": it.path, "size": size})
         logger.info(f"[Download] Listed {len(files)} files from {repo_id} (tree API)")
@@ -2075,7 +2246,7 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
             files_to_do = []
             for f in plan.get("single_files", []):
                 name = (f or {}).get("name") or ""
-                size_hint = int(EXPECTED_SIZES.get(name, 0))
+                size_hint = int(f.get("size") or EXPECTED_SIZES.get(name, 0))
                 tid = download_manager.add_file_task(pl, name, size_hint or 1)
                 files_to_do.append((f, tid))
             download_manager.emit(pl.pipeline_id)
@@ -2091,10 +2262,12 @@ def _start_prefetch_pipeline(pipeline: str) -> Dict[str, Any]:
                     continue
                 download_manager.mark_downloading(pl, tid)
                 name, url = st["name"], st["url"]
-                size_hint = int(EXPECTED_SIZES.get(name, 0))
+                size_hint = int(f.get("size") or EXPECTED_SIZES.get(name, 0))
                 download_manager.update_progress(pl, tid, 0, size_hint or 1)
                 try:
-                    _download_single_file(pl, tid, name, url, size_hint=size_hint)
+                    if not url:
+                        raise ValueError(f"Local checkpoint {name} is missing or invalid. Restore the file in the model directory.")
+                    _download_single_file(pl, tid, name, url, size_hint=size_hint, sha256=f.get("sha256", ""))
                     if not pl.cancelled:
                         download_manager.mark_completed(pl, tid)
                 except Exception as e:
@@ -2179,11 +2352,21 @@ def _download_repo_files(pl: PipelineDownload, tid: str, repo_id: str, manifest:
                              is_cancelled=lambda: pl.cancelled)
             files_done += 1
             done = files_done
+        actual_size = dest.stat().st_size if dest.exists() else 0
+        if rsz > 0 and actual_size != rsz:
+            dest.unlink(missing_ok=True)
+            raise ValueError(f"Downloaded {rel} has size {actual_size}, expected {rsz}")
+        if dest.suffix == ".safetensors" and not _is_valid_safetensors(dest):
+            dest.unlink(missing_ok=True)
+            raise ValueError(f"Downloaded {rel} is not a valid safetensors file")
+        if dest.suffix == ".gguf" and not _is_valid_gguf(dest):
+            dest.unlink(missing_ok=True)
+            raise ValueError(f"Downloaded {rel} is not a valid GGUF file")
         download_manager.update_progress(pl, tid, done, total)
         time.sleep(0)
 
 
-def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, size_hint: int = 0):
+def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, size_hint: int = 0, sha256: str = ""):
     # Normalize filename to lowercase for .gguf and .safetensors files
     normalized_name = normalize_model_filename(name)
     lock = _gguf_lock(normalized_name)
@@ -2193,9 +2376,21 @@ def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, s
             headers["Authorization"] = f"Bearer {_hf_token()}"
         dest = MODEL_DIR / normalized_name
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        expected_size = _expected_size(normalized_name, url)
+        expected_size = int(size_hint or 0) or _expected_size(normalized_name, url)
         if dest.exists() and dest.stat().st_size > 0:
-            if expected_size <= 0 or dest.stat().st_size == expected_size:
+            size_ok = expected_size <= 0 or dest.stat().st_size == expected_size
+            format_ok = (
+                _is_valid_gguf(dest) if dest.suffix == ".gguf" else
+                _is_valid_safetensors(dest) if dest.suffix == ".safetensors" else True
+            )
+            if size_ok and format_ok and sha256:
+                from video_enhance import verify_asset
+                try:
+                    verify_asset(dest, sha256)
+                except ValueError:
+                    format_ok = False
+                    dest.unlink(missing_ok=True)
+            if size_ok and format_ok:
                 download_manager.update_progress(pl, tid, expected_size or dest.stat().st_size, expected_size or dest.stat().st_size)
                 return
         if pl.cancelled:
@@ -2211,8 +2406,22 @@ def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, s
 
         _stream_download(url, dest, headers=headers, update=_tick, is_cancelled=lambda: pl.cancelled)
         if expected_size > 0 and dest.stat().st_size != expected_size:
+            actual_size = dest.stat().st_size
             dest.unlink(missing_ok=True)
-            raise ValueError(f"Downloaded {normalized_name} has size {dest.stat().st_size}, expected {expected_size}")
+            raise ValueError(f"Downloaded {normalized_name} has size {actual_size}, expected {expected_size}")
+        if dest.suffix == ".safetensors" and not _is_valid_safetensors(dest):
+            dest.unlink(missing_ok=True)
+            raise ValueError(f"Downloaded {normalized_name} is not a valid safetensors file")
+        if dest.suffix == ".gguf" and not _is_valid_gguf(dest):
+            dest.unlink(missing_ok=True)
+            raise ValueError(f"Downloaded {normalized_name} is not a valid GGUF file")
+        if sha256:
+            from video_enhance import verify_asset
+            try:
+                verify_asset(dest, sha256)
+            except ValueError:
+                dest.unlink(missing_ok=True)
+                raise
         download_manager.update_progress(pl, tid, expected_size or dest.stat().st_size, expected_size or dest.stat().st_size)
 
 
@@ -2902,6 +3111,31 @@ def _img_b64_to_pil(b64: str) -> Image.Image:
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
 
+# Shared image-only defaults. Caller additions (e.g. portrait layout exclusions)
+# are retained; these terms are not injected into the positive prompt.
+IMAGE_NEGATIVE_PROMPT = (
+    "worst quality, low quality, multiple views, multiple angle, split view, grid view, "
+    "two shot, blurry, deformed, extra fingers, bad anatomy, long torso, anatomy error, "
+    "child, toddler, teen, underage, loli, shota, minor, futa, leg hair, hairy legs, "
+    "watermark, underwear, panties, bra, lingerie, thong, panty, clothed crotch, "
+    "covered vagina, covered genitals, censored, covered nipples, covered areolas, "
+    "signature, interracial, black man, black cock, african male, fat male, big male belly"
+)
+
+
+def _image_negative_prompt(data):
+    extra = data.get("negative_prompt")
+    values = IMAGE_NEGATIVE_PROMPT.split(",")
+    if isinstance(extra, str):
+        values.extend(extra.split(","))
+    unique = {}
+    for value in values:
+        term = value.strip()
+        if term:
+            unique.setdefault(term.casefold(), term)
+    return ", ".join(unique.values())
+
+
 @app.route("/image/standard", methods=["POST"])
 def image_standard_sdxl():
     import logging as _logging
@@ -2912,7 +3146,7 @@ def image_standard_sdxl():
     if not prompt:
         return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
 
-    negative_prompt = data.get("negative_prompt", "bad anatomy, extra hands, extra legs, extra fingers, poorly drawn face, fused face, cloned face")
+    negative_prompt = _image_negative_prompt(data)
     height = int(data.get("height", 1024))
     width  = int(data.get("width", 1024))
 
@@ -2935,6 +3169,7 @@ def image_standard_sdxl():
 
     gen_id = genbus.new("sdxl_standard", {"endpoint": "/image/standard", "prompt": prompt})
 
+    base = refiner = compel_base = compel_ref = shared_encoder = shared_vae = None
     try:
         device = DeviceManager.get_device()
         dtype  = DeviceManager.get_dtype(device)
@@ -2949,7 +3184,7 @@ def image_standard_sdxl():
                         torch_dtype=dtype,
                         use_safetensors=True,
                         local_files_only=True,
-                    ).to(device)
+                    )
                     logger.info(f"[sdxl] Loaded base from single-file checkpoint: {ckpt_path.name}")
             except Exception as e:
                 logger.warning(f"[sdxl] Single-file load failed; falling back to repo: {e}")
@@ -2963,7 +3198,7 @@ def image_standard_sdxl():
                     use_safetensors=True,
                     variant="fp16",
                     local_files_only=is_offline,
-                ).to(device)
+                )
 
         def _apply_lora(pipe, lora_path: Path, strength: float, tag: str):
             try:
@@ -3031,11 +3266,24 @@ def image_standard_sdxl():
                 return torch.cat([t, pad_tensor], dim=1)
             return pad(a), pad(b)
 
+        base.text_encoder.to(device)
+        base.text_encoder_2.to(device)
         compel_base = _make_compel(base)
         with torch.inference_mode():
             prompt_embeds_base, pooled_base = compel_base(prompt)
             neg_embeds_base, neg_pooled_base = compel_base(negative_prompt)
             prompt_embeds_base, neg_embeds_base = _pad_seq_len(prompt_embeds_base, neg_embeds_base)
+
+        from inference_memory import constrained
+        if constrained(device):
+            base.text_encoder.to("cpu")
+            base.text_encoder_2.to("cpu")
+        base.vae.enable_tiling()
+        if constrained(device) and device.type != "cpu":
+            apply_group_offloading(base.unet, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        else:
+            base.unet.to(device)
+            base.vae.to(device)
 
         def cb_base(step, timestep, latents):
             genbus.progress(gen_id, "generating", 1, 3)
@@ -3054,17 +3302,28 @@ def image_standard_sdxl():
             callback_steps=max(1, cb_steps),
         ).images
 
+        shared_encoder = base.text_encoder_2
+        shared_vae = base.vae
+        shared_encoder.to("cpu")
+        shared_vae.to("cpu")
+        del compel_base, prompt_embeds_base, pooled_base, neg_embeds_base, neg_pooled_base
+        from inference_memory import detach_hooks
+        detach_hooks(base.unet)
+        base = None
+        from inference_memory import reclaim
+        reclaim(device)
+
         # Use offline mode if pipeline is fully downloaded
         with offline_mode_if_complete("sdxl_intermediate") as is_offline:
             refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(
                 str(repo_local_dir(SDXL_REFINER_REPO)),
-                text_encoder_2=getattr(base, "text_encoder_2", None),
-                vae=getattr(base, "vae", None),
+                text_encoder_2=shared_encoder,
+                vae=shared_vae,
                 torch_dtype=dtype,
                 use_safetensors=True,
                 variant="fp16",
                 local_files_only=is_offline,
-            ).to(device)
+            )
 
         if lora_filename:
             lp = (MODEL_DIR / lora_filename).resolve()
@@ -3077,11 +3336,21 @@ def image_standard_sdxl():
         except Exception:
             pass
 
+        refiner.text_encoder_2.to(device)
         compel_ref = _make_compel(refiner)
         with torch.inference_mode():
             prompt_embeds_ref, pooled_ref = compel_ref(prompt)
             neg_embeds_ref, neg_pooled_ref = compel_ref(negative_prompt)
             prompt_embeds_ref, neg_embeds_ref = _pad_seq_len(prompt_embeds_ref, neg_embeds_ref)
+
+        if constrained(device):
+            refiner.text_encoder_2.to("cpu")
+        refiner.vae.enable_tiling()
+        if constrained(device) and device.type != "cpu":
+            apply_group_offloading(refiner.unet, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        else:
+            refiner.unet.to(device)
+        refiner.vae.to(device)
 
         def cb_ref(step, timestep, latents_):
             genbus.progress(gen_id, "generating", 1, 3)
@@ -3124,6 +3393,8 @@ def image_standard_sdxl():
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
+        base = refiner = compel_base = compel_ref = shared_encoder = shared_vae = None
+        gc.collect()
         DeviceManager.free_memory()
 
 
@@ -3137,9 +3408,7 @@ def z_image_quality():
     """Generate image using Z-Image-Turbo (quality mode)."""
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
-    negative_prompt = (data.get("negative_prompt") or "").strip() or (
-        "blurry, low quality, distorted, jpeg artifacts, text, watermark"
-    )
+    negative_prompt = _image_negative_prompt(data)
     H = int(data.get("height", 512))
     W = int(data.get("width", 512))
     steps = int(data.get("steps", 9))
@@ -3168,6 +3437,7 @@ def z_image_quality():
 
     gen_id = genbus.new("z_image_quality", {"endpoint": "/image/quality", "w": W, "h": H, "steps": steps, "private": bool(use_private)})
 
+    pipe = transformer = None
     try:
         genbus.progress(gen_id, "loading", 0, 3)
 
@@ -3187,7 +3457,7 @@ def z_image_quality():
                     str(local_checkpoint),
                     config=str(tr_cfg),
                     torch_dtype=compute_dtype,
-                ).to(device)
+                )
                 logger.info("[z-image] Loaded local transformer checkpoint %s", local_checkpoint.name)
             else:
                 transformer = ZImageTransformer2DModel.from_single_file(
@@ -3195,7 +3465,7 @@ def z_image_quality():
                     config=str(tr_cfg),
                     quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
                     dtype=compute_dtype,
-                ).to(device)
+                )
 
             pipe = ZImagePipeline.from_pretrained(
                 str(repo_local_dir(Z_REPO)),
@@ -3204,7 +3474,12 @@ def z_image_quality():
                 local_files_only=is_offline,
             )
 
-        pipe = pipe.to(device)
+        from inference_memory import configure_pipeline, release_on_first_forward, release_before_decode
+        configure_pipeline(pipe, device, None if has_local_checkpoint else MODEL_DIR / Z_GGUF_NAME)
+        release_on_first_forward(pipe, ("text_encoder",), device)
+        release_before_decode(pipe, ("transformer",), device)
+        transformer = None
+        pipe.vae.enable_tiling()
 
         generator = (
             torch.Generator(device=device).manual_seed(seed)
@@ -3274,6 +3549,7 @@ def z_image_quality():
             "ok": True,
             "prompt": prompt,
             "negative_prompt": negative_prompt,
+            "negative_prompt_applied": False,
             **image_webp_payload(image, encoded),
             "image_path": str(out_path) if 'out_path' in dir() else None,
             "generation_id": gen_id,
@@ -3286,205 +3562,163 @@ def z_image_quality():
         genbus.error(gen_id, str(e))
         return jsonify(_json_sanitize({"error": str(e)})), 500
     finally:
+        pipe = transformer = None
+        gc.collect()
         DeviceManager.free_memory()
 
 
 # =============================================================================
-# REST API: IMAGE GENERATION - FLUX KLEIN 4B (TURBO)
+# REST API: IMAGE GENERATION - FLUX KLEIN 9B GGUF (TURBO)
 # =============================================================================
+
+@app.route("/image/experimental/klein-9b", methods=["POST"])
+def image_experimental_klein_9b(edit=False):
+    """Shared local Q4_K_M Turbo generation and reference-image editing."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON object is required"}), 400
+    prompt = data.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return jsonify({"error": "Prompt is required"}), 400
+    try:
+        use_lora = data.get("use_lora", True)
+        if not isinstance(use_lora, bool):
+            raise ValueError("use_lora must be a boolean")
+        lora_scale = float(data.get("lora_scale", 1.0))
+        if not math.isfinite(lora_scale) or not 0 <= lora_scale <= 2:
+            raise ValueError("lora_scale must be between 0 and 2")
+        width, height = int(data.get("width", 768)), int(data.get("height", 768))
+        steps, seed = int(data.get("steps", 4)), int(data.get("seed", 0))
+        if any(n < 256 or n > 4096 or n % 16 for n in (width, height)):
+            raise ValueError("Width and height must be multiples of 16 between 256 and 4096")
+        if not 1 <= steps <= 20 or not 0 <= seed < 2**63:
+            raise ValueError("Steps must be 1–20; seed must be 0–2^63-1")
+        if "auto_download" in data and not isinstance(data["auto_download"], bool):
+            raise ValueError("auto_download must be a boolean")
+    except (TypeError, ValueError, OverflowError) as error:
+        return jsonify({"error": str(error)}), 400
+    image_b64 = data.get("image_base64", "")
+    image_url = data.get("image_url", "")
+    if edit and (not isinstance(image_b64, str) or not isinstance(image_url, str) or not (image_b64.strip() or image_url.strip())):
+        return jsonify({"error": "Provide image_base64 or image_url for editing"}), 400
+    if not FLUX_KLEIN_9B_LOCK.acquire(blocking=False):
+        return jsonify({"error": "A Turbo image generation is already running"}), 409
+    pipe = transformer = None
+    adapter_handles = []
+    gen_id = None
+    try:
+        guard = _ensure_files_present_or_start("flux_klein_9b_gguf", auto_download=data.get("auto_download", False))
+        if guard:
+            return guard
+        # Lazy import keeps existing image endpoints usable on older installations.
+        from diffusers import Flux2Transformer2DModel
+        device = DeviceManager.get_device()
+        # CPU float32 is portable, including processors without bf16 support.
+        # CUDA also covers AMD ROCm; use bf16 only when the runtime supports it.
+        dtype = torch.float32
+        if device.type == "mps":
+            dtype = torch.float16
+        elif device.type == "cuda":
+            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        endpoint = "/image/image/turbo" if edit else "/image/turbo"
+        gen_id = genbus.new("image_turbo", {"endpoint": endpoint})
+        started = time.monotonic()
+        genbus.progress(gen_id, "loading", 0, 3)
+        root = repo_local_dir(FLUX_KLEIN_9B_REPO)
+        transformer = Flux2Transformer2DModel.from_single_file(
+            str(MODEL_DIR / FLUX_KLEIN_9B_GGUF_NAME),
+            config=str(root), subfolder="transformer",
+            quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
+            torch_dtype=dtype, local_files_only=True,
+        )
+        pipe = Flux2KleinPipeline.from_pretrained(
+            str(root), transformer=transformer, torch_dtype=dtype, local_files_only=True,
+        )
+        applied_loras = []
+        adapter_names = []
+        if use_lora and lora_scale > 0:
+            from klein_adapters import load_klein_adapter
+            candidates = [(MODEL_DIR / filename, adapter) for filename, adapter in
+                          [(FLUX_KLEIN_9B_LORA_NAME, "klein_local"),
+                           (FLUX_KLEIN_9B_LORA_EXTRA_NAME, "klein_extra")]
+                          if (MODEL_DIR / filename).exists()]
+            if len(candidates) == 2:
+                lora_scale = 0.5
+            for lora_path, adapter in candidates:
+                if not _is_valid_safetensors(lora_path):
+                    raise ValueError(f"Invalid LoRA file: {lora_path.name}")
+                handles, peft_adapter = load_klein_adapter(pipe, lora_path, adapter, lora_scale)
+                adapter_handles.extend(handles)
+                applied_loras.append(lora_path.name)
+                if peft_adapter:
+                    adapter_names.append(adapter)
+            if adapter_names:
+                pipe.set_adapters(adapter_names, adapter_weights=[lora_scale] * len(adapter_names))
+        lora_applied = bool(applied_loras)
+        pipe.vae.enable_slicing()
+        pipe.vae.enable_tiling()
+        from inference_memory import configure_pipeline, release_on_first_forward, release_before_decode
+        configure_pipeline(pipe, device, MODEL_DIR / FLUX_KLEIN_9B_GGUF_NAME)
+        release_on_first_forward(pipe, ("text_encoder",), device)
+        release_before_decode(pipe, ("transformer",), device)
+        transformer = None
+        loaded = time.monotonic()
+        genbus.progress(gen_id, "generating", 1, 3)
+        conditioning = {}
+        if edit:
+            conditioning["image"] = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
+        image = pipe(prompt=prompt.strip(), width=width, height=height,
+                     num_inference_steps=steps, guidance_scale=1.0,
+                     generator=torch.Generator(device="cpu").manual_seed(seed),
+                     **conditioning).images[0]
+        generated = time.monotonic()
+        genbus.progress(gen_id, "finalizing", 2, 3)
+        out_path = FILES_DIR / f"image_klein_9b_{gen_id}.webp"
+        image.save(str(out_path), format="WEBP", quality=90)
+        result = {"prompt": prompt.strip(), **image_webp_payload(image, encode_image_to_webp(image)),
+                  "image_path": str(out_path), "generation_id": gen_id,
+                  "generation_websocket_url": generation_url(), "seed": seed,
+                  "model": FLUX_KLEIN_9B_GGUF_NAME, "device": device.type,
+                  "negative_prompt": _image_negative_prompt(data),
+                  "negative_prompt_applied": False,
+                  "lora": applied_loras[0] if lora_applied else None,
+                  "loras": applied_loras,
+                  "lora_scale": lora_scale if lora_applied else 0,
+                  "load_seconds": round(loaded - started, 3),
+                  "inference_seconds": round(generated - loaded, 3)}
+        genbus.progress(gen_id, "complete", 3, 3)
+        genbus.finish(gen_id, {"ok": True})
+        return jsonify(_json_sanitize(result)), 201
+    except Exception as error:
+        logger.exception("Klein 9B Turbo generation failed")
+        if gen_id:
+            genbus.error(gen_id, str(error))
+        return jsonify({"error": str(error)}), 500
+    finally:
+        for handle in adapter_handles:
+            handle.remove()
+        del pipe, transformer
+        try:
+            gc.collect()
+            DeviceManager.free_memory()
+        finally:
+            FLUX_KLEIN_9B_LOCK.release()
+
 
 @app.route("/image/turbo", methods=["POST"])
 def image_turbo_flux_klein():
-    """Generate image using FLUX Klein 4B (fast turbo mode)."""
-    data = request.json or {}
-    prompt = (data.get("prompt") or "").strip()
-    h = int(data.get("height", 1024))
-    w = int(data.get("width", 1024))
-    steps = int(data.get("steps", 4))  # Klein is optimized for 4 steps
-    guidance = float(data.get("guidance_scale", 1.0))  # Klein uses guidance_scale=1.0
-    auto_dl = bool(data.get("auto_download", False))
-
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
-
-    guard = _ensure_files_present_or_start("flux_klein", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("flux_klein", {"endpoint": "/image/turbo", "prompt": prompt})
-
-    try:
-        genbus.progress(gen_id, "loading", 0, 3)
-
-        device = DeviceManager.get_device()
-        if device.type == "cuda":
-            compute_dtype = torch.bfloat16
-        elif device.type == "mps":
-            compute_dtype = torch.float16
-        else:
-            compute_dtype = torch.float32
-
-        # Load Flux2KleinPipeline (specific to FLUX.2-klein-4B)
-        with offline_mode_if_complete("flux_klein") as is_offline:
-            pipe = Flux2KleinPipeline.from_pretrained(
-                str(repo_local_dir(FLUX_KLEIN_REPO)),
-                torch_dtype=compute_dtype,
-                local_files_only=is_offline,
-            )
-            pipe.enable_model_cpu_offload()  # Save VRAM by offloading to CPU
-
-        genbus.progress(gen_id, "generating", 1, 3)
-
-        image = pipe(
-            prompt=prompt,
-            guidance_scale=guidance,
-            height=h,
-            width=w,
-            num_inference_steps=steps,
-            generator=torch.Generator(device=device).manual_seed(0) if device.type != "mps" else None
-        ).images[0]
-
-        genbus.progress(gen_id, "finalizing", 2, 3)
-
-        b64 = encode_image_to_webp(image)
-
-        # Save image to FILES_DIR for persistence
-        try:
-            out_path = FILES_DIR / f"image_turbo_{gen_id}.webp"
-            image.save(str(out_path), format="WEBP", quality=90)
-            logger.info(f"[flux-klein] Image saved to {out_path}")
-        except Exception as save_err:
-            logger.warning(f"[flux-klein] Failed to save image to disk: {save_err}")
-
-        genbus.progress(gen_id, "complete", 3, 3)
-        genbus.finish(gen_id, {"ok": True})
-
-        return jsonify(_json_sanitize({
-            "prompt": prompt, **image_webp_payload(image, b64),
-            "image_path": str(out_path) if 'out_path' in dir() else None,
-            "generation_id": gen_id,
-            "generation_websocket_url": generation_url()
-        })), 201
-
-    except Exception as e:
-        logger.exception("FLUX Klein generation failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        # Explicitly delete pipeline to free memory
-        if 'pipe' in dir():
-            del pipe
-        gc.collect()
-        DeviceManager.free_memory()
+    return image_experimental_klein_9b()
 
 
 @app.route("/image/image/turbo", methods=["POST"])
 def image_turbo_flux_klein_i2i():
-    """Generate image-to-image using FLUX Klein 4B (fast turbo edit mode)."""
-    data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").strip()
-    image_b64 = (data.get("image_base64") or "").strip()
-    image_url = (data.get("image_url") or "").strip()
-    h = int(data.get("height", 1024))
-    w = int(data.get("width", 1024))
-    steps = int(data.get("steps", 4))  # Klein is optimized for 4 steps
-    guidance = float(data.get("guidance_scale", 1.0))  # Klein uses guidance_scale=1.0
-    auto_dl = bool(data.get("auto_download", False))
-
-    if not prompt:
-        return jsonify(_json_sanitize({"error": "Prompt is required"})), 400
-    if not image_b64 and not image_url:
-        return jsonify(_json_sanitize({"error": "Provide 'image_base64' or 'image_url'"})), 400
-
-    guard = _ensure_files_present_or_start("flux_klein", auto_download=auto_dl)
-    if guard:
-        return guard
-
-    gen_id = genbus.new("flux_klein_i2i", {"endpoint": "/image/image/turbo", "w": w, "h": h, "steps": steps})
-
-    try:
-        genbus.progress(gen_id, "loading", 0, 4)
-        logger.info(f"[FluxKleinI2I] Starting - device detection...")
-
-        device = DeviceManager.get_device()
-        if device.type == "cuda":
-            compute_dtype = torch.bfloat16
-        elif device.type == "mps":
-            compute_dtype = torch.float16
-        else:
-            compute_dtype = torch.float32
-
-        logger.info(f"[FluxKleinI2I] Device: {device}, dtype: {compute_dtype}")
-
-        # Load Flux2KleinPipeline (supports both T2I and I2I via image parameter)
-        logger.info(f"[FluxKleinI2I] Loading pipeline from {FLUX_KLEIN_REPO}...")
-        genbus.progress(gen_id, "loading model", 1, 4)
-
-        with offline_mode_if_complete("flux_klein") as is_offline:
-            pipe = Flux2KleinPipeline.from_pretrained(
-                str(repo_local_dir(FLUX_KLEIN_REPO)),
-                torch_dtype=compute_dtype,
-                local_files_only=is_offline,
-            )
-            pipe.enable_model_cpu_offload()  # Save VRAM by offloading to CPU
-
-        logger.info(f"[FluxKleinI2I] Pipeline loaded, processing input image...")
-        genbus.progress(gen_id, "processing image", 2, 4)
-
-        # Load input image
-        init_img = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
-        logger.info(f"[FluxKleinI2I] Input image size: {init_img.size}")
-
-        logger.info(f"[FluxKleinI2I] Starting generation with {steps} steps...")
-        genbus.progress(gen_id, "generating", 3, 4)
-
-        image = pipe(
-            prompt=prompt,
-            image=init_img,  # Flux2KleinPipeline uses image as condition
-            guidance_scale=guidance,
-            height=h,
-            width=w,
-            num_inference_steps=steps,
-            generator=torch.Generator(device=device).manual_seed(0) if device.type != "mps" else None
-        ).images[0]
-
-        logger.info(f"[FluxKleinI2I] Generation complete!")
-
-        genbus.progress(gen_id, "finalizing", 4, 5)
-
-        b64 = encode_image_to_webp(image)
-
-        genbus.progress(gen_id, "complete", 5, 5)
-        genbus.finish(gen_id, {"ok": True})
-
-        return jsonify(_json_sanitize({
-            "prompt": prompt, **image_webp_payload(image, b64), "generation_id": gen_id,
-            "generation_websocket_url": generation_url()
-        })), 201
-
-    except Exception as e:
-        logger.exception("FLUX Klein I2I generation failed")
-        genbus.error(gen_id, str(e))
-        return jsonify(_json_sanitize({"error": str(e)})), 500
-    finally:
-        # Explicitly delete pipeline to free memory
-        try:
-            del pipe
-        except:
-            pass
-        gc.collect()
-        DeviceManager.free_memory()
+    return image_experimental_klein_9b(edit=True)
 
 
-
-
-# ACE-Step v1.5 handler cache — keyed by quality mode
-_ace_step_handlers = {}  # "fast" → handler, "quality" → handler
+# ACE-Step v1.5 Diffusers pipeline cache
+_ace_step_pipeline = None
+_ace_step_offload = None
 _ace_step_lock = threading.Lock()
-
-# ACE-Step LLM handler for semantic audio mode
-_ace_step_llm = None
-_ace_step_llm_lock = threading.Lock()
 
 # Kokoro TTS pipeline cache
 _kokoro_pipeline = None
@@ -3577,12 +3811,28 @@ def audio_turbo_kokoro():
         # Generate audio using KPipeline
         # Returns generator of (graphemes, phonemes, audio) tuples
         audio_segments = []
+        narration_texts = []
         for i, (gs, ps, audio) in enumerate(pipeline(prompt, voice=voice, speed=speed)):
-            audio_segments.append(audio)
+            if hasattr(audio, "detach"):
+                audio = audio.detach().cpu().numpy()
+            samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+            if not len(samples) or not np.isfinite(samples).all():
+                raise ValueError("The narrator returned invalid audio. Please record again.")
+            audio_segments.append(samples)
+            narration_texts.append(str(gs))
 
         # Concatenate all audio segments
         if audio_segments:
-            full_audio = np.concatenate(audio_segments)
+            from meditation_timing import narration_timeline
+            timing = narration_timeline([len(audio) for audio in audio_segments], narration_texts, 24000, data.get("target_duration_seconds"))
+            timed_segments = []
+            for pause, audio in zip(timing["before_samples"], audio_segments):
+                if pause:
+                    timed_segments.append(np.zeros(pause, dtype=np.float32))
+                timed_segments.append(audio)
+            if timing["tail_samples"]:
+                timed_segments.append(np.zeros(timing["tail_samples"], dtype=np.float32))
+            full_audio = np.concatenate(timed_segments)
         else:
             raise ValueError("No audio generated")
 
@@ -3593,7 +3843,7 @@ def audio_turbo_kokoro():
         out_path = str(FILES_DIR / out_name)
 
         # Convert to int16 WAV
-        audio_int16 = (full_audio * 32767).astype(np.int16)
+        audio_int16 = (np.clip(full_audio, -1, 1) * 32767).astype(np.int16)
 
         with wave.open(out_path, 'wb') as wav_file:
             wav_file.setnchannels(1)
@@ -3616,6 +3866,10 @@ def audio_turbo_kokoro():
             "gender": KOKORO_VOICES[voice]["gender"],
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
+            "duration_seconds": timing["duration_seconds"],
+            "narration_seconds": timing["narration_seconds"],
+            "requested_duration_seconds": timing["requested_duration_seconds"],
+            "caption_segments": timing["caption_segments"],
         }), 201
 
     except Exception as e:
@@ -3627,13 +3881,12 @@ def audio_turbo_kokoro():
 
 
 # =============================================================================
-# REST API: QWEN3-TTS - High-Quality Voice Design & Cloning
+# REST API: CHATTERBOX MULTILINGUAL V3 - QUALITY TTS & VOICE CLONING
 # =============================================================================
 
 # Model caches
-_qwen3_tts_base = None
-_qwen3_tts_design = None
-_qwen3_tts_lock = threading.Lock()
+_chatterbox_tts = None
+_chatterbox_tts_lock = threading.Lock()
 
 # Voice prompt cache for reusing designed voices
 _voice_prompt_cache = {}
@@ -3647,94 +3900,115 @@ def _voice_cache_evict():
         del _voice_prompt_cache[oldest_key]
 
 
-def _load_qwen3_tts_base():
-    """Load Qwen3-TTS Base model for voice cloning."""
-    global _qwen3_tts_base
+_CHATTERBOX_LANGUAGE_CODES = {
+    "arabic": "ar", "danish": "da", "german": "de", "greek": "el",
+    "english": "en", "spanish": "es", "finnish": "fi", "french": "fr",
+    "hebrew": "he", "hindi": "hi", "italian": "it", "japanese": "ja",
+    "korean": "ko", "malay": "ms", "dutch": "nl", "norwegian": "no",
+    "polish": "pl", "portuguese": "pt", "russian": "ru", "swedish": "sv",
+    "swahili": "sw", "turkish": "tr", "chinese": "zh",
+}
 
-    with _qwen3_tts_lock:
-        if _qwen3_tts_base is not None:
-            return _qwen3_tts_base
 
-        from qwen_tts import Qwen3TTSModel
+def _chatterbox_language_code(language):
+    value = (language or "en").strip().lower()
+    code = _CHATTERBOX_LANGUAGE_CODES.get(value, value.split("-")[0])
+    return code if code in set(_CHATTERBOX_LANGUAGE_CODES.values()) else "en"
 
+
+class _ChatterboxAdapter:
+    """Preserve BonzAI's established route contract on Chatterbox V3."""
+
+    def __init__(self, model):
+        self.model = model
+        self.sr = int(model.sr)
+
+    @staticmethod
+    def _numpy_audio(audio):
+        if torch.is_tensor(audio):
+            audio = audio.detach().float().cpu().numpy()
+        return np.asarray(audio, dtype=np.float32).squeeze()
+
+    def create_voice_clone_prompt(self, ref_audio, ref_text=None):
+        audio, sample_rate = ref_audio
+        audio = self._numpy_audio(audio)
+        digest = hashlib.sha256(audio.tobytes()).hexdigest()[:20]
+        path = FILES_DIR / f"chatterbox_voice_{digest}.wav"
+        if not path.exists():
+            import soundfile as sf
+            sf.write(path, audio, int(sample_rate))
+        return str(path)
+
+    def generate_voice_clone(self, text, language, voice_clone_prompt):
+        audio = self.model.generate(
+            text,
+            language_id=_chatterbox_language_code(language),
+            audio_prompt_path=str(voice_clone_prompt),
+        )
+        return [self._numpy_audio(audio)], self.sr
+
+    def generate_voice_design(self, text, language, instruct):
+        # Chatterbox is a cloning model. Seed its clone with a deterministic
+        # Kokoro speaker selected from the requested persona description.
+        # This retains BonzAI's useful voice-design route without a second
+        # heavyweight text model or a vendor-specific prompt format.
+        description = (instruct or "").lower()
+        gender = "male" if re.search(r"\b(male|man|masculine)\b", description) else "female"
+        candidates = [name for name, meta in KOKORO_VOICES.items() if meta["gender"] == gender]
+        voice = candidates[int(hashlib.sha256(description.encode()).hexdigest(), 16) % len(candidates)]
+        pipeline = _load_kokoro_pipeline()
+        seed_text = text if _chatterbox_language_code(language) == "en" else (
+            "Hello, this is my natural speaking voice. It is wonderful to meet you."
+        )
+        seed_segments = [segment for _, _, segment in pipeline(seed_text, voice=voice, speed=1.0)]
+        if not seed_segments:
+            raise RuntimeError("Kokoro did not produce a persona seed")
+        seed = np.concatenate(seed_segments).astype(np.float32)
+        prompt_path = self.create_voice_clone_prompt((seed, 24000), text)
+        return self.generate_voice_clone(text, language, prompt_path)
+
+
+def _load_chatterbox_tts():
+    """Load Chatterbox Multilingual V3 strictly from BonzAI's model store."""
+    global _chatterbox_tts
+    with _chatterbox_tts_lock:
+        if _chatterbox_tts is not None:
+            return _chatterbox_tts
+
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+        from chatterbox.models.tokenizers import tokenizer as chatterbox_tokenizer
+
+        local_dir = repo_local_dir(CHATTERBOX_REPO)
+        if not local_dir.exists():
+            raise RuntimeError(f"Chatterbox model is missing at {local_dir}; download audio_quality first")
         device = DeviceManager.get_device()
-        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
-
-        logger.info(f"[Qwen3-TTS] Loading Base model on {device}...")
-
-        # Attention implementation: flash_attention_2 for CUDA, sdpa for MPS, eager for CPU
-        if device.type == "cuda":
-            attn_impl = "flash_attention_2"
-        elif device.type == "mps":
-            attn_impl = "sdpa"
-        else:
-            attn_impl = "eager"
-
-        # Use local path if available, otherwise fall back to repo name
-        local_dir = repo_local_dir(QWEN3_TTS_BASE_REPO)
-        model_path = str(local_dir) if local_dir.exists() else QWEN3_TTS_BASE_REPO
-
-        # NOTE: Qwen3TTSModel doesn't support .to(), use device_map for all devices
-        # With accelerate>=1.12.0, device_map should work correctly
-        with offline_mode_if_complete("audio_quality_clone") as is_offline:
-            _qwen3_tts_base = Qwen3TTSModel.from_pretrained(
-                model_path,
-                device_map="auto",
-                torch_dtype=dtype,
-                attn_implementation=attn_impl,
-                local_files_only=is_offline,
+        device_name = device.type
+        logger.info("[Chatterbox] Loading Multilingual V3 on %s", device_name)
+        # Upstream's Chinese normalizer calls hf_hub_download even when the
+        # model itself is loaded from a local directory. Route that lookup to
+        # the file already verified by BonzAI's downloader so inference stays
+        # offline after prefetch.
+        original_hf_download = chatterbox_tokenizer.hf_hub_download
+        chatterbox_tokenizer.hf_hub_download = (
+            lambda repo_id, filename, **kwargs: str(local_dir / filename)
+        )
+        try:
+            model = ChatterboxMultilingualTTS.from_local(
+                local_dir,
+                device_name,
+                t3_model=CHATTERBOX_T3_MODEL,
             )
-
-        logger.info("[Qwen3-TTS] Base model loaded successfully")
-        return _qwen3_tts_base
-
-
-def _load_qwen3_tts_design():
-    """Load Qwen3-TTS VoiceDesign model for creating voices from descriptions."""
-    global _qwen3_tts_design
-
-    with _qwen3_tts_lock:
-        if _qwen3_tts_design is not None:
-            return _qwen3_tts_design
-
-        from qwen_tts import Qwen3TTSModel
-
-        device = DeviceManager.get_device()
-        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
-
-        logger.info(f"[Qwen3-TTS] Loading VoiceDesign model on {device}...")
-
-        # Attention implementation: flash_attention_2 for CUDA, sdpa for MPS, eager for CPU
-        if device.type == "cuda":
-            attn_impl = "flash_attention_2"
-        elif device.type == "mps":
-            attn_impl = "sdpa"
-        else:
-            attn_impl = "eager"
-
-        # Use local path if available, otherwise fall back to repo name
-        local_dir = repo_local_dir(QWEN3_TTS_DESIGN_REPO)
-        model_path = str(local_dir) if local_dir.exists() else QWEN3_TTS_DESIGN_REPO
-
-        # NOTE: Qwen3TTSModel doesn't support .to(), use device_map for all devices
-        # With accelerate>=1.12.0, device_map should work correctly
-        with offline_mode_if_complete("audio_quality_design") as is_offline:
-            _qwen3_tts_design = Qwen3TTSModel.from_pretrained(
-                model_path,
-                device_map="auto",
-                torch_dtype=dtype,
-                attn_implementation=attn_impl,
-                local_files_only=is_offline,
-            )
-
-        logger.info("[Qwen3-TTS] VoiceDesign model loaded successfully")
-        return _qwen3_tts_design
+        finally:
+            chatterbox_tokenizer.hf_hub_download = original_hf_download
+        _chatterbox_tts = _ChatterboxAdapter(model)
+        logger.info("[Chatterbox] Multilingual V3 loaded")
+        return _chatterbox_tts
 
 
 @app.route("/audio/quality/design", methods=["POST"])
 def audio_quality_design():
     """
-    Design a voice from a text description using Qwen3-TTS VoiceDesign.
+    Create a reusable persona voice with Chatterbox Multilingual V3.
 
     Creates a reference audio that can be used for voice cloning.
 
@@ -3776,13 +4050,13 @@ def audio_quality_design():
     if guard:
         return guard
 
-    gen_id = genbus.new("qwen3_tts_design", {"endpoint": "/audio/quality/design", "voice_id": voice_id})
+    gen_id = genbus.new("chatterbox_design", {"endpoint": "/audio/quality/design", "voice_id": voice_id})
 
     try:
         gc.collect()
         genbus.progress(gen_id, "loading", 0, 4)
 
-        model = _load_qwen3_tts_design()
+        model = _load_chatterbox_tts()
 
         genbus.progress(gen_id, "designing voice", 1, 4)
 
@@ -3803,7 +4077,7 @@ def audio_quality_design():
         sf.write(out_path, wavs[0], sr)
 
         # Create and cache voice clone prompt for reuse
-        base_model = _load_qwen3_tts_base()
+        base_model = _load_chatterbox_tts()
         voice_prompt = base_model.create_voice_clone_prompt(
             ref_audio=(wavs[0], sr),
             ref_text=text,
@@ -3823,7 +4097,7 @@ def audio_quality_design():
         genbus.progress(gen_id, "complete", 3, 4)
         genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path, "voice_id": voice_id})
 
-        logger.info(f"[Qwen3-TTS] Voice designed: {out_path} (MP3: {mp3_path}, voice_id: {voice_id})")
+        logger.info(f"[Chatterbox] Voice designed: {out_path} (MP3: {mp3_path}, voice_id: {voice_id})")
 
         return jsonify({
             "ok": True,
@@ -3831,13 +4105,13 @@ def audio_quality_design():
             "audio_path_mp3": mp3_path,
             "voice_id": voice_id,
             "voice_prompt_cached": True,
-            "model": "qwen3-tts-voicedesign",
+            "model": "chatterbox-multilingual-v3",
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
         }), 201
 
     except Exception as e:
-        logger.exception("Qwen3-TTS VoiceDesign failed")
+        logger.exception("Chatterbox voice design failed")
         genbus.error(gen_id, str(e))
         return jsonify({"error": str(e)}), 500
     finally:
@@ -3847,7 +4121,7 @@ def audio_quality_design():
 @app.route("/audio/quality/clone", methods=["POST"])
 def audio_quality_clone():
     """
-    Generate speech using voice cloning with Qwen3-TTS Base.
+    Generate speech with Chatterbox Multilingual V3 voice cloning.
 
     Uses a previously designed voice or a reference audio.
 
@@ -3884,13 +4158,13 @@ def audio_quality_clone():
     if guard:
         return guard
 
-    gen_id = genbus.new("qwen3_tts_clone", {"endpoint": "/audio/quality/clone", "voice_id": voice_id or "custom"})
+    gen_id = genbus.new("chatterbox_clone", {"endpoint": "/audio/quality/clone", "voice_id": voice_id or "custom"})
 
     try:
         gc.collect()
         genbus.progress(gen_id, "loading", 0, 4)
 
-        model = _load_qwen3_tts_base()
+        model = _load_chatterbox_tts()
 
         genbus.progress(gen_id, "preparing voice", 1, 4)
 
@@ -3899,7 +4173,7 @@ def audio_quality_clone():
         # Try to get cached voice prompt
         if voice_id and voice_id in _voice_prompt_cache:
             voice_prompt = _voice_prompt_cache[voice_id]["prompt"]
-            logger.info(f"[Qwen3-TTS] Using cached voice prompt: {voice_id}")
+            logger.info(f"[Chatterbox] Using cached voice prompt: {voice_id}")
         elif ref_audio_b64 or ref_audio_path:
             # Create voice prompt from reference audio
             if ref_audio_b64:
@@ -3915,6 +4189,10 @@ def audio_quality_clone():
 
             import soundfile as sf
             ref_audio, sr = sf.read(ref_audio_path)
+            if len(ref_audio) / float(sr) < 0.5:
+                message = "Reference audio must be at least 0.5 seconds long"
+                genbus.error(gen_id, message)
+                return jsonify({"error": message}), 400
             voice_prompt = model.create_voice_clone_prompt(
                 ref_audio=(ref_audio, sr),
                 ref_text=ref_text,
@@ -3954,20 +4232,20 @@ def audio_quality_clone():
         mp3_path = convert_wav_to_mp3(out_path)
 
         genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path})
-        logger.info(f"[Qwen3-TTS] Voice cloned: {out_path} (MP3: {mp3_path})")
+        logger.info(f"[Chatterbox] Voice cloned: {out_path} (MP3: {mp3_path})")
 
         return jsonify({
             "ok": True,
             "audio_path": out_path,
             "audio_path_mp3": mp3_path,
             "voice_id": voice_id or None,
-            "model": "qwen3-tts-base",
+            "model": "chatterbox-multilingual-v3",
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
         }), 201
 
     except Exception as e:
-        logger.exception("Qwen3-TTS Clone failed")
+        logger.exception("Chatterbox voice cloning failed")
         genbus.error(gen_id, str(e))
         return jsonify({"error": str(e)}), 500
     finally:
@@ -4029,7 +4307,7 @@ def audio_quality_persona():
     if guard:
         return guard
 
-    gen_id = genbus.new("qwen3_tts_persona", {"endpoint": "/audio/quality/persona", "voice_id": voice_id})
+    gen_id = genbus.new("chatterbox_persona", {"endpoint": "/audio/quality/persona", "voice_id": voice_id})
 
     try:
         gc.collect()
@@ -4048,7 +4326,7 @@ def audio_quality_persona():
             # Option 1: Restore from provided sample (voice persistence)
             if restore_sample:
                 genbus.progress(gen_id, "restoring voice", 1, 5)
-                logger.info(f"[Qwen3-TTS] Restoring voice from sample: {voice_id}")
+                logger.info(f"[Chatterbox] Restoring voice from sample: {voice_id}")
 
                 try:
                     # Decode base64 audio
@@ -4069,7 +4347,7 @@ def audio_quality_persona():
                     genbus.progress(gen_id, "creating voice prompt", 2, 5)
 
                     # Create clone prompt from restored audio
-                    clone_model = _load_qwen3_tts_base()
+                    clone_model = _load_chatterbox_tts()
                     voice_prompt = clone_model.create_voice_clone_prompt(
                         ref_audio=(wavs_restored, sr),
                         ref_text=sample_text or "Hello, this is my voice.",
@@ -4085,10 +4363,10 @@ def audio_quality_persona():
                         "created_at": time.time(),
                     }
                     voice_restored = True
-                    logger.info(f"[Qwen3-TTS] Voice restored from sample: {voice_id}")
+                    logger.info(f"[Chatterbox] Voice restored from sample: {voice_id}")
 
                 except Exception as e:
-                    logger.warning(f"[Qwen3-TTS] Failed to restore voice from sample: {e}")
+                    logger.warning(f"[Chatterbox] Failed to restore voice from sample: {e}")
                     # Fall through to design new voice
 
             # Option 2: Design new voice from description
@@ -4103,7 +4381,7 @@ def audio_quality_persona():
                     sample_text = "Hello, this is my voice. I hope you like it."
 
                 # Design the voice
-                design_model = _load_qwen3_tts_design()
+                design_model = _load_chatterbox_tts()
                 wavs, sr = design_model.generate_voice_design(
                     text=sample_text,
                     language=language,
@@ -4116,7 +4394,7 @@ def audio_quality_persona():
                 genbus.progress(gen_id, "creating voice prompt", 2, 5)
 
                 # Create clone prompt
-                clone_model = _load_qwen3_tts_base()
+                clone_model = _load_chatterbox_tts()
                 voice_prompt = clone_model.create_voice_clone_prompt(
                     ref_audio=(wavs[0], sr),
                     ref_text=sample_text,
@@ -4132,15 +4410,15 @@ def audio_quality_persona():
                     "created_at": time.time(),
                 }
 
-                logger.info(f"[Qwen3-TTS] Persona voice designed: {voice_id}")
+                logger.info(f"[Chatterbox] Persona voice designed: {voice_id}")
         else:
             genbus.progress(gen_id, "using cached voice", 1, 5)
-            logger.info(f"[Qwen3-TTS] Using cached persona: {voice_id}")
+            logger.info(f"[Chatterbox] Using cached persona: {voice_id}")
 
         genbus.progress(gen_id, "generating speech", 3, 5)
 
         # Generate speech with the persona voice
-        clone_model = _load_qwen3_tts_base()
+        clone_model = _load_chatterbox_tts()
         voice_prompt = _voice_prompt_cache[voice_id]["prompt"]
 
         wavs, sr = clone_model.generate_voice_clone(
@@ -4161,7 +4439,7 @@ def audio_quality_persona():
         mp3_path = convert_wav_to_mp3(out_path)
 
         genbus.finish(gen_id, {"audio_path": out_path, "audio_path_mp3": mp3_path})
-        logger.info(f"[Qwen3-TTS] Persona speech: {out_path} (MP3: {mp3_path})")
+        logger.info(f"[Chatterbox] Persona speech: {out_path} (MP3: {mp3_path})")
 
         # Build response
         response_data = {
@@ -4171,7 +4449,7 @@ def audio_quality_persona():
             "voice_id": voice_id,
             "voice_designed": need_design,
             "voice_restored": voice_restored if need_design else False,
-            "model": "qwen3-tts-persona",
+            "model": "chatterbox-multilingual-v3",
             "generation_id": gen_id,
             "generation_websocket_url": generation_url(),
         }
@@ -4182,14 +4460,14 @@ def audio_quality_persona():
                 with open(ref_path, "rb") as f:
                     audio_bytes = f.read()
                 response_data["voice_sample_base64"] = base64.b64encode(audio_bytes).decode("utf-8")
-                logger.info(f"[Qwen3-TTS] Including voice sample in response for persistence")
+                logger.info(f"[Chatterbox] Including voice sample in response for persistence")
             except Exception as e:
-                logger.warning(f"[Qwen3-TTS] Could not read voice sample: {e}")
+                logger.warning(f"[Chatterbox] Could not read voice sample: {e}")
 
         return jsonify(response_data), 201
 
     except Exception as e:
-        logger.exception("Qwen3-TTS Persona failed")
+        logger.exception("Chatterbox persona generation failed")
         genbus.error(gen_id, str(e))
         return jsonify({"error": str(e)}), 500
     finally:
@@ -4215,160 +4493,64 @@ def audio_quality_voices():
 # ACE-STEP MUSIC GENERATION
 # =============================================================================
 
-def _load_ace_step(quality="fast", offload_to_cpu=False):
-    """Load or get cached ACE-Step v1.5 DiT handler.
-
-    Args:
-        quality: "fast" (v1.5 turbo, 2B) or "quality" (v1.5 XL turbo, 4B)
-        offload_to_cpu: Whether to offload model components to CPU between uses
-    """
-    global _ace_step_handlers
-    cache_key = f"{quality}_{offload_to_cpu}"
+def _load_ace_step_diffusers(offload_to_cpu=None):
+    """Load the official ACE-Step 1.5 XL Turbo Diffusers pipeline."""
+    global _ace_step_pipeline, _ace_step_offload
     with _ace_step_lock:
-        if cache_key in _ace_step_handlers:
-            return _ace_step_handlers[cache_key]
+        from inference_memory import constrained
+        requested_offload = constrained(DeviceManager.get_device()) if offload_to_cpu is None else bool(offload_to_cpu)
+        if _ace_step_pipeline is not None and _ace_step_offload == requested_offload:
+            return _ace_step_pipeline
+        if _ace_step_pipeline is not None:
+            _ace_step_pipeline = None
+            _ace_step_offload = None
+            gc.collect()
+            DeviceManager.free_memory()
 
-        # Unload any other handler to free memory (only one at a time)
-        for key in list(_ace_step_handlers.keys()):
-            logger.info(f"[ACE-Step] Unloading {key} handler to load {cache_key}")
-            del _ace_step_handlers[key]
-        gc.collect()
-        DeviceManager.free_memory()
+        from diffusers import AceStepPipeline
 
-        from acestep.handler import AceStepHandler
+        local_dir = repo_local_dir(ACE_STEP_REPO)
+        if not local_dir.exists():
+            raise RuntimeError(f"ACE-Step model is missing at {local_dir}; download music first")
 
-        if quality == "quality":
-            config_path = "acestep-v15-xl-turbo"
-            label = "XL Turbo (4B)"
+        device = DeviceManager.get_device()
+        dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        logger.info("[ACE-Step] Loading official Diffusers pipeline on %s", device)
+        pipe = AceStepPipeline.from_pretrained(
+            local_dir,
+            dtype=dtype,
+            local_files_only=True,
+            low_cpu_mem_usage=True,
+        )
+        if requested_offload and device.type in ("cuda", "mps"):
+            pipe.enable_model_cpu_offload(device=device)
         else:
-            config_path = "acestep-v15-turbo"
-            label = "Turbo (2B)"
-
-        main_local = repo_local_dir(ACE_STEP_REPO)
-        if not main_local.exists():
-            raise RuntimeError(
-                f"ACE-Step repo not found at {main_local}. "
-                "Download it first via the pipeline system."
-            )
-        project_root = str(main_local)
-
-        ckpt_link = main_local / "checkpoints"
-        if not ckpt_link.exists():
-            os.symlink(".", str(ckpt_link))
-
-        # Symlink XL turbo repo into base repo if needed
-        if quality == "quality":
-            xl_local = repo_local_dir(ACE_STEP_XL_REPO)
-            xl_link = main_local / "acestep-v15-xl-turbo"
-            if xl_local.exists() and not xl_link.exists():
-                os.symlink(str(xl_local), str(xl_link))
-                logger.info(f"[ACE-Step] Symlinked XL turbo: {xl_link} → {xl_local}")
-
-        device = DeviceManager.get_device()
-        device_str = "cuda" if device.type == "cuda" else (
-            "mps" if device.type == "mps" else "cpu"
-        )
-
-        handler = AceStepHandler()
-        handler._get_project_root = lambda: project_root
-
-        is_mps = device.type == "mps"
-        status_msg, success = handler.initialize_service(
-            project_root=project_root,
-            config_path=config_path,
-            device=device_str,
-            offload_to_cpu=offload_to_cpu,
-        )
-        if not success:
-            raise RuntimeError(f"ACE-Step {label} init failed: {status_msg}")
-
-        if is_mps:
-            _original_load_model_context = handler._load_model_context
-            from contextlib import contextmanager
-
-            @contextmanager
-            def _mps_aware_load_model_context(model_name: str):
-                with _original_load_model_context(model_name):
-                    yield
-                if hasattr(torch.mps, 'empty_cache'):
-                    torch.mps.empty_cache()
-                if hasattr(torch.mps, 'synchronize'):
-                    torch.mps.synchronize()
-                gc.collect()
-
-            handler._load_model_context = _mps_aware_load_model_context
-            logger.info(f"ACE-Step {label}: MPS cache clearing patch applied")
-
-        logger.info("ACE-Step: using stock tiled_decode (overlap-discard)")
-        _ace_step_handlers[cache_key] = handler
-        logger.info("ACE-Step v1.5 %s loaded (%s, offload=%s): %s", label, device_str, offload_to_cpu, status_msg)
-        return handler
-
-
-def _load_ace_step_llm():
-    """Load or get cached ACE-Step v1.5 LLM handler for thinking/CoT mode."""
-    global _ace_step_llm
-    with _ace_step_llm_lock:
-        if _ace_step_llm is not None:
-            return _ace_step_llm
-
-        from acestep.llm_inference import LLMHandler
-
-        main_local = repo_local_dir(ACE_STEP_REPO)
-        if not main_local.exists():
-            raise RuntimeError(
-                f"ACE-Step repo not found at {main_local}. "
-                "Download it first via the pipeline system."
-            )
-        project_root = str(main_local)
-
-        device = DeviceManager.get_device()
-        device_str = "cuda" if device.type == "cuda" else (
-            "mps" if device.type == "mps" else "cpu"
-        )
-
-        handler = LLMHandler(persistent_storage_path=str(MODEL_DIR))
-
-        # Initialize LLM with the 5Hz language model
-        # The model path is relative to the checkpoint dir (acestep-5Hz-lm-1.7B in ACE-Step 1.5)
-        lm_model_path = "acestep-5Hz-lm-1.7B"  # 5Hz Language Model for CoT reasoning
-        status_msg, success = handler.initialize(
-            checkpoint_dir=project_root,
-            lm_model_path=lm_model_path,
-            backend="transformers",  # Use transformers backend for broader compatibility
-            device=device_str,
-            offload_to_cpu=(device.type != "cuda"),
-        )
-        if not success:
-            logger.warning(f"ACE-Step LLM init failed: {status_msg}. Thinking mode unavailable.")
-            # Return a dummy handler that won't be used for thinking
-            _ace_step_llm = LLMHandler()
-            return _ace_step_llm
-
-        _ace_step_llm = handler
-        logger.info("ACE-Step v1.5 LLM handler loaded (%s): %s", device_str, status_msg)
-        return _ace_step_llm
+            pipe.to(device)
+        _ace_step_pipeline = pipe
+        _ace_step_offload = requested_offload
+        logger.info("[ACE-Step] Official Diffusers pipeline loaded")
+        return pipe
 
 
 @app.route("/audio/music", methods=["POST"])
 def audio_music():
     """
-    Generate music using ACE-Step v1.5 (hybrid LM + DiT).
+    Generate music using the official ACE-Step v1.5 XL Turbo Diffusers pipeline.
 
     Parameters:
         prompt (str): Caption / genre-style tags (e.g. "pop rock, energetic, electric guitar")
         lyrics (str, optional): Song lyrics with [verse]/[chorus] markers
         duration (int): Duration in seconds (10-600, default 60)
         steps (int): Inference steps (1-8 for turbo, default 8)
-        guidance_scale (float): CFG scale (default 7.0)
+        guidance_scale (float): Accepted for compatibility; XL Turbo is guidance-distilled.
         seed (int): Random seed (-1 for random, default -1)
         bpm (int, optional): Tempo 30-300
         keyscale (str, optional): Musical key e.g. "C minor"
         time_signature (str, optional): Time signature e.g. "4/4", "3/4" (included in caption)
-        shift (float, optional): Noise schedule shift (1.0-10.0, default 4.0)
+        shift (float, optional): Noise schedule shift (1.0-10.0, default 3.0)
         instrumental (bool): Force instrumental, no vocals (default false)
         vocal_language (str): ISO language code (default "en")
-        semantic (bool): Use 5Hz LLM to generate semantic audio codes for better lyrics alignment (default false)
+        semantic (bool): Accepted for compatibility; the official pipeline uses DiT conditioning.
         auto_download (bool): Auto-download model if missing (default false)
     """
     data = request.get_json(force=True, silent=True) or {}
@@ -4376,15 +4558,17 @@ def audio_music():
     if not prompt:
         return jsonify({"error": "prompt is required"}), 400
 
-    quality = (data.get("quality") or "fast").strip().lower()  # "fast" (v1.5 turbo) or "quality" (v1.5 XL)
+    # Keep the old fields accepted so persisted jobs remain valid. The official
+    # Diffusers release currently exposes one XL Turbo checkpoint.
+    quality = (data.get("quality") or "fast").strip().lower()
     if quality not in ("fast", "quality"):
         quality = "fast"
     lyrics = (data.get("lyrics") or "").strip() or ""
     duration = max(10, min(600, int(data.get("duration", 60))))
-    steps = max(1, min(32, int(data.get("steps", 8))))
+    steps = max(1, min(8, int(data.get("steps", 8))))
     guidance_scale = float(data.get("guidance_scale", 7.0))
     seed = int(data.get("seed", -1))
-    shift = max(1.0, min(10.0, float(data.get("shift", 4.0))))
+    shift = max(1.0, min(10.0, float(data.get("shift", 3.0))))
     bpm = data.get("bpm")
     if bpm is not None:
         bpm = max(30, min(300, int(bpm)))
@@ -4393,19 +4577,12 @@ def audio_music():
     instrumental = bool(data.get("instrumental", False))
     vocal_language = (data.get("vocal_language") or "en").strip()
     semantic = bool(data.get("semantic", False))
-    offload_to_cpu = bool(data.get("offload", False))  # CPU offload disabled by default
+    offload_to_cpu = bool(data["offload"]) if "offload" in data else None  # Adaptive placement by default
     auto_dl = bool(data.get("auto_download", False))
 
-    # Memory check for semantic mode (LLM + DiT together need ~10GB)
-    # Falls back to non-semantic instead of failing
-    SEMANTIC_MIN_MEMORY_GB = 10
     if semantic:
-        import psutil
-        available_gb = psutil.virtual_memory().available / (1024 ** 3)
-        if available_gb < SEMANTIC_MIN_MEMORY_GB:
-            logger.warning(f"[ACE-Step] Semantic mode requires {SEMANTIC_MIN_MEMORY_GB}GB free memory, "
-                          f"only {available_gb:.1f}GB available. Falling back to non-semantic mode.")
-            semantic = False
+        logger.info("[ACE-Step] Semantic mode is unavailable in the official Diffusers pipeline; using DiT conditioning")
+        semantic = False
 
     # Append time signature to caption if provided (ACE-Step uses it as a style tag)
     if time_signature and time_signature not in prompt:
@@ -4427,71 +4604,39 @@ def audio_music():
         gc.collect()
         DeviceManager.free_memory()
 
-        dit_handler = _load_ace_step(quality=quality, offload_to_cpu=offload_to_cpu)
+        pipe = _load_ace_step_diffusers(offload_to_cpu=offload_to_cpu)
 
         import random as _rng
         actual_seed = seed if seed >= 0 else _rng.randint(0, 2**31 - 1)
 
-        from acestep.inference import generate_music, GenerationParams, GenerationConfig
-        from acestep.llm_inference import LLMHandler
-
-        # Semantic mode: use 5Hz LLM to generate audio codes for better lyrics alignment
-        if semantic:
-            genbus.progress(gen_id, "loading 5Hz LLM for semantic codes", 1, 10)
-            llm_handler = _load_ace_step_llm()
-            use_thinking = True
-            logger.info("[ACE-Step] Semantic mode: using 5Hz LLM for audio code generation")
-        else:
-            genbus.progress(gen_id, "generating (turbo)", 1, 10)
-            llm_handler = LLMHandler()  # Dummy handler
-            use_thinking = False
-
-        params = GenerationParams(
-            caption=prompt,
-            lyrics=lyrics,
-            instrumental=instrumental,
-            duration=float(duration),
-            bpm=bpm,
-            keyscale=keyscale,
+        genbus.progress(gen_id, "generating (ACE-Step XL Turbo)", 2, 10)
+        generator_device = "cpu" if DeviceManager.get_device().type == "mps" else DeviceManager.get_device().type
+        generator = torch.Generator(device=generator_device).manual_seed(actual_seed)
+        result = pipe(
+            prompt=prompt,
+            lyrics="" if instrumental else lyrics,
+            audio_duration=float(duration),
             vocal_language=vocal_language,
-            inference_steps=steps,
-            guidance_scale=guidance_scale,
-            seed=actual_seed,
+            num_inference_steps=steps,
+            guidance_scale=1.0,
             shift=shift,
-            infer_method="ode",
-            task_type="text2music",
-            thinking=use_thinking,
-            # CoT settings (only used when thinking=True)
-            use_cot_metas=True,
-            use_cot_caption=True,
-            use_cot_language=True,
+            generator=generator,
+            bpm=bpm,
+            keyscale=keyscale or None,
+            timesignature=(time_signature.split("/")[0] if time_signature else None),
         )
 
-        config = GenerationConfig(
-            batch_size=1,
-            use_random_seed=False,
-            audio_format="wav",
-        )
-
-        save_dir = str(FILES_DIR)
-
-        if semantic:
-            genbus.progress(gen_id, "generating semantic codes + audio", 3, 10)
-
-        result = generate_music(
-            dit_handler=dit_handler,
-            llm_handler=llm_handler,
-            params=params,
-            config=config,
-            save_dir=save_dir,
-        )
-
-        if not result.success or not result.audios:
-            err = result.error or "No audio generated"
-            genbus.error(gen_id, err)
-            return jsonify({"error": err}), 500
-
-        audio_path = result.audios[0].get("path", "")
+        audio = result.audios[0]
+        if torch.is_tensor(audio):
+            audio = audio.detach().float().cpu().numpy()
+        audio = np.asarray(audio, dtype=np.float32)
+        if audio.ndim == 2:
+            audio = audio.T
+        if audio.size == 0 or not np.isfinite(audio).all():
+            raise RuntimeError("ACE-Step returned invalid audio")
+        audio_path = str(FILES_DIR / f"ace_step_{int(time.time())}_{gen_id[:8]}.wav")
+        import soundfile as sf
+        sf.write(audio_path, audio, int(pipe.sample_rate))
 
         # Convert to MP3 for smaller file size (OpenClaw/WhatsApp compatibility)
         # Use higher bitrate for music quality
@@ -4506,6 +4651,7 @@ def audio_music():
             "duration": duration,
             "seed": actual_seed,
             "semantic": semantic,
+            "model": "ace-step-v1.5-xl-turbo-diffusers",
         })), 201
 
     except Exception as e:
@@ -4530,21 +4676,21 @@ def audio_info():
                 "requires_voice_reference": False,
             },
             "quality_design": {
-                "name": "Qwen3-TTS VoiceDesign",
+                "name": "Chatterbox Multilingual V3 Voice Design",
                 "endpoint": "/audio/quality/design",
                 "features": ["voice_design_from_description", "high_quality", "expressive"],
                 "requires_voice_reference": False,
                 "description": "Create a voice from text description (age, gender, style)",
             },
             "quality_clone": {
-                "name": "Qwen3-TTS Clone",
+                "name": "Chatterbox Multilingual V3 Clone",
                 "endpoint": "/audio/quality/clone",
                 "features": ["voice_cloning", "high_quality", "reusable_voice_prompts"],
                 "requires_voice_reference": True,
                 "description": "Clone speech from a reference audio or cached voice",
             },
             "quality_persona": {
-                "name": "Qwen3-TTS Persona",
+                "name": "Chatterbox Multilingual V3 Persona",
                 "endpoint": "/audio/quality/persona",
                 "features": ["voice_design", "voice_cloning", "persona_caching", "high_quality"],
                 "requires_voice_reference": False,
@@ -4556,16 +4702,82 @@ def audio_info():
                 "features": ["music_generation", "lyrics_support", "genre_tags", "bpm_control", "key_control", "instrumental"],
                 "duration_range": [10, 600],
                 "steps_range": [1, 8],
-                "description": "Fast turbo music generation (ODE solver, 8 steps max, DMD-GAN distilled). Optional semantic mode uses 5Hz LLM for better lyrics alignment.",
+                "description": "Official Diffusers ACE-Step 1.5 XL Turbo music generation at 48 kHz.",
             },
         },
         "cached_voices": list(_voice_prompt_cache.keys()),
-        "note": "Turbo uses Kokoro for fast inference, Quality uses Qwen3-TTS for high-quality output.",
+        "note": "Turbo uses Kokoro; quality speech and voice cloning use Chatterbox Multilingual V3.",
     }), 200
 
 # =============================================================================
 # REST API: LTX-2 VIDEO (GGUF) - Text-to-Video and Image-to-Video
 # =============================================================================
+
+def _finger_frame_source(data: Dict[str, Any]) -> Tuple[str, bool]:
+    if data.get("source_path"):
+        return validate_video_path(str(data["source_path"])), False
+    if data.get("video_base64"):
+        return materialize_uploaded_video(str(data["video_base64"])), True
+    raise ValueError("Provide 'source_path' or 'video_base64'")
+
+
+@app.route("/workflows/finger-frame/analyze", methods=["POST"])
+def finger_frame_analyze():
+    """Validate the gesture and extract the local video-generation keyframe."""
+    data = request.get_json(force=True) or {}
+    gen_id = genbus.new("finger_frame_analysis")
+    source_path = None
+    temporary = False
+    try:
+        source_path, temporary = _finger_frame_source(data)
+        result = analyze_finger_frame_video(
+            source_path,
+            lambda stage, step, total: genbus.progress(gen_id, stage, step, total),
+        )
+        result.update({"generation_id": gen_id, "source_path": source_path})
+        # Uploaded browser files must survive until the composite request.
+        temporary = False
+        genbus.finish(gen_id, result)
+        return jsonify(result)
+    except (ValueError, RuntimeError) as exc:
+        genbus.error(gen_id, str(exc))
+        return jsonify({"error": str(exc), "generation_id": gen_id}), 422
+    except Exception as exc:
+        logger.exception("[Finger Frame] Analysis failed")
+        genbus.error(gen_id, str(exc))
+        return jsonify({"error": str(exc), "generation_id": gen_id}), 500
+    finally:
+        if temporary and source_path:
+            Path(source_path).unlink(missing_ok=True)
+
+
+@app.route("/workflows/finger-frame/composite", methods=["POST"])
+def finger_frame_composite():
+    """Project a generated BonzAI clip into the tracked hand-frame window."""
+    data = request.get_json(force=True) or {}
+    gen_id = genbus.new("finger_frame_composite")
+    try:
+        source_path, _ = _finger_frame_source(data)
+        generated_path = validate_video_path(str(data.get("generated_path") or ""))
+        output_path = str(FILES_DIR / f"finger_frame_{gen_id}.mp4")
+        result = composite_finger_frame_video(
+            source_path,
+            generated_path,
+            output_path,
+            get_ffmpeg_binary_path(),
+            lambda stage, step, total: genbus.progress(gen_id, stage, step, total),
+        )
+        result["generation_id"] = gen_id
+        genbus.finish(gen_id, result)
+        return jsonify(result)
+    except (ValueError, RuntimeError) as exc:
+        genbus.error(gen_id, str(exc))
+        return jsonify({"error": str(exc), "generation_id": gen_id}), 422
+    except Exception as exc:
+        logger.exception("[Finger Frame] Composite failed")
+        genbus.error(gen_id, str(exc))
+        return jsonify({"error": str(exc), "generation_id": gen_id}), 500
+
 
 @app.route("/video", methods=["POST"])
 def ltx2_gguf_video():
@@ -4766,17 +4978,20 @@ def ltx2_gguf_video():
                     )
                     setattr(pipe, attr_name, reloaded)
 
-        # Group offloading: offloads blocks of layers to CPU between forward passes.
-        # More memory-efficient than enable_model_cpu_offload (whole-model level)
-        # and compatible with GGUF quantized models (unlike enable_sequential_cpu_offload).
+        # Leaf placement lets packed GGUF projections manage their own row
+        # transfers; block placement would copy their entire packed weights.
         from diffusers.hooks import apply_group_offloading
-        apply_group_offloading(pipe.transformer, onload_device=device, offload_device="cpu", offload_type="block_level", num_blocks_per_group=1)
-        apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        # Apply leaf-level offloading to all remaining pipeline nn.Module components
-        for component_name in ["connectors", "audio_vae", "vocoder"]:
-            component = getattr(pipe, component_name, None)
-            if component is not None and isinstance(component, torch.nn.Module):
-                apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        if device.type != "cpu":
+            for component_name in ("transformer", "text_encoder", "connectors", "audio_vae", "vocoder"):
+                component = getattr(pipe, component_name, None)
+                if isinstance(component, torch.nn.Module):
+                    apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        from inference_memory import bound_gguf_layers, release_on_first_forward, release_before_decode, release_video_decoder_before_audio
+        bound_gguf_layers(pipe.transformer, device, MODEL_DIR / LTX2_GGUF_NAME)
+        release_on_first_forward(pipe, ("text_encoder", "prompt_enhancer"), device)
+        release_before_decode(pipe, ("transformer",), device)
+        release_video_decoder_before_audio(pipe, device)
+        transformer = None
         pipe.vae.to(device)
 
         # Enable tiling for high resolutions (720p+ = ~900K pixels)
@@ -4860,9 +5075,8 @@ def ltx2_gguf_video():
 
         # Convert video to uint8
         import numpy as np
-        video = np.nan_to_num(video, nan=0.0, posinf=1.0, neginf=0.0)
-        video = np.clip(video, 0, 1)
-        video = (video * 255).round().astype("uint8")
+        from inference_memory import video_to_uint8
+        video = video_to_uint8(video)
 
         # Convert video to tensor for encoding
         video = torch.from_numpy(video)
@@ -4962,12 +5176,596 @@ def ltx2_gguf_video():
 # REST API: VIDEO QUALITY — Wan2.2 I2V 14B (GGUF)
 # =============================================================================
 
+def _minimax_h3_phase(block_names):
+    """Build a component-minimal H3 pipeline for one memory-isolated phase."""
+    from diffusers.modular_pipelines import MiniMaxH3Blocks
+    from diffusers.modular_pipelines.modular_pipeline import SequentialPipelineBlocks
+
+    blocks = MiniMaxH3Blocks().sub_blocks
+    # The reviewed H3 branch groups task-specific layout steps below five
+    # public phase blocks. Keep BonzAI's phase names stable while selecting
+    # those public blocks so large components are still memory-isolated.
+    phase_map = {
+        ("setup", "text_encoder"): ("before_encode", "text_encoder"),
+        ("vae_encoder",): ("vae_encoder",),
+        ("denoise",): ("denoise",),
+        ("decode",): ("decode",),
+    }
+    resolved = phase_map.get(tuple(block_names), tuple(block_names))
+    selected = {name: blocks[name] for name in resolved}
+    phase = SequentialPipelineBlocks.from_blocks_dict(selected)
+    return phase.init_pipeline(repo_local_dir(MINIMAX_H3_REPO))
+
+
+def _ensure_h3_processor_compat(processor):
+    """Backfill the multimodal token classifier required by H3 Diffusers.
+
+    H3's current Diffusers encoder block calls this helper, but the current
+    Qwen3-VL processor still does not expose it. H3 only needs the simple token
+    classification contract below, so keep the compatibility local to H3.
+    """
+    if hasattr(processor, "create_mm_token_type_ids"):
+        return processor
+
+    tokenizer = processor.tokenizer
+    image_token_ids = {
+        tokenizer.convert_tokens_to_ids(token)
+        for token in (getattr(processor, "image_token", None), "<|image_pad|>")
+        if token
+    }
+    video_token_ids = {
+        tokenizer.convert_tokens_to_ids(token)
+        for token in (getattr(processor, "video_token", None), "<|video_pad|>")
+        if token
+    }
+    image_token_ids.discard(None)
+    video_token_ids.discard(None)
+
+    def create_mm_token_type_ids(input_ids):
+        return [
+            [2 if token_id in video_token_ids else 1 if token_id in image_token_ids else 0 for token_id in row]
+            for row in input_ids
+        ]
+
+    processor.create_mm_token_type_ids = create_mm_token_type_ids
+    return processor
+
+
+def _pin_h3_vision_position_embedding(model, device):
+    """Keep Qwen3-VL's small interpolation table beside its MPS outputs."""
+    pos_embed = model.model.visual.pos_embed
+    registry = getattr(pos_embed, "_diffusers_hook", None)
+    if registry is not None:
+        registry.remove_hook("group_offloading", recurse=False)
+    pos_embed.to(device)
+
+
+def _detach_h3_group_offloading(model):
+    """Release hook-owned module groups before loading the next H3 phase."""
+    if model is None:
+        return
+    registry = getattr(model, "_diffusers_hook", None)
+    if registry is not None:
+        registry.remove_hook("group_offloading", recurse=True)
+
+
+def _move_pipeline_state(state, device):
+    def move(value):
+        if isinstance(value, torch.Tensor):
+            if device.type == "mps" and value.dtype == torch.float64:
+                return value.to(device=device, dtype=torch.float32)
+            return value.to(device)
+        if isinstance(value, list):
+            return [move(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(move(item) for item in value)
+        if isinstance(value, dict):
+            return {key: move(item) for key, item in value.items()}
+        return value
+
+    for key, value in state.values.items():
+        state.values[key] = move(value)
+    return state
+
+
+def _patch_h3_mps_position_ids():
+    """Use the highest rotary-coordinate precision supported by Apple MPS.
+
+    The reviewed H3 blocks intentionally construct their position grid on CPU
+    in float64, but MPS cannot materialize float64 tensors.  Casting only the
+    finished grid to float32 retains the reference grid construction while
+    avoiding a backend error before denoising begins.
+    """
+    from diffusers.modular_pipelines.minimax_h3 import before_denoise
+
+    for class_name, method_name in (
+        ("MiniMaxH3PrepareLayoutStep", "build_packed_sequence"),
+        ("MiniMaxH3Ref2VAPrepareLayoutStep", "build_ref2va_packed_sequence"),
+    ):
+        layout_class = getattr(before_denoise, class_name)
+        current = getattr(layout_class, method_name)
+        if getattr(current, "_bonzai_mps_compatible", False):
+            continue
+
+        def mps_compatible(*args, _original=current, **kwargs):
+            values = _original(*args, **kwargs)
+            return (values[0].to(dtype=torch.float32), *values[1:])
+
+        mps_compatible._bonzai_mps_compatible = True
+        setattr(layout_class, method_name, staticmethod(mps_compatible))
+
+
+def _release_h3_phase():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if torch.backends.mps.is_available():
+        torch.mps.synchronize()
+        torch.mps.empty_cache()
+
+
+class _H3ProgressBar:
+    """Small tqdm-compatible context that forwards denoising progress."""
+
+    def __init__(self, total, callback):
+        self.total = max(1, int(total or 1))
+        self.current = 0
+        self.callback = callback
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def update(self, amount=1):
+        self.current = min(self.total, self.current + int(amount))
+        self.callback(self.current, self.total)
+
+
+def _attach_h3_step_progress(pipe, callback):
+    """Attach a progress callback to all nested H3 denoising loop variants."""
+    attached = 0
+
+    def visit(block):
+        nonlocal attached
+        if block.__class__.__name__ in {
+            "MiniMaxH3DenoiseStep",
+            "MiniMaxH3Ref2VADenoiseStep",
+        }:
+            def progress_bar(_self, iterable=None, total=None):
+                if iterable is not None:
+                    total = len(iterable)
+                return _H3ProgressBar(total, callback)
+
+            block.progress_bar = types.MethodType(progress_bar, block)
+            attached += 1
+        for child in getattr(block, "sub_blocks", {}).values():
+            visit(child)
+
+    visit(pipe._blocks)
+    if not attached:
+        raise RuntimeError("MiniMax H3 denoising loop was not found for progress reporting")
+
+
+def _install_h3_euler_ancestral_scheduler(scheduler, seed):
+    """Install ComfyUI's rectified-flow Euler ancestral update on H3."""
+    if scheduler.__class__.__name__ != "MiniMaxH3Scheduler":
+        raise RuntimeError("MiniMax H3 Euler ancestral requires MiniMaxH3Scheduler")
+    original_set_timesteps = scheduler.set_timesteps
+
+    def set_ancestral_timesteps(_scheduler, num_inference_steps=None, device=None, sigmas=None):
+        result = original_set_timesteps(
+            num_inference_steps=num_inference_steps,
+            device=device,
+            sigmas=sigmas,
+        )
+        _scheduler._h3_noise_generator = torch.Generator(device="cpu").manual_seed(seed)
+        return result
+
+    def euler_ancestral(_scheduler, model_output, timestep, sample, return_dict=True):
+        from diffusers.schedulers.scheduling_minimax_h3 import MiniMaxH3SchedulerOutput
+
+        if _scheduler.step_index is None:
+            _scheduler._step_index = _scheduler.index_for_timestep(timestep)
+        index = _scheduler.step_index
+        sigma = _scheduler.sigmas[index].to(device=sample.device, dtype=torch.float32)
+        sigma_next = _scheduler.sigmas[index + 1].to(device=sample.device, dtype=torch.float32)
+        sigma_from_timestep = 1 - torch.as_tensor(
+            timestep, device=sample.device, dtype=sample.dtype
+        )
+        while sigma_from_timestep.ndim < sample.ndim:
+            sigma_from_timestep = sigma_from_timestep.unsqueeze(-1)
+        denoised = sample + sigma_from_timestep * model_output
+
+        if float(sigma_next) == 0.0:
+            prev_sample = denoised.float()
+        else:
+            # ComfyUI's Euler ancestral RF path for CONST/rectified-flow
+            # sampling. It advances to sigma_down, rescales for the clean
+            # coefficient, then injects reproducible ancestral noise.
+            sigma_down = sigma_next * (sigma_next / sigma)
+            alpha_next = 1.0 - sigma_next
+            alpha_down = 1.0 - sigma_down
+            renoise_squared = (
+                sigma_next.square()
+                - sigma_down.square() * alpha_next.square() / alpha_down.square()
+            )
+            renoise_coeff = torch.sqrt(torch.clamp(renoise_squared, min=0.0))
+            ratio = sigma_down / sigma
+            prev_sample = ratio * sample.float() + (1.0 - ratio) * denoised.float()
+            prev_sample = (alpha_next / alpha_down) * prev_sample
+            noise = torch.randn(
+                sample.shape,
+                generator=_scheduler._h3_noise_generator,
+                device="cpu",
+                dtype=torch.float32,
+            ).to(device=sample.device)
+            prev_sample = prev_sample + noise * renoise_coeff
+
+        _scheduler._step_index += 1
+        prev_sample = prev_sample.to(dtype=sample.dtype)
+        if not return_dict:
+            return (prev_sample,)
+        return MiniMaxH3SchedulerOutput(prev_sample=prev_sample)
+
+    scheduler.set_timesteps = types.MethodType(set_ancestral_timesteps, scheduler)
+    scheduler.step = types.MethodType(euler_ancestral, scheduler)
+    return scheduler
+
+
+def _prepare_h3_audio_for_export(audio):
+    """Apply transparent peak protection before the AAC encoder clips audio."""
+    audio = audio.detach().float()
+    if not bool(torch.isfinite(audio).all()):
+        raise RuntimeError("MiniMax H3 produced non-finite decoded audio")
+    peak = float(audio.abs().max()) if audio.numel() else 0.0
+    gain = min(1.0, 0.98 / peak) if peak > 0 else 1.0
+    if gain < 1.0:
+        audio = audio * gain
+    return audio, {"decoded_peak": peak, "export_gain": gain}
+
+
+def _h3_image_canvas(width, height, image_width, image_height):
+    """Keep the selected pixel budget, oriented like the source (as in Wan)."""
+    if (image_width < image_height and width > height) or (image_width > image_height and width < height):
+        return height, width
+    return width, height
+
+
+@app.route("/video/sota", methods=["POST"])
+def minimax_h3_video():
+    """MiniMax H3 Q2_K_XL text/keyframe video with synchronized audio."""
+    data = request.get_json(force=True) or {}
+    if data.get("license_accepted") is not True:
+        return jsonify({"error": "MiniMax H3 terms must be accepted before use"}), 403
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+
+    width = max(256, int(data.get("width", 960)))
+    height = max(256, int(data.get("height", 544)))
+    width -= width % 32
+    height -= height % 32
+    if width * height > 1344 * 768:
+        return jsonify({"error": "MiniMax H3 canvas must not exceed 1,032,192 pixels"}), 400
+    requested_frames = int(data.get("num_frames", 124))
+    num_frames = max(124, 17 * max(7, (requested_frames - 5 + 16) // 17) + 5)
+    # 345 is the largest 17n+5 count whose 24 fps duration remains <=15s.
+    num_frames = min(num_frames, 345)
+    requested_steps = int(data.get("num_inference_steps", 8))
+    if requested_steps < 4 or requested_steps > 8:
+        return jsonify({
+            "error": "MiniMax H3 supports 4 to 8 inference steps with the current samplers"
+        }), 400
+    steps = requested_steps
+    seed = int(data.get("seed") or secrets.randbelow(2**31))
+    hybrid_checkpoint = (MODEL_DIR / MINIMAX_H3_HYBRID_NAME).is_file()
+    default_sampler = "euler" if hybrid_checkpoint else MINIMAX_H3_SAMPLER
+    requested_sampler = str(data.get("sampler", default_sampler)).strip().lower()
+    requested_sampler = requested_sampler.replace("-", "_").replace(" ", "_")
+    if requested_sampler not in {"euler", "euler_ancestral", "euler_a"}:
+        return jsonify({
+            "error": "Supported H3 samplers: euler, euler_ancestral"
+        }), 400
+    requested_schedule = str(data.get("schedule", data.get("scheduler", "simple"))).strip().lower()
+    if requested_schedule != "simple":
+        return jsonify({"error": "Only the validated simple H3 schedule is supported"}), 400
+    try:
+        requested_guidance = float(data.get("guidance_scale", MINIMAX_H3_GUIDANCE_SCALE))
+    except (TypeError, ValueError):
+        return jsonify({"error": "MiniMax H3 guidance scale must be a number"}), 400
+    if not math.isfinite(requested_guidance) or not math.isclose(
+        requested_guidance, MINIMAX_H3_GUIDANCE_SCALE, rel_tol=0.0, abs_tol=1e-6
+    ):
+        return jsonify({
+            "error": "MiniMax H3 is guidance-distilled and locked to guidance scale 1"
+        }), 400
+    image_b64 = (data.get("image_base64") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+
+    guard = _ensure_files_present_or_start(
+        "video_sota", auto_download=bool(data.get("auto_download", True))
+    )
+    if guard is not None:
+        return guard
+
+    device = DeviceManager.get_device()
+    # H3's native transformer stack is bfloat16. FP16 has insufficient
+    # exponent range for its AdaLN/attention activations and can silently
+    # produce NaNs on MPS, which otherwise export as a black, silent MP4.
+    text_compute_dtype = torch.bfloat16 if device.type == "mps" else DeviceManager.get_dtype(device)
+    # H3 is a mixed-precision model. The GGUF loader keeps the official FP32
+    # projection/time/rope modules in FP32 while AdaLN and the 50-block
+    # attention/MLP stack use BF16.
+    transformer_compute_dtype = torch.bfloat16 if device.type == "mps" else DeviceManager.get_dtype(device)
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    first_image = None
+    if image_url:
+        first_image = load_image(image_url).convert("RGB")
+    elif image_b64:
+        first_image = Image.open(io.BytesIO(_decode_image_base64(image_b64))).convert("RGB")
+
+    if first_image is not None:
+        # Match Wan's portrait/landscape canvas selection for every caller,
+        # including image URLs and reused generation parameters.
+        width, height = _h3_image_canvas(width, height, *first_image.size)
+
+    gen_id = genbus.new("minimax_h3", {
+        "endpoint": "/video/sota", "w": width, "h": height, "frames": num_frames,
+    })
+    pipe = model = state = None
+    h3_lora_modules = 0
+    h3_applied_loras = []
+    try:
+        from diffusers.utils import encode_video
+        from h3_numerics import (
+            check_conditioning, stabilize_norms, watch_scheduler, watch_transformer,
+        )
+        from minimax_h3_gguf import (
+            load_h3_audio_vae,
+            load_h3_lora,
+            load_h3_text_encoder,
+            load_h3_transformer,
+            load_h3_video_vae,
+        )
+
+        official_dir = repo_local_dir(MINIMAX_H3_REPO)
+        transformer_path = MODEL_DIR / (MINIMAX_H3_HYBRID_NAME if hybrid_checkpoint else MINIMAX_H3_TRANSFORMER_NAME)
+        text_encoder_path = MODEL_DIR / MINIMAX_H3_TEXT_ENCODER_NAME
+        video_vae_path = MODEL_DIR / MINIMAX_H3_VIDEO_VAE_NAME
+        audio_vae_path = MODEL_DIR / MINIMAX_H3_AUDIO_VAE_NAME
+        lora_path = MODEL_DIR / MINIMAX_H3_LORA_NAME
+        if not hybrid_checkpoint and not lora_path.is_file():
+            raise FileNotFoundError(
+                "MiniMax H3 local preset is missing from the model directory: "
+                + lora_path.name
+            )
+
+        progress_total = steps + 4
+        genbus.progress(gen_id, "encoding prompt", 1, progress_total)
+        model = load_h3_text_encoder(
+            text_encoder_path, str(official_dir), text_compute_dtype
+        )
+        stabilize_norms(model)
+        apply_group_offloading(model, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        if device.type == "mps":
+            from minimax_h3_gguf import preserve_h3_gguf_storage
+            preserve_h3_gguf_storage(model)
+            from h3_quantized import install_h3_memory_reclaim
+            install_h3_memory_reclaim(model.model.language_model.layers, device)
+        if first_image is not None:
+            # Qwen3-VL creates interpolation weights from pos_embed.weight's
+            # current device before calling the embedding. A leaf offload hook
+            # moves that weight during the call, producing MPS output multiplied
+            # by CPU weights. This table is tiny; pin it for keyframe prompts.
+            _pin_h3_vision_position_embedding(model, device)
+        pipe = _minimax_h3_phase(["setup", "text_encoder"])
+        pipe.load_components(
+            ["tokenizer", "processor"],
+            pretrained_model_name_or_path=str(official_dir),
+            local_files_only=True,
+        )
+        _ensure_h3_processor_compat(pipe.processor)
+        pipe.update_components(text_encoder=model)
+        state = pipe(
+            prompt=prompt,
+            image=first_image,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+        )
+        check_conditioning(state, "prompt_embeds")
+        _detach_h3_group_offloading(model)
+        pipe.update_components(text_encoder=None)
+        pipe = model = None
+        _release_h3_phase()
+
+        if first_image is not None:
+            genbus.progress(gen_id, "encoding keyframe", 2, progress_total)
+            model = load_h3_video_vae(official_dir / "vae", video_vae_path)
+            pipe = _minimax_h3_phase(["vae_encoder"])
+            pipe.load_components(
+                ["scheduler"],
+                pretrained_model_name_or_path=str(official_dir),
+                local_files_only=True,
+            )
+            pipe.update_components(vae=model)
+            if device.type != "mps":
+                apply_group_offloading(
+                    pipe.vae, onload_device=device, offload_device="cpu", offload_type="leaf_level"
+                )
+            else:
+                # CPU float16 Conv3d is emulated and extremely slow. The
+                # encoder is only ~0.34 GB of this decoder-heavy checkpoint,
+                # so promote just the modules used by keyframe encoding.
+                pipe.vae.encoder.to(dtype=torch.float32)
+                pipe.vae.quant_conv.to(dtype=torch.float32)
+            # A one-frame FP16 Conv3d encode can fault asynchronously in MPS
+            # after returning valid moments. On Apple Silicon the VAE already
+            # resides on CPU, and this branch runs once per request; keeping it
+            # there avoids that driver path and the associated process kill.
+            state = pipe(state=state)
+            check_conditioning(state, "condition_latents")
+            _detach_h3_group_offloading(model)
+            pipe.update_components(vae=None)
+            pipe = model = None
+            _release_h3_phase()
+
+        genbus.progress(gen_id, "preparing video and audio", 2, progress_total)
+        model = load_h3_transformer(transformer_path, transformer_compute_dtype)
+        stabilize_norms(model)
+        watch_transformer(model)
+        # Hybrid checkpoint already contains merged adapters; do not stack the legacy preset.
+        if not hybrid_checkpoint:
+            installed = load_h3_lora(
+                model,
+                lora_path,
+                strength=MINIMAX_H3_LORA_STRENGTH,
+                compute_dtype=transformer_compute_dtype,
+            )
+            h3_lora_modules += len(installed)
+            h3_applied_loras.append({
+                "name": lora_path.name,
+                "strength": MINIMAX_H3_LORA_STRENGTH,
+                "modules": len(installed),
+                "required": True,
+            })
+            logger.info(
+                "[MiniMax H3] Applied required local motion LoRA to %d transformer modules (strength=%s)",
+                len(installed),
+                MINIMAX_H3_LORA_STRENGTH,
+            )
+        apply_group_offloading(model, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        if hybrid_checkpoint and device.type == "mps":
+            from h3_quantized import preserve_h3_quantized_storage
+            preserve_h3_quantized_storage(model)
+            from h3_quantized import install_h3_memory_reclaim
+            install_h3_memory_reclaim(model.transformer_blocks, device)
+        if device.type == "mps":
+            _patch_h3_mps_position_ids()
+        pipe = _minimax_h3_phase(["denoise"])
+        pipe.load_components(
+            ["scheduler", "audio_scheduler"],
+            pretrained_model_name_or_path=str(official_dir),
+            local_files_only=True,
+        )
+        pipe.scheduler.set_shift(MINIMAX_H3_VIDEO_SHIFT)
+        pipe.audio_scheduler.set_shift(MINIMAX_H3_AUDIO_SHIFT)
+        if requested_sampler != "euler":
+            _install_h3_euler_ancestral_scheduler(pipe.scheduler, seed + 1)
+            _install_h3_euler_ancestral_scheduler(pipe.audio_scheduler, seed + 2)
+        watch_scheduler(pipe.scheduler, "video")
+        watch_scheduler(pipe.audio_scheduler, "audio")
+        pipe.update_components(transformer=model)
+        _attach_h3_step_progress(
+            pipe,
+            lambda current, total: genbus.progress(
+                gen_id,
+                f"generating video and audio ({current}/{total})",
+                2 + current,
+                total + 4,
+            ),
+        )
+        # The scheduler API counts its terminal sigma as a grid point; one
+        # extra point gives the public API's requested number of evaluations.
+        state = pipe(state=state, generator=generator, num_inference_steps=steps + 1)
+        _detach_h3_group_offloading(model)
+        pipe.update_components(transformer=None)
+        pipe = model = None
+        _release_h3_phase()
+
+        for latent_name in ("latents", "audio_latents"):
+            latent_value = state.get(latent_name)
+            if latent_value is None or not bool(torch.isfinite(latent_value).all()):
+                raise RuntimeError(
+                    f"MiniMax H3 produced non-finite {latent_name}; refusing to export an invalid video"
+                )
+
+        genbus.progress(gen_id, "decoding", steps + 3, progress_total)
+        video_vae = load_h3_video_vae(official_dir / "vae", video_vae_path)
+        audio_vae = load_h3_audio_vae(official_dir / "audio_vae", audio_vae_path)
+        pipe = _minimax_h3_phase(["decode"])
+        if device.type == "mps":
+            # The H3 ViT VAE's partial 3-axis RoPE/attention path currently
+            # produces finite but incorrect near-gray frames on MPS.  The
+            # same checkpoint reconstructs correctly on CPU, including after
+            # the original FP16 weights are promoted to the FP32 numerical
+            # contract required by Diffusers.  Decode both modalities on CPU
+            # so the modular block uses one consistent execution device.
+            # Denoising, by far the expensive phase, remains on MPS.
+            state = _move_pipeline_state(state, torch.device("cpu"))
+            # Only the decode path is live. Use temporary FP32 affine weights
+            # per layer instead of permanently doubling decoder storage.
+            from minimax_h3_gguf import stream_h3_cpu_decode
+            stream_h3_cpu_decode(video_vae.decoder)
+            stream_h3_cpu_decode(video_vae.post_quant_conv)
+        else:
+            apply_group_offloading(
+                video_vae, onload_device=device, offload_device="cpu", offload_type="leaf_level"
+            )
+        pipe.update_components(vae=video_vae, audio_vae=audio_vae)
+        # The audio VAE uses legacy weight_norm parameters, so keep its whole
+        # ~605 MB module resident on the phase device rather than leaf-offload
+        # parametrized Conv1d weights independently.
+        pipe.audio_vae.to("cpu" if device.type == "mps" else device)
+        state = pipe(state=state, output_type="pil")
+
+        out_path = str(FILES_DIR / f"minimax_h3_{gen_id}.mp4")
+        export_audio, audio_metrics = _prepare_h3_audio_for_export(state.get("audio")[0])
+        encode_video(
+            state.get("videos")[0],
+            fps=24,
+            audio=export_audio,
+            audio_sample_rate=state.get("sampling_rate"),
+            output_path=out_path,
+        )
+        genbus.progress(gen_id, "complete", progress_total, progress_total)
+        genbus.finish(gen_id, {"video_path": out_path})
+        return jsonify({
+            "generation_id": gen_id,
+            "video_path": out_path,
+            "frames": num_frames,
+            "fps": 24,
+            "duration": num_frames / 24,
+            "width": width,
+            "height": height,
+            "seed": seed,
+            "num_inference_steps": steps,
+            "sampler": "euler" if requested_sampler == "euler" else MINIMAX_H3_SAMPLER,
+            "guidance_scale": MINIMAX_H3_GUIDANCE_SCALE,
+            "schedule": MINIMAX_H3_SCHEDULER,
+            "video_shift": MINIMAX_H3_VIDEO_SHIFT,
+            "audio_shift": MINIMAX_H3_AUDIO_SHIFT,
+            "has_audio": True,
+            "audio_sample_rate": state.get("sampling_rate"),
+            "audio_peak_before_export": audio_metrics["decoded_peak"],
+            "audio_export_gain": audio_metrics["export_gain"],
+            "pipeline": "video_sota",
+            "model": "minimax-h3-hybrid" if hybrid_checkpoint else "minimax-h3-ud-q2-k-xl",
+            "checkpoint": transformer_path.name,
+            "merged_loras": hybrid_checkpoint,
+            "runtime": "diffusers",
+            "lora": h3_applied_loras[0]["name"] if h3_applied_loras else None,
+            "lora_strength": h3_applied_loras[0]["strength"] if h3_applied_loras else 0.0,
+            "lora_modules": h3_lora_modules,
+            "loras": h3_applied_loras,
+        })
+    except Exception as exc:
+        logger.exception("[MiniMax H3] Generation failed")
+        genbus.error(gen_id, str(exc))
+        return jsonify({"error": str(exc)}), 500
+    finally:
+        pipe = model = state = None
+        _release_h3_phase()
+
+
 @app.route("/video/quality", methods=["POST"])
 def wan_i2v_video():
     """
     Wan2.2 I2V 14B — High-quality image-to-video generation.
 
-    Uses Q2_K GGUF quantized transformer (~5.3GB) with group offloading.
+    Uses paired Q5_K_M GGUF transformers with group offloading.
     Two noise schedules control motion intensity:
     - "low": subtle, realistic motion (default)
     - "high": dynamic, expressive motion
@@ -4995,13 +5793,6 @@ def wan_i2v_video():
     guidance = float(data.get("guidance_scale", 1.0))
     seed = data.get("seed")
     auto_dl = bool(data.get("auto_download", False))
-    # Style LoRAs — enabled by default on top of the dasiwa GGUF.
-    # Pass `use_extra: false` / `use_physics: false` to opt out for
-    # ablation. Weights default to 0.7 each (set _weight params to tune).
-    use_extra = bool(data.get("use_extra", True))
-    use_physics = bool(data.get("use_physics", True))
-    extra_weight = float(data.get("extra_weight", 0.7))
-    physics_weight = float(data.get("physics_weight", 0.7))
 
     if not prompt:
         return jsonify({"error": "Missing 'prompt'"}), 400
@@ -5025,7 +5816,7 @@ def wan_i2v_video():
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-    pipe = None
+    pipe = residency = transformer = transformer_2 = vae = None
 
     try:
         from huggingface_hub import hf_hub_download
@@ -5088,23 +5879,14 @@ def wan_i2v_video():
             }), 503
         logger.info(f"[Wan2.2] Q5_K_M GGUF shards ready: high={high_path.name} low={low_path.name}")
 
-        transformer = WanTransformer3DModel.from_single_file(
-            str(high_path),
-            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
-            config=WAN_REPO,
-            subfolder="transformer",
-            torch_dtype=model_dtype,
-        )
-        transformer_2 = WanTransformer3DModel.from_single_file(
-            str(low_path),
-            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
-            config=WAN_REPO,
-            subfolder="transformer_2",
-            torch_dtype=model_dtype,
-        )
+        from wan_residency import WanExpert, WanResidency
+        high_config = WanTransformer3DModel.load_config(WAN_REPO, subfolder="transformer")
+        low_config = WanTransformer3DModel.load_config(WAN_REPO, subfolder="transformer_2")
+        from diffusers.configuration_utils import FrozenDict
+        transformer = WanExpert(FrozenDict(high_config), model_dtype)
+        transformer_2 = WanExpert(FrozenDict(low_config), model_dtype)
 
-        # Load VAE in fp32 (not quantized) — matches ComfyUI workflow's
-        # `wan_2.1_vae.safetensors` in fp32.
+        # This VAE checkpoint is distributed in fp32 and is not quantized.
         vae = AutoencoderKLWan.from_pretrained(
             WAN_REPO, subfolder="vae", torch_dtype=torch.float32,
         )
@@ -5128,116 +5910,14 @@ def wan_i2v_video():
         )
         logger.info(f"[Wan2.2] Scheduler: FlowMatchEulerDiscreteScheduler (model default sigmas, dasiwa Euler/Simple)")
 
-        # Optional style LoRAs (extra / physics) — load BEFORE
-        # apply_group_offloading so the offload hooks wrap the LoRA
-        # layers. Loading after offloading silently bypasses LoRA
-        # forward. NEVER fuse_lora — it errors on GGUF read-only tensors.
-        # Files are misnamed `.gguf` on disk but actually safetensors;
-        # diffusers detects format from content.
-        loaded_adapters = []
-        adapter_weights = []
-
-        # `low_cpu_mem_usage=False` forces eager allocation. Without it,
-        # diffusers builds LoRA layers via init_empty_weights and leaves
-        # some adapter params on the meta device, which crashes
-        # apply_group_offloading downstream when it tries to .to("cpu").
-        if use_extra:
-            extra_high = MODEL_DIR / WAN_EXTRA_HIGH
-            extra_low = MODEL_DIR / WAN_EXTRA_LOW
-            if extra_high.exists():
-                try:
-                    pipe.load_lora_weights(
-                        str(extra_high),
-                        adapter_name="extra_high",
-                        low_cpu_mem_usage=False,
-                    )
-                    loaded_adapters.append("extra_high")
-                    adapter_weights.append(extra_weight)
-                    logger.info(f"[Wan2.2] LoRA → transformer: extra_high (w={extra_weight})")
-                except Exception as e:
-                    logger.warning(f"[Wan2.2] Failed to load extra_high: {e}")
-            if extra_low.exists():
-                try:
-                    pipe.load_lora_weights(
-                        str(extra_low),
-                        adapter_name="extra_low",
-                        load_into_transformer_2=True,
-                        low_cpu_mem_usage=False,
-                    )
-                    loaded_adapters.append("extra_low")
-                    adapter_weights.append(extra_weight)
-                    logger.info(f"[Wan2.2] LoRA → transformer_2: extra_low (w={extra_weight})")
-                except Exception as e:
-                    logger.warning(f"[Wan2.2] Failed to load extra_low: {e}")
-
-        if use_physics:
-            physics_high = MODEL_DIR / WAN_PHYSICS_HIGH
-            physics_low = MODEL_DIR / WAN_PHYSICS_LOW
-            if physics_high.exists():
-                try:
-                    pipe.load_lora_weights(
-                        str(physics_high),
-                        adapter_name="physics_high",
-                        low_cpu_mem_usage=False,
-                    )
-                    loaded_adapters.append("physics_high")
-                    adapter_weights.append(physics_weight)
-                    logger.info(f"[Wan2.2] LoRA → transformer: physics_high (w={physics_weight})")
-                except Exception as e:
-                    logger.warning(f"[Wan2.2] Failed to load physics_high: {e}")
-            if physics_low.exists():
-                try:
-                    pipe.load_lora_weights(
-                        str(physics_low),
-                        adapter_name="physics_low",
-                        load_into_transformer_2=True,
-                        low_cpu_mem_usage=False,
-                    )
-                    loaded_adapters.append("physics_low")
-                    adapter_weights.append(physics_weight)
-                    logger.info(f"[Wan2.2] LoRA → transformer_2: physics_low (w={physics_weight})")
-                except Exception as e:
-                    logger.warning(f"[Wan2.2] Failed to load physics_low: {e}")
-
-        if loaded_adapters:
-            pipe.set_adapters(loaded_adapters, adapter_weights)
-            logger.info(f"[Wan2.2] Active adapters: {list(zip(loaded_adapters, adapter_weights))}")
-
-            # Defensive sweep: even with low_cpu_mem_usage=False, some
-            # diffusers versions still leave a few LoRA adapter buffers
-            # on the meta device. apply_group_offloading then errors with
-            # "Cannot copy out of meta tensor". Walk both transformers
-            # and materialize any stragglers as zero-init real tensors.
-            # Zeros are a no-op contribution from a dead LoRA branch — far
-            # better than crashing the whole generation.
-            def _materialize_meta(module, label):
-                fixed = 0
-                for name, param in list(module.named_parameters(recurse=True)):
-                    if param.is_meta:
-                        real = torch.zeros(param.shape, dtype=param.dtype, device="cpu")
-                        parts = name.split(".")
-                        parent = module
-                        for p in parts[:-1]:
-                            parent = getattr(parent, p)
-                        setattr(parent, parts[-1], torch.nn.Parameter(real, requires_grad=param.requires_grad))
-                        fixed += 1
-                if fixed:
-                    logger.warning(f"[Wan2.2] Materialized {fixed} stray meta tensors in {label}")
-            _materialize_meta(pipe.transformer, "transformer")
-            _materialize_meta(pipe.transformer_2, "transformer_2")
-        else:
-            logger.info("[Wan2.2] No external LoRAs (dasiwa baked-in only)")
-
-        # apply_group_offloading at leaf_level — REQUIRED for GGUF tensors.
-        # Block-level was incompatible with quanto; leaf_level + GGUF is
-        # the supported combo. Runs AFTER LoRA loading so hooks wrap them.
-        apply_group_offloading(pipe.transformer, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        apply_group_offloading(pipe.transformer_2, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        for component_name in ["image_encoder"]:
-            component = getattr(pipe, component_name, None)
-            if component is not None and isinstance(component, torch.nn.Module):
-                apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        residency = WanResidency(pipe, transformer, transformer_2,
+                                 (high_path, low_path), MODEL_DIR, data, device,
+                                 model_dtype, logger, WAN_REPO)
+        # Encoders run once; expert weights and their LoRAs load only on use.
+        if device.type != "cpu":
+            apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+            if getattr(pipe, "image_encoder", None) is not None:
+                apply_group_offloading(pipe.image_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
         # VAE: keep pinned to device for decode. apply_group_offloading
         # at leaf_level interferes with Wan VAE's `feat_cache` propagation
         # between consecutive frames — at small spatial extents (240p)
@@ -5248,6 +5928,7 @@ def wan_i2v_video():
         # comfortably alongside the leaf-offloaded transformers.
         pipe.vae.to(dtype=torch.float32)
         pipe.vae.to(device)
+        pipe.vae.enable_tiling()
 
         genbus.progress(gen_id, "generating", 3, 4)
 
@@ -5256,6 +5937,13 @@ def wan_i2v_video():
             torch.mps.empty_cache()
 
         generator = torch.Generator(device="cpu").manual_seed(int(seed)) if seed else None
+
+        from wan_validation import validate_wan_latents, validate_wan_frames
+        def on_wan_step(pipeline, step, timestep, values):
+            values = validate_wan_latents(pipeline, step, timestep, values)
+            if step == pipeline.num_timesteps - 1:
+                residency.release()
+            return values
 
         output = pipe(
             image=pil_image,
@@ -5267,15 +5955,18 @@ def wan_i2v_video():
             num_inference_steps=steps,
             guidance_scale=guidance,
             generator=generator,
+            callback_on_step_end=on_wan_step,
+            callback_on_step_end_tensor_inputs=["latents"],
         )
 
-        video_frames = output.frames[0]
+        video_frames = validate_wan_frames(output.frames[0])
 
         # Save video
         files_dir = MODEL_DIR / "files"
         files_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(files_dir / f"wan_i2v_{gen_id}.mp4")
-        export_to_video(video_frames, out_path, fps=output_fps)
+        from inference_memory import video_to_uint8
+        _write_video_uint8((video_to_uint8(frame) for frame in video_frames), out_path, fps=output_fps)
 
         genbus.progress(gen_id, "complete", 4, 4)
         genbus.finish(gen_id, {"video_path": out_path})
@@ -5284,6 +5975,7 @@ def wan_i2v_video():
 
         return jsonify({
             "generation_id": gen_id,
+            "loras": residency.applied,
             "video_path": out_path,
             "frames": num_frames,
             "fps": output_fps,
@@ -5297,8 +5989,9 @@ def wan_i2v_video():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        if pipe is not None:
-            del pipe
+        if residency is not None:
+            residency.release()
+        pipe = residency = transformer = transformer_2 = vae = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -5375,7 +6068,7 @@ def wan_i2v_video_test():
         "endpoint": "/video/test", "w": W, "h": H, "frames": num_frames,
     })
 
-    pipe = None
+    pipe = residency = transformer_high = transformer_low = vae = None
 
     try:
         from huggingface_hub import hf_hub_download
@@ -5417,20 +6110,10 @@ def wan_i2v_video_test():
         low_path = hf_hub_download(repo_id=WAN_TEST_GGUF_REPO, filename=WAN_TEST_GGUF_LOW)
         logger.info(f"[Wan2.2-test] GGUF shards ready: high={high_path} low={low_path}")
 
-        transformer_high = WanTransformer3DModel.from_single_file(
-            high_path,
-            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
-            config=WAN_TEST_MERGE_REPO,
-            subfolder="transformer",
-            torch_dtype=model_dtype,
-        )
-        transformer_low = WanTransformer3DModel.from_single_file(
-            low_path,
-            quantization_config=GGUFQuantizationConfig(compute_dtype=model_dtype),
-            config=WAN_TEST_MERGE_REPO,
-            subfolder="transformer_2",
-            torch_dtype=model_dtype,
-        )
+        from wan_residency import WanExpert, WanResidency
+        from diffusers.configuration_utils import FrozenDict
+        transformer_high = WanExpert(FrozenDict(WanTransformer3DModel.load_config(WAN_TEST_MERGE_REPO, subfolder="transformer")), model_dtype)
+        transformer_low = WanExpert(FrozenDict(WanTransformer3DModel.load_config(WAN_TEST_MERGE_REPO, subfolder="transformer_2")), model_dtype)
 
         vae = AutoencoderKLWan.from_pretrained(
             WAN_TEST_BASE_REPO, subfolder="vae", torch_dtype=torch.float32,
@@ -5452,19 +6135,17 @@ def wan_i2v_video_test():
         pipe._internal_dict["boundary_ratio"] = 0.5
         logger.info(f"[Wan2.2-test] scheduler=UniPC flow_shift=8.0 boundary_ratio=0.5 steps={steps} guidance={guidance}")
 
-        # Group offloading: leaf_level for both transformers. `block_level`
-        # was incompatible with quanto's WeightQBytesTensor wrapping; GGUF
-        # uses diffusers' built-in dequant and works with leaf_level.
-        from diffusers.hooks import apply_group_offloading
-        apply_group_offloading(pipe.transformer, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        apply_group_offloading(pipe.transformer_2, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        for component_name in ["image_encoder"]:
-            component = getattr(pipe, component_name, None)
-            if component is not None and isinstance(component, torch.nn.Module):
-                apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
-        pipe.vae.to(dtype=torch.float32)
-        apply_group_offloading(pipe.vae, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        residency = WanResidency(pipe, transformer_high, transformer_low,
+                                 (high_path, low_path), MODEL_DIR,
+                                 {"use_general": False, "use_animation": False, "use_extra": False},
+                                 device, model_dtype, logger, WAN_TEST_MERGE_REPO)
+        if device.type != "cpu":
+            for component_name in ("text_encoder", "image_encoder"):
+                component = getattr(pipe, component_name, None)
+                if isinstance(component, torch.nn.Module):
+                    apply_group_offloading(component, onload_device=device, offload_device="cpu", offload_type="leaf_level")
+        pipe.vae.to(device=device, dtype=torch.float32)
+        pipe.vae.enable_tiling()
 
         gc.collect()
         if torch.backends.mps.is_available():
@@ -5473,6 +6154,11 @@ def wan_i2v_video_test():
         genbus.progress(gen_id, "generating", 3, 4)
 
         generator = torch.Generator(device="cpu").manual_seed(int(seed)) if seed else None
+
+        def release_after_last_step(pipeline, step, timestep, values):
+            if step == pipeline.num_timesteps - 1:
+                residency.release()
+            return values
 
         output = pipe(
             image=pil_image,
@@ -5484,6 +6170,8 @@ def wan_i2v_video_test():
             num_inference_steps=steps,
             guidance_scale=guidance,
             generator=generator,
+            callback_on_step_end=release_after_last_step,
+            callback_on_step_end_tensor_inputs=["latents"],
         )
 
         video_frames = output.frames[0]
@@ -5491,7 +6179,8 @@ def wan_i2v_video_test():
         files_dir = MODEL_DIR / "files"
         files_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(files_dir / f"wan_i2v_test_{gen_id}.mp4")
-        export_to_video(video_frames, out_path, fps=output_fps)
+        from inference_memory import video_to_uint8
+        _write_video_uint8((video_to_uint8(frame) for frame in video_frames), out_path, fps=output_fps)
 
         genbus.progress(gen_id, "complete", 4, 4)
         genbus.finish(gen_id, {"video_path": out_path})
@@ -5514,8 +6203,9 @@ def wan_i2v_video_test():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        if pipe is not None:
-            del pipe
+        if residency is not None:
+            residency.release()
+        pipe = residency = transformer_high = transformer_low = vae = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -5524,31 +6214,9 @@ def wan_i2v_video_test():
 
 
 # =============================================================================
-# REST API: VIDEO ENHANCE — Real-ESRGAN x4 + ffmpeg minterpolate (Nx temporal)
+# REST API: VIDEO ENHANCE — SeedVR2, with explicit Real-ESRGAN fallback
 # =============================================================================
-#
-# Post-processes a video file:
-#   1. Spatial upscale x4 via Real-ESRGAN (RealESRGAN_x4plus or
-#      realesr-animevideov3 for animation-style content).
-#   2. Temporal upscale Nx via ffmpeg's `minterpolate` motion-compensated
-#      filter (mci + aobmc + bidir + vsbmc=1).
-#
-# Order matters: upscaling first gives the interpolator a cleaner spatial
-# signal to estimate flow from. Reversing the order propagates ESRGAN
-# artifacts into every interpolated frame.
-#
-# Why ffmpeg minterpolate instead of RIFE: rife-ncnn-vulkan-python has no
-# arm64 wheel, requires the LunarG Vulkan SDK to build from source on
-# macOS (~500 MB). minterpolate ships with the ffmpeg already pulled in
-# by imageio_ffmpeg (transitive dep of diffusers), so zero extra install.
-# Quality tradeoff is acceptable here because the upscale step does the
-# heavy lifting on detail.
-#
-# Dependencies:
-#   - realesrgan, basicsr  (PyPI; pure Python — install with --no-deps to
-#                           avoid pulling outdated torch / opencv)
-#   - imageio_ffmpeg       (already installed via diffusers transitive)
-
+# Frame interpolation is optional and uses the bundled FFmpeg.
 
 _ESRGAN_CACHE = {"model": None, "variant": None}
 
@@ -5588,7 +6256,7 @@ def _load_realesrgan(variant: str = "default"):
         scale=4,
         model_path=str(weights),
         model=model,
-        tile=0,           # no tiling — full-frame upscale on unified memory
+        tile=256,         # keep the legacy fallback bounded on large frames
         tile_pad=10,
         pre_pad=0,
         half=False,       # bf16/fp16 unstable on MPS for RRDBNet
@@ -5609,7 +6277,7 @@ def _ffmpeg_exe():
         raise RuntimeError(f"ffmpeg unavailable via imageio_ffmpeg: {e}")
 
 
-def _write_video_uint8(frames, output_path: str, fps: int):
+def _write_video_uint8(frames, output_path: str, fps: float):
     """Write a list of uint8 RGB HxWx3 frames to MP4. We can't use diffusers'
     `export_to_video` here because it does `(frame * 255).astype(uint8)` on
     every numpy array (it assumes float [0,1] input from a diffusion pipeline
@@ -5628,187 +6296,105 @@ def _write_video_uint8(frames, output_path: str, fps: int):
             writer.append_data(frame)
 
 
-def _read_video_frames(path: str):
-    """Decode a video file into a list of HxWx3 uint8 numpy frames + fps."""
-    import imageio.v3 as iio
-    meta = iio.immeta(path, plugin="pyav")
-    fps = float(meta.get("fps") or 24.0)
-    frames = [f for f in iio.imiter(path, plugin="pyav")]
-    return frames, fps
-
-
-def _upscale_frames(frames, variant: str = "default"):
-    """Run Real-ESRGAN x4 on each frame (numpy HxWx3 uint8 → upscaled)."""
-    upsampler = _load_realesrgan(variant)
-    out = []
-    for i, frame in enumerate(frames):
-        # RealESRGANer.enhance expects BGR uint8 (OpenCV convention).
-        bgr = frame[:, :, ::-1].copy()
-        upscaled, _ = upsampler.enhance(bgr, outscale=4)
-        out.append(upscaled[:, :, ::-1].copy())  # back to RGB
-    return out
-
-
-def _interpolate_video_ffmpeg(input_path: str, output_path: str, factor: int):
-    """Temporal interpolation via ffmpeg's `minterpolate` (motion-compensated,
-    optical-flow-based). Cross-platform, no extra binaries required.
-
-    Quality is below RIFE 4.6 but acceptable for our use case (video already
-    upscaled to 1280×960 by Real-ESRGAN — interpolation has plenty of detail
-    to estimate flow from). `mi_mode=mci` + `mc_mode=aobmc` + `vsbmc=1` gives
-    the smoothest result without obvious tearing.
-    """
-    if factor <= 1:
-        # No interpolation requested — just copy the file.
-        import shutil
-        shutil.copyfile(input_path, output_path)
-        return
-    import subprocess
-    # Probe input fps via imageio_ffmpeg to compute target fps.
-    import imageio.v3 as iio
-    meta = iio.immeta(input_path, plugin="pyav")
-    in_fps = float(meta.get("fps") or 24.0)
-    target_fps = in_fps * factor
-    cmd = [
-        _ffmpeg_exe(),
-        "-y",
-        "-i", input_path,
-        "-filter:v", (
-            f"minterpolate=fps={target_fps}:"
-            "mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
-        ),
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-crf", "18",
-        "-preset", "medium",
-        output_path,
-    ]
-    logger.info(f"[Enhance] ffmpeg minterpolate: in_fps={in_fps} target_fps={target_fps} factor={factor}")
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg minterpolate failed: {proc.stderr[-2000:]}")
-
-
 @app.route("/video/enhance", methods=["POST"])
 def video_enhance():
+    """Restore locally with SeedVR2 (default) or explicit Real-ESRGAN fallback.
+
+    Source audio and frame rate are preserved unless interp_factor is supplied.
+    See docs/VIDEO_ENHANCEMENT.md for the request contract and memory controls.
     """
-    Enhance a video: x4 spatial upscale (Real-ESRGAN) + Nx temporal
-    interpolation (ffmpeg minterpolate). Input video stays untouched.
-
-    Request body:
-      - video_path (str)        — absolute path to source MP4 (preferred)
-      - video_base64 (str)      — alternative if no path available
-      - variant (str)           — 'default' (photo) or 'anime'. Default 'default'.
-      - upscale (bool)          — default True. Set False to skip upscaling.
-      - interp_factor (int)     — temporal multiplier. Default 4.
-      - auto_download (bool)    — pull missing weights inline. Default False.
-
-    Response:
-      - generation_id (str)
-      - video_path (str)        — enhanced output MP4
-      - input_fps (float)
-      - output_fps (float)
-      - input_size [w,h]
-      - output_size [w,h]
-      - frame_count (int)
-    """
-    data = request.get_json(force=True) or {}
-
-    video_path = (data.get("video_path") or "").strip()
-    video_b64 = (data.get("video_base64") or "").strip()
-    variant = (data.get("variant") or "default").strip().lower()
-    do_upscale = bool(data.get("upscale", True))
-    interp_factor = int(data.get("interp_factor", 4))
-    auto_dl = bool(data.get("auto_download", False))
-
-    if not video_path and not video_b64:
-        return jsonify({"error": "Provide 'video_path' or 'video_base64'"}), 400
-    if interp_factor not in (1, 2, 4, 8):
-        return jsonify({"error": "interp_factor must be 1, 2, 4, or 8"}), 400
-
-    if do_upscale:
-        guard = _ensure_files_present_or_start("video_enhance", auto_download=auto_dl)
-        if guard:
-            return guard
-
-    gen_id = genbus.new("video_enhance", {
-        "endpoint": "/video/enhance", "variant": variant,
-        "upscale": do_upscale, "interp_factor": interp_factor,
-    })
+    from video_enhance import (EnhanceOptions, SEEDVR2_DIT, prepare_seedvr2,
+                               seedvr2_dependencies, run_seedvr2, probe_video, finish_video)
+    data = request.get_json(silent=True)
+    try:
+        options = EnhanceOptions.parse(data)
+        video_path = data.get("video_path", "")
+        video_b64 = data.get("video_base64", "")
+        if not isinstance(video_path, str) or not isinstance(video_b64, str):
+            raise ValueError("video_path and video_base64 must be strings.")
+        if bool(video_path.strip()) == bool(video_b64.strip()):
+            raise ValueError("Provide exactly one of video_path or video_base64.")
+        if video_path and not Path(video_path).is_file():
+            raise ValueError("The source video file is unavailable.")
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
     files_dir = MODEL_DIR / "files"
     files_dir.mkdir(parents=True, exist_ok=True)
-
+    gen_id = None
+    output = None
     try:
-        if video_b64 and not video_path:
-            tmp_in = files_dir / f"enhance_in_{gen_id}.mp4"
-            tmp_in.write_bytes(base64.b64decode(video_b64))
-            video_path = str(tmp_in)
-
-        genbus.progress(gen_id, "decoding", 1, 4)
-        frames, in_fps = _read_video_frames(video_path)
-        in_h, in_w = frames[0].shape[:2]
-        logger.info(f"[Enhance] decoded {len(frames)} frames @ {in_w}x{in_h}, {in_fps}fps")
-
-        if do_upscale:
-            genbus.progress(gen_id, "upscaling", 2, 4)
-            frames = _upscale_frames(frames, variant=variant)
-            out_h, out_w = frames[0].shape[:2]
-            logger.info(f"[Enhance] upscaled to {out_w}x{out_h}")
-        else:
-            out_h, out_w = in_h, in_w
-
-        # Write the upscaled (or untouched) frames to an intermediate mp4
-        # at the original fps. If no interpolation was requested, this IS
-        # the final output. If interpolation was requested, ffmpeg
-        # minterpolate reads this and writes the final.
-        intermediate_path = str(files_dir / f"enhance_mid_{gen_id}.mp4")
-        out_path = str(files_dir / f"enhance_{gen_id}.mp4")
-
-        genbus.progress(gen_id, "encoding intermediate", 3, 4)
-        _write_video_uint8(frames, intermediate_path, fps=int(round(in_fps)))
-
-        if interp_factor > 1:
-            genbus.progress(gen_id, "interpolating", 4, 4)
-            _interpolate_video_ffmpeg(intermediate_path, out_path, interp_factor)
+        with tempfile.TemporaryDirectory(prefix="enhance-", dir=files_dir) as temporary:
+            if video_b64:
+                video_path = str(Path(temporary) / "input.mp4")
+                try:
+                    Path(video_path).write_bytes(base64.b64decode(video_b64, validate=True))
+                except ValueError:
+                    return jsonify({"error": "Invalid video_base64."}), 400
             try:
-                Path(intermediate_path).unlink()
+                source = probe_video(video_path, count_frames=True)
             except Exception:
-                pass
-            out_fps = in_fps * interp_factor
-            # Frame count after interpolation isn't known exactly without
-            # re-decoding; estimate from fps target.
-            est_frames = int(round(len(frames) * interp_factor))
-        else:
-            # Just rename intermediate → final (no interp pass).
-            import shutil
-            shutil.move(intermediate_path, out_path)
-            out_fps = in_fps
-            est_frames = len(frames)
+                return jsonify({"error": "The source video could not be decoded."}), 400
+            options = options.for_source(data, source["size"])
+            if options.upscale:
+                if options.backend == "seedvr2":
+                    missing = seedvr2_dependencies()
+                    if missing:
+                        return jsonify({"error": "seedvr2_runtime_missing",
+                                        "message": "Install the updated BonzAI Python dependencies before using SeedVR2.",
+                                        "missing": missing}), 503
+                guard = _ensure_files_present_or_start(
+                    "video_enhance" if options.backend == "seedvr2" else "video_enhance_realesrgan",
+                    auto_download=options.auto_download)
+                if guard:
+                    return guard
 
-        genbus.finish(gen_id, {"video_path": out_path})
-        logger.info(f"[Enhance] wrote {out_path} ({out_w}x{out_h} @ {out_fps}fps)")
+            gen_id = genbus.new("video_enhance", {"endpoint": "/video/enhance",
+                "backend": options.backend, "upscale": options.upscale,
+                "interp_factor": options.interp_factor})
+            restored = video_path
+            if options.upscale:
+                restored = str(Path(temporary) / "restored.mp4")
+                if options.backend == "seedvr2":
+                    genbus.progress(gen_id, "preparing SeedVR2", 0, 1)
+                    runtime = prepare_seedvr2(MODEL_DIR)
+                    DeviceManager.free_memory()
+                    run_seedvr2(runtime, MODEL_DIR, video_path, restored, options,
+                                DeviceManager.get_device(),
+                                progress=lambda stage, done, total: genbus.progress(gen_id, stage, done, total))
+                else:
+                    import imageio.v3 as iio
+                    upsampler = _load_realesrgan(variant=options.variant)
+                    def restored_frames():
+                        for index, frame in enumerate(iio.imiter(video_path, plugin="pyav")):
+                            bgr, _ = upsampler.enhance(frame[..., ::-1], outscale=4)
+                            genbus.progress(gen_id, "upscaling", index + 1, source["frame_count"])
+                            yield bgr[..., ::-1]
+                    _write_video_uint8(restored_frames(), restored, fps=source["fps"])
 
-        return jsonify({
-            "generation_id": gen_id,
-            "video_path": out_path,
-            "input_fps": in_fps,
-            "output_fps": out_fps,
-            "input_size": [in_w, in_h],
-            "output_size": [out_w, out_h],
-            "frame_count": est_frames,
-        })
-
-    except Exception as e:
+            genbus.progress(gen_id, "encoding and checking video", 0, 1)
+            output = files_dir / f"enhance_{gen_id}.mp4"
+            actual = finish_video(video_path, restored, output, options, source, _ffmpeg_exe())
+            result = {"generation_id": gen_id, "video_path": str(output),
+                      "backend": options.backend if options.upscale else "ffmpeg",
+                      "model": SEEDVR2_DIT if options.upscale and options.backend == "seedvr2" else None,
+                      "input_fps": source["fps"], "output_fps": actual["fps"],
+                      "input_size": source["size"], "output_size": actual["size"],
+                      "frame_count": actual["frame_count"], "has_audio": actual["has_audio"],
+                      "interp_factor": options.interp_factor}
+            genbus.finish(gen_id, result)
+            return jsonify(result)
+    except Exception as error:
+        if output:
+            output.unlink(missing_ok=True)
         logger.exception("[Enhance] failed")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        if gen_id:
+            genbus.error(gen_id, str(error))
+        return jsonify({"error": str(error), "backend": options.backend}), 500
     finally:
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
+        # Do not keep the fallback model resident alongside subsequent jobs.
+        _ESRGAN_CACHE.update(model=None, variant=None)
+        DeviceManager.free_memory()
 
 
 # =============================================================================
@@ -6522,7 +7108,12 @@ def start_sdxl_lora_training():
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
     
-    base_model = data.get("base_model", "z-image-turbo")
+    base_model = data.get("base_model", "sdxl-base-1.0")
+    if base_model == "z-image-turbo":
+        return jsonify({
+            "error": "Z-Image training is not implemented by this UNet trainer. Use SDXL with an image-file dataset.",
+            "code": "training_not_implemented",
+        }), 501
     image_repo = IMAGE_FINETUNE_MODELS.get(base_model)
     if not image_repo:
         return jsonify({"error": f"Unsupported image base model: {base_model}", "supported": list(IMAGE_FINETUNE_MODELS.keys())}), 400
@@ -6884,6 +7475,13 @@ def start_audio_lora_training():
     This endpoint uses the same asynchronous training contract as the text and
     image trainers so the desktop UI can track text/image/audio jobs uniformly.
     """
+    # The worker below prepares metadata only; it cannot produce trained weights.
+    # Fail before accepting datasets or emitting misleading completion events.
+    return jsonify({
+        "error": "Audio LoRA training is not implemented. No training job was started.",
+        "code": "training_not_implemented",
+    }), 501
+
     data = request.get_json(silent=True) or {}
 
     dataset_id = (data.get("dataset_id") or "").strip()
@@ -6999,6 +7597,11 @@ def start_video_lora_training():
     Currently a structured stub — emits real stage progress but does not
     perform actual Wan 2.2 LoRA training yet.
     """
+    return jsonify({
+        "error": "Video LoRA training is not implemented. No training job was started.",
+        "code": "training_not_implemented",
+    }), 501
+
     data = request.get_json(silent=True) or {}
 
     dataset_id = (data.get("dataset_id") or "").strip()
@@ -7418,6 +8021,10 @@ def start_abliteration():
 # REST API: TRAINING - LIST TRAINED MODELS
 # =============================================================================
 
+from hub_publish import register_hub_publish
+register_hub_publish(app, MODEL_DIR / "trained")
+
+
 @app.route("/training/models", methods=["GET"])
 def list_trained_models():
     """List all trained models (LoRAs, finetunes)."""
@@ -7511,26 +8118,58 @@ def update_trained_model_economy(model_id):
 
 @app.route("/training/models/<model_id>/validate", methods=["POST"])
 def validate_trained_model(model_id):
-    """Validate a local model artifact before economic publication."""
-    model_dir = MODEL_DIR / "trained" / model_id
+    """Versioned SHA256 of artifact bytes plus local structural checks, not an inference benchmark or independent attestation."""
+    trained_root = (MODEL_DIR / "trained").resolve()
+    model_dir = trained_root / model_id
+    # The endpoint must never read or update a model outside its trained folder.
+    try:
+        model_dir = model_dir.resolve()
+        model_dir.relative_to(trained_root)
+        if model_dir == trained_root:
+            raise ValueError("Invalid model directory")
+    except (ValueError, OSError, RuntimeError):
+        return jsonify({"error": "Model directory escapes the trained model folder"}), 422
     if not model_dir.exists():
         return jsonify({"error": "Model not found"}), 404
 
     metadata_path = model_dir / "metadata.json"
+    if metadata_path.is_symlink():
+        return jsonify({"error": "Symlinked model metadata cannot be validated"}), 422
     metadata = _read_json_file(metadata_path, {})
     artifacts = []
     errors = []
     warnings = []
 
-    for path in model_dir.rglob("*"):
-        if not path.is_file() or path.name == "metadata.json":
+    for path in sorted(model_dir.rglob("*"), key=lambda item: item.as_posix()):
+        relative_path = str(path.relative_to(model_dir))
+        # Generated training artifacts are regular files. Reject links rather
+        # than following a link into unrelated local data (including directories).
+        if path.is_symlink():
+            errors.append(f"Symlink artifact cannot be validated: {relative_path}")
+            continue
+        if not path.is_file() or path == metadata_path:
             continue
         try:
-            size = path.stat().st_size
-        except OSError:
+            path.resolve().relative_to(model_dir)
+            digest = hashlib.sha256()
+            size = 0
+            # O_NOFOLLOW prevents replacement with a file symlink between the
+            # check above and opening. Hash large weights in bounded chunks.
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as handle:
+                before = os.fstat(handle.fileno())
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    size += len(chunk)
+                after = os.fstat(handle.fileno())
+            if (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino) or size != after.st_size:
+                errors.append(f"Artifact changed during validation: {relative_path}")
+                continue
+        except (OSError, ValueError) as exc:
+            errors.append(f"Could not hash {relative_path}: {type(exc).__name__}")
             continue
         if size > 0:
-            artifacts.append({"path": str(path.relative_to(model_dir)), "bytes": size})
+            artifacts.append({"path": relative_path, "bytes": size, "sha256": digest.hexdigest()})
 
     ggufs = [model_dir / item["path"] for item in artifacts if item["path"].lower().endswith(".gguf")]
     if ggufs:
@@ -7558,6 +8197,7 @@ def validate_trained_model(model_id):
         warnings.append("Abliteration quality metrics are missing")
 
     validation_payload = {
+        "scheme": "bonzai-local-artifact-sha256-v1",
         "model_id": model_id,
         "model_kind": "abliterated" if metadata.get("type") == "abliteration" else "fine_tuned",
         "artifacts": artifacts,
@@ -7636,16 +8276,16 @@ def training_info():
         },
         "supported_llm_models": [{"key": k, "repo": v} for k, v in LLM_FINETUNE_MODELS.items()],
         "supported_image_models": [
-            {"key": "z-image-turbo", "repo": ZIMAGE_BASE_REPO},
             {"key": "sdxl-base-1.0", "repo": SDXL_BASE_REPO},
         ],
-        "supported_audio_models": [
-            {"key": "qwen-tts", "name": "Qwen3-TTS Persona"},
-            {"key": "ace-step", "name": "ACE-Step v1.5 Music"},
-        ],
-        "supported_video_models": [
-            {"key": "wan-2.2", "name": "Wan2.2 I2V 14B"},
-        ],
+        "supported_audio_models": [],
+        "supported_video_models": [],
+        "training_modalities": {
+            "text": {"implemented": True, "dataset_format": "text_jsonl"},
+            "image": {"implemented": True, "dataset_format": "image_files", "desktop_import_supported": False},
+            "audio": {"implemented": False},
+            "video": {"implemented": False},
+        },
         "supported_dataset_types": ["text", "image", "audio", "video"],
         "abliteration_models": ABLIT_MODEL_INFO,
         "abliteration_quantize_available": _find_quantize_binary() is not None,
@@ -7792,21 +8432,12 @@ def memory_clear():
         unloaded = []
         preserved = []
 
-        # Unload ACE-Step v1.5 DiT handlers
-        global _ace_step_handlers
-        if _ace_step_handlers:
-            _ace_step_handlers.clear()
+        # Unload ACE-Step v1.5 Diffusers pipeline
+        global _ace_step_pipeline, _ace_step_offload
+        if _ace_step_pipeline is not None:
+            _ace_step_pipeline = None
+            _ace_step_offload = None
             unloaded.append("ace_step_music")
-
-        # Unload ACE-Step v1.5 LLM handler (for quality mode)
-        global _ace_step_llm
-        if _ace_step_llm is not None:
-            try:
-                del _ace_step_llm
-            except:
-                pass
-            _ace_step_llm = None
-            unloaded.append("ace_step_llm")
 
         # Always unload Kokoro TTS pipeline (voice cache is preserved separately)
         global _kokoro_pipeline
@@ -7818,27 +8449,11 @@ def memory_clear():
             _kokoro_pipeline = None
             unloaded.append("kokoro_tts")
 
-        # Always unload Qwen 3 TTS models (large VRAM consumers)
-        # Voice cache is preserved separately when preserve_tts=True
-        global _qwen3_tts_base, _qwen3_tts_design
-        if _qwen3_tts_base is not None:
-            try:
-                if hasattr(_qwen3_tts_base, 'to'):
-                    _qwen3_tts_base.to('cpu')
-                del _qwen3_tts_base
-            except:
-                pass
-            _qwen3_tts_base = None
-            unloaded.append("qwen3_tts_base")
-        if _qwen3_tts_design is not None:
-            try:
-                if hasattr(_qwen3_tts_design, 'to'):
-                    _qwen3_tts_design.to('cpu')
-                del _qwen3_tts_design
-            except:
-                pass
-            _qwen3_tts_design = None
-            unloaded.append("qwen3_tts_design")
+        # Always unload Chatterbox (voice reference paths remain cacheable).
+        global _chatterbox_tts
+        if _chatterbox_tts is not None:
+            _chatterbox_tts = None
+            unloaded.append("chatterbox_tts")
 
 
         # Voice prompt cache: preserve when preserve_tts=True (small, enables voice consistency)
@@ -7900,10 +8515,10 @@ def memory_status():
 
         if _kokoro_pipeline is not None:
             status["cached_models"].append("kokoro_tts")
-        if _qwen3_tts_base is not None:
-            status["cached_models"].append("qwen3_tts_base")
-        if _qwen3_tts_design is not None:
-            status["cached_models"].append("qwen3_tts_design")
+        if _chatterbox_tts is not None:
+            status["cached_models"].append("chatterbox_tts")
+        if _ace_step_pipeline is not None:
+            status["cached_models"].append("ace_step_music")
         if _voice_prompt_cache:
             status["cached_models"].append(f"voice_cache({len(_voice_prompt_cache)})")
 

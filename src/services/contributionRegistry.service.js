@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { CONFIG } from '../config/web3.config.js';
+import { CONFIG, networkKeyForChainId } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
 
 const CONTRIBUTION_REGISTRY_ABI = [
@@ -29,16 +29,17 @@ function requiredAddress(key) {
 
 async function signerContract(address, abi) {
   const chainId = registryConfig().chainId;
-  const networkKey = Object.entries(CONFIG.networks || {})
-    .find(([, network]) => Number(network.chainId) === Number(chainId))?.[0] || 'base';
+  const networkKey = networkKeyForChainId(chainId);
+  if (!networkKey) throw new Error(`Unsupported contribution chain: ${chainId}`);
   await web3Service.switchNetwork?.(networkKey);
   const browserProvider = await web3Service.getBrowserProvider();
   const signer = await browserProvider.getSigner();
   return new ethers.Contract(address, abi, signer);
 }
 
-function hashString(value) {
-  return ethers.id(String(value || 'bonzai-empty'));
+export function contentHashForRegistry(value) {
+  if (ethers.isHexString(value, 32)) return value;
+  return ethers.id(String(value ?? 'bonzai-empty'));
 }
 
 function contributionTypeId(kind) {
@@ -129,7 +130,7 @@ export async function publishContributionRows(rows, options = {}) {
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i];
     const tx = await registry.registerContribution(
-      hashString(row.contribution_hash || row.text || row.image_base64 || row.image_url || row.source_url || i),
+      contentHashForRegistry(row.contribution_hash || row.text || row.image_base64 || row.image_url || row.source_url || i),
       metadataURIForRecord(row, options.packMetadataURI, i),
       licenseURI(row),
       row.source_url || '',
@@ -157,7 +158,7 @@ export async function publishDatasetFromRows(rows, options = {}) {
   const contributionIds = contributionResults.map(result => result.contributionId).filter(Boolean);
   const registry = await signerContract(requiredAddress('datasetRegistryAddress'), DATASET_REGISTRY_ABI);
   const tx = await registry.registerDataset(
-    hashString(options.datasetHash || JSON.stringify(rows.map(row => row.contribution_hash || row.contribution_id || row.text || row.source_url))),
+    contentHashForRegistry(options.datasetHash || JSON.stringify(rows.map(row => row.contribution_hash || row.contribution_id || row.text || row.source_url))),
     options.datasetMetadataURI || options.packMetadataURI || `bonzai-local://dataset/${Date.now()}`,
     options.licenseURI || registryConfig().defaultLicenseURI || 'https://bonzai.sh/licenses/contribution-v1',
     options.trainingAllowed !== false,
@@ -189,7 +190,7 @@ export async function publishModelFromProvenance(model, provenance = {}, options
     || `bonzai-model://${model?.id || Date.now()}`;
   const tx = await registry.publishModel(
     modelTypeId(model),
-    hashString(options.modelHash || model?.id || model?.filename || metadataURI),
+    contentHashForRegistry(options.modelHash || model?.id || model?.filename || metadataURI),
     metadataURI,
     options.licenseURI || provenance?.dataset?.license || registryConfig().defaultLicenseURI || 'https://bonzai.sh/licenses/contribution-v1',
     revenueRecipient,

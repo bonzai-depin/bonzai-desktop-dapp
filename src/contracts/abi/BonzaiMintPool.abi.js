@@ -85,6 +85,45 @@ export const BonzaiMintPoolABI = [
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "BasketRewardForwardingFailed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "rewards",
+        "type": "address"
+      }
+    ],
+    "name": "BasketRewardsConfigured",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "BasketRewardsForwarded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "uint256",
         "name": "epochId",
@@ -604,6 +643,19 @@ export const BonzaiMintPoolABI = [
   },
   {
     "inputs": [],
+    "name": "BASKET_ROUTING_GAS_LIMIT",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_BPS",
     "outputs": [
       {
@@ -668,6 +720,19 @@ export const BonzaiMintPoolABI = [
         "internalType": "bool",
         "name": "",
         "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "basketRewards",
+    "outputs": [
+      {
+        "internalType": "contract IMintBasketRewards",
+        "name": "",
+        "type": "address"
       }
     ],
     "stateMutability": "view",
@@ -1044,6 +1109,13 @@ export const BonzaiMintPoolABI = [
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "forwardBasketRewards",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -1452,6 +1524,19 @@ export const BonzaiMintPoolABI = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "pendingBasketRewards",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -1695,6 +1780,19 @@ export const BonzaiMintPoolABI = [
     "inputs": [
       {
         "internalType": "address",
+        "name": "rewards",
+        "type": "address"
+      }
+    ],
+    "name": "setBasketRewards",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "_factory",
         "type": "address"
       }
@@ -1858,6 +1956,19 @@ export const BonzaiMintPoolABI = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "stakingVaultFrozen",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -1868,6 +1979,19 @@ export const BonzaiMintPoolABI = [
     "name": "sweepUnclaimed",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalBasketForwarded",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

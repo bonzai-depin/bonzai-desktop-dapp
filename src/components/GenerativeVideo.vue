@@ -27,7 +27,7 @@
             <div class="video-progress-card__head">
               <span class="video-progress-card__title video-progress-card__title--pill fira-sans-condensed-black-italic">
                 <BonzaiPulse variant="dot" />
-                Crafting...
+                {{ generationStageLabel }}
               </span>
               <span class="video-progress-card__pct fira-sans-condensed-black-italic">
                 {{ generationPctRounded }}%
@@ -44,7 +44,7 @@
                     <span class="bz-eyebrow">{{ $t('create.quality') }}</span>
                     <ModeChipBar v-model="videoModel" :items="videoModelItems" compact />
                   </div>
-                  <div v-if="videoModel === 'fast'" class="video-control-row">
+                  <div v-if="videoModel !== 'quality'" class="video-control-row">
                     <span class="bz-eyebrow">{{ $t('create.mode') }}</span>
                     <ModeChipBar v-model="mode" :items="videoModeItems" compact />
                   </div>
@@ -64,6 +64,7 @@
                       :items="fpsItems"
                       compact
                     />
+                    <span v-else-if="videoModel === 'sota'" class="bz-pill">24fps + audio</span>
                     <ModeChipBar
                       v-else
                       v-model="wanFps"
@@ -75,55 +76,21 @@
                     <span class="bz-eyebrow">Resolution</span>
                     <ModeChipBar v-model="quality" :items="qualityItems" compact />
                   </div>
-
                 </div>
 
-                <!-- READINESS CTA -->
-                <div
-                  v-if="showUpdateCTA"
-                  class="video-notice video-notice--danger"
-                >
-                  <div class="video-notice__body">
-                    <strong class="video-notice__title fira-sans-condensed-black-italic">
-                      Download Required
-                    </strong>
-                    <span v-if="readiness.missingRepos.length">
-                      <ul style="margin-top: 0.5rem; text-transform: lowercase">
-                        <li v-for="d in readiness.repoDetails" :key="d.repo">
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-1"
-                          >
-                            deployed_code
-                          </span>
-                          {{ d.repo }}
-                        </li>
-                      </ul>
-                    </span>
-                    <span v-if="readiness.missingGguf">
-                      <ul style="text-transform: lowercase">
-                        <li v-for="gguf in readiness.ggufNames">
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-1"
-                          >
-                            deployed_code
-                          </span>
-                          {{ gguf }}
-                        </li>
-                      </ul>
-                    </span>
-                  </div>
-                  <button
-                    class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
-                    @click="prefetchForMode"
-                    :disabled="downloads.active || readiness.authRequired"
-                    title="(Re)download required files"
-                  >
-                    <span class="material-symbols-outlined" aria-hidden="true">
-                      download
-                    </span>
-                    Download Now
-                  </button>
-                </div>
+                <DownloadRequirement category="video"
+                  v-if="showUpdateCTA || downloads.active"
+                  :items="[...readiness.repoDetails, ...readiness.ggufNames]"
+                  :active="downloads.active"
+                  cancellable
+                  :cancelling="isCancellingDownloads"
+                  @cancel="cancelCurrentPipeline"
+                  :progress="downloads.total_progress || downloads.progress || 0"
+                  :tasks="downloadTaskList"
+                  :disabled="readiness.authRequired"
+                  :error="readiness.authRequired ? $t('rcDownloads.authRequired') : downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''"
+                  @download="prefetchForMode"
+                />
 
                 <!-- GENERATION ERROR -->
                 <div
@@ -135,50 +102,6 @@
                     <span>{{ generation.error }}</span>
                   </div>
                 </div>
-                <!-- DOWNLOAD PROGRESS -->
-                <div
-                  v-if="downloads && downloads.active"
-                  class="video-progress-card"
-                >
-                  <div class="video-progress-card__head">
-                    <span class="video-progress-card__title video-progress-card__title--pill fira-sans-condensed-black-italic">
-                      <BonzaiPulse variant="dot" />
-                      Downloading
-                    </span>
-                    <span class="video-progress-card__pct fira-sans-condensed-black-italic">
-                      {{ Math.round(downloads.total_progress || 0) }}%
-                    </span>
-                  </div>
-                  <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
-                  <div
-                    v-if="downloadTaskList.length"
-                    class="video-download-taskwrap"
-                  >
-                    <ul>
-                      <li
-                        v-for="t in downloadTaskList"
-                        :key="t.task_id"
-                        class="is-size-7 columns"
-                      >
-                        <div class="column has-text-left">
-                          <span class="material-symbols-outlined is-size-6">
-                            deployed_code
-                          </span>
-                          {{ t.filename }} —
-                          <span class="fira-sans-condensed-black-italic">
-                            {{ t.status }}
-                          </span>
-                        </div>
-                        <div
-                          class="column is-2 fira-sans-condensed-black-italic has-text-right"
-                        >
-                          {{ Math.round(t.progress || 0) }}%
-                        </div>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-
                 <!-- IMAGE PICKER (only for I2V mode) -->
                 <div v-if="mode === 'i2v' || videoModel === 'quality'" class="video-image-picker">
                   <div class="video-image-picker__input file is-fullwidth is-medium">
@@ -335,6 +258,13 @@
                           {{ entry.inference.networkMode === 'private' ? 'Private' : 'Remote' }}
                         </span>
                       </div>
+                      <p v-if="enhancementStatus[entry.inference.id]?.stage === 'downloading' && !enhancementErrors[entry.inference.id]"
+                         class="bz-video-enhance-status" role="status">
+                        {{ $t('rcDownloads.downloading') }} SeedVR2 · {{ enhancementStatus[entry.inference.id].percent }}%
+                      </p>
+                      <p v-if="enhancementErrors[entry.inference.id] || entry.inference.answer?.data?.enhancement_error" class="bz-video-enhance-status bz-video-enhance-status--error" role="alert">
+                        {{ enhancementErrors[entry.inference.id] || entry.inference.answer?.data?.enhancement_error }}
+                      </p>
                       <GenerativeActions
                         :actions="actionsFor(entry.inference)"
                         icon-only
@@ -372,7 +302,41 @@
     @minted="onMinted"
   />
 
-  <Transition name="bz-image-toast">
+  <div v-if="showH3Terms" ref="h3Dialog" class="bz-h3-terms" role="dialog" aria-modal="true" aria-labelledby="h3-terms-title">
+    <div class="bz-h3-terms__panel">
+      <span class="material-symbols-outlined bz-h3-terms__mark" aria-hidden="true">movie</span>
+      <h2 id="h3-terms-title" class="bz-h2 fira-sans-condensed-black-italic">MiniMax H3</h2>
+      <p>
+        H3 is a third-party model governed by the MiniMax H3 Community License and acceptable-use restrictions.
+        Generated video and audio remain on this device. Quantized weights and standalone VAEs are Unsloth
+        derivatives and are not an official MiniMax product.
+      </p>
+      <label class="bz-h3-terms__check">
+        <input v-model="h3TermsChecked" type="checkbox" />
+        <span>I have read and agree to the model terms.</span>
+      </label>
+      <a
+        href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"
+        target="_blank"
+        rel="noreferrer"
+      >Read the license</a>
+      <a
+        href="https://huggingface.co/unsloth/MiniMax-H3-GGUF/blob/main/NOTICE"
+        target="_blank"
+        rel="noreferrer"
+      >Read the Unsloth notice</a>
+      <div class="bz-h3-terms__actions">
+        <button type="button" class="bz-btn bz-btn--ghost" @click="showH3Terms = false">Cancel</button>
+        <button type="button" class="bz-btn bz-btn--primary" :disabled="!h3TermsChecked" @click="acceptH3Terms">
+          Agree and continue
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <Teleport to="body">
+    <div v-if="pendingDelete" class="bz-confirmation-backdrop" aria-hidden="true"></div>
+    <Transition name="bz-image-toast">
     <div
       v-if="pendingDelete"
       class="bz-image-delete-toast"
@@ -391,6 +355,7 @@
       </button>
     </div>
   </Transition>
+  </Teleport>
 </template>
 
 <script>
@@ -408,17 +373,25 @@ import {
 import { v4 as uuid } from "uuid";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
+import { videoReuseSettings } from "../services/videoReuse.js";
+import { enhanceVideo, videoEnhanceSource } from "../services/videoEnhance.js";
 import { io } from "socket.io-client";
 import { useInferenceRouter } from "../composables/useInferenceRouter.js";
 import AccessRequirements from "./AccessRequirements.vue";
+import { recordedMintGeneration } from "../services/mintValidation.js";
 import MintModal from "./MintModal.vue";
 import BonzaiPulse from "./BonzaiPulse.vue";
+import DownloadRequirement from "./DownloadRequirement.vue";
+import { cancelLocalDownloads } from "../services/downloadCancellation.js";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
 import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addVideoInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
+import { generationElapsedMs, formatGenerationTime } from "../shared/generationTiming.js";
+import { useModalAccessibility } from '../composables/useModalAccessibility.js';
+import { i18n } from '../i18n/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERFORMANCE UTILITIES
@@ -464,7 +437,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
-  components: { AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput, ModeChipBar },
+  components: { DownloadRequirement, AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput, ModeChipBar },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const { inferenceRequest } = useInferenceRouter();
@@ -472,7 +445,9 @@ export default {
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
 
+    let mintSelectionRequest = 0;
     const openMint = async (inference) => {
+      const request = ++mintSelectionRequest;
       const videoPath = inference.answer?.data?.video_path;
       let content = null;
       if (videoPath && window.electronAPI?.readFileAsBase64) {
@@ -482,18 +457,19 @@ export default {
           console.warn('[GenerativeVideo] Could not read video file:', e);
         }
       }
+      if (request !== mintSelectionRequest) return;
       mintTarget.value = {
         inferenceType: 'video',
         inferenceId: inference.id,
         content,
         contentType: 'video/mp4',
         prompt: inference.question,
-        generation: {
+        generation: recordedMintGeneration(inference, {
           type: inference.question?.startsWith('i2v') ? 'image-to-video' : 'text-to-video',
           model: inference.model || 'ltx-2',
           timestamp: inference.timestamp,
           elapsedMs: inference.elapsedMs || null,
-        },
+        }),
       };
     };
 
@@ -512,6 +488,17 @@ export default {
     // diffusion + Lightning 4-step distillation produces materially
     // better motion + character consistency on MPS.
     const videoModel = ref("quality");
+    const showH3Terms = ref(false);
+    const h3Dialog = ref(null);
+    useModalAccessibility(h3Dialog, { onClose: () => { showH3Terms.value = false; } });
+    const h3TermsChecked = ref(false);
+    const h3TermsAccepted = ref(localStorage.getItem("bonzai:minimax-h3-terms") === "accepted");
+    const acceptH3Terms = () => {
+      if (!h3TermsChecked.value) return;
+      localStorage.setItem("bonzai:minimax-h3-terms", "accepted");
+      h3TermsAccepted.value = true;
+      showH3Terms.value = false;
+    };
     // Default to 640×480 (4:3 landscape) for Wan/quality mode — solid
     // working resolution. 240p Draft is still available one click away
     // for fast prompt iteration. LTX (fast) mode overrides this to
@@ -520,11 +507,13 @@ export default {
     const duration = ref(5);       // seconds: default 5s
     const fps = ref(12);           // 12 or 24 (default 12fps for memory efficiency)
     const wanFps = ref(16);         // 8 or 16 (default 16fps for Wan2.2)
-    // Auto-enhance: chain /video/enhance (Real-ESRGAN x4 + RIFE 4x) after
-    // /video/quality completes. Default off — adds 2-4 min per generation.
+    // Auto-enhance: chain /video/enhance (SeedVR2 detail restoration) after
+    // /video/quality completes. Default off; cost depends on size and device.
     const autoEnhance = ref(false);
+    const reusedSampling = ref({});
     const videoModelItems = [
       { value: "fast", label: "Turbo", icon: "bolt" },
+      { value: "sota", label: "SOTA", icon: "movie" },
       { value: "quality", label: "Quality", icon: "auto_awesome" },
     ];
     const videoModeItems = [
@@ -532,6 +521,8 @@ export default {
       { value: "i2v", label: "From Image", icon: "image" },
     ];
     const fastDurationItems = [
+      { value: 2, label: "2s" },
+      { value: 3, label: "3s" },
       { value: 5, label: "5s" },
       { value: 10, label: "10s" },
       { value: 15, label: "15s" },
@@ -570,11 +561,21 @@ export default {
       { value: "832x640", label: "832x640" },
       { value: "1024x576", label: "1024x576" },
     ];
+    const sotaQualityItems = [
+      { value: "256x256", label: "256x256" },
+      { value: "512x288", label: "512x288" },
+      { value: "640x384", label: "640x384" },
+      { value: "960x544", label: "960x544" },
+    ];
     const durationItems = computed(() =>
-      videoModel.value === "quality" ? qualityDurationItems : fastDurationItems,
+      videoModel.value === "sota"
+        ? fastDurationItems.filter((item) => item.value >= 5 && item.value <= 15)
+        : videoModel.value === "quality" ? qualityDurationItems : fastDurationItems,
     );
     const qualityItems = computed(() =>
-      videoModel.value === "quality" ? qualityQualityItems : fastQualityItems,
+      videoModel.value === "sota"
+        ? sotaQualityItems
+        : videoModel.value === "quality" ? qualityQualityItems : fastQualityItems,
     );
     const isLoading = ref(false);
     const isEnhancingPrompt = ref(false);
@@ -835,6 +836,15 @@ export default {
 
     // Use shared generation store for persistent state across view navigation
     const generation = computed(() => generationStore.state.video);
+    const generationStageLabel = computed(() => {
+      const stage = String(generation.value?.stage || '').toLowerCase();
+      const key = /load|start|prepar|queue/.test(stage) ? 'preparing'
+        : /prompt|keyframe/.test(stage) ? 'encoding'
+        : /decod/.test(stage) ? 'decoding'
+        : /sav|export|final|complete/.test(stage) ? 'saving'
+        : 'generating';
+      return i18n.t(`rc.creation.${key}`);
+    });
 
     // Computed properties for progress display (avoid repeated Math.round in template)
     const generationPctRounded = computed(() =>
@@ -855,8 +865,16 @@ export default {
         )
     );
 
-    const endpointForMode = () => videoModel.value === "quality" ? "/video/quality" : "/video";
-    const pipelineForMode = () => videoModel.value === "quality" ? "video_quality" : "video_fast";
+    const endpointForMode = () => ({
+      fast: "/video",
+      sota: "/video/sota",
+      quality: "/video/quality",
+    })[videoModel.value];
+    const pipelineForMode = () => ({
+      fast: "video_fast",
+      sota: "video_sota",
+      quality: "video_quality",
+    })[videoModel.value];
 
     const normalizeFramesForLTX2 = (frames) => {
       // LTX-2 frames must be 8n+1
@@ -928,8 +946,12 @@ export default {
       return sumPct / tasks.length;
     };
 
+    const trackedDownloadPipelines = new Set();
+    const cancelledDownloadPipelines = new Set();
+    const isCancellingDownloads = ref(false);
+
     const applyPipelineUpdate = (p) => {
-      if (!p) return;
+      if (!p || isCancellingDownloads.value || cancelledDownloadPipelines.has(p.pipeline_id)) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
       const existing = downloads.pipeline?.tasks || {};
@@ -1031,6 +1053,8 @@ export default {
 
     const connectAndSubscribe = (pipelineId, websocketUrl) => {
       if (!pipelineId) return;
+      trackedDownloadPipelines.add(pipelineId);
+      cancelledDownloadPipelines.delete(pipelineId);
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
@@ -1055,6 +1079,7 @@ export default {
     // Pipeline names relevant to this view
     const VIDEO_PIPELINES = [
       "video_fast", "ltx2_video_gguf", "ltx2_video", "ltx_video",
+      "video_sota", "minimax_h3",
       "video_quality", "wan_i2v",
     ];
 
@@ -1076,18 +1101,19 @@ export default {
     };
 
     const cancelCurrentPipeline = async () => {
-      if (!downloads.pipelineId) return;
+      if (isCancellingDownloads.value) return;
+      const pipelineIds = [...trackedDownloadPipelines];
+      if (!pipelineIds.length && downloads.pipelineId) pipelineIds.push(downloads.pipelineId);
+      if (!pipelineIds.length) return;
+      isCancellingDownloads.value = true;
       try {
-        const { data, status } = await axios.post(
-          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`,
-          {},
-          { validateStatus: () => true }
-        );
-        if (status === 200) {
-          downloads.status = "cancelled";
-          downloads.active = false;
-        }
-      } catch {}
+        await cancelLocalDownloads({ pipelineIds, apiBase: API_BASE });
+        pipelineIds.forEach(id => cancelledDownloadPipelines.add(id));
+        trackedDownloadPipelines.clear();
+        downloads.status = "cancelled";
+        downloads.active = false;
+      } catch { downloads.status = "failed"; }
+      finally { isCancellingDownloads.value = false; }
     };
 
     const retryCurrentPipeline = async () => {
@@ -1297,6 +1323,9 @@ export default {
           { validateStatus: () => true }
         );
         if (res.status === 202) {
+          if (Array.isArray(res.data?.pipelines_started)) {
+            res.data.pipelines_started.forEach(id => trackedDownloadPipelines.add(id));
+          }
           const started = Array.isArray(res.data?.pipelines_started)
             ? res.data.pipelines_started
             : [];
@@ -1352,6 +1381,9 @@ export default {
           validateStatus: () => true,
         });
         if (res.status === 202) {
+          if (Array.isArray(res.data?.pipelines_started)) {
+            res.data.pipelines_started.forEach(id => trackedDownloadPipelines.add(id));
+          }
           const pid =
             res.data?.pipeline_id ||
             (Array.isArray(res.data?.pipelines_started) &&
@@ -1387,16 +1419,15 @@ export default {
     const uploadedImageBase64 = ref("");
     const imageAspectRatio = ref("landscape"); // "landscape" or "portrait"
 
+    const useExistingImage = ref(true);
+    const effectiveImage = computed(() => uploadedImageBase64.value ||
+      (useExistingImage.value ? props.existingImageBase64.trim().replace(/^data:image\/[^;]+;base64,/, "") : ""));
+    watch(() => props.existingImageBase64, () => { useExistingImage.value = true; });
+
     const imagePreviewUrl = computed(() => {
-      if (uploadedImageBase64.value)
-        return "data:image/png;base64," + uploadedImageBase64.value;
-      if (props.existingImageBase64)
-        return "data:image/png;base64," + props.existingImageBase64;
-      return "";
+      return effectiveImage.value ? "data:image/png;base64," + effectiveImage.value : "";
     });
-    const hasAnyImage = computed(
-      () => !!(uploadedImageBase64.value || props.existingImageBase64)
-    );
+    const hasAnyImage = computed(() => !!effectiveImage.value);
 
     // Detect aspect ratio from image dimensions
     const detectImageAspectRatio = (base64) => {
@@ -1445,7 +1476,9 @@ export default {
       const promptText = form.prompt.trim();
       if (!promptText || isEnhancingPrompt.value) return;
       isEnhancingPrompt.value = true;
-      const modelName = videoModel.value === "quality" ? "Wan 2.2 image-to-video" : "LTX-2";
+      const modelName = videoModel.value === "quality"
+        ? "Wan 2.2 image-to-video"
+        : videoModel.value === "sota" ? "MiniMax H3" : "LTX-2";
       try {
         const instruction = `Rewrite this video prompt for ${modelName}. Return only the final prompt, no markdown, no commentary. Make it concrete, cinematic, chronological, and compatible with diffusion video generation. Include subject, setting, camera motion, physical motion, lighting, duration pacing, and avoid contradictory actions.\n\nPrompt: ${promptText}`;
         const response = await window.electronAPI.chat(instruction, {
@@ -1464,65 +1497,45 @@ export default {
 
     let _lastRoutingMode = 'local';
 
-    // /video/enhance is gated by the same _ensure_files_present_or_start
-    // pre-flight as other pipelines: when ESRGAN weights are missing
-    // and `auto_download:true`, the first POST returns 202 (download
-    // accepted) without running the enhance. We need to wait for the
-    // download to finish (small files, ~64 MB total) and retry. After
-    // first run, weights are cached and the first POST succeeds.
-    const callEnhanceWithRetry = async (videoPath) => {
-      const body = JSON.stringify({
-        video_path: videoPath,
-        upscale: true,
-        interp_factor: 4,
-        variant: "default",
-        auto_download: true,
-      });
-      for (let attempt = 0; attempt < 12; attempt++) {  // ≤ 60s wait window
-        const r = await fetch(`${API_BASE}/video/enhance`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-        });
-        if (r.status === 202) {
-          await new Promise((res) => setTimeout(res, 5000));
-          continue;
-        }
-        if (!r.ok) {
-          console.warn("[GenerativeVideo] Enhance failed:", r.status, await r.text());
-          return null;
-        }
-        return await r.json();
-      }
-      console.warn("[GenerativeVideo] Enhance timed out waiting for weight download");
-      return null;
-    };
-
-    // Per-inference enhance state. Map<inferenceId, true> while in flight.
     const enhancingIds = ref({});
+    const enhancementStatus = ref({});
+    const enhancementErrors = ref({});
 
     const enhanceInference = async (inference) => {
       const id = inference?.id;
       const data = inference?.answer?.data;
-      if (!id || !data?.video_path || data?.enhanced || enhancingIds.value[id]) return;
+      const sourcePath = videoEnhanceSource(data);
+      if (!id || !sourcePath || enhancingIds.value[id]) return;
       enhancingIds.value = { ...enhancingIds.value, [id]: true };
+      enhancementErrors.value[id] = "";
+      const enhancementStarted = performance.now();
       try {
-        const enh = await callEnhanceWithRetry(data.video_path);
+        const enh = await enhanceVideo({
+          baseUrl: API_BASE, videoPath: sourcePath,
+          onProgress: progress => { enhancementStatus.value[id] = progress; },
+        });
         if (enh?.video_path) {
           const arr = inferences.value.slice();
           const idx = arr.findIndex((i) => i.id === id);
           if (idx >= 0) {
             arr[idx] = {
               ...arr[idx],
+              width: enh.output_size[0], height: enh.output_size[1], fps: enh.output_fps,
               answer: {
                 ...arr[idx].answer,
                 data: {
                   ...arr[idx].answer.data,
                   video_path: enh.video_path,
                   enhanced: true,
-                  enhanced_from: data.video_path,
+                  enhancement_error: null,
+                  enhanced_from: sourcePath,
+                  enhancement_backend: enh.backend,
+                  enhancement_model: enh.model,
+                  enhancement_elapsed_ms: Math.round(performance.now() - enhancementStarted),
                   output_fps: enh.output_fps,
                   output_size: enh.output_size,
+                  width: enh.output_size[0], height: enh.output_size[1], fps: enh.output_fps,
+                  frames: enh.frame_count,
                 },
               },
             };
@@ -1530,6 +1543,8 @@ export default {
             persistInferences([...arr]);
           }
         }
+      } catch (error) {
+        enhancementErrors.value[id] = error?.message || String(error);
       } finally {
         const next = { ...enhancingIds.value };
         delete next[id];
@@ -1546,6 +1561,11 @@ export default {
       _lastRoutingMode = 'local';
 
       const isQuality = videoModel.value === "quality";
+      const isSota = videoModel.value === "sota";
+      if (isSota && !h3TermsAccepted.value) {
+        showH3Terms.value = true;
+        return;
+      }
 
       // Size mappings: [height, width] for landscape orientation
       const ltxSizeMaps = {
@@ -1561,22 +1581,47 @@ export default {
         "832x640": [640, 832],
         "1024x576": [576, 1024],
       };
+      const sotaSizeMaps = {
+        "256x256": [256, 256],
+        "512x288": [288, 512],
+        "640x384": [384, 640],
+        "960x544": [544, 960],
+      };
 
-      const activeMaps = isQuality ? wanSizeMaps : ltxSizeMaps;
-      let [h, w] = activeMaps[quality.value] || activeMaps["480p"];
+      const activeMaps = isSota ? sotaSizeMaps : isQuality ? wanSizeMaps : ltxSizeMaps;
+      let [h, w] = activeMaps[quality.value] || Object.values(activeMaps)[0];
+
+      // Resolve the actual current image, including images passed from other views.
+      if ((mode.value === "i2v" || isQuality) && effectiveImage.value) {
+        await detectImageAspectRatio(effectiveImage.value);
+      }
 
       // For i2v mode, swap dimensions for portrait images
       // For t2v mode, default to landscape
-      if (mode.value === "i2v" && imageAspectRatio.value === "portrait") {
+      if ((mode.value === "i2v" || isQuality) && imageAspectRatio.value === "portrait") {
         [h, w] = [w, h];
       }
 
-      const frameRate = isQuality ? wanFps.value : fps.value;
-      const frames = isQuality
+      const frameRate = isSota ? 24 : isQuality ? wanFps.value : fps.value;
+      const frames = isSota
+        ? (17 * Math.ceil((duration.value * 24 - 5) / 17) + 5)
+        : isQuality
         ? (duration.value * wanFps.value + 1)
         : normalizeFramesForLTX2(frameRate * duration.value + 1);
 
-      const payload = isQuality
+      const payload = isSota
+        ? {
+            prompt: promptText,
+            height: h,
+            width: w,
+            num_frames: frames,
+            num_inference_steps: quality.value === "256x256" ? 4 : 8,
+            // Backend selects the validated sampler for the installed H3 checkpoint.
+            guidance_scale: 1,
+            license_accepted: true,
+            auto_download: true,
+          }
+        : isQuality
         ? {
             prompt: promptText,
             height: h,
@@ -1602,11 +1647,19 @@ export default {
             auto_download: true,
           };
 
+      Object.assign(payload, reusedSampling.value);
       // Include image for i2v mode (LTX-2) or always for Wan2.2 (I2V only)
       if (mode.value === "i2v" || isQuality) {
         payload.image_base64 =
-          uploadedImageBase64.value || (props.existingImageBase64 || "").trim();
+          effectiveImage.value;
       }
+      // Capture before awaiting inference: controls may change while a job runs.
+      const generationSettings = {
+        request: { ...payload }, engine: videoModel.value, mode: mode.value,
+        quality: quality.value, duration: duration.value,
+        autoEnhance: autoEnhance.value, imageName: pickedImageName.value,
+      };
+      const generationPipeline = pipelineForMode();
       const url = `${API_BASE}${endpointForMode()}`;
 
       // Free GPU memory: unload local LLM + clear cached Flask models
@@ -1619,7 +1672,7 @@ export default {
 
       ensureGenerationSocket();
       startGeneration("video"); // Initialize generation state
-      const _genStart = Date.now();
+      const _genStart = performance.now();
 
       const onSuccess = async (response) => {
         // UPDATED: Check for video_url OR video_path
@@ -1627,46 +1680,52 @@ export default {
           let finalData = {
             ...response.data,
             prompt: promptText,
-            mode: mode.value,
-            engine: isQuality ? "quality" : "fast",
-            quality: quality.value,
-            duration: duration.value,
-            fps: isQuality ? wanFps.value : frameRate,
-            frames,
+            mode: generationSettings.mode,
+            engine: isSota ? "sota" : isQuality ? "quality" : "fast",
+            quality: generationSettings.quality,
+            duration: response.data?.duration || generationSettings.duration,
+            fps: frameRate,
+            frames: response.data?.frames || frames,
             width: response.data?.width || w,
             height: response.data?.height || h,
           };
 
-          // Auto-enhance: only meaningful for /video/quality (Wan) since LTX
-          // already produces higher-FPS output. Chain Real-ESRGAN x4 + RIFE 4x
-          // before surfacing the result so the inference card lands enhanced.
-          if (isQuality && autoEnhance.value && finalData.video_path) {
+          // Optional Wan restoration preserves the generated clip's timing.
+          if (isQuality && generationSettings.autoEnhance && finalData.video_path) {
             try {
-              const enh = await callEnhanceWithRetry(finalData.video_path);
+              const enh = await enhanceVideo({ baseUrl: API_BASE, videoPath: finalData.video_path });
               if (enh?.video_path) {
                 finalData = {
                   ...finalData,
                   video_path: enh.video_path,
                   enhanced: true,
                   enhanced_from: response.data.video_path,
+                  enhancement_backend: enh.backend,
+                  enhancement_model: enh.model,
+                  enhancement_elapsed_ms: enh.elapsed_ms,
                   output_fps: enh.output_fps,
                   output_size: enh.output_size,
+                  width: enh.output_size[0], height: enh.output_size[1], fps: enh.output_fps,
+                  frames: enh.frame_count,
                 };
               }
             } catch (e) {
+              finalData.enhancement_error = e?.message || String(e);
               console.warn("[GenerativeVideo] Enhance error:", e?.message || e);
             }
           }
 
-          const elapsedMs = Date.now() - _genStart;
+          const elapsedMs = Math.round(performance.now() - _genStart);
           const newInference = {
             question: promptText,
+            generationSettings,
             answer: { data: finalData },
             id: uuid(),
-            model: isQuality ? 'wan2.2-14b' : 'ltx-2',
-            mode: mode.value,
-            quality: quality.value,
-            duration: duration.value,
+            model: finalData.model || (isSota ? 'minimax-h3' : isQuality ? 'wan2.2-14b' : 'ltx-2'),
+            pipeline: generationPipeline,
+            mode: generationSettings.mode,
+            quality: generationSettings.quality,
+            duration: finalData.duration,
             fps: finalData.output_fps || finalData.fps,
             width: finalData.width,
             height: finalData.height,
@@ -1681,11 +1740,12 @@ export default {
             promptText,
             finalData.video_path || finalData.video_url,
             {
-              pipeline: pipelineForMode(),
-              duration: duration.value,
+              pipeline: generationPipeline,
+              generationSettings,
+              duration: finalData.duration,
               fps: finalData.output_fps || finalData.fps,
-              mode: mode.value,
-              quality: quality.value,
+              mode: generationSettings.mode,
+              quality: generationSettings.quality,
               width: finalData.width,
               height: finalData.height,
               elapsed: elapsedMs / 1000,
@@ -1732,12 +1792,17 @@ export default {
       const height = data.height || data.video_height || inference.height || null;
       const frameRate = data.fps || data.frame_rate || inference.fps || fps.value || wanFps.value;
       const durationValue = data.duration || inference.duration || duration.value;
-      const modelName = inference.model || (videoModel.value === "quality" ? "Wan2.2" : "LTX-2");
-      const pipeline = inference.pipeline || data.pipeline || (videoModel.value === "quality" ? "video_quality" : "video_fast");
+      const modelName = data.model || inference.model || ({
+        fast: "LTX-2",
+        sota: "MiniMax H3",
+        quality: "Wan2.2",
+      })[videoModel.value];
+      const pipeline = inference.pipeline || data.pipeline || pipelineForMode();
 
       inspector.show({
         id: inference.id,
         kind: "video",
+        elapsedMs: generationElapsedMs(inference),
         mediaUrl,
         prompt: promptText,
         negativePrompt: data.negative_prompt || inference.negativePrompt,
@@ -1746,7 +1811,7 @@ export default {
         status: inference.error ? "Error" : "Complete",
         errorMessage: inference.errorMessage || inference.error || "",
         seed: data.seed || inference.seed,
-        steps: data.steps || inference.steps,
+        steps: data.num_inference_steps || data.steps || inference.steps,
         guidanceScale: data.guidance_scale || inference.guidanceScale,
         ...(width && height ? { width, height } : {}),
         networkMode: inference.networkMode || "local",
@@ -1756,12 +1821,16 @@ export default {
         createdAt: inference.createdAt,
         extra: {
           mode: mode.value === "i2v" ? "Image to video" : "Text to video",
-          engine: videoModel.value === "quality" ? "Quality" : "Fast",
+          engine: ({ fast: "Turbo", sota: "SOTA", quality: "Quality" })[videoModel.value],
           quality: data.quality || inference.quality || quality.value,
           duration: durationValue ? `${durationValue}s` : "",
           fps: frameRate ? `${frameRate} fps` : "",
           frames: data.num_frames || data.frames || "",
+          checkpoint: data.checkpoint || "",
+          sampler: data.sampler || "",
+          schedule: data.schedule || "",
           enhanced: data.enhanced ? "Yes" : "No",
+          ...(data.enhancement_elapsed_ms != null ? { "Enhancement time": formatGenerationTime(data.enhancement_elapsed_ms) } : {}),
           videoPath: data.video_path || "",
         },
       });
@@ -1999,13 +2068,13 @@ export default {
       { immediate: true }
     );
 
-    // Re-probe when switching between fast (LTX-2) and quality (Wan2.2)
+    // Re-probe when switching video engines.
     watch(videoModel, (newModel) => {
-      // Reset duration and quality to mode-appropriate defaults.
-      // Quality (Wan) defaults to 640×480 / 5s; fast (LTX-2) goes to
-      // its own 480p preset.
+      reusedSampling.value = {};
       duration.value = 5;
-      quality.value = newModel === "quality" ? "640x480" : "480p";
+      quality.value = newModel === "quality"
+        ? "640x480"
+        : newModel === "sota" ? "960x544" : "480p";
       probeCurrentMode();
       nextTick(setupMasonryGridObserver);
     });
@@ -2019,21 +2088,21 @@ export default {
     // into <GenerativeActions>. Replaces 5 inline Bulma buttons.
     const actionsFor = (inference) => {
       const hasVideo = !!getVideoUrl(inference);
-      const enhanced = !!inference?.answer?.data?.enhanced;
+      const enhanced = inference?.answer?.data?.enhancement_backend === 'seedvr2';
       const enhancing = !!enhancingIds.value[inference.id];
       const minted = !!inference?.nft;
       return [
         { id: "inspect", icon: "info", label: "", variant: "default", title: "Open inspector" },
         { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasVideo, title: "Save video" },
-        { id: "copy",     icon: hasCopy[inference._originalIndex] ? "check" : "content_copy",
-          label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
-          title: "Reuse this prompt", variant: "default" },
+        { id: "copy",     icon: hasCopy.value[inference._originalIndex] ? "check" : "content_copy",
+          label: hasCopy.value[inference._originalIndex] ? "Copied" : "Reuse",
+          title: "Reuse", variant: "default" },
         { id: "enhance",
           icon: enhanced ? "check_circle" : (enhancing ? "progress_activity" : "high_quality"),
-          label: enhanced ? "Enhanced" : (enhancing ? "Enhancing…" : "Upscale ×4"),
+          label: enhanced ? "Enhanced" : (enhancing ? "Enhancing…" : "Enhance"),
           variant: enhanced ? "success" : "default",
           disabled: enhanced || enhancing || !hasVideo,
-          title: enhanced ? "Already enhanced (×4 spatial + 4× temporal)" : "Upscale ×4 + interpolate to 4× framerate" },
+          title: enhanced ? "Enhanced" : "SeedVR2" },
         { id: "mint",
           icon: minted ? "check_circle" : "token",
           label: minted ? "Minted" : "Mint",
@@ -2046,15 +2115,34 @@ export default {
           title: "Remove this result" },
       ];
     };
+    const reuseInference = async (inference) => {
+      const settings = videoReuseSettings(inference);
+      videoModel.value = settings.engine;
+      // The engine watcher resets resolution/duration; restore after it runs.
+      await nextTick();
+      reusedSampling.value = settings.sampling;
+      mode.value = settings.mode;
+      quality.value = settings.quality;
+      duration.value = settings.duration;
+      if (settings.engine === 'quality') wanFps.value = settings.fps;
+      else fps.value = settings.fps;
+      autoEnhance.value = settings.autoEnhance;
+      form.prompt = settings.prompt;
+      useExistingImage.value = false;
+      uploadedImageBase64.value = settings.image;
+      pickedImageName.value = settings.imageName;
+      imageAspectRatio.value = 'landscape';
+      if (settings.image) await detectImageAspectRatio(settings.image);
+      copy(settings.prompt);
+      setCopied(inference._originalIndex);
+      scrollToTop();
+    };
     const handleAction = (id, inference) => {
       switch (id) {
         case "inspect":  openInspector(inference); break;
         case "download": downloadVideo(inference._originalIndex); break;
         case "copy":
-          form.prompt = inference.question;
-          copy(inference.question);
-          setCopied(inference._originalIndex);
-          scrollToTop();
+          reuseInference(inference);
           break;
         case "enhance": enhanceInference(inference); break;
         case "mint":    openMint(inference); break;
@@ -2065,6 +2153,11 @@ export default {
     return {
       mode,
       videoModel,
+      showH3Terms,
+      h3Dialog,
+      generationStageLabel,
+      h3TermsChecked,
+      acceptH3Terms,
       quality,
       duration,
       fps,
@@ -2127,6 +2220,7 @@ export default {
       importHistory,
       prefetchForMode,
       cancelCurrentPipeline,
+      isCancellingDownloads,
       retryCurrentPipeline,
       probeCurrentMode,
       fileUrl,
@@ -2138,15 +2232,61 @@ export default {
       mintTarget,
       openMint,
       onMinted,
-      // Enhance (Real-ESRGAN x4 + RIFE 4x)
+      // Enhance (SeedVR2 detail restoration)
       enhanceInference,
       enhancingIds,
+      enhancementStatus,
+      enhancementErrors,
     };
   },
 };
 </script>
 
 <style scoped>
+.bz-h3-terms {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: var(--bz-space-6);
+  background: var(--bz-scrim);
+}
+
+.bz-h3-terms__panel {
+  width: min(460px, 100%);
+  padding: var(--bz-space-7);
+  border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-md);
+  background: var(--bz-raised);
+  box-shadow: var(--bz-shadow-lg);
+}
+
+.bz-h3-terms__mark {
+  color: var(--bz-purple-300);
+  font-size: 32px;
+}
+
+.bz-h3-terms__panel p {
+  color: var(--bz-fg-muted);
+  line-height: 1.55;
+}
+
+.bz-h3-terms__check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--bz-space-3);
+  margin: var(--bz-space-5) 0 var(--bz-space-3);
+  color: var(--bz-fg);
+}
+
+.bz-h3-terms__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--bz-space-3);
+  margin-top: var(--bz-space-6);
+}
+
 .video-control-stack {
   display: flex;
   flex-direction: column;
@@ -2723,24 +2863,6 @@ ol.chat li {
   background: var(--bz-card);
 }
 
-.history-item .question::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: min(46%, 148px);
-  background:
-    linear-gradient(
-      180deg,
-      transparent 0%,
-      rgba(0, 0, 0, 0.18) 34%,
-      rgba(0, 0, 0, 0.76) 100%
-    );
-  pointer-events: none;
-  z-index: 1;
-}
-
 .generated__video {
   width: 100%;
   height: auto;
@@ -2752,45 +2874,22 @@ ol.chat li {
 }
 
 .history-item .bz-gen-actions {
-  position: absolute;
-  left: 50%;
-  top: var(--bz-space-3);
-  bottom: auto;
-  transform: translateX(-50%);
-  z-index: 2;
-  background: var(--bz-scrim);
-  padding: var(--bz-space-2);
-  border-radius: var(--bz-r-sm);
+  position: static;
+  transform: none;
+  flex-wrap: nowrap;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  background: var(--bz-panel);
+  padding: var(--bz-space-3);
+  border-top: 1px solid var(--bz-border);
   gap: var(--bz-space-2);
-  max-width: calc(100% - var(--bz-space-6));
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
 }
 
 .history-item .bz-gen-actions::-webkit-scrollbar {
-  display: none;
-}
-
-.history-item .bz-gen-actions :deep(.bz-gen-action) {
-  color: var(--bz-on-accent);
-  border-color: rgba(255, 255, 255, 0.24);
-  background: rgba(255, 255, 255, 0.08);
-}
-.history-item .bz-gen-actions :deep(.bz-gen-action--primary) {
-  color: var(--bz-on-accent);
-  border-color: transparent;
-  background: var(--bz-gradient-brand);
-}
-
-.history-item .bz-gen-actions :deep(.bz-gen-action:hover:not(:disabled)) {
-  color: var(--bz-on-accent);
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.42);
-}
-
-.history-item .bz-gen-actions :deep(.bz-gen-action--primary:hover:not(:disabled)) {
-  background: var(--bz-gradient-brand);
-  border-color: transparent;
+  height: 4px;
 }
 
 .bz-img-meta {
@@ -2798,10 +2897,7 @@ ol.chat li {
   align-items: center;
   gap: var(--bz-space-3);
   margin: 0;
-  position: absolute;
-  left: var(--bz-space-3);
-  bottom: var(--bz-space-3);
-  z-index: 2;
+  padding: var(--bz-space-2) var(--bz-space-3);
 }
 .bz-origin-pill {
   display: inline-flex;
@@ -2823,4 +2919,7 @@ ol.chat li {
 .bz-origin-pill--consumer .bz-origin-pill__dot { background: var(--bz-info); }
 .bz-origin-pill--private  { color: var(--bz-purple-300); border-color: var(--bz-border-brand); background: var(--bz-purple-soft); }
 .bz-origin-pill--private .bz-origin-pill__dot { background: var(--bz-purple-300); }
+
+.bz-video-enhance-status { padding: .75rem 1rem; font-size: .875rem; color: var(--bz-muted); }
+.bz-video-enhance-status--error { color: var(--bz-danger, #e67575); }
 </style>

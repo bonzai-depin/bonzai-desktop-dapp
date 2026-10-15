@@ -19,6 +19,7 @@
                 </h1>
             </div>
             <div class="bz-screen-actions">
+                <button v-if="workspaceTab==='generate' && creationMode==='level' && lastGeneratedCode" type="button" class="bz-btn bz-btn--primary" :disabled="editorBusy" @click="openLevelEditor"><span class="material-symbols-outlined" aria-hidden="true">edit</span>{{ $t('levelEditor.open') }}</button>
                 <button
                   v-if="workspaceTab === 'generate'"
                   class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
@@ -33,7 +34,7 @@
                 <button
                   v-if="workspaceTab === 'generate'"
                   class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
-                  :disabled="isLoading"
+                  :disabled="isLoading || !lastGeneratedCode"
                   @click="clearScene"
                   title="Clear scene"
                 >
@@ -52,6 +53,7 @@
               type="button"
               :class="{ 'is-active': workspaceTab === tab.id }"
               :aria-current="workspaceTab === tab.id ? 'page' : undefined"
+              :disabled="editorBusy"
               @click="setWorkspaceTab(tab.id)"
             >
               <span class="material-symbols-outlined" aria-hidden="true">{{ tab.icon }}</span>
@@ -59,6 +61,9 @@
             </button>
           </nav>
 
+          <ExampleLibrary v-if="showExamples && workspaceTab === 'generate'" :initial-kind="creationMode" @select="useExample" />
+          <div class="three-controls-layout" v-if="workspaceTab === 'generate'">
+          <div class="models__activity--payouts">
           <!-- GENERATION PROGRESS -->
           <div v-if="isLoading && workspaceTab === 'generate'" class="three-progress-card">
             <div class="three-progress-card__head">
@@ -122,111 +127,27 @@
             </div>
           </div>
 
-          <!-- Example Prompts -->
-          <div
-            class="examples-panel models__activity--payouts"
-            v-if="showExamples && workspaceTab === 'generate'"
-          >
-            <div class="example-grid">
-              <div
-                v-for="(example, idx) in activeExamples"
-                :key="idx"
-                class="example-card"
-                @click="useExample(example)"
-              >
-                <span class="material-symbols-outlined example-icon" aria-hidden="true">{{ example.icon }}</span>
-                <div class="example-title">{{ example.title }}</div>
-                <div class="example-desc">{{ example.description }}</div>
-              </div>
-            </div>
-          </div>
-          <div v-if="workspaceTab === 'generate'" class="models__activity--payouts">
+
             <div class="columns">
               <div class="column is-12">
-                <!-- DOWNLOAD REQUIRED PANEL -->
-                <div
-                  v-if="needsDownload && !downloads.active"
-                  class="three-notice three-notice--danger"
-                >
-                  <div class="three-notice__body">
-                    <strong class="three-notice__title fira-sans-condensed-black-italic">
-                      Download Required
-                    </strong>
-                    <ul class="download-list">
-                      <li
-                        v-for="model in missingRequiredModels"
-                        :key="model.filename"
-                      >
-                        <span class="material-symbols-outlined" aria-hidden="true">
-                          deployed_code
-                        </span>
-                        <span class="download-item-name">
-                          {{ model.role }}: {{ model.filename }}
-                        </span>
-                        <span class="download-item-size">
-                          {{ model.filesize }}
-                        </span>
-                      </li>
-                    </ul>
-                  </div>
-                  <button
-                    class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
-                    @click="downloadAllModels"
-                  >
-                    <span class="material-symbols-outlined" aria-hidden="true">download</span>
-                    Download All
-                  </button>
-                </div>
-
-                <!-- DOWNLOAD PROGRESS -->
-                <div
-                  v-if="downloads && downloads.active"
-                  class="three-progress-card"
-                >
-                  <div class="three-progress-card__head">
-                    <span class="three-progress-card__title fira-sans-condensed-black-italic">
-                      <BonzaiPulse variant="dot" />
-                      Downloading
-                    </span>
-                    <span class="three-progress-card__pct fira-sans-condensed-black-italic">
-                      {{ Math.round(downloads.total_progress || 0) }}%
-                    </span>
-                  </div>
-                  <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
-                  <div
-                    v-if="downloadTaskList.length"
-                    style="max-height: 180px; overflow: auto"
-                  >
-                    <ul>
-                      <li
-                        v-for="t in downloadTaskList"
-                        :key="t.task_id"
-                        class="is-size-7 columns"
-                        style="text-transform: lowercase"
-                      >
-                        <div class="column has-text-left">
-                          <span class="material-symbols-outlined is-size-6">
-                            deployed_code
-                          </span>
-                          {{ t.filename }} —
-                          <span class="fira-sans-condensed-black-italic">
-                            {{ t.status }}
-                          </span>
-                        </div>
-                        <div
-                          class="column is-2 fira-sans-condensed-black-italic has-text-right"
-                        >
-                          {{ Math.round(t.progress || 0) }}%
-                        </div>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
+                <DownloadRequirement category="3d"
+                  v-if="needsDownload || downloads.active"
+                  :items="missingRequiredModels"
+                  :active="downloads.active"
+                  cancellable
+                  :cancelling="isCancellingDownloads"
+                  @cancel="cancelActiveDownloads"
+                  :progress="downloads.total_progress || downloads.progress || 0"
+                  :tasks="downloadTaskList"
+                  :error="downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''"
+                  @download="downloadAllModels"
+                />
 
                 <div class="bz-3d-mode" role="group" aria-label="Creation type">
                   <button
                     type="button"
                     :class="{ 'is-selected': creationMode === 'object' }"
+                    :aria-pressed="creationMode === 'object'"
                     @click="creationMode = 'object'"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">deployed_code</span>
@@ -235,18 +156,22 @@
                   <button
                     type="button"
                     :class="{ 'is-selected': creationMode === 'level' }"
+                    :aria-pressed="creationMode === 'level'"
                     @click="creationMode = 'level'; objectInputMode = 'prompt'"
                   >
                     <span class="material-symbols-outlined" aria-hidden="true">landscape</span>
                     Level
                   </button>
+                  <button type="button" :class="{ 'is-selected': creationMode === 'game' }" :aria-pressed="creationMode === 'game'" @click="creationMode = 'game'; objectInputMode = 'prompt'">
+                    <span class="material-symbols-outlined" aria-hidden="true">sports_esports</span> Game
+                  </button>
                 </div>
 
                 <div v-if="creationMode === 'object'" class="object-input-mode" role="group" aria-label="Object input">
-                  <button type="button" :class="{ 'is-selected': objectInputMode === 'prompt' }" @click="objectInputMode = 'prompt'; removeReferenceImage()">
+                  <button type="button" :class="{ 'is-selected': objectInputMode === 'prompt' }" :aria-pressed="objectInputMode === 'prompt'" @click="objectInputMode = 'prompt'; removeReferenceImage()">
                     <span class="material-symbols-outlined">text_fields</span>Prompt
                   </button>
-                  <button type="button" :class="{ 'is-selected': objectInputMode === 'image' }" @click="objectInputMode = 'image'">
+                  <button type="button" :class="{ 'is-selected': objectInputMode === 'image' }" :aria-pressed="objectInputMode === 'image'" @click="objectInputMode = 'image'">
                     <span class="material-symbols-outlined">add_photo_alternate</span>Prompt + image
                   </button>
                 </div>
@@ -273,12 +198,14 @@
 
                 <GenerativeInput
                   v-model="form.prompt"
-                  :placeholder="creationMode === 'level'
-                      ? 'Describe a complete playable environment or level...'
+                  :min-height="64"
+                  :max-height="96"
+                  :placeholder="creationMode === 'game' ? 'Describe the game loop, controls and objective...' : creationMode === 'level'
+                      ? 'Describe a traversable environment or level...'
                     : objectInputMode === 'image'
                       ? 'Describe how the object should be reconstructed or styled...'
                       : 'Describe a 3D object...'"
-                  :submit-label="creationMode === 'level' ? 'Generate level' : objectInputMode === 'image' ? 'Reconstruct object' : 'Generate object'"
+                  :submit-label="creationMode === 'game' ? 'Generate game' : creationMode === 'level' ? 'Generate level' : objectInputMode === 'image' ? 'Reconstruct object' : 'Generate object'"
                   running-label="Building"
                   :running="isLoading"
                   :disabled="!canSubmitWithAccess || !isModel"
@@ -318,7 +245,16 @@
           </div>
 
           <!-- ENVIRONMENT CONTROLS -->
-          <div v-if="workspaceTab === 'generate'" class="environment-controls bz-3d-environment mt-5">
+          <section v-if="workspaceTab === 'generate'" class="bz-3d-advanced mt-5" aria-label="Scene controls">
+            <div class="environment-controls bz-3d-environment">
+            <div class="bz-3d-control-group">
+              <div class="bz-3d-control-head"><span class="material-symbols-outlined">view_in_ar</span><span>Presentation</span></div>
+              <div class="bz-3d-selector" role="group" aria-label="Presentation">
+                <button v-for="mode in ['studio', 'environment']" :key="mode" type="button" class="bz-3d-option" :class="{ 'is-selected': presentation === mode }" :aria-pressed="presentation === mode" @click="presentation = mode">
+                  {{ mode === 'studio' ? 'Studio' : 'Environment' }}
+                </button>
+              </div>
+            </div>
             <div class="bz-3d-control-group bz-3d-control-group--lighting">
               <div class="bz-3d-control-head">
                 <span class="material-symbols-outlined">wb_sunny</span>
@@ -330,6 +266,7 @@
                   :key="preset.id"
                   class="bz-3d-option"
                   :class="{ 'is-selected': currentTime === preset.id }"
+                  :aria-pressed="currentTime === preset.id"
                   @click="setTimeOfDay(preset.id)"
                   :title="preset.label"
                 >
@@ -350,7 +287,8 @@
                   :key="weather.id"
                   class="bz-3d-option"
                   :class="{ 'is-selected': currentWeather === weather.id }"
-                  @click="setWeather(weather.id)"
+                  :aria-pressed="currentWeather === weather.id"
+                  @click="presentation = 'environment'; setWeather(weather.id)"
                   :title="weather.label"
                 >
                   <span class="material-symbols-outlined">{{ weather.class }}</span>
@@ -370,6 +308,7 @@
                   :key="preset.id"
                   class="bz-3d-option"
                   :class="{ 'is-selected': currentPerformance === preset.id }"
+                  :aria-pressed="currentPerformance === preset.id"
                   @click="setPerformance(preset.id)"
                   :title="preset.label"
                 >
@@ -378,26 +317,35 @@
                 </button>
               </div>
             </div>
-          </div>
+            </div>
+          </section>
 
+          </div>
           <!-- VIEWER -->
           <div class="viewer-container" :class="{ 'is-build': workspaceTab === 'build' }">
             <section v-if="workspaceTab === 'build' && buildEditorReady && !isPlaytesting" class="build-director" aria-label="Level editor" @click.stop>
               <div class="build-director__levels">
-                <input v-model="gameProject.title" class="build-director__title" aria-label="Game title" placeholder="Untitled game" />
+                <input v-model="gameProject.title" :disabled="editorBusy" class="build-director__title" aria-label="Game title" placeholder="Untitled game" />
                 <div class="build-level-tabs" role="tablist" aria-label="Levels">
-                  <button v-for="(level, index) in orderedProjectLevels" :key="level.id" type="button" :class="{ 'is-active': forgeLevelId === level.id }" @click="selectBuildLevel(level.id)">
+                  <button v-for="(level, index) in orderedProjectLevels" :key="level.id" type="button" :class="{ 'is-active': forgeLevelId === level.id }" :disabled="editorBusy" @click="selectBuildLevel(level.id)">
                     <span class="build-level-tabs__index">{{ index + 1 }}</span>{{ level.title }}
                   </button>
-                  <button class="build-level-tabs__add" type="button" title="Generate a level" @click="createLevelFromBuild"><span class="material-symbols-outlined">add</span></button>
+                  <button class="build-level-tabs__add" type="button" title="Generate a level" :disabled="editorBusy" @click="createLevelFromBuild"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
                 </div>
                 <div v-if="activeLevel" class="build-director__order build-director__actions">
-                  <button type="button" title="Move level earlier" @click="moveActiveLevel(-1)"><span class="material-symbols-outlined">arrow_back</span></button>
-                  <button type="button" title="Move level later" @click="moveActiveLevel(1)"><span class="material-symbols-outlined">arrow_forward</span></button>
-                  <button type="button" title="Remove level" @click="removeActiveLevel"><span class="material-symbols-outlined">close</span></button>
-                  <button class="build-action" type="button" :disabled="!canTokenizeProject" @click="startPlaytest"><span class="material-symbols-outlined">play_arrow</span>Playtest</button>
-                  <button class="build-action is-publish" type="button" :disabled="!canTokenizeProject" @click="tokenizeGameProject"><span class="material-symbols-outlined">publish</span>Publish</button>
+                  <button type="button" title="Move level earlier" :disabled="editorBusy" @click="moveActiveLevel(-1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span></button>
+                  <button type="button" title="Move level later" :disabled="editorBusy" @click="moveActiveLevel(1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button>
+                  <button type="button" title="Remove level" :disabled="editorBusy" @click="removeActiveLevel"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
+                  <button class="build-action" type="button" :disabled="editorBusy || !canTokenizeProject" @click="startPlaytest"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>Playtest</button>
+                  <button class="build-action is-publish" type="button" :disabled="editorBusy || !canTokenizeProject" @click="tokenizeGameProject"><span class="material-symbols-outlined" aria-hidden="true">publish</span>Publish</button>
                 </div>
+              </div>
+              <details class="build-gameplay"><summary>{{ $t('levelEditor.gameplay') }}</summary>
+              <div v-if="activeLevel" class="build-marker-fields">
+                <fieldset v-for="type in ['start','finish']" :key="type" :disabled="editorBusy">
+                  <legend>{{ $t(`levelEditor.${type}`) }}</legend>
+                  <label v-for="axis in ['x','y','z']" :key="axis">{{ axis.toUpperCase() }}<input type="number" step="0.25" :aria-label="`${$t(`levelEditor.${type}`)} ${axis.toUpperCase()}`" :value="(type==='start'?activeLevel.entry:activeLevel.exits[0]?.position)?.[axis] || 0" @change="commitLevelMarker(type,axis,$event.target.value)" /></label>
+                </fieldset>
               </div>
               <form class="gameplay-command" @submit.prevent="updateGameplayWithAI">
                 <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
@@ -411,9 +359,9 @@
               <div v-if="activeLevel" class="clear-conditions">
                 <span class="clear-conditions__label">Clear when</span>
                 <button v-for="condition in activeLevel.clearConditions || []" :key="condition.id" type="button" :title="`Remove: ${condition.label}`" @click="deleteClearCondition(condition.id)">
-                  <span class="material-symbols-outlined">{{ clearConditionIcon(condition.type) }}</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">{{ clearConditionIcon(condition.type) }}</span>
                   {{ condition.label }}
-                  <span class="material-symbols-outlined">close</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">close</span>
                 </button>
                 <span v-if="!activeLevel.clearConditions?.length" class="clear-conditions__empty">Ask BonzAI to define the win condition.</span>
                 <span v-else-if="activeLevel.clearConditions.length > 1" class="clear-conditions__mode">{{ activeLevel.clearMode === 'any' ? 'Any' : 'All' }}</span>
@@ -421,51 +369,22 @@
               <div class="gameplay-suggestions" aria-label="Gameplay suggestions">
                 <button v-for="suggestion in gameplaySuggestions" :key="suggestion" type="button" @click="gameplayInstruction = suggestion">{{ suggestion }}</button>
               </div>
+              </details>
             </section>
             <section v-if="workspaceTab === 'build' && !buildEditorReady" class="build-workflow" aria-label="Start game build" @click.stop>
-              <template v-if="canStartBuildWorkflow">
-                <div class="build-workflow__step">
-                  <span>1</span><strong>Select a level</strong>
-                  <div class="build-workflow__levels">
-                    <button v-for="level in historyLevelLibrary" :key="level.libraryId" type="button" :class="{ 'is-selected': selectedBuildLevelLibraryId === level.libraryId }" @click="selectedBuildLevelLibraryId = level.libraryId">
-                      <img v-if="level.thumbnail" :src="level.thumbnail" :alt="level.title" />
-                      <span v-else class="material-symbols-outlined">landscape</span>
-                      <small>{{ level.title }}</small>
-                    </button>
-                  </div>
+              <div class="level-entry">
+                <h2 class="bz-h2">{{ $t('levelEditor.chooseLevel') }}</h2>
+                <div class="build-workflow__levels">
+                  <button v-for="level in historyLevelLibrary" :key="level.libraryId" type="button" @click="useBuildAsset(level)"><img v-if="level.thumbnail" :src="level.thumbnail" alt=""/><span>{{level.title}}</span></button>
                 </div>
-                <div class="build-workflow__step">
-                  <span>2</span><strong>Select objects</strong>
-                  <div class="build-workflow__objects">
-                    <button v-for="asset in historyObjectLibrary" :key="asset.libraryId" type="button" :class="{ 'is-selected': selectedBuildObjectLibraryIds.includes(asset.libraryId) }" :title="asset.title" :aria-label="asset.title" @click="toggleBuildObject(asset.libraryId)">
-                      <img v-if="asset.thumbnail" :src="asset.thumbnail" alt="" />
-                      <span v-else class="material-symbols-outlined">deployed_code</span>
-                    </button>
-                  </div>
-                </div>
-                <form class="build-workflow__step build-workflow__gameplay" @submit.prevent="startBuildWorkflow">
-                  <span>3</span><strong>Describe gameplay</strong>
-                  <textarea v-model="gameplayInstruction" rows="3" placeholder="Make the selected object the player. Collect three crystals while avoiding traps..." aria-label="Describe initial gameplay"></textarea>
-                  <button type="submit" :disabled="!buildWorkflowComplete || gameplayUpdating">
-                    <BonzaiPulse v-if="gameplayUpdating" variant="dot" />
-                    <span v-else class="material-symbols-outlined">auto_awesome</span>
-                    {{ gameplayUpdating ? 'Building' : 'Build game' }}
-                  </button>
-                </form>
-              </template>
-              <div v-else class="build-workflow__blocked">
-                <strong>Generate a level and an object first</strong>
-                <div>
-                  <button type="button" :class="{ 'is-ready': historyLevelLibrary.length }" @click="createLevelFromBuild"><span class="material-symbols-outlined">{{ historyLevelLibrary.length ? 'check' : 'add' }}</span>Level</button>
-                  <button type="button" :class="{ 'is-ready': historyObjectLibrary.length }" @click="createObjectFromBuild"><span class="material-symbols-outlined">{{ historyObjectLibrary.length ? 'check' : 'add' }}</span>Object</button>
-                </div>
+                <button class="bz-btn bz-btn--primary" type="button" @click="createLevelFromBuild">{{ $t('levelEditor.newLevel') }}</button>
               </div>
             </section>
             <div v-if="workspaceTab === 'build' && isPlaytesting" class="playtest-bar" @click.stop>
-              <button type="button" @click="stopPlaytest"><span class="material-symbols-outlined">arrow_back</span>Edit</button>
+              <button type="button" @click="stopPlaytest"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>Edit</button>
               <strong>{{ gameProject.title }}</strong>
               <select v-model="agentCompanionId" aria-label="Companion player"><option v-for="companion in agentCompanions" :key="companion.id" :value="companion.id">{{ companion.name }}</option></select>
-              <button type="button" @click="startCompanionPlay"><span class="material-symbols-outlined">smart_toy</span>Let {{ agentCompanionName }} play</button>
+              <button type="button" @click="startCompanionPlay"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>Let {{ agentCompanionName }} play</button>
             </div>
             <div
               class="viewer-wrapper"
@@ -476,59 +395,43 @@
             >
               <ThreeViewer
                 ref="threeViewer"
+                :edit-mode="workspaceTab==='build' && !isPlaytesting"
                 :enablePhysics="enablePhysics"
                 :initial-time-of-day="currentTime"
                 :initial-weather="currentWeather"
+                :presentation="workspaceTab === 'build' || creationMode !== 'object' ? 'environment' : presentation"
                 @generation-success="handleSuccess"
                 @generation-error="handleError"
               />
               <p v-if="workspaceTab === 'build' && projectStatus" class="build-status">{{ projectStatus }}</p>
             </div>
 
-            <aside v-if="workspaceTab === 'build' && buildEditorReady && !isPlaytesting && selectedPlacement" class="build-inspector" aria-label="Selection inspector" @click.stop>
-                <div class="build-inspector__head">
-                  <div><span>Selected object</span><strong>{{ selectedPlacementAsset?.title || 'Object' }}</strong></div>
-                  <button class="bz-iconbtn" type="button" title="Remove object" @click="deleteSelectedPlacement"><span class="material-symbols-outlined">delete</span></button>
-                </div>
-                <label class="build-field"><span>Role</span><select v-model="selectedPlacement.role" @change="commitSelectedPlacement"><option v-for="role in objectRoles" :key="role.id" :value="role.id">{{ role.label }}</option></select></label>
-                <div class="build-transform">
-                  <span>Position</span>
-                  <label v-for="axis in ['x','y','z']" :key="axis"><small>{{ axis.toUpperCase() }}</small><input v-model.number="selectedPlacement.position[axis]" type="number" step="0.25" @change="commitSelectedPlacement" /></label>
-                </div>
-                <div class="build-transform">
-                  <span>Scale</span>
-                  <label v-for="axis in ['x','y','z']" :key="axis"><small>{{ axis.toUpperCase() }}</small><input v-model.number="selectedPlacement.scale[axis]" type="number" step="0.1" min="0.1" @change="commitSelectedPlacement" /></label>
-                </div>
-                <div class="build-connections">
-                  <strong>Interaction</strong>
-                  <select v-model="interactionType" aria-label="Interaction behavior">
-                    <option value="activates">Activates</option>
-                    <option value="damages">Damages</option>
-                    <option value="unlocks">Unlocks</option>
-                    <option value="collects">Collects</option>
-                  </select>
-                  <select v-model="interactionTargetId" aria-label="Interaction target">
-                    <option value="">Choose target</option>
-                    <option v-for="item in activeLevelPlacements.filter(item => item.id !== selectedPlacement.id)" :key="item.id" :value="item.id">{{ placementLabel(item) }}</option>
-                  </select>
-                  <button class="bz-btn bz-btn--ghost bz-btn--sm" type="button" :disabled="!interactionTargetId" @click="addForgeInteraction">Add interaction</button>
-                  <div v-for="interaction in selectedPlacementInteractions" :key="interaction.id" class="build-connection-row">
-                    <span>{{ interaction.type }}</span><span>{{ placementLabelById(interaction.targetPlacementId) }}</span>
-                  </div>
-                </div>
-            </aside>
-
-            <div v-if="workspaceTab === 'build' && buildEditorReady && !isPlaytesting" class="build-palette" aria-label="Object palette">
-              <div class="build-palette__head"><strong>Objects</strong><span>{{ buildObjectLibrary.length }}</span></div>
-              <div class="build-palette__items">
-                <button v-for="asset in buildObjectLibrary" :key="asset.libraryId" type="button" :class="{ 'is-selected': pendingPaletteItemId === asset.libraryId }" :title="asset.title" :aria-label="asset.title" draggable="true" @dragstart="beginHistoryDrag(asset, $event)" @dragend="draggedObjectId = ''" @click="selectPaletteAsset(asset)">
-                  <img v-if="asset.thumbnail" :src="asset.thumbnail" alt="" />
-                  <span v-else class="material-symbols-outlined">deployed_code</span>
-                </button>
-                <button class="build-palette__add" type="button" title="Generate object" aria-label="Generate object" @click="createObjectFromBuild"><span class="material-symbols-outlined">add</span></button>
-              </div>
-            </div>
           </div>
+          <DownloadRequirement v-if="workspaceTab==='build' && buildEditorReady && !isPlaytesting && (needsDownload || downloads.active)"
+            category="3d" :items="missingRequiredModels" :active="downloads.active" cancellable
+            :cancelling="isCancellingDownloads" @cancel="cancelActiveDownloads"
+            :progress="downloads.total_progress || downloads.progress || 0" :tasks="downloadTaskList"
+            :error="downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''" @download="downloadAllModels" />
+          <LevelEditor v-if="workspaceTab==='build' && buildEditorReady && !isPlaytesting" ref="levelEditor"
+            :viewer="threeViewer" :revision="editorRevision" :assets="buildObjectLibrary" :busy="editorBusy"
+            :model-ready="!needsDownload && !downloads.active"
+            :generating="editingBusy" @cancel-generation="cancelLevelRegeneration"
+            :can-undo="editUndo.length>0" :can-redo="editRedo.length>0" :message="projectStatus"
+            @selection="selectedPlacementId=$event?.target?.placementId || ''" @transform="commitLevelTransform"
+            @place="placeEditorAsset" @regenerate="regenerateLevelSelection" @save="saveEditedLevel"
+            @undo="undoLevelEdit" @redo="redoLevelEdit">
+            <template #selection>
+              <details v-if="selectedPlacement" class="build-gameplay"><summary>{{ $t('levelEditor.gameplay') }}</summary>
+                <label class="build-field"><span>{{ $t('levelEditor.role') }}</span><select :value="selectedPlacement.role" :disabled="editorBusy" @change="commitSelectedPlacement($event.target.value)"><option v-for="role in objectRoles" :key="role.id" :value="role.id">{{role.label}}</option></select></label>
+                <label class="build-field"><span>{{ $t('levelEditor.interaction') }}</span><select v-model="interactionType" :disabled="editorBusy"><option v-for="type in ['activates','damages','unlocks','collects']" :key="type" :value="type">{{ $t(`levelEditor.${type}`) }}</option></select></label>
+                <label class="build-field"><span>{{ $t('levelEditor.target') }}</span><select v-model="interactionTargetId" :disabled="editorBusy"><option value="">{{ $t('levelEditor.select') }}</option><option v-for="placement in activeLevelPlacements.filter(item=>item.id!==selectedPlacementId)" :key="placement.id" :value="placement.id">{{ placementLabel(placement) }}</option></select></label>
+                <button type="button" class="bz-btn bz-btn--ghost" :disabled="editorBusy || !interactionTargetId" @click="addForgeInteraction">{{ $t('levelEditor.link') }}</button>
+                <p v-for="interaction in selectedPlacementInteractions" :key="interaction.id">{{ $t(`levelEditor.${interaction.type}`) }} · {{ placementLabelById(interaction.targetPlacementId) }}</p>
+
+              </details>
+              <button v-if="selectedPlacement" type="button" class="bz-btn bz-btn--ghost" :disabled="editorBusy" @click="deleteSelectedPlacement">{{ $t('levelEditor.remove') }}</button>
+            </template>
+          </LevelEditor>
 
           <!-- GENERATION HISTORY HEADER -->
           <div v-if="objectInferences.length > 0 && workspaceTab === 'generate'" class="level mb-4 mt-5">
@@ -577,6 +480,8 @@
               </div>
             </div>
           </div>
+
+          <p v-if="glbExportStatus" class="mb-4" role="status">{{ glbExportStatus }}</p>
 
           <!-- History -->
           <div v-if="objectInferences.length > 0 && workspaceTab === 'generate'">
@@ -637,6 +542,17 @@
                     </div>
                   </div>
 
+                  <p v-if="item.qualityStatus" class="mb-2" role="status">
+                    {{ item.qualityStatus === 'reviewed' ? 'Visual review passed' : item.qualityStatus === 'needs-refinement' ? 'Draft · review suggestions' : 'Draft · not visually reviewed' }}
+                  </p>
+                  <details v-if="item.assemblyReport?.errors?.length || item.fidelityReview?.defects?.length || item.fidelityReview?.passes?.some(pass => pass.verdict === 'correction-failed')" class="mb-3">
+                    <summary>{{ 'Review details' }}</summary>
+                    <ul class="mt-2 pl-5">
+                      <li v-for="(issue, idx) in (item.assemblyReport?.errors || [])" :key="'assembly-' + idx">{{ issue }}</li>
+                      <li v-for="(defect, idx) in (item.fidelityReview?.defects || [])" :key="idx">{{ defect }}</li>
+                      <li v-for="(pass, idx) in (item.fidelityReview?.passes || []).filter(pass => pass.verdict === 'correction-failed')" :key="'failure-' + idx">{{ 'Automatic correction could not be applied.' }} {{ pass.raw }}</li>
+                    </ul>
+                  </details>
                   <div v-if="!item.success" class="error-note">
                     <span class="material-symbols-outlined mr-1">error</span>
                     {{ item.notes }}
@@ -733,7 +649,9 @@
     @minted="onMinted"
   />
 
-  <Transition name="bz-image-toast">
+  <Teleport to="body">
+    <div v-if="pendingDelete" class="bz-confirmation-backdrop" aria-hidden="true"></div>
+    <Transition name="bz-image-toast">
     <div
       v-if="pendingDelete"
       class="bz-image-delete-toast"
@@ -742,19 +660,21 @@
     >
       <span class="material-symbols-outlined" aria-hidden="true">delete</span>
       <span class="bz-image-delete-toast__body">
-        {{ pendingDelete.all ? 'Clear 3D history?' : 'Delete this object?' }}
+        {{ pendingDelete.scene ? $t('rc.creation.clearSceneConfirm') : pendingDelete.all ? 'Clear 3D history?' : 'Delete this object?' }}
       </span>
       <button type="button" class="bz-image-delete-toast__ghost" @click="dismissDeleteToast">
         Cancel
       </button>
       <button type="button" class="bz-image-delete-toast__danger" @click="confirmDeleteObject">
-        {{ pendingDelete.all ? 'Clear' : 'Delete' }}
+        {{ pendingDelete.scene || pendingDelete.all ? $t('common.clear') : $t('common.delete') }}
       </button>
     </div>
   </Transition>
+  </Teleport>
 </template>
 
 <script>
+import { reportOperation } from "../stores/activityStore.js";
 import {
   ref,
   reactive,
@@ -765,8 +685,20 @@ import {
   nextTick,
 } from "vue";
 import ThreeViewer from "./ThreeViewer.vue";
+import { useI18n } from "../i18n/index.js";
+import LevelEditor from './gen3d/LevelEditor.vue';
+import { compileLevelPreview, setLevelPartEdit, sourceForBuilder, assetBuilder } from './gen3d/levelEditing.js';
+import { recordedMintGeneration } from "../services/mintValidation.js";
 import MintModal from "./MintModal.vue";
+import ExampleLibrary from "./gen3d/ExampleLibrary.vue";
+import { parse as parseJavaScript } from 'acorn';
+import { requestAssemblyPlan, repairAssembly, assemblyInstructions, inspectAssembly } from './gen3d/assemblyContract.js';
+import { aggregateViewReviews, resizeReviewImage, visualReviewPrompt, parseVisualReview, passesVisualReview, reviewSceneQuality } from "./gen3d/visualQuality.js";
+import { renderWithRecovery, awaitSceneConstruction } from "./gen3d/runtimeRecovery.js";
+import { exportCodeGLB, GLB_MIME } from "./gen3d/glbExport.js";
 import BonzaiPulse from "./BonzaiPulse.vue";
+import { cancelLocalDownloads } from '../services/downloadCancellation.js';
+import DownloadRequirement from "./DownloadRequirement.vue";
 import BzCloseButton from "./BzCloseButton.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
@@ -774,6 +706,7 @@ import { requestOpenNetworkModal } from "../services/level.service.js";
 import { fetchNFT3DCode } from "../services/contentNFT.service.js";
 import { inspector as generationInspector } from "../services/generationInspector.service.js";
 import { resolveLLM } from "../skills/flagship.js";
+import { DEFAULT_3D_LLM_ID, DEFAULT_3D_LLM_TIER } from "../config/modelDefaults.js";
 import { validateGeneratedGameCode } from "./gen3d/gameRuntime.js";
 import {
   applyGameplayPatch,
@@ -782,6 +715,7 @@ import {
   addObjectAsset,
   buildGameCollectibleManifest,
   compileGameProject,
+  importLevelSnapshot,
   createGameProject,
   moveLevel,
   placeObject,
@@ -804,12 +738,11 @@ import {
   inferenceStore,
 } from "../stores/inferenceStore";
 
-// Prompt-injection reference: CHEATSHEET.md (concise) not SKILL.md (full).
-// Full SKILL.md files (500-660 lines each) ballooned the code-gen prompt to
-// ~2300 lines and drove prefill times past 13 minutes on small LLMs; the
-// cheatsheets are 32-46 lines each and cover the same API surface.
+// Bounded runtime API references, selected by subject rather than whole-file keyword overlap.
+import { sceneDesignSignature } from './gen3d/designSignature.js';
+import { createCreativeDirection, creativeDirectionPrompt } from './gen3d/creativeDirection.js';
+import { validateSceneBody, sceneContract, buildScenePrompt, buildSceneRevision, selectThreeReferences, buildSceneRepair, applySceneEdits } from './gen3d/generationContract.js';
 const skillFiles = import.meta.glob('../skills/threejs/*/CHEATSHEET.md', { as: 'raw', eager: true });
-const recipeFiles = import.meta.glob('../skills/threejs/recipes/*.md', { as: 'raw', eager: true });
 
 // Server URL for downloads
 const SERVER_URL =
@@ -856,8 +789,14 @@ function indent(text, spaces = 4) {
     .join("\n");
 }
 
-function normalizeLLMCode(code) {
+export function normalizeLLMCode(code) {
   let out = String(code);
+  // Reopening history must normalize the authored body, not redeclare the host
+  // (notably its seeded Math). Keep the same seed and source across round trips.
+  if (/^\s*export default async function generate\(params\)/.test(out)) {
+    const savedBody=out.match(/^[ \t]*\/\/ ── USER CODE START ──\r?\n([\s\S]*?)^[ \t]*\/\/ ── USER CODE END ──/m);
+    if(savedBody)out=savedBody[1].replace(/^  /gm,'').trim();
+  }
 
   // STEP 0: Strip reasoning/thinking tags (Qwen 3.5, GLM, Nanbeige, etc.)
   out = out.replace(/<think>[\s\S]*?<\/think>\s*/gi, "");
@@ -866,6 +805,8 @@ function normalizeLLMCode(code) {
   out = out.replace(/<\|thinking\|>[\s\S]*$/gi, ""); // unclosed thinking tag
   // Strip any /nothink or /think directives echoed back by the model
   out = out.replace(/^\s*\/no?think\s*/i, "");
+
+  out = out.trim();
 
   // STEP 1: Extract code from markdown fences (handles text before/after fences)
   const fenceMatch = out.match(/```(?:javascript|js|typescript|ts)?\s*\n([\s\S]*?)```/i);
@@ -1161,6 +1102,7 @@ function normalizeLLMCode(code) {
     "HemisphereLight",
     "Group",
     "Mesh",
+    "InstancedMesh",
     "Points",
     "Sprite",
     "Object3D",
@@ -1242,17 +1184,8 @@ function normalizeLLMCode(code) {
   out = out.replace(/root\.add\s*\(\s*new\s+THREE\.AmbientLight\([^)]*\)\s*\)\s*;?/g, "");
   out = out.replace(/root\.add\s*\(\s*new\s+THREE\.DirectionalLight\([^)]*\)\s*\)\s*;?/g, "");
 
-  // STEP 6: Balance braces
-  let openBraces = (out.match(/\{/g) || []).length;
-  let closeBraces = (out.match(/\}/g) || []).length;
-  while (closeBraces < openBraces) {
-    out += "\n}";
-    closeBraces++;
-  }
-  while (closeBraces > openBraces && out.trimEnd().endsWith("}")) {
-    out = out.trimEnd().slice(0, -1);
-    closeBraces--;
-  }
+  // Let the JavaScript parser diagnose incomplete output; braces in strings,
+  // comments and shader literals must never be treated as program structure.
 
   // STEP 6.5: Fix common LLM code errors
 
@@ -1297,12 +1230,14 @@ function normalizeLLMCode(code) {
   // STEP 8: Wrap in module structure with pre-built material library
   // No try/catch here — errors must propagate so applyModuleCode can report them.
   // ThreeViewer.applyModuleCode has its own error handling for real execution.
-  return `
+  return awaitSceneConstruction(`
 export default async function generate(params) {
   const THREE = params.THREE;
+  const Math = params.sceneMath || globalThis.Math;
   const scene = params.scene;
   const root = new THREE.Group();
   root.name = "GeneratedObject";
+  root.userData.generationContract = 2;
   const addUpdateCallback = params.addUpdateCallback;
   const setObjectInfo = params.setObjectInfo;
   // Post-FX toggles — defensive no-ops if the host doesn't provide them
@@ -1339,7 +1274,7 @@ ${indent(out, 2)}
   scene.add(root);
   return root;
 }
-`;
+`);
 }
 
 function stripJSComments(code) {
@@ -1409,26 +1344,7 @@ function stripJSComments(code) {
 }
 
 function validateRenderableUserCode(userCode) {
-  const executable = stripJSComments(String(userCode || "")).trim();
-
-  if (!executable) {
-    return { ok: false, reason: "LLM produced comments/prose but no executable JavaScript" };
-  }
-
-  if (!/root\.add\s*\(/.test(executable)) {
-    return { ok: false, reason: "Generated code never adds visible objects to root" };
-  }
-
-  const createsRenderable =
-    /\bnew\s+THREE\.(?:Mesh|Group|Points|Sprite|Line|LineSegments|InstancedMesh)\b/.test(executable) ||
-    /\b(?:FLUID|FX|CELESTIAL)\./.test(executable) ||
-    /\bH\.(?:dust|bubbles|sparks|smoke|label|text|ribbon|trail)\s*\(/.test(executable);
-
-  if (!createsRenderable) {
-    return { ok: false, reason: "Generated code does not create any renderable geometry or engine object" };
-  }
-
-  return { ok: true, reason: "" };
+  return validateSceneBody(userCode);
 }
 
 function buildReferenceFallbackCode(imageDataUrl) {
@@ -1510,29 +1426,30 @@ function modelFromResolved(resolved, role) {
 
 export default {
   name: "Generative3D",
-  components: { ThreeViewer, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
+  components: { LevelEditor, ExampleLibrary, DownloadRequirement, ThreeViewer, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
   setup() {
+    const {t} = useI18n();
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
 
     const openMint = (item) => {
-      // Always mint the Three.js code — the interactive 3D viewer is the
-      // collectible, never a static screenshot.
+      // Minting prepares a GLB and retains this source plus the interactive viewer.
       mintTarget.value = {
         inferenceType: "object",
         inferenceId: item.id,
         content: item.code,
-        contentType: "model/gltf+json",
+        contentType: "application/javascript",
         prompt: item.prompt,
-        generation: {
+        generation: recordedMintGeneration(item, {
           type: `bonzai-${item.assetKind || item.mode || "object"}`,
           assetKind: item.assetKind || item.mode || "object",
-          model: currentModel.value.modelname || "three-js",
+          model: item.model || "",
           timestamp: item.timestamp,
           threeCode: item.code,
           projectManifest: item.projectManifest || null,
+          levelProject: item.levelProject || null,
           tokensPerSecond: item.tokensPerSecond || null,
-        },
+        }),
       };
     };
 
@@ -1714,6 +1631,12 @@ export default {
     const interactionType = ref("activates");
     const draggedObjectId = ref("");
     const selectedPlacementId = ref("");
+    const levelEditor = ref(null);
+    const editorRevision = ref(0);
+    const editingBusy = ref(false);
+    const buildingPreview = ref(false);
+    const editUndo = ref([]), editRedo = ref([]);
+    let editCancelled = false, editDisposed = false;
     const pendingPaletteItemId = ref("");
     const buildTool = ref("select");
     const buildTools = [
@@ -1723,12 +1646,10 @@ export default {
     ];
     const gameplayInstruction = ref("");
     const gameplayUpdating = ref(false);
+    const editorBusy = computed(() => editingBusy.value || buildingPreview.value || gameplayUpdating.value || isLoading.value);
     const selectedBuildLevelLibraryId = ref("");
     const selectedBuildObjectLibraryIds = ref([]);
-    const buildEditorReady = ref(
-      gameProject.value.levels.length > 0 &&
-      gameProject.value.levels.some((level) => level.placements?.length && level.clearConditions?.length),
-    );
+    const buildEditorReady = ref(gameProject.value.levels.length > 0);
     const isPlaytesting = ref(false);
     const gameplaySuggestions = [
       "Collect 5 relics before time runs out",
@@ -1781,6 +1702,7 @@ export default {
           code: item.code,
           thumbnail: historyThumbnail(item),
           projectManifest: item.projectManifest || null,
+          levelProject: item.levelProject || null,
           source: "history",
         }));
       const inferenceIds = new Set(history.map((item) => item.inferenceId));
@@ -1790,6 +1712,7 @@ export default {
           libraryId: `project:${item.id}`,
           projectAssetId: item.id,
           kind: "object",
+          elapsedMs: item.elapsedMs,
           title: item.title,
           code: item.code,
           thumbnail: item.thumbnail,
@@ -1828,12 +1751,32 @@ export default {
     const selectedPlacementInteractions = computed(() => gameProject.value.gameplay.interactions.filter(
       (interaction) => interaction.sourcePlacementId === selectedPlacementId.value,
     ));
+    const presentation = ref(localStorage.getItem('bonzai-3d-presentation') === 'environment' ? 'environment' : 'studio');
+    watch(presentation, value => localStorage.setItem('bonzai-3d-presentation', value));
     const currentTime = ref(localStorage.getItem("bonzai-3d-time") || "day");
     const currentWeather = ref(localStorage.getItem("bonzai-3d-weather") || "sunny");
     const lightIntensity = ref(1.0);
     const loadedModelFilename = ref(null);
     const form = reactive({ prompt: "" });
     const lastGeneratedCode = ref('');
+    const lastGeneratedBrief = ref('');
+    const lastAssemblyContract = ref(null);
+    const assertAssembly = (viewer, allowedErrors = 0) => {
+      if (!lastAssemblyContract.value) return null;
+      const report=inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value);
+      if(report.errors.length>allowedErrors){const error=new Error(report.errors.join('\n'));error.name='AssemblyValidationError';throw error;}
+      return report;
+    };
+    const assemblyPlanningDiagnostics = ref([]);
+    const planAssembly = async (brief,mode,reference='') => {
+      const result=await requestAssemblyPlan({brief,mode,reference,generate:async prompt=>{
+        await window.electronAPI.resetChat();
+        const response=await callLLM(prompt,{maxTokens:3200,temperature:.2,thoughtTokens:0,enableThinking:false},({tokenCount,elapsedMs})=>{stream.tokenCount=tokenCount;stream.elapsedMs=elapsedMs;});
+        return stripThinkBlocks(response.text);
+      }});
+      assemblyPlanningDiagnostics.value=result.diagnostics;
+      return result.plan;
+    };
     const refinePrompt = ref('');
     const downloadProgress = ref(0);
     const modelAvailability = reactive({
@@ -2108,9 +2051,22 @@ export default {
     // Computed: needs download if either required LLM model is missing
     const needsDownload = computed(() => !isModel.value);
 
+    let downloadRun = 0;
+    const isCancellingDownloads = ref(false);
+    const cancelActiveDownloads = async () => {
+      isCancellingDownloads.value = true;
+      downloadRun++;
+      try {
+        await cancelLocalDownloads({ filenames: Object.values(downloads.pipeline?.tasks || {}).filter(task => !['completed', 'failed', 'cancelled'].includes(task.status)).map(task => task.filename) });
+        downloads.status = 'cancelled';
+        downloads.active = false;
+      } catch { downloads.status = 'failed'; }
+      finally { isCancellingDownloads.value = false; }
+    };
     // Download required models (LLM)
     const downloadAllModels = async () => {
-      if (downloads.active) return;
+      if (downloads.active || isCancellingDownloads.value) return;
+      const run = ++downloadRun;
 
       downloads.active = true;
       downloads.status = "downloading";
@@ -2120,6 +2076,7 @@ export default {
 
       try {
         for (const model of missingRequiredModels.value) {
+          if (run !== downloadRun) return;
           const llmTaskId = `llm-${model.filename}`;
           downloads.pipeline.tasks[llmTaskId] = {
             task_id: llmTaskId,
@@ -2130,7 +2087,7 @@ export default {
           };
 
           const llmProgressHandler = (e, data) => {
-            if (data.filename === model.filename) {
+            if (run === downloadRun && data.filename === model.filename) {
               const pct = Math.round(data.percent * 100);
               downloads.pipeline.tasks[llmTaskId].progress = pct;
               updateTotalProgress();
@@ -2143,6 +2100,7 @@ export default {
             model.filename,
           );
 
+          if (run !== downloadRun) return;
           if (success) {
             downloads.pipeline.tasks[llmTaskId].status = "completed";
             downloads.pipeline.tasks[llmTaskId].progress = 100;
@@ -2163,9 +2121,11 @@ export default {
           downloads.status = "failed";
         }
       } catch (e) {
+        if (run !== downloadRun) return;
         console.error("Download error:", e);
         downloads.status = "failed";
       } finally {
+        if (run !== downloadRun) return;
         if (downloads.status === "completed") {
           await new Promise((r) => setTimeout(r, 1500));
         }
@@ -2397,10 +2357,10 @@ export default {
     // - Planner rewrites the prompt into a geometric blueprint.
     // - Codegen writes the actual Three.js object.
     const plannerModel = computed(() =>
-      modelFromResolved(resolveLLM("qwen3_5_9b_deepseek_v4_flash", "q4"), "Planner"),
+      modelFromResolved(resolveLLM(DEFAULT_3D_LLM_ID, DEFAULT_3D_LLM_TIER), "Planner"),
     );
     const codeModel = computed(() =>
-      modelFromResolved(resolveLLM("qwen3_5_9b_deepseek_v4_flash", "q4"), "Codegen"),
+      modelFromResolved(resolveLLM(DEFAULT_3D_LLM_ID, DEFAULT_3D_LLM_TIER), "Codegen"),
     );
     const requiredModels = computed(() => [plannerModel.value, codeModel.value]);
     const requiredModelFiles = computed(() => {
@@ -2426,143 +2386,6 @@ export default {
       ),
     );
     const isModel = computed(() => missingRequiredModels.value.length === 0);
-
-    const levelExamples = ref([
-      {
-        kind: "level",
-        icon: "filter_hdr",
-        title: "Sky Garden Odyssey",
-        description: "Vertical collectathon across floating castle gardens",
-        prompt: "Create a complete 3D platforming level set across floating castle gardens above a bright cloud sea. Build three readable vertical routes, hidden terraces, moving vine platforms, bounce flowers, 30 collectible sun seeds, five secret alcoves and a summit gate that opens after 20 seeds. Include recovery platforms, a start area, checkpoint, final goal, win state and fall reset. Reward curiosity without using existing game characters or worlds.",
-      },
-      {
-        kind: "level",
-        icon: "temple_buddhist",
-        title: "Temple Gauntlet",
-        description: "Precision corridors, chase beats and collapsing paths",
-        prompt: "Create a complete 3D platforming level inside a monumental jungle temple. Alternate precision corridors with two wide spectacle chambers, collapsing stone paths, swinging hazards, wall jumps, a short rolling-boulder chase and three optional relic rooms. Establish a safe tutorial beat, escalating checkpoints, a clear exit idol, win and failure states, and lighting cues that make the critical route instantly readable.",
-      },
-      {
-        kind: "level",
-        icon: "paragliding",
-        title: "Glider Archipelago",
-        description: "Floating islands linked by glide routes and wind rings",
-        prompt: "Create a complete 3D platforming level across a colorful archipelago of floating islands. The player crosses gaps by gliding through wind rings, catching thermal columns and choosing risky shortcuts. Include altitude recovery, moving airships, 20 sky emblems, two hidden caves, a mid-level checkpoint, a landing challenge and a lighthouse finish. Define controls, scoring, fall reset and a clear win state.",
-      },
-      {
-        kind: "level",
-        icon: "public",
-        title: "Gravity Lanterns",
-        description: "Small worlds connected by shifting gravity",
-        prompt: "Create a complete 3D platforming level made of six lantern-lit planetoids with local gravity. Let the player leap between curved surfaces, rotate gravity at marked shrines and use orbiting platforms to reach the final moon gate. Include a gentle first planet, escalating traversal puzzles, 18 collectible sparks, checkpoints, direction cues and robust recovery after missed jumps.",
-      },
-      {
-        kind: "level",
-        icon: "nightlight",
-        title: "Moonlit Rooftops",
-        description: "Stealth platforming above a living city",
-        prompt: "Create a complete nighttime 3D platforming level across tiled rooftops, courtyards and bell towers. Combine precise jumps with patrol spotlights, shadow zones, distraction bells and alternate high and low routes. Add six hidden letters, three checkpoints, a timed final escape and a glowing train platform as the goal. Make sightlines and safe routes immediately legible.",
-      },
-      {
-        kind: "level",
-        icon: "speed",
-        title: "Velocity Foundry",
-        description: "Rails, wall runs and momentum-driven shortcuts",
-        prompt: "Create a complete high-speed 3D platforming level through a luminous industrial foundry. Use acceleration lanes, grind rails, wall runs, launch pads, rotating turbines and branching shortcuts that reward momentum. Add a readable beginner route, advanced time-trial route, checkpoint gates, split timing, fail recovery and a dramatic reactor-core finish.",
-      },
-      {
-        kind: "level",
-        icon: "psychology",
-        title: "Dream Workshop",
-        description: "A surreal scale-shifting puzzle playground",
-        prompt: "Create a complete surreal 3D platforming level inside a dream workshop where the player changes scale to navigate giant desks, miniature machinery and folding paper architecture. Build puzzles around size, perspective and movable props, with five memorable chambers, optional imagination fragments, checkpoints and a final clockwork door that establishes the win state.",
-      },
-      {
-        kind: "level",
-        icon: "timer",
-        title: "Clockwork Course",
-        description: "A replayable obstacle course built for mastery",
-        prompt: "Create a complete replayable 3D obstacle-course level in a clockwork arena. Use moving platforms, swinging pendulums, rotating beams, timed doors, seesaws and a final vertical sprint. Provide bronze, silver and gold target times, checkpoint toggles, instant reset, a clearly framed finish bell and clean silhouettes that keep every hazard readable at speed.",
-      },
-    ]);
-
-    const examplePrompts = ref([
-      {
-        icon: "settings",
-        title: "Clockwork Heart",
-        description: "Beating mechanism with blood-glass chambers",
-        prompt: "An anatomical clockwork heart resting on a brass plinth — the outer shell is a semi-transparent glass dome with subtle iridescent sheen, through which four pulsing chambers of deep red translucent liquid can be seen slowly beating to an unseen rhythm. Around the equator of the heart runs a crown of ornate brass gear teeth, rotating just perceptibly. Delicate gold arterial tubes arc out of the top and loop back down into the heart's sides. The plinth is a polished marble slab with rune-like gold filigree. The whole piece is haloed in a faint crimson glow, crimson mist trailing from the base, fine gold flecks drifting around it.",
-      },
-      {
-        icon: "foundation",
-        title: "Gem Pedestal",
-        description: "Faceted gems resting on a marble pedestal",
-        prompt: "A circular white-marble pedestal with a mirror-polished gold rim, atop which rest a small pile of faceted gemstones — ruby, sapphire, emerald, topaz, amethyst — each cut into distinct sharp facets that catch highlights and cast deep shadows where they meet the stone. The marble surface shows subtle grey veining running through it, polished to catch a faint reflection of the gems sitting on it. Gold dust motes drift in the air; a low mist curls at the base; each gem glows faintly from within, bright enough that the highlights bloom softly. Museum jewel-display lighting — single warm key light plus cool ambient fill from above.",
-      },
-      {
-        icon: "water_drop",
-        title: "Cascading Fountain",
-        description: "Tiered basins with reflective falling water",
-        prompt: "An ornate three-tier stone fountain with water cascading from the smallest top basin down through the middle and into the wide bottom pool. Each basin is a shallow carved bowl with a gold inlay rim — the stone is deeply pitted and weathered, with moss darkening every crevice. Water inside each tier is a true reflective surface mirroring the scene above and showing real caustic patterns rippling across the pool floor below. Slender water columns pour between tiers, breaking into droplets and a fine mist where they impact. A central stone pillar connects the tiers with small gold spouts at each rim — the gold polished smooth so it catches and reflects the environment sharply, in contrast to the matte weathered stone.",
-      },
-      {
-        icon: "blur_circular",
-        title: "Seer's Orb",
-        description: "Crystal ball with cosmic nebula interior",
-        prompt: "A large crystal-ball seer's orb cradled on an ornate bronze stand with three curved claw feet, each foot detailed with relief carvings that catch deep shadow between the toes. Inside the clear glass sphere, a deep purple cosmic nebula swirls hypnotically — stars, gas clouds and violet light drifting in real time, bright enough that the interior glow bleeds through the glass and blooms softly around the surface. A violet halo surrounds the outer sphere. Three amethyst gemstones are inset into the stand's base with faceted cuts that glint sharply. The bronze is polished along the claws and weathered-dark in the recesses, so the environment reflection plays across the smooth parts while the crevices sit in cool shadow. Purple mist curls at the foot; cyan sparks slowly orbit the orb.",
-      },
-      {
-        icon: "shield",
-        title: "Holographic Shield",
-        description: "Kite shield with live hologram interface",
-        prompt: "A floating kite-shaped shield with a live holographic emerald-green interface projected across its front face — animated scanlines, flickering tactical data, a traveling signal wave bright enough to bloom off the plate. The shield body is deeply-etched brushed steel with relief circuit channels running vertically, the recesses dark with AO, the raised lands catching sharp highlights. Gold stud rivets at each corner and dark leather straps on the back. A translucent green force-field dome surrounds the entire shield, pulsing gently. A slow-rotating chrome ring orbits around it and shows a real reflection of the hologram on its inner face. Tiny green sparks orbit at varying radii.",
-      },
-      {
-        icon: "science",
-        title: "Alchemist's Flask",
-        description: "Bubbling flask on gimbal with pouring potion",
-        prompt: "An Erlenmeyer flask of clear glass mounted on a three-axis polished-brass gimbal, tilted at an angle and pouring a glowing emerald-green potion into a waiting glass goblet below. The glass has true refractive transmission so the potion colour bends through the walls; the potion itself glows bright enough that the pour-stream halo blooms softly. The potion surface ripples gently and fine bubbles rise through the liquid. Each brass ring carries etched rune-bands in its recessed channel, dark with shadow against the polished outer edge, and the rings rotate on their own axes at slightly different speeds. The pouring stream is a continuous column of flowing liquid with droplet accents, splashing outward where it strikes the goblet. The whole assembly sits on a dark oak plinth with subtle green mist hanging in the air.",
-      },
-      {
-        icon: "blur_circular",
-        title: "Levitating Crystal",
-        description: "Sharp amethyst spire orbiting a base platform",
-        prompt: "A large sharply-faceted amethyst crystal levitating upright above a low obsidian platform deeply inscribed with gold rune glyphs — the glyphs recessed enough that the channels carry cool AO shadow while the gold catches highlights. The crystal slowly rotates and bobs gently on an unseen current; each facet catches the environment reflection differently, with a violet inner glow bright enough to bloom around the sharp edges. Eight smaller floating gems — sapphires, emeralds, rubies — orbit the platform on a horizontal ring, each catching the central crystal's violet glow. A purple fresnel halo surrounds the main crystal and a faint translucent hemisphere dome of energy covers the platform. Violet mist drifts at the base; tiny violet sparks rise steadily.",
-      },
-      {
-        icon: "local_fire_department",
-        title: "Lava Obelisk",
-        description: "Tall obsidian pillar with flowing lava veins",
-        prompt: "An imposing black obsidian obelisk standing on a rough rocky platform — the obelisk's four faces deeply pitted and weathered, every crack and crater catching contact shadow. Glowing orange-red lava veins run down each face in jagged lightning-bolt patterns, visibly flowing and pulsing with heat, hot enough that the bright cores bloom into the air around them. A gold band wraps the top third and catches sharp environment reflections across its polished surface. The rocky platform below is shattered in layered slabs that cast soft shadows into each other. Ember particles rise continuously from the base, warm red mist pools at its feet and orange caustic light dances on the ground around it. Dust motes catch the lava's glow.",
-      },
-      {
-        icon: "auto_awesome",
-        title: "Starforge Anvil",
-        description: "Glowing anvil with stellar metal being hammered",
-        prompt: "A blacksmith's anvil forged from dark meteorite iron with a pitted, star-textured surface, mounted on a worn stone pillar whose erosion has left deep channels and crevices down its sides. A stellar ingot of molten star-metal lies glowing on the anvil's top — intense amber-orange, surface churning with heat, bright enough that the whole ingot blooms and casts warm rim-light onto the anvil. A heavy leather-gripped steel hammer hovers above, rising and falling in a slow rhythm and striking the ingot on each beat. On every impact a burst of golden splash particles erupts. The anvil and stone pillar sit in a pool of deep contact shadow where they meet the ground. Hundreds of golden sparks drift continuously in the surrounding air.",
-      },
-      {
-        icon: "egg_alt",
-        title: "Iridescent Dragon Egg",
-        description: "Cracking egg on a nest of embers",
-        prompt: "A large dragon egg — ovoid, taller than wide — with a tightly-overlapping iridescent scaled shell that shifts colors from bronze to violet to teal as the viewing angle changes. Each scale is raised enough to cast soft shadow on the one beneath, so the full surface reads as real relief rather than a flat texture. Three jagged thermal cracks run across the shell, lava-orange glow bleeding through from within — bright enough that the molten glow blooms around the cracks. The egg rests in a woven nest of twisted branches interspersed with glowing embers; the weave tangles deeply, with each branch-crossover dark in shadow. Caustic orange light patterns the ground beneath the nest, warm mist rises and hundreds of ember sparks drift upward continuously. A subtle orange halo surrounds the egg.",
-      },
-      {
-        icon: "balance",
-        title: "Balance of Fates",
-        description: "Golden scales tipping with gemstone weights",
-        prompt: "An ornate golden balance scale standing on a white-marble plinth with grey veining that the polish catches as faint reflection. The central column is intricately carved with fluted relief and leaf motifs — the recesses dark with contact shadow, the raised surfaces catching sharp highlights. Two shallow gold dishes hang from gold chain links at either end of a horizontal crossbeam; each chain link sits in soft shadow against the next. The left dish holds three ruby octahedron gemstones that glow bright enough to bloom around their sharp edges, the right dish is empty. The crossbeam tilts slowly back and forth as if weighing invisible fates. Amber mist pools below the plinth; fine gold dust drifts around the piece with sparks orbiting the gems.",
-      },
-      {
-        icon: "hardware",
-        title: "Rune Sword Altar",
-        description: "Sword embedded in stone with magical aura",
-        prompt: "A broadsword driven vertically halfway into a rough-hewn stone altar. The altar's surface is scarred with chisel marks and shallow weathering, each groove catching deep shadow. The blade is polished brushed steel engraved with cyan runic script running down its length — the runes cut deeply into the steel so they hold shadow, and the glyphs themselves glow bright cyan, hot enough to bloom softly across the blade. The crossguard and fittings are mirror-polished gold catching sharp environment reflections; the grip is dark wrapped leather with thread-line detail; a faceted sapphire pommel glints at the end. A cyan dissolve-pulse ripples across the blade every few seconds. A translucent cyan energy hemisphere covers the altar. A circular rune inscription glows on the ground around the altar base. Cyan mist curls upward, cyan sparks rise continuously, and faint caustic light patterns the surrounding ground.",
-      },
-    ]);
-    const activeExamples = computed(() =>
-      creationMode.value === "level" ? levelExamples.value : examplePrompts.value,
-    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // PROMPT BUILDERS
@@ -2596,13 +2419,31 @@ export default {
       return body?.response || body?.text || body?.analysis || "";
     };
 
-    const runVisionAnalysis = async (imageDataUrl, prompt, maxTokens = 1400) => {
+    const runVisionAnalysis = async (imageDataUrl, prompt, maxTokens = 1400, { localReview = false } = {}) => {
+      if (localReview) imageDataUrl = await resizeReviewImage(imageDataUrl);
       const payload = {
         image_base64: String(imageDataUrl).replace(/^data:image\/[^;]+;base64,/, ""),
         prompt,
         max_tokens: maxTokens,
-        auto_download: true,
+        auto_download: !localReview,
+        ...(localReview ? { review: true } : {}),
       };
+      if (localReview) {
+        // Use the shared local vision pool directly; no Flask startup, remote
+        // routing or implicit model download is needed for quality review.
+        if (window.electronAPI?.analyzeLocalImage) {
+          const result=await window.electronAPI.analyzeLocalImage(payload);
+          if(result?.error)throw new Error(result.error);
+          const response=typeof result==='string'?result:visionResponseText(result);
+          if(!response)throw new Error("Local visual review returned no assessment");
+          return response;
+        }
+        const { data } = await axios.post("http://127.0.0.1:3002/api/vision/analyze", payload, { timeout: 600000 });
+        if (data?.error) throw new Error(data.error);
+        const response = visionResponseText(data);
+        if (!response) throw new Error("Local visual review returned no assessment");
+        return response;
+      }
       const requestVision = async () => {
         const routed = await routeFlaskRequest("/vision/analyze", payload);
         return routed.handled
@@ -2692,25 +2533,6 @@ Use exact 3D vocabulary. Do not invent unseen details. This analysis will be pas
       return canvas.toDataURL("image/jpeg", 0.9);
     };
 
-    const reviewReferenceFidelity = async (referenceDataUrl, renderDataUrl) => {
-      const comparison = await makeReferenceComparison(referenceDataUrl, renderDataUrl);
-      const raw = await runVisionAnalysis(
-        comparison,
-        `The left half is a reference image and the right half is its procedural Three.js reconstruction.
-Evaluate only visible fidelity. Return strict JSON:
-{"score":0.0,"silhouette":0.0,"proportions":0.0,"materials":0.0,"criticalDetails":0.0,"verdict":"pass|refine","defects":["short concrete defect"],"strengths":["short concrete strength"]}
-Scores range from 0 to 1. Do not reward atmosphere when geometry is wrong.`,
-        700,
-      );
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) return { score: null, verdict: "unparsed", raw, comparison };
-      try {
-        return { ...JSON.parse(match[0]), raw, comparison };
-      } catch {
-        return { score: null, verdict: "unparsed", raw, comparison };
-      }
-    };
-
     // PROMPT ENHANCER — decompose vague descriptions into geometric blueprints
     // ═══════════════════════════════════════════════════════════════════════
     const buildEnhancePrompt = (userText, referenceAnalysis = "") => {
@@ -2737,89 +2559,28 @@ Define: genre and camera; player fantasy and controls; one complete gameplay loo
 
 FORMAT: 180-280 words, dense prose, no markdown, no bullets, no <think>.`;
       }
+      if (creationMode.value === 'level') {
+        return `/no_think
+Plan this Three.js environment in 350-550 words: ${userText}
+Specify world-scale dimensions in metres and an authored, finished environment. Plan foreground/midground/background, walkable routes, entrances, vertical changes and sightlines to distinct landmarks. For each landmark define its silhouette, secondary construction (thickness, supports, openings, bevels, trims) and a few meaningful close-up details. Plan terrain transitions and grounded props instead of a flat plane with scattered placeholder primitives. Provide physical material values, texture tiling in metres and relief scales; await MAT.scanned supplies bundled 2K photographic PBR across masonry, wood, metal, cloth, leather, stone, terrain and more, while MAT.surface provides procedural stone/concrete/wood/metal/fabric/ground/sand PBR, and H.bevelBox provides reusable bevelled geometry. H.bevelPanel(contour,{depth,bevel,holes}) builds real openings; H.latheProfile([[radius,height],...]) builds turned sections; H.worldUV(geometry,tileSizeInMetres) gives consistent texture scale across differently sized modules. Use instancing and shared modules to keep detail within 160 draw calls/600k triangles. Identify coplanar surfaces and avoid z-fighting. Preserve the user's theme and an explicitly minimal/low-poly style. Do not shrink a level to a 1.5-unit object or add unrequested gameplay. Output only a concrete construction plan.`;
+      }
       return `/no_think
-You are a 3D production designer. Return a compact ASSEMBLY BLUEPRINT for the exact object below. Do not reason. Do not write a thinking process.
-
-OBJECT: "${userText}"
-
-For every visible sub-part, include: SHAPE, MATERIAL with hex color for solids, Y range, size/proportion, and function. Use y=0 as the ground origin. Total height must be 0.3-1.5 units. Parts on top must start at the exact top Y of the part below. Liquids inside containers must remain inside the container.
-
-ARCHETYPE TAGS (optional, recommended) — when the scene is one of the
-recognized archetypes below, OPEN the blueprint with the matching tag on its
-own line. This is a STYLE HINT for the codegen, not a contract — the engine
-guarantees correct water rendering regardless of how the codegen builds the
-geometry, so don't agonize over picking a tag. Use one only if it cleanly
-fits.
-
-  [ARCHETYPE: TIERED_FOUNTAIN, tiers=N, baseRadius=R]
-      Multi-tier / cascading water feature.
-  [ARCHETYPE: SINGLE_BASIN, radius=R]
-      One bowl + rim + water surface.
-  [ARCHETYPE: LIQUID_VESSEL, container=<vesselName>, fill=<color>, level=0.0–1.0]
-      Liquid inside a flask / goblet / cauldron.
-  [ARCHETYPE: OPEN_WATER, footprint=N×N]
-      Pool / lake / moat / scrying basin.
-  [ARCHETYPE: STREAM, from=<part>, to=<part>]
-      Pouring / falling water column.
-
-LIQUID RULE. Whenever a sub-part is water, potion, blood,
-acid, oil, lava, mercury, or any other liquid, describe ONLY:
-  - Which container or footprint holds it
-  - The semantic type (water | lava | potion | blood | oil | mercury | acid)
-  - Optional color tint and fill level
-Do NOT write "BaseColor #xxxxxx Roughness 0.1 Metalness 0.1 Transparency 0.8"
-for a liquid. The engine has dedicated shaders per liquid type and will pick
-the correct optics; spec'ing material parameters yourself produces a flat
-dull disc when the codegen translates it literally.
-
-FORMAT: One or two archetype tag lines if useful, then ONE dense paragraph of 120-220 words. No bullets. No markdown. No code. No <think>.
-
-RULES:
-- Stay EXACTLY faithful to the user's intent — do not change the subject or add unrelated elements
-- DO add structural sub-parts the object would realistically have (a bottle needs a cork, a sword needs a pommel)
-- Every color must have a hex code (except liquids — see LIQUID RULE). If user didn't specify, pick vivid realistic ones
-- Output ONLY the blueprint.`;
+You are a procedural 3D production designer. Plan the exact asset below before implementation.
+BRIEF: ${userText}
+Return a structured assembly plan of 350-550 words with these sections:
+First identify the object's operating principle and indispensable components. Choose one coherent mechanism consistent with the request; never combine incompatible mechanisms just to add details. For example, a battery lantern needs a compact battery base, a visible LED/light chamber and protective glazing; a fuel lantern needs a reservoir below a burner and a clear chimney, not a solid opaque cylinder through the illuminated chamber. Keep variations subordinate to function and recognizability.
+1. Silhouette and dimensions: proportions, ground y=0, longest dimension about 1.5 normalized scene units (not a claim about real-world size).
+2. Named parts: resolve actual cross-sections and negative spaces, not a stack of rough placeholders. Give a compact part table with parent, geometry strategy (lathe profile, bevelled extrusion, tube, instancing, custom mesh), dimensions, position and exact attachment/contact points.
+State material families only in this plan; do not invent scanned material IDs. The coding step receives the actual catalogue shortlist.
+3. Materials: For realistic surfaces use await MAT.scanned(id,{normalStrength:.5,aoIntensity:.65}); the runtime supplies a relevant shortlist from its extensive local photographic PBR catalogue. Plan metre-based UVs and use untinted scanned albedo. Other materials: physical palette, roughness, metalness, transparent thickness, procedural texture scale and small surface details. MAT.surface(kind,{color,repeat,relief,seed}) supplies matched local color/bump/roughness maps for stone, concrete, wood, metal, fabric, ground and sand. H.bevelBox supplies rounded boxes, H.latheProfile takes [radius,height] arrays for hollow/turned cross-sections, H.bevelPanel takes [x,y] contours and holes for bevelled plates/arches, and H.worldUV bakes metre-based texture coordinates; use shaped profiles for identity-critical forms. Specify where these actually improve construction. No emission unless the material emits light.
+4. Motion and interaction: only when appropriate to the subject; specify how moving parts remain connected. Water has visible flow, contained surfaces and realistic landing points.
+5. Construction checks: list visible acceptance criteria and exact contact points for the code generator to verify. Distinctive construction details, repeated geometry to instance, essential engine techniques and sensible laptop performance budget.
+Prioritize faithful geometry, restrained materials and a readable silhouette. No mandatory magical decoration or post effects. Explicit user instructions override all inferred choices. Output the plan only, not code or reasoning.`;
     };
 
     // ═══════════════════════════════════════════════════════════════════════
-    const buildObjectPrompt = (userText) => {
-      const keywords = userText.toLowerCase().split(/[\s,.-]+/).filter(w => w.length > 3);
-
-      // Score ALL skill files by keyword relevance to the prompt
-      const scored = [];
-      for (const [path, content] of Object.entries(skillFiles)) {
-        // Skip loaders (not useful for procedural scenes). postprocessing
-        // cheatsheet IS useful now — it tells the LLM the setters exist
-        // and warns against hand-rolling a composer.
-        if (path.includes('threejs-loaders')) continue;
-        let score = 0;
-        const lc = content.toLowerCase();
-        for (const w of keywords) { if (lc.includes(w)) score++; }
-        // Core skills always get a base score
-        if (path.includes('threejs-geometry')) score += 5;
-        if (path.includes('threejs-materials')) score += 4;
-        if (path.includes('threejs-animation')) score += 3;
-        scored.push({ path, content, score });
-      }
-      scored.sort((a, b) => b.score - a.score);
-
-      // Select best matching recipe hint (if any)
-      let recipeHint = '';
-      const recipeScored = [];
-      for (const [path, content] of Object.entries(recipeFiles)) {
-        let score = 0;
-        const lc = content.toLowerCase();
-        for (const w of keywords) { if (lc.includes(w)) score++; }
-        if (score > 0) recipeScored.push({ content, score });
-      }
-      recipeScored.sort((a, b) => b.score - a.score);
-      if (recipeScored.length > 0 && recipeScored[0].score >= 1) {
-        recipeHint = recipeScored[0].content;
-      }
-
-      // Take top 3 most relevant skill files
-      const selectedSkills = scored.slice(0, 3).map(s => s.content);
-      const skillsContext = selectedSkills.join("\n\n---\n\n");
+    const buildObjectPrompt = (userText, originalBrief = userText, variation = "") => {
+      const skillsContext = selectThreeReferences(`${originalBrief}\n${userText}`, skillFiles);
 
       const gameContract = creationMode.value === "game" ? `
 
@@ -2867,12 +2628,14 @@ This is reference reconstruction, not concept art.
 
 CRITICAL: Output ONLY raw JavaScript. No reasoning, prose, markdown fences, imports or requestAnimationFrame. Start with setObjectInfo().
 
+ORIGINAL BRIEF:
+${originalBrief}
+
 RECONSTRUCTION BLUEPRINT:
 ${userText}
 ${reconstructionContract}
 
-Pre-declared runtime:
-THREE, root, MAT, TEX, SHADER, FLUID, H, P, FX, CELESTIAL, addUpdateCallback, setObjectInfo, setAO, setBloom, setColorGrade, setDoF.
+${sceneContract('object')}
 
 Implementation requirements:
 1. Establish a nodes object and build the complete named component hierarchy.
@@ -2883,846 +2646,20 @@ Implementation requirements:
 6. Attach every child physically to its parent. Ground the object at y=0.
 7. Add sockets and simple collider descriptors for movable or interactive parts.
 8. Set root.userData.sculptRuntime = { nodes, sockets, colliders }.
-9. Use the existing cinematic baseline. Add animation or FX only when visible evidence or user intent requires it.
+9. Use the existing neutral presentation. Add animation or FX only when visible evidence or user intent requires it.
 10. Keep total object height between 0.3 and 1.5 units and return a valid root.
 
 Relevant Three.js references:
 ${skillsContext}
 
-${recipeHint ? `Relevant material/form recipe:\n${recipeHint}` : ""}
-
 OUTPUT RAW JAVASCRIPT:`;
       }
 
-      return `${detectArchetypeHint(userText)}You are an expert Three.js developer building a bespoke scene
-from the task below. Match the app's AAA quality bar, but do not copy
-the default scene.
-
-CRITICAL: Output ONLY raw JavaScript code. No thinking, no reasoning,
-no <think> tags, no explanation, no markdown fences. Start with
-setObjectInfo() immediately.
-
-TASK: "${userText}"
-${gameContract}
-${reconstructionContract}
-
-═══ QUALITY CONTRACT — NON-NEGOTIABLE ═══
-The orrery reference uses EVERY subsystem of the engine. Your output
-must reach the same coverage. Before returning code, verify it contains
-AT MINIMUM each of the following. Count your actual calls — do not
-substitute one for another.
-
-  [A] Hero silhouette: 1 dominant shape + 2-3 supporting forms.
-  [B] FROM MAT LIBRARY: at least 4 named material presets
-      (MAT.gold, MAT.brass, MAT.obsidian, MAT.ruby, MAT.glass, etc.)
-      — NOT four hand-rolled MeshPhysicalMaterials.
-  [C] FROM TEX LIBRARY: at least 2 procedural textures
-      (TEX.stone, TEX.marble, TEX.wood, TEX.runes, TEX.circuit, etc.)
-  [D] FROM SHADER LIBRARY: at least 2 animated shaders
-      (SHADER.nebula, fresnel, hologram, lava, caustics, portal,
-       flowParticles, dissolve, iridescence).
-  [E] FROM FX LIBRARY: at least 2 scene-level FX
-      (FX.withGlow on the emissive hero AND FX.godRayCone radiating
-       from a bright light source. Add FX.batch for any scatter > 10
-       meshes.)
-  [F] FROM CELESTIAL LIBRARY: 1 starfield + 1 nebulaCloud dome
-      (unless the scene is explicitly indoors — interiors use
-       H.dust + SHADER.flowParticles as the atmosphere layer instead.)
-  [G] PHYSICS: await P.init(); at least 1 static collider +
-      1 dynamic body (gems, debris, leaves, coins, etc.).
-  [H] POST OVERRIDE: setLensFlare({ position, strength: 0.3-0.6,
-      occlusionTest: true }) on any scene with a dominant emissive
-      source (core, ingot, lava, crystal, orb, lantern).
-  [I] ANIMATION: addUpdateCallback({ time, deltaTime }) driving at
-      least one orbit / rotation / pulse / breathing cycle.
-  [J] CONNECTED COMPOSITION — most-failed rule, read carefully:
-      - NO sub-part may float away from its parent. A column MUST
-        reach from its pedestal top to its capital base with no gap.
-      - A ring/gimbal/cage around a central hero MUST have inner
-        radius > hero's outer radius + clearance (use the hero's
-        boundingSphere or geometry.boundingBox). Never let rings
-        clip through the flask/orb/core they surround.
-      - A liquid inside a vessel MUST be created via
-        H.fillLiquid(vesselMesh, color, { fillLevel }) AFTER the
-        vessel has been positioned AND its parent transforms applied.
-        Pass the MESH, not the geometry. The engine re-snaps the
-        liquid group's world transform to the vessel's world
-        transform automatically, so it works inside tilted gimbals.
-      - Every vertical element's top = the next element's bottom.
-        Pedestal top at y=0.05 → base bottom at y=0.05.
-        Base top at y=0.2 → column bottom at y=0.2.
-        Column top at y=0.5 → head bottom at y=0.5.
-        NO gaps, NO overlaps.
-      - Ground plane always at y=0. No sub-part has y < 0 unless
-        you're carving into the ground (moat floor, etc.).
-      - PARENT/CHILD Y COMPOUNDS — read carefully. When the blueprint
-        gives ABSOLUTE world Y values (e.g. ringInner at y=0.20), and
-        you nest the rings as parent → child via Group.add(), the
-        child's position.y is RELATIVE to its parent. Setting both
-        ringMid.position.y = 0.16 AND ringInner.position.y = 0.20
-        AFTER ringMid.add(ringInner) makes ringInner sit at world
-        y = 0.16 + 0.20 = 0.36 — not the intended 0.20.
-
-        FIX — pick ONE of these patterns per assembly:
-          (A) FLAT: add every part to root with its absolute Y.
-              root.add(ringOuter); ringOuter.position.y = 0.12;
-              root.add(ringMid);   ringMid.position.y   = 0.16;
-              root.add(ringInner); ringInner.position.y = 0.20;
-              root.add(flask);     flask.position.y     = 0.22;
-          (B) NESTED: parent absorbs the parent's Y, children offset
-              from the parent. ringInner.position.y = 0.04 means
-              "0.04 above ringMid", not "world y = 0.04".
-              const ringOuter = new THREE.Group();
-              ringOuter.position.y = 0.12;
-              const ringMid = new THREE.Group();
-              ringMid.position.y = 0.04;          // 0.04 above ringOuter
-              const ringInner = new THREE.Group();
-              ringInner.position.y = 0.04;        // 0.04 above ringMid
-              const flask = ...;
-              flask.position.y = 0.02;            // 0.02 above ringInner
-              ringInner.add(flask);
-              ringMid.add(ringInner);
-              ringOuter.add(ringMid);
-              root.add(ringOuter);
-
-        For multi-axis gimbals, pattern (B) is required because each
-        ring needs to rotate independently and animate its children.
-        For loose stacks (pedestal + base + column + head), pattern
-        (A) is fine.
-
-Scenes that meet fewer than 8 of the 10 requirements FAIL quality
-review. Treat this list as a self-check before emitting return root;
-
-═══ APPLIED-AUTOMATICALLY BASELINE (already active — do not set) ═══
-These are ALWAYS on before your code runs. You do not need to invoke
-them unless you want scene-specific overrides:
-  - ACES Filmic tone mapping, HDR pipeline, SMAA anti-aliasing
-  - N8AO (screen-space AO) at quality tier "High"
-  - Selective HDR bloom (threshold 0.9)
-  - Chromatic aberration (0.08) + film grain (0.025) + color grade
-  - HDR IBL (user-selected preset: studio / day / sunset / night)
-  - Scene-level weather (fog, rain, lens droplets, lightning) —
-    DO NOT call setHeightFog or setScreenDroplets.
-
-═══ LIQUID CONVENTION — applies to EVERY liquid in the scene ═══
-The engine runs a FLUID.normalize() post-pass that walks the scene graph
-and swaps materials on any mesh you tag with the convention below. This
-is the SCALABLE path: it works for any liquid scenario (water, lava,
-potion, blood, oil, mercury, acid…) without you needing to know about
-specific helpers.
-
-  ── For a water/lava/potion SURFACE (open pool, lake, moat, fountain
-     pool top, lava lake, vat surface, pond): build any horizontal
-     planar geometry (CircleGeometry, RingGeometry, PlaneGeometry) with
-     ANY placeholder material, then tag it:
-
-       const surface = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({color:0x000}));
-       surface.userData.fluid = {
-         type: "water",        // water | lava | potion | blood | oil | mercury | acid | elixir | ice
-         color: 0x4a90c4,      // optional — engine has good defaults per type
-         fillLevel: 0.75,      // ignored on standalone surfaces
-       };
-       surface.rotation.x = -Math.PI / 2;
-       parent.add(surface);
-
-     The engine swaps surface.material to a transmissive water shader
-     with the right caustics, fresnel, ripple animation, foam threshold.
-
-  ── For LIQUID INSIDE A CONTAINER (potion in a flask, mead in a goblet,
-     ale in a stein, water in a bowl, lava in a cauldron, blood in a
-     basin, oil in a jar): tag the CONTAINER mesh:
-
-       bottleMesh.userData.fluidContainer = {
-         type: "potion",
-         color: 0x9c27ff,      // optional
-         fillLevel: 0.65,      // 0..1 of vessel interior height
-       };
-
-     The engine fills the vessel via H.fillLiquid → FLUID.upgradeFill,
-     auto-positioning the liquid body inside the vessel's interior with
-     a properly-shaded animated surface. You do NOT call H.fillLiquid
-     yourself — just tag the container and the engine handles it.
-
-  ── For preferred / fastest path on common archetypes, the high-level
-     helpers still exist (and are usually a one-liner):
-       FLUID.tieredFountain({ tiers, baseRadius })   — fountain
-       FLUID.fountainBasin({ radius, y })             — single basin
-       FLUID.stream({ from, to, radius })             — pouring column
-       FLUID.oceanWater(geom, opts)                   — explicit ocean
-     Use them when they match. When they don't, hand-roll the geometry
-     and rely on the convention above — both yield correct water.
-
-  ── ANTI-PATTERN: do NOT spec a liquid as \`MeshStandardMaterial({
-     color: 0x4682B4, transparent: true, opacity: 0.8 })\`. That renders
-     as a flat dull blue disc. The convention exists so you can describe
-     intent ("this is water") without spec'ing material parameters that
-     don't reproduce real water optics.
-
-  ── ANTI-PATTERN: do NOT add a hand-rolled CircleGeometry "water
-     surface" inside a vessel that you also tagged as a fluidContainer.
-     One or the other — never both. The engine fills containers via the
-     userData tag.
-
-═══ MANDATORY AAA CHECKLIST — apply to EVERY scene, not just templates ═══
-Every generation must pass these requirements. Treat them as the quality bar.
-
-  [1] LIQUIDS: any water/potion/blood/acid/lava surface MUST use FLUID.*
-      - Flat pool / lake / moat / basin top     → FLUID.oceanWater(geom, opts)
-      - Multi-tier cascading fountain (3+ tiers)→ root.add(FLUID.tieredFountain({ tiers: 3, baseRadius: 0.55 }));
-          This is THE fountain primitive. One call. Do NOT hand-roll
-          bowls + streams separately when the scene is a tiered fountain.
-      - Single fountain tier (bowl + rim + water)→ FLUID.fountainBasin({radius, y})
-      - Pouring / falling column                → FLUID.stream({from, to, radius})
-      - Liquid inside a glass container          → H.fillLiquid(c, color) THEN FLUID.upgradeFill(liquid)
-      - Lava                                     → SHADER.lava({hot, cold})
-      - NEVER build liquids from raw MeshPhysicalMaterial{transmission:...}
-      - NEVER build a flat CircleGeometry / PlaneGeometry at a
-        hand-picked Y to represent liquid inside a vessel. It will
-        float above or below the rim. H.fillLiquid reads the vessel's
-        LatheGeometry interior and produces a correctly-positioned
-        liquid body + surface disc automatically. Pass the CONTAINER
-        MESH (not its geometry) as first arg.
-      - NEVER wrap engine calls in "typeof FLUID !== 'undefined'" or
-        "if (FLUID && FLUID.surface)" defensive guards. MAT/TEX/SHADER
-        /FLUID/P/FX/CELESTIAL are ALWAYS pre-declared. These guards
-        silently skip the call and produce broken scenes.
-
-  [2] GEMS / CRYSTALS: always faceted + colored lights
-      - Use MAT.gem({color}) or MAT.gemRuby / gemEmerald / gemSapphire / gemAmethyst / gemTopaz / gemDiamond
-        These set flatShading:true so every facet catches light differently.
-      - For low-poly faceted geometry use OctahedronGeometry / DodecahedronGeometry /
-        IcosahedronGeometry / TetrahedronGeometry at detail 0.
-      - Drop root.add(MAT.gemLights(radius)) near any gem cluster to add the
-        violet/pink/cyan point-light halo that makes gems truly pop.
-
-  [3] MAGICAL GLOW / AURA: wrap the hero in moving particles
-      - SHADER.flowParticles({bounds, color, color2, size, speed}) around
-        any magical core, spellbook, energy object, artifact.
-      - SHADER.nebula(inner, outer) inside an orb for a cosmos core.
-      - SHADER.portal(color) for rifts, warp gates, magic mirrors.
-
-  [4] ATMOSPHERIC DEPTH: the scene must breathe
-      - CELESTIAL.nebulaCloud({dome:true, bounds, innerRadius}) if the scene
-        calls for cosmic / mystical backdrop.
-      - FLUID.mist + H.dust for close-range atmospheric motes.
-      - H.sparks for impact / ember particles.
-
-  [5] CINEMATIC FINISH — the AAA post stack (pmndrs/postprocessing).
-      A cinematic BASELINE is already applied for every generation:
-        setFilmGrain(0.035, 0.35)
-        setChromatic(0.22, 2.2)
-        setColorGrade({ saturation: 1.12, contrast: 1.04 })
-        setDoF({ aperture: 0.006, maxblur: 0.006 })   // auto-focus on orbit target
-        setUnderwater(false, { auto: true, ... })     // auto-triggers below water
-        setAO({ radius: 0.6, intensity: 3.0 })        // N8AO screen-space AO
-        setBloom({ intensity: 0.8, threshold: 0.85 }) // selective mipmap bloom
-      You only need to call a setter when you want a scene-specific OVERRIDE
-      or to enable one of these extra effects:
-      - setLensFlare({ position: sunVec3, strength: 0.6, occlusionTest: true })
-                                          if the scene has a visible sun or
-                                          dominant emissive light source.
-      - setScreenDroplets(0.3)            rain / aquatic / underwater mood.
-      - setColorGrade({ ... })            re-tint for a specific mood.
-      - setDoF({ aperture: 0.015 })       stronger blur for product-shot vibe.
-      - setAO({ radius: 1.2, intensity: 5.0, quality: "Ultra" })
-                                          deeper crevice shadows for stone/
-                                          archviz/product renders.
-      - setBloom({ intensity: 1.4, threshold: 0.6 })
-                                          stronger glow for magical / neon
-                                          scenes where highlights should glare.
-      - await setEnvironment("studio" | "day" | "sunset" | "night")
-                                          swap IBL preset for a scene-appropriate
-                                          reflection/lighting base.
-
-  [5b] POST-PROCESS-FREE BLOOM (cheaper than selective bloom):
-      For any glowing hero (orb, crystal, magical core):
-        root.add(FX.withGlow(coreMesh, 0x8b5cf6, { scale: 1.08, intensity: 1.3 }));
-      Or use MAT.fakeGlow on a scaled-up shell mesh directly.
-
-  [5c] MESH-BASED VOLUMETRIC LIGHT:
-      For sunbeams through windows, magical shafts, spell channels:
-        root.add(FX.godRayCone({ from: sunPos, to: floorPoint, color: 0xffe8a0 }));
-
-  [6] PHYSICS for anything that can roll / fall / stack
-      - await P.init({gravity: -4 to -9.81});
-      - P.body(mesh, {type:'static'|'dynamic', shape, restitution, friction, density, angularDamping, radius?})
-      - Dynamic gems/dice/rocks should use shape:'ball' with opts.radius for
-        controlled rolling. Add rb.setAngvel({x,y,z}, true) for tumble on spawn.
-
-  [7] BONZAI PALETTE (use when the prompt doesn't dictate a scheme)
-      Purple #8b5cf6 / var(--bz-purple-300), Green var(--bz-emerald-500) / var(--bz-emerald-500),
-      Pink #fe2d6e / #fe7eb0, Dark #0a0a0f
-
-RULE: If the prompt is for "a gem", "a sword", "a potion", a single sculpture,
-you STILL wrap it with items 3-5 (aura, atmosphere, grain). A lone mesh on a
-black background is NEVER acceptable.
-
-═══ RUNTIME SURFACE (pre-declared — never redeclare these names) ═══
-  THREE, scene, camera, root (THREE.Group — add everything here)
-  setObjectInfo({title, description})
-  addUpdateCallback((ctx) => {...})   // ctx = { time, deltaTime } — YES, animate freely
-  MAT, TEX, SHADER, FLUID, P, H
-
-═══ MATERIAL LIBRARY (MAT.*) — reuse these before hand-rolling PBR ═══
-Metals  : MAT.gold / silver / bronze / copper / iron / steel / chrome / brass / titanium / gunmetal / rust
-Gems    : MAT.ruby / sapphire / emerald / amethyst / diamond / topaz / jade / obsidian / glass / crystal / ice
-Organic : MAT.bone / flesh / leaf / bark / clay / marble / porcelain / ceramic / pearl / coral / moss
-Energy  : MAT.lava / neon_cyan / neon_pink / neon_violet
-Earth   : MAT.sand / snow / rubber / plastic / leather / velvet_black / silk_white
-All entries are shared MeshPhysicalMaterial instances — clone() if you need per-mesh tweaks.
-
-═══ PROCEDURAL TEXTURES (TEX.*) — all return CanvasTexture with RepeatWrapping ═══
-  TEX.wood(base?, grain?), TEX.stone(base?), TEX.metal(base?), TEX.marble(base?, vein?)
-  TEX.concrete(base?), TEX.rust(base?), TEX.grass(), TEX.scales(base?, ridge?)
-  TEX.carbon(base?), TEX.brick(base?, mortar?), TEX.hexgrid(base?, line?)
-  TEX.circuit(base?, trace?), TEX.fabric(base?), TEX.leather(base?), TEX.runes(base?, rune?)
-Call .repeat.set(x, y) on the texture if you need tiling.
-
-═══ SHADER LIBRARY (SHADER.*) — animated ShaderMaterial factories ═══
-  SHADER.fresnel(color, power = 3, opacity = 0.9)              — rim halo for glowing halos / auras
-  SHADER.hologram(color = 0x00e5ff, lineFreq = 80)             — scanlines + flicker for UI / energy
-  SHADER.nebula(inner, outer)                                   — cosmic swirl inside spheres
-  SHADER.lava(hot, cold, speed)  OR  SHADER.lava({hot, cold, speed, chroma?, displacement?, emissiveBoost?})
-      Domain-warped molten flow with gradient-perturbed normals (bubbling
-      surface, not a flat plane), RGB heat-shimmer at the crack edges,
-      and pulsing worley-driven bright cores between cooled plates.
-  SHADER.water(shallow, deep, speed)  OR  SHADER.water({shallow, deep, speed, chroma?, caustics?, waveAmp?})
-      Lightweight (non-PBR) wavy surface with chromatic fresnel edge fringe
-      and RGB-split worley caustics — use for distant lakes / stylized
-      water. Real transmissive water → FLUID.surface / waterMaterial.
-  SHADER.dissolve(base, edge, progress)                         — edge-glowing dissolve (animate progress)
-  SHADER.forcefield(color, freq)                                — pulsing shield bands
-  SHADER.iridescence(base)                                      — PBR with physical iridescence
-  SHADER.starfield(density)                                     — back-sided skydome stars
-  SHADER.caustics(color, {scale?, speed?, chroma?, intensity?, additive?}) — RGB-split worley caustics. Three wavelength-offset cell samples produce true chromatic fringing on the highlights. Default additive; set additive:false for an opaque caustic film.
-  SHADER.portal(color, {color2?, speed?, swirl?, intensity?})            — swirling energy-rift shader for planes/discs. Twisted radial noise + bright event-horizon rim. Use for magic mirrors, warp gates, spell portals.
-  SHADER.flowParticles({count?, bounds?, color?, color2?, size?, speed?, swirl?}) — organic swirling point-cloud driven by a 3D noise flow field. Returns a THREE.Points ready to add to root. No update-callback wiring needed.
-  SHADER.hologram(color, lineFreq, { signalSpeed?, blink?, blinkRate?, additive?, opacity?, fresnelPower?, fresnelOnly? }) — Mancini/ektogamat recipe. Fresnel rim × scanline × traveling signal wave × blink. Additive by default for projection feel.
-Every SHADER is hooked into the engine tick: uTime advances automatically.
-
-═══ FX — MESH-BASED SCENE EFFECTS ═══
-  FX.godRayCone({ from, to, color?, spread?, intensity? })
-      Volumetric light shaft via a cone mesh with additive radial shader.
-      Zero post-process cost. Use instead of screen-space god rays when
-      you need scene-aware lighting through windows/portals.
-
-  FX.withGlow(mesh, color, { scale?, intensity?, power? })
-      Wraps a mesh with a fresnel-additive shell for post-process-FREE
-      bloom. Cheaper than selective bloom, works everywhere:
-        root.add(FX.withGlow(orb, 0x8b5cf6, { scale: 1.08, intensity: 1.3 }));
-
-  FX.scatter(targetMesh, protoMesh, count, { scaleRange?, alignToNormal?, rotateY? })
-      Scatter instanced copies of prototype across target surface via
-      MeshSurfaceSampler. For foliage, crowds, debris fields. async —
-      returns a Promise<InstancedMesh>.
-
-  FX.batch([meshes], { material? })
-      Collapse many varied-geometry meshes into a single BatchedMesh
-      (one draw call, one material). Use for gem piles, debris, crowds
-      of small unique props where InstancedMesh isn't enough. Pass the
-      meshes you'd otherwise add to root — the batch replaces them.
-
-  MAT.fakeGlow({ color, intensity?, power? })
-      Raw material for the fake-glow technique. Pair with a cloned
-      geometry scaled up 1.05–1.10× as a shell around any mesh.
-
-═══ MATCAP MATERIALS (MAT.matcap*) ═══
-MeshMatcapMaterial-backed presets that shade purely from a baked sphere
-gradient — zero lights, gorgeous polish on small props. Use for hero gems,
-cursed orbs, trophy pieces where you want a consistent jewel look that
-doesn't respond to scene lighting.
-  MAT.matcapGold, MAT.matcapChrome, MAT.matcapPearl
-  MAT.matcapEmerald, MAT.matcapRuby, MAT.matcapOnyx
-  MAT.matcap({base?, mid?, highlight?, rim?, color?, flatShading?}) — custom matcap
-
-Water surface materials (waterMaterial, FLUID.stream, FLUID.surface) now
-ship chromatic fresnel edge fringing + animated RGB worley caustics on the
-surface itself — no post-processing needed to get the "dispersed light"
-look. Tune via {caustics: 0..1, chroma: 0..0.05}.
-
-═══ WATER + FLUID — UNIFIED LIQUID RULES ═══
-Every liquid in a scene MUST share the same rendering — ripples, caustics,
-fresnel, transmission. Mixing raw MeshPhysicalMaterial with FLUID.* produces
-visually inconsistent fluids. STRICT RULES:
-
-  [X] NEVER construct a new THREE.MeshPhysicalMaterial with transmission
-     for anything that represents liquid (potion, blood, acid, water, oil).
-  [X] NEVER build streams as raw TubeGeometry + material — use FLUID.stream.
-  [X] NEVER use SHADER.water as a standalone shader — it exists only for
-     back-compat and routes through the unified waterMaterial.
-
-  [OK] Flat open water (pool, lake, moat, scrying basin, fountain top):
-        FLUID.oceanWater(geometry, { color, distortionScale, speed, rippleDensity })
-  [OK] FOUNTAIN BASIN (bowl + rim + water, all ready to use):
-        root.add(FLUID.fountainBasin({ radius: 0.6, y: 0.0 }));
-        // Returns a complete Group: stone bowl, gold inlay, obsidian lip,
-        // reflective oceanWater surface. Use this for EVERY fountain tier.
-        // Do NOT hand-build LatheGeometry bowls if a basin is the goal.
-  [OK] Liquid on arbitrary geometry (basin interior, dish top, pond bed):
-        FLUID.surface(geometry, { color, deep, waveAmp, caustics, chroma })
-  [OK] Liquid INSIDE a container (flask, vial, goblet, cauldron):
-        const liquid = H.fillLiquid(container, color, { fillLevel });
-        FLUID.upgradeFill(liquid, { waveAmp: 0.003, caustics: 0.9 });
-        // The upgradeFill call swaps the surface disc to waterMaterial so
-        // the potion ripples like every other liquid in the scene.
-  [OK] Pouring / cascading / falling water:
-        FLUID.stream({ from: Vector3, to: Vector3, radius, color })
-  [OK] Impact / splash bursts:
-        FLUID.splash({ at: Vector3, count, color })
-  [OK] Custom mesh that should be water-material:
-        new THREE.Mesh(geometry, MAT.liquid({ color, waveAmp, caustics }))
-
-  FLUID.stream({from, to, radius, color, deep?, droplets?})
-      Curved, tapered TubeGeometry from A to B with the refractive water
-      shader applied — wave displacement, foam on crests, depth tinting,
-      accent droplets orbiting the column. THE default primitive for any
-      pouring / cascading / falling water.
-
-  FLUID.surface(geometry, {color, deep?, waveAmp?, waveFreq?, flow?})
-      Applies the REFRACTIVE water shader (MeshPhysicalMaterial + fbm
-      vertex displacement + PBR normal perturbation + RGB caustics) to
-      any geometry. Use for liquid INSIDE a container: potion surface in
-      a vial, acid pool, colored fluid in a glass jar — anywhere
-      transmission through the fluid body is the point.
-
-  FLUID.oceanWater(geometry, {color, distortionScale?, speed?, sunDirection?, sunColor?, textureWidth?, textureHeight?, normalMap?})
-      AAA reflector-based water using THREE.Water. The scene is rendered
-      to a render target each frame, then sampled with UVs perturbed by
-      an animated normalmap. Fresnel mixes the reflection with the clear
-      water color. THIS IS THE TECHNIQUE USED BY water-simulation.vercel.app.
-      Use for mirror pools, lake surfaces, scrying basins, open water —
-      anywhere the reflection of the environment sells the liquid.
-      Default color 0x0a86c8 (clear blue); pass a darker color for deep
-      water. distortionScale controls ripple strength (1 = calm, 5 = storm).
-
-  FLUID.splash({at, count, color, size})
-      Burst of individual refractive droplet SPHERES (each a real mesh
-      with the water shader), tumbling outward from the impact point.
-      Not flat sprites — volumetric drops.
-
-Lighter particle-only helpers (use for foam/spray ONLY, not for the body
-of the water):
-
-  FLUID.pour({from, to, rate, color})   — sparse droplet stream, gravity-biased
-  FLUID.mist({bounds, count, color})    — rising volumetric fog
-  FLUID.pool({bounds, yBase, color})    — jittery particle surface (rarely needed — use FLUID.surface instead)
-
-Legacy helpers still available:
-  H.sparks/dust/bubbles/smoke/fire
-  H.fillLiquid(containerMesh, color, {fillLevel, inset, opacity})
-      For COLORED liquid inside glass containers (vials, potion bottles).
-
-═══ CELESTIAL ═══
-Shader-driven point clouds for skyboxes, galaxies, and nebulae. Every
-star has a soft disc + cross-glare + twinkle — NOT flat dots.
-
-  CELESTIAL.starfield({count, radius, colorA?, colorB?, colorC?, size?, twinkle?})
-      Sphere-shell of twinkling stars. Parent to the scene when you want
-      a spacey backdrop around the object (drop it centered on the hero).
-
-  CELESTIAL.galaxy({count, arms, radius, inner?, outer?, size?, spin?})
-      Spiral galaxy point cloud with arm swirl + per-radius color.
-      Auto-rotates on its Y axis.
-
-  CELESTIAL.nebulaCloud({count, bounds, colorA?, colorB?})
-      Volumetric-looking nebula — large soft stars scattered in a bounding
-      box, colored with a two-color gradient.
-
-═══ PHYSICS (P.*) — Rapier, real dynamics ═══
-  await P.init({ gravity: -9.81 });                 — once per scene, before any P.body(...)
-  P.body(mesh, { type, shape, restitution, friction, density, linearDamping, angularDamping })
-    type:  'dynamic' (default) | 'static' | 'kinematic'
-    shape: 'box' (default) | 'ball' | 'capsule' | 'cylinder'
-  P.impulse(rec, {x,y,z})      — kick a body
-  P.setLinvel(rec, {x,y,z})    — set velocity
-
-═══ POST-FX ═══
-  setScreenDroplets(density, {speed?, size?})
-      Rain-on-lens post effect. Screen-space refractive droplets distort
-      the scene behind them with RGB chromatic dispersion per drop.
-      density: 0 = off (default), 0.3 = drizzle, 1.0 = heavy rain.
-      Useful for aquatic / underwater / rainy atmospheres — calling it
-      once is enough; it's a post pass, not a particle system.
-
-  setFilmGrain(strength, vignette)
-      Cinematic grain overlay + soft vignette on the final frame.
-      strength: 0 = clean, 0.04 = default cinematic, 0.08 = heavy grain.
-      vignette: 0 = off, 0.25 = default, 0.6 = moody dark edges.
-
-  setChromatic(strength, falloff?)
-      Radial RGB-offset post pass. 0 = clean, 0.3 = subtle cyberpunk,
-      1.0 = heavy distortion. Corner-weighted — centre stays clean.
-      Call once at scene start: setChromatic(0.3).
-
-  setDoF({ aperture, maxblur?, focus?, autoFocus? })
-      Bokeh depth-of-field. By default the focus distance auto-tracks
-      the orbit target, so the hero stays sharp as the user zooms. You
-      almost always want just:   setDoF({ aperture: 0.015 });
-      aperture: 0 = off, 0.012 = subtle, 0.025 = strong, 0.05 = heavy.
-      Only pass a fixed 'focus' + 'autoFocus: false' for dolly-zoom
-      cinematic effects where you want the focal plane locked.
-
-  setColorGrade({ hue?, saturation?, contrast?, lift?, gain? })
-      Hue rotation + saturation + contrast + lift/gain tint.
-      Examples: cyberpunk: setColorGrade({saturation:1.3, contrast:1.15, gain:0xe0c8ff}).
-                Sepia:     setColorGrade({saturation:0.3, gain:0xd4b480}).
-                Cold:      setColorGrade({saturation:1.1, gain:0xc8d8ff}).
-
-  setLensFlare({ position: Vector3, strength, tint?, anamorphic?, occlusionTest? })
-      Anderson-Mancini-style screen-space lens flare with ghost chain +
-      anamorphic streak + star-burst. Pass a world-space sun position;
-      the flare is auto-projected to screen each frame. occlusionTest:
-      true does a per-frame raycast so solid objects block the flare.
-      setLensFlare({ position: new THREE.Vector3(8,6,-5), strength: 0.7, tint: 0xffd8a8, occlusionTest: true }).
-
-  setUnderwater(active, { color?, distort?, rays?, waterY?, auto? })
-      Submerged screen pass — blue tint + wave UV distortion + god-ray
-      bars. Pass active=true for always-on, or auto=true + waterY=<y>
-      to auto-activate when the camera crosses below that Y.
-Ground plane: make a flat BoxGeometry at y=0 with opacity 0 and give it a static box body — catches falling debris.
-
-═══ ANIMATION — YES, please ═══
-  addUpdateCallback(({ time, deltaTime }) => {
-    mesh.rotation.y = time * 0.5;
-    mesh.position.y = 0.5 + Math.sin(time * 2) * 0.05;
-  });
-Drive orbits, pulses, gear spin, breathing, mechanism cycles. Keep logic idempotent: never mutate arrays or spawn geometry inside the callback.
-
-═══ THREE.JS REFERENCE ═══
-${skillsContext}
-${recipeHint ? `\n═══ PATTERN HINT ═══\n${recipeHint}\n` : ''}
-═══ AAA COMPOSITION CHECKLIST ═══
-Aim for every generated piece to hit at least 4 of these:
-  ✓ A hero silhouette — one dominant shape the eye locks onto
-  ✓ Layered materials — pair a transmissive/iridescent element with a metallic one and an absorbing matte one
-  ✓ One animated mechanism — rotating, orbiting, pulsing, or physics-driven
-  ✓ One shader-driven surface — nebula/lava/hologram/water/fresnel
-  ✓ Atmosphere — FLUID.mist OR H.dust OR SHADER.caustics on the ground
-  ✓ Accent light — emissive highlights or SHADER.fresnel halo around a focal element
-  ✓ Small physics details — optional, but 3-8 P.body dynamic props (gems, debris) make it feel alive
-  ✓ Spatial cohesion — every sub-part positioned from a parent's bounding box, never hardcoded
-
-═══ RULES ═══
-- RAW JS only, COMPLETE code, no external assets, no post-processing, no markdown
-- Object scale: fit ~1x1 footprint, height 0.3 - 1.5 world units, centered at origin
-- Use complex geometry (LatheGeometry, ExtrudeGeometry, TubeGeometry along Curve3, BufferGeometry) — avoid plain boxes/spheres unless layered under a shader
-- Shader materials go on their own meshes, not on detailed PBR geometry
-- Always call \`await\` before P.init if you use physics
-- Do NOT redeclare THREE/root/H/MAT/TEX/SHADER/FLUID/P/addUpdateCallback/setObjectInfo
-- LatheGeometry points are Vector2(x=radius, y=height), bottom-to-top; closed vessels start and end at x ≈ 0
-- TubeGeometry requires a Curve3 (CatmullRomCurve3, QuadraticBezierCurve3), NEVER an array of points
-- MeshPhysicalMaterial has NO 'transparency' property — use 'transmission' / 'opacity'
-- For liquid INSIDE glass, use H.fillLiquid(container, color, {fillLevel}); don't hand-roll a liquid mesh
-- Compute dependent positions from parent geometry bounding boxes — no hardcoded y values for lids/bases/rings
-
-═══ FORBIDDEN — these will crash ═══
-- Nested MAT paths (MAT.gems, MAT.metals) — MAT is flat
-- 'transparency' / 'specular' on MeshPhysicalMaterial
-- requestAnimationFrame / setInterval / setTimeout (use addUpdateCallback)
-- AxesHelper / GridHelper / debug gizmos
-- \`const NAMESPACE.X = ...\` — JavaScript SYNTAX ERROR. \`const\` requires
-  a plain identifier, never a member expression. The error reads
-  "Identifier 'MAT' has already been declared" but the actual cause is
-  the dot. Wrong:
-      const MAT.PolishedBrass = new THREE.MeshPhysicalMaterial({...});
-      const TEX.Wood = TEX.wood('#5a3a1a');
-  Right (use a local const, then USE it):
-      const polishedBrass = new THREE.MeshPhysicalMaterial({...});
-      const woodTex = TEX.wood('#5a3a1a');
-      // …later: new THREE.Mesh(geo, polishedBrass);
-  Reusing engine presets is fine — \`MAT.brass\`, \`MAT.gold\`,
-  \`TEX.stone(...)\` are just READS, they don't declare anything.
-
-═══ QUALITY REFERENCE — do not copy the default scene ═══
-The default scene is an Arcane Orrery. It is ONLY a quality benchmark:
-layered geometry, material presets, procedural textures, shader accents,
-volumetric-looking FX, weather-aware lighting, and animation callbacks.
-Your subject, silhouette, parts, title, and description MUST come from
-TASK, not from the orrery.
-
-═══ SCENE ENVIRONMENT — DO NOT TOUCH ═══
-The viewer provides the visual ground (grid, sky, stars, weather).
-P.init() auto-creates an infinite physics ground collider.
-  * NEVER add a floor / ground / platform mesh at or below y=0.
-  * NEVER add a "visible: false" BoxGeometry as a physics floor —
-    it shows up as a transmission-buffer artifact under any
-    transparent hero.
-  * NEVER add a large horizontal plane at the base of the scene.
-  * The root of your scene starts at y=0. Every sub-part has y > 0.
-
-═══ TRANSPARENT GLASS CONTAINERS — exact recipe ═══
-Glass vessels (flasks, orbs, goblets, jars) MUST use this material
-shape or they render as opaque white:
-  new THREE.MeshPhysicalMaterial({
-    color: 0xffffff,       // neutral — do not tint with emissive
-    transmission: 0.95,    // required
-    ior: 1.5,
-    roughness: 0.04,
-    thickness: 0.2,
-    clearcoat: 1.0,
-    transparent: true,
-    opacity: 1.0,          // opacity 1 is correct with transmission
-  });
-Do NOT set emissive on glass. Do NOT set opacity < 0.5 — that fights
-with transmission. After adding the container, call
-  const liquid = H.fillLiquid(containerMesh, 0x40ff80, { fillLevel: 0.6 });
-  FLUID.upgradeFill(liquid);
-  root.add(liquid);
-Pass the MESH (not geometry). The engine snaps liquid to the
-container's world transform automatically.
-
-// Pedestal with procedural texture + MAT preset rim
-const stoneTex = TEX.stone('#3a3640'); stoneTex.repeat.set(3, 3);
-const dais = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.48, 0.06, 96),
-  new THREE.MeshPhysicalMaterial({ color: 0x7a7680, map: stoneTex,
-    roughness: 0.82, metalness: 0.05, clearcoat: 0.15 }));
-dais.position.y = -0.03; dais.receiveShadow = true; root.add(dais);
-const daisRim = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.006, 24, 128), MAT.gold);
-daisRim.rotation.x = Math.PI / 2; daisRim.position.y = 0.003; root.add(daisRim);
-
-// Hero glass with internal shader-driven nebula
-const coreY = 0.62;
-const nebulaCore = new THREE.Mesh(new THREE.SphereGeometry(0.105, 64, 64),
-  SHADER.nebula(0x8b5cf6, 0x0a0a0f));
-nebulaCore.position.y = coreY; root.add(nebulaCore);
-const orb = new THREE.Mesh(new THREE.SphereGeometry(0.14, 96, 96),
-  new THREE.MeshPhysicalMaterial({ color: 0xf0f0ff, transmission: 0.96, ior: 1.5,
-    roughness: 0.03, thickness: 0.25, clearcoat: 1.0, transparent: true }));
-orb.position.y = coreY; root.add(orb);
-const halo = new THREE.Mesh(new THREE.SphereGeometry(0.17, 48, 48),
-  SHADER.fresnel(0xa855f7, 2.5, 0.75));
-halo.position.y = coreY; root.add(halo);
-
-// Lens flare on the dominant emissive hero
-setLensFlare({ position: new THREE.Vector3(0, coreY, 0), strength: 0.3,
-  tint: 0xc28dff, anamorphic: 1.0, occlusionTest: true });
-
-// Volumetric god rays
-for (let i = 0; i < 4; i++) {
-  const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-  root.add(FX.godRayCone({
-    from: new THREE.Vector3(Math.cos(a) * 0.06, coreY - 0.02, Math.sin(a) * 0.06),
-    to:   new THREE.Vector3(Math.cos(a) * 0.62, 0.08, Math.sin(a) * 0.62),
-    color: 0xa855f7, spread: 0.12, intensity: 0.45 }));
-}
-
-// Orbiting rings + planets
-const rings = [];
-[{ r: 0.28, mat: MAT.gold, speed: 0.45 },
- { r: 0.36, mat: MAT.brass, tilt: Math.PI / 3, speed: 0.3 },
- { r: 0.44, mat: MAT.silver, tilt: Math.PI / 6, speed: 0.2 }
-].forEach((def, i) => {
-  const tilt = new THREE.Group(); tilt.position.y = coreY;
-  if (def.tilt) tilt.rotation.x = def.tilt;
-  root.add(tilt);
-  const spin = new THREE.Group(); tilt.add(spin);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(def.r, 0.008, 16, 192), def.mat);
-  ring.rotation.x = Math.PI / 2; spin.add(ring);
-  const marbleTex = TEX.marble('#08306a', '#f5c776');
-  const planet = new THREE.Mesh(new THREE.SphereGeometry(0.032, 48, 48),
-    new THREE.MeshPhysicalMaterial({ map: marbleTex, metalness: 0.35, roughness: 0.28,
-      clearcoat: 1.0, clearcoatRoughness: 0.08 }));
-  planet.position.set(def.r, 0, 0); spin.add(planet);
-  rings.push({ spin, speed: def.speed, phase: i * (Math.PI * 2 / 3) });
-});
-
-// Backdrop
-const stars = CELESTIAL.starfield({ count: 1400, radius: 9, size: 36, twinkle: 0.75 });
-stars.position.y = coreY; root.add(stars);
-root.add(CELESTIAL.nebulaCloud({ dome: true, count: 420,
-  bounds: { x: 6, y: 4.5, z: 6 }, innerRadius: 4.2,
-  colorA: 0x8b5cf6, colorB: 0xfe2d6e, brightness: 1.0, size: 58 }));
-
-// Atmosphere aura + per-frame animation
-const aura = SHADER.flowParticles({ count: 900, bounds: { x: 0.55, y: 0.75, z: 0.55 },
-  color: 0x8b5cf6, color2: 0x10b981, size: 32, speed: 0.35, swirl: 0.5 });
-aura.position.y = coreY; aura.userData.excludeFromBBox = true; root.add(aura);
-addUpdateCallback(({ time }) => {
-  for (const r of rings) r.spin.rotation.y = time * r.speed + r.phase;
-  nebulaCore.rotation.y = time * 0.15;
-});
-
-═══ HARD-LEARNED ANTI-PATTERNS ═══
-- Liquid inside a glass container: H.fillLiquid(containerMesh, color,
-  { fillLevel }) THEN FLUID.upgradeFill(result). NEVER hand-roll a flat
-  CircleGeometry/PlaneGeometry at a hard-coded Y — it floats above the rim.
-- NEVER wrap engine calls in "typeof FLUID !== 'undefined'" guards. They
-  silently skip the call and produce broken scenes.
-- NEVER hand-roll four MeshPhysicalMaterial instances when MAT.gold /
-  MAT.brass / MAT.obsidian / MAT.ruby etc. already exist. Use the presets.
-- NEVER leave the hero floating above its pedestal — every vertical
-  element must reach from base to head without a visible gap.
-- The cinematic post baseline is ALREADY ACTIVE. Do not call setFilmGrain,
-  setChromatic, setColorGrade, setAO, or setBloom unless you're
-  overriding the baseline. DO call setLensFlare({ position, strength,
-  occlusionTest: true }) when the scene has a dominant emissive hero.
-
-${detectArchetypeHint(userText)}OUTPUT CODE FOR: "${userText}"`;
+      return buildScenePrompt({ mode: creationMode.value, brief: originalBrief || userText, plan: userText, references: skillsContext, variation, gameContract: gameContract + (creationMode.value === 'level' ? "\nLEVEL OVERRIDE: Use world-scale dimensions in metres. Set root.userData.worldScale = true. Build a traversable environment, not a miniature object; include the requested terrain and architecture." : "") });
     };
 
-    /**
-     * Soft archetype hint — the engine's FLUID.normalize() pass now
-     * guarantees that any liquid mesh tagged with `userData.fluid` or
-     * `userData.fluidContainer` gets the right water shader, regardless
-     * of how the codegen built it. So this function is no longer the
-     * load-bearing directive it was — it's a STYLE HINT that nudges the
-     * model toward the most appropriate built-in helper when one exists,
-     * but doesn't punish the model for hand-rolling.
-     *
-     * If a high-confidence archetype is detected, we emit a small
-     * "Suggested helper" note. The convention rules in the main prompt
-     * carry the actual safety guarantees.
-     *
-     * Returns "" for non-water scenes.
-     */
-    function detectArchetypeHint(text) {
-      const t = (text || "").toLowerCase();
-
-      // 1. Explicit ARCHETYPE tag from the blueprint phase — highest signal.
-      // Format: [ARCHETYPE: NAME, key=val, key=val]
-      const tagMatch = (text || "").match(/\[ARCHETYPE:\s*([A-Z_]+)([^\]]*)\]/);
-      let tagName = null;
-      const tagParams = {};
-      if (tagMatch) {
-        tagName = tagMatch[1];
-        const paramStr = tagMatch[2] || "";
-        for (const pair of paramStr.split(",")) {
-          const [k, v] = pair.split("=").map((s) => (s || "").trim());
-          if (k && v) tagParams[k.toLowerCase()] = v;
-        }
-      }
-
-      // 2. Natural-language fallbacks (work even without the tag).
-      const numericTier = t.match(/\b(\d+)[\s-]*tier(s|ed)?\b/);
-      const wordTier = t.match(/\b(two|three|four|five|six|seven)[\s-]*tier(s|ed)?\b/);
-      const wordToNum = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
-      const inferredTierCount = numericTier
-        ? parseInt(numericTier[1], 10)
-        : wordTier
-          ? wordToNum[wordTier[1]]
-          : null;
-
-      const isFountainWord = /\bfountain\b/.test(t);
-      const isCascading = /\bcascad(ing|e)\b|\bstacked\b/.test(t) && (isFountainWord || /\bbasin|bowl|tier\b/.test(t));
-
-      // 3. Resolve to a single archetype.
-      let archetype = tagName;
-      let params = { ...tagParams };
-      if (!archetype) {
-        if ((isFountainWord && inferredTierCount && inferredTierCount >= 2) || isCascading) {
-          archetype = "TIERED_FOUNTAIN";
-          params.tiers = String(inferredTierCount || 3);
-        } else if (isFountainWord) {
-          archetype = "SINGLE_BASIN";
-        } else if (/\b(pool|lake|moat|pond|reservoir|scrying basin)\b/.test(t)) {
-          archetype = "OPEN_WATER";
-        }
-      }
-      if (!archetype) return "";
-
-      // 4. Emit the soft hint. The engine's FLUID.normalize() guarantees
-      // any tagged liquid mesh gets the right shader, so these are
-      // "suggested helpers" not enforcement walls.
-      if (archetype === "TIERED_FOUNTAIN") {
-        const tiers = parseInt(params.tiers, 10) || inferredTierCount || 3;
-        const baseRadius = parseFloat(params.baseradius) || 0.55;
-        return `// SUGGESTED HELPER for this scene:
-//   root.add(FLUID.tieredFountain({ tiers: ${tiers}, baseRadius: ${baseRadius.toFixed(2)} }));
-// One call, fully assembled (basins + rims + water + cascading streams).
-// If you instead build the fountain by hand, tag every water surface
-// with userData.fluid = { type: "water" } and every bowl with
-// userData.fluidContainer = { type: "water", fillLevel: 0.7 } — the
-// engine's FLUID.normalize pass will swap in the correct water shader
-// regardless. Either approach yields proper transmissive water.
-
-`;
-      }
-      if (archetype === "SINGLE_BASIN") {
-        const radius = parseFloat(params.radius) || 0.6;
-        return `// SUGGESTED HELPER for this scene:
-//   root.add(FLUID.fountainBasin({ radius: ${radius.toFixed(2)}, y: 0.0 }));
-// Or hand-build and tag the bowl with
-//   userData.fluidContainer = { type: "water", fillLevel: 0.75 };
-
-`;
-      }
-      if (archetype === "OPEN_WATER") {
-        return `// SUGGESTED PATH for this scene's water surface:
-//   const water = new THREE.Mesh(geom, ...placeholderMaterial);
-//   water.userData.fluid = { type: "water" };
-// FLUID.normalize will swap the material to the proper transmissive
-// shader. Or call FLUID.oceanWater(geom, opts) directly for explicit
-// control.
-
-`;
-      }
-      if (archetype === "LIQUID_VESSEL") {
-        return `// SUGGESTED PATH for the liquid in the vessel:
-//   vesselMesh.userData.fluidContainer = { type: "potion", fillLevel: 0.7 };
-// FLUID.normalize will fill the vessel via H.fillLiquid + FLUID.upgradeFill.
-
-`;
-      }
-      if (archetype === "STREAM") {
-        return `// SUGGESTED HELPER for the pouring water:
-//   root.add(FLUID.stream({ from: Vector3, to: Vector3, radius: 0.025 }));
-
-`;
-      }
-      return "";
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // REFINE PROMPT BUILDER
-    // ═══════════════════════════════════════════════════════════════════════
     const buildRefinePrompt = (existingCode, instruction) => {
-      return `You are modifying existing Three.js code. Make the requested change BOLD and VISUALLY OBVIOUS.
-CRITICAL: Output ONLY the COMPLETE modified code. No thinking, no reasoning, no <think> tags, no explanation. Start with setObjectInfo() immediately.
-Do NOT add reasoning or explanation. Output raw JavaScript only.
-
-═══ CURRENT CODE ═══
-${existingCode}
-
-═══ REQUESTED CHANGE ═══
-${instruction}
-
-═══ AVAILABLE API ═══
-- THREE: Full Three.js library
-- root: THREE.Group (add all meshes here)
-- setObjectInfo({title, description}): Set object metadata
-
-PRE-BUILT MATERIALS: MAT.gold, MAT.silver, MAT.bronze, MAT.copper, MAT.iron, MAT.steel,
-MAT.ruby, MAT.emerald, MAT.sapphire, MAT.amethyst, MAT.diamond,
-MAT.glass, MAT.obsidian, MAT.bone, MAT.flesh, MAT.leaf, MAT.bark,
-MAT.clay, MAT.marble, MAT.lava, MAT.ice, MAT.sand, MAT.snow
-
-HELPERS: H.glass(color,opts), H.gem(color,opts), H.metal(color,opts),
-H.matte(color,opts), H.glow(color,opts), H.liquid(color,opts),
-H.fire(opts), H.ice(color,opts), H.lava(opts),
-H.leather(color,opts), H.velvet(color,opts)
-LIGHTS: H.light(color,intensity,distance), H.spot(color,intensity,opts)
-PARTICLES: H.sparks(count,opts), H.dust(count,opts), H.bubbles(count,opts), H.smoke(count,opts)
-
-═══ RULES ═══
-- Make the change DRAMATIC and CLEARLY VISIBLE — not subtle tweaks
-- If asked to change material/color: replace the ENTIRE material on ALL relevant meshes
-- If asked to add something: add at least 2-3 new mesh objects or particle systems
-- If asked to resize: change by at least 50% so the difference is obvious
-- Keep all existing geometry and materials UNLESS the change requires modifying them
-- NO ANIMATION — do NOT call addUpdateCallback(). The scene is STATIC. NO requestAnimationFrame, NO setInterval. Remove any existing addUpdateCallback calls
-- NO physics, NO CANNON — physics engine is NOT available
-- Do NOT declare THREE, scene, root, H, MAT, TEX, setObjectInfo — they are pre-declared
-- H.dust(), H.bubbles(), H.sparks() — call ONCE, root.add() result. They self-animate
-- TubeGeometry REQUIRES a Curve3 (CatmullRomCurve3, QuadraticBezierCurve3), NEVER an array of points
-- MeshStandardMaterial/MeshPhysicalMaterial have NO specular property — use metalness/roughness. NO 'transparency' property — use 'transmission' for glass/gems
-- MAT is FLAT: MAT.ruby, MAT.gold etc. NO MAT.gems, NO nested objects. NO MAT.velvet/topaz/crystal/fabric
-- For velvet/leather/fabric: use H.velvet(color), H.leather(color), TEX.fabric(color)
-- NO H.gold/silver/bronze/iron/steel — use MAT.gold, MAT.silver etc. for metal materials
-- NO H.updateParticleSystem — dust/sparks/bubbles animate automatically
-- SPATIAL: compute sub-part positions from geometry bounding boxes — lids at container top, bases below body. Never hardcode Y positions
-- Output complete modified code starting with setObjectInfo()
-
-OUTPUT:`;
+      return buildSceneRevision({ mode: creationMode.value, code: existingCode, instruction, references: selectThreeReferences(instruction, skillFiles) });
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3742,7 +2679,13 @@ OUTPUT:`;
         typeof window?.electronAPI?.chatStream === "function" &&
         typeof window?.electronAPI?.onChatToken === "function";
 
-      const extraOpts = {};
+      const extraOpts = { isolated: true };
+      if (window.electronAPI.completionBudget) {
+        const budget = await window.electronAPI.completionBudget(prompt, options.maxTokens || 2048);
+        if (options.maxTokens >= 8192 && budget.maxTokens < 4096) throw new Error(`Only ${budget.maxTokens} output tokens fit in the loaded ${budget.context}-token context. Try a shorter scene description or a smaller model.`);
+        options = { ...options, maxTokens: budget.maxTokens };
+        stream.maxTokens = budget.maxTokens;
+      }
       if (options.maxTokens) extraOpts.maxTokens = options.maxTokens;
       if (options.temperature !== undefined) extraOpts.temperature = options.temperature;
       if (options.thoughtTokens !== undefined) extraOpts.thoughtTokens = options.thoughtTokens;
@@ -3867,7 +2810,9 @@ OUTPUT:`;
     };
 
     const clearScene = () => {
-      threeViewer.value?.clear();
+      if (!lastGeneratedCode.value || isLoading.value) return;
+      clearDeleteToastTimer();
+      pendingDelete.value = { scene: true };
     };
 
     const saveCurrentAsset = async (kind) => {
@@ -3921,6 +2866,7 @@ OUTPUT:`;
           ? gameProject.value.levels.find((level) => level.id === item.projectAssetId)
           : gameProject.value.levels.find((level) => level.sourceInferenceId === item.inferenceId);
         if (existing) return existing;
+        if(item.levelProject) return importLevelSnapshot(gameProject.value,item.levelProject,{sourceInferenceId:item.inferenceId||'',thumbnail:item.thumbnail});
         return addLevel(gameProject.value, {
           title: item.title,
           code: item.code,
@@ -3945,14 +2891,17 @@ OUTPUT:`;
       try {
         const asset = materializeBuildAsset(item);
         if (item.kind === "game") {
-          await previewGameProject();
+          buildEditorReady.value = true;
+          workspaceTab.value = "build";
+          await previewLevelEditor(false);
           projectStatus.value = `${gameProject.value.title} opened from history.`;
           return;
         }
         if (item.kind === "level") {
           forgeLevelId.value = asset.id;
-          await threeViewer.value?.applyModuleCode(normalizeLLMCode(asset.code), "replace");
-          restoreViewerEnvironmentControls();
+          buildEditorReady.value = true;
+          workspaceTab.value = "build";
+          await previewLevelEditor(false);
           projectStatus.value = `${asset.title} is now the active level.`;
           return;
         }
@@ -3990,12 +2939,14 @@ OUTPUT:`;
       selectedPlacementId.value = "";
       buildTool.value = "select";
       try {
-        await previewGameProject();
+        editUndo.value=[]; editRedo.value=[];
+        buildEditorReady.value=true;
+        await previewLevelEditor(false);
         workspaceTab.value = "build";
-        projectStatus.value = "Level ready. Drag an object from the palette to place it.";
+        projectStatus.value = t('levelEditor.ready');
       } catch (error) {
         const level = gameProject.value.levels.find((candidate) => candidate.id === levelId);
-        if (level?.code) await threeViewer.value?.applyModuleCode(normalizeLLMCode(level.code), "replace");
+        if (level?.code) await threeViewer.value?.applyModuleCode(normalizeLLMCode(level.code), "replace", {kind: "level"});
         projectStatus.value = `Level opened. ${error.message}`;
       }
     };
@@ -4044,7 +2995,7 @@ OUTPUT:`;
     };
 
     const handleBuildCanvasClick = async (event) => {
-      if (workspaceTab.value !== "build") return;
+      if (workspaceTab.value !== "build" || buildEditorReady.value) return;
       if (!activeLevel.value) {
         projectStatus.value = "Choose a level first.";
         return;
@@ -4067,36 +3018,16 @@ OUTPUT:`;
       }
     };
 
-    const commitSelectedPlacement = async () => {
+    const commitSelectedPlacement = async role => {
       if (!selectedPlacement.value || !activeLevel.value) return;
-      try {
-        updatePlacement(gameProject.value, activeLevel.value.id, selectedPlacement.value.id, {
-          role: selectedPlacement.value.role,
-          position: selectedPlacement.value.position,
-          rotation: selectedPlacement.value.rotation,
-          scale: selectedPlacement.value.scale,
-        });
-        await previewGameProject();
-        workspaceTab.value = "build";
-        projectStatus.value = `${placementLabel(selectedPlacement.value)} updated.`;
-      } catch (error) {
-        projectStatus.value = error.message;
-      }
+      const id=selectedPlacement.value.id;
+      await editLevel((project,level)=>updatePlacement(project,level.id,id,{role}));
     };
 
     const deleteSelectedPlacement = async () => {
       if (!selectedPlacement.value || !activeLevel.value) return;
-      const title = placementLabel(selectedPlacement.value);
-      removePlacement(gameProject.value, activeLevel.value.id, selectedPlacement.value.id);
-      selectedPlacementId.value = "";
-      try {
-        await previewGameProject();
-        workspaceTab.value = "build";
-      } catch (error) {
-        projectStatus.value = error.message;
-        return;
-      }
-      projectStatus.value = `${title} removed.`;
+      const id=selectedPlacement.value.id;
+      await editLevel((project,level)=>removePlacement(project,level.id,id));
     };
 
     const placeForgeObject = () => {
@@ -4127,6 +3058,7 @@ OUTPUT:`;
     };
 
     const dropObjectOnMap = async (event) => {
+      if (buildEditorReady.value) return;
       const libraryId = event.dataTransfer.getData("application/x-bonzai-asset") || event.dataTransfer.getData("text/plain");
       const libraryItem = buildLibrary.value.find((item) => item.libraryId === libraryId);
       let objectId = event.dataTransfer.getData("application/x-bonzai-object");
@@ -4290,7 +3222,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         applyGameplayPatch(gameProject.value, patch);
         gameplayInstruction.value = "";
         const verdict = validateGameProject(gameProject.value);
-        if (verdict.ok) await previewGameProject();
+        if (verdict.ok) await previewLevelEditor();
         else projectStatus.value = `Gameplay updated. ${verdict.errors[0]}`;
         return true;
       } catch (error) {
@@ -4301,13 +3233,15 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       }
     };
 
-    const removeActiveLevel = () => {
+    const removeActiveLevel = async () => {
+      if(editorBusy.value)return;
       if (!activeLevel.value) return;
       const currentIndex = gameProject.value.levelOrder.indexOf(activeLevel.value.id);
       removeLevel(gameProject.value, activeLevel.value.id);
       forgeLevelId.value = gameProject.value.levelOrder[Math.max(0, currentIndex - 1)] || "";
       selectedPlacementId.value = "";
       if (!gameProject.value.levels.length) buildEditorReady.value = false;
+      else await selectBuildLevel(forgeLevelId.value);
     };
 
     const startPlaytest = async () => {
@@ -4334,6 +3268,148 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       }
     };
 
+    const cloneProject = project => JSON.parse(JSON.stringify(project));
+    const previewLevelEditor = async (preserveCamera = true, project = gameProject.value) => {
+      buildingPreview.value=true;
+      try {
+        const viewer=await waitForViewerReady();
+        if(!viewer) throw new Error('3D viewer is not ready');
+        const view=preserveCamera&&viewer.isLevelScene ? {position:viewer.camera.position.clone(),target:viewer.controls.target.clone()} : null;
+        levelEditor.value?.detach();
+        const code=compileLevelPreview(project,forgeLevelId.value);
+        await viewer.applyModuleCode(normalizeLLMCode(code),'replace',{kind:'level'});
+        restoreViewerEnvironmentControls();
+        if(view){viewer.camera.position.copy(view.position);viewer.controls.target.copy(view.target);viewer.controls.update();}
+        lastAssemblyContract.value=null;lastGeneratedCode.value=code;lastGeneratedBrief.value=activeLevel.value?.title || '';
+        editorRevision.value++;
+        return code;
+      } finally {buildingPreview.value=false;}
+    };
+    const finishLevelEdit = (before,next) => {
+      next.updatedAt=Date.now();
+      // Commit only after rendering succeeds. Storage errors keep the old draft.
+      localStorage.setItem('bonzai-game-project',JSON.stringify(next));
+      editUndo.value=[...editUndo.value.slice(-19),before];editRedo.value=[];
+      gameProject.value=next;
+      projectStatus.value=t('levelEditor.savedLocally');
+    };
+    const editLevel = async mutate => {
+      if(editorBusy.value || !activeLevel.value)return;
+      const before=cloneProject(gameProject.value),next=cloneProject(before);
+      try {
+        mutate(next,next.levels.find(level=>level.id===forgeLevelId.value));
+        await previewLevelEditor(true,next);
+        finishLevelEdit(before,next);
+      } catch(error) {
+        try{await previewLevelEditor(true,before);}catch{}
+        projectStatus.value=error.message;
+      }
+    };
+    const commitLevelTransform = selection => editLevel((project,level)=>{
+      if(selection.target.placementId)updatePlacement(project,level.id,selection.target.placementId,selection.transform);
+      else setLevelPartEdit(level,{target:selection.target,transform:selection.transform});
+    });
+    const commitLevelMarker = (type,axis,value) => editLevel((project,level)=>{
+      const coordinate=Number(value);if(!Number.isFinite(coordinate))throw new Error('Invalid marker position');
+      const position={x:0,y:0,z:0,...(type==='start'?level.entry:level.exits[0]?.position),[axis]:coordinate};
+      setLevelMarker(project,level.id,type,position);
+    });
+    const placeEditorAsset = async ({asset,position}) => {
+      let target;
+      await editLevel((project,level)=>{
+      let object=project.objects.find(item=>item.id===asset.projectAssetId || (asset.inferenceId && item.sourceInferenceId===asset.inferenceId));
+      if(!object)object=addObjectAsset(project,{title:asset.title,code:asset.code,thumbnail:asset.thumbnail,sourceInferenceId:asset.inferenceId||''});
+      const placement=placeObject(project,level.id,object.id,{position,role:'prop'});
+      target={placementId:placement.id};
+      });
+      await nextTick();
+      if(target)levelEditor.value?.selectTarget(target);
+    };
+    const travelLevelEdit = async direction => {
+      if(editorBusy.value)return;
+      const from=direction==='undo'?editUndo:editRedo,to=direction==='undo'?editRedo:editUndo;
+      if(!from.value.length)return;
+      const current=cloneProject(gameProject.value),next=cloneProject(from.value.at(-1));
+      try {
+        await previewLevelEditor(true,next);
+        localStorage.setItem('bonzai-game-project',JSON.stringify(next));
+        from.value=from.value.slice(0,-1);to.value=[...to.value,current];gameProject.value=next;
+        projectStatus.value=t('levelEditor.savedLocally');
+      }catch(error){try{await previewLevelEditor(true,current);}catch{}projectStatus.value=error.message;}
+    };
+    const undoLevelEdit=()=>travelLevelEdit('undo'),redoLevelEdit=()=>travelLevelEdit('redo');
+    const openLevelEditor = async () => {
+      if(editorBusy.value)return;
+      if(!activeLevel.value && lastGeneratedCode.value){
+        const level=addLevel(gameProject.value,{title:form.prompt||'Level',code:lastGeneratedCode.value});forgeLevelId.value=level.id;
+      }
+      if(!activeLevel.value)return;
+      workspaceTab.value='build';buildEditorReady.value=true;
+      await selectBuildLevel(forgeLevelId.value);
+    };
+    const saveEditedLevel = async () => {
+      if(editorBusy.value||!activeLevel.value)return;
+      buildingPreview.value=true;
+      try {
+        const code=compileLevelPreview(gameProject.value,activeLevel.value.id);
+        // Gizmos and selection outlines are editor-only, never export content.
+        levelEditor.value?.detach();
+        const snapshot=await captureViewerSnapshot(activeLevel.value.title);
+        const level=cloneProject(activeLevel.value);
+        const objectIds=new Set(level.placements.map(item=>item.objectId));
+        const record=await addObjectInference(level.title,normalizeLLMCode(code),{success:true,assetKind:'level',mode:'level',title:level.title,
+          levelProject:{level,objects:cloneProject(gameProject.value.objects.filter(item=>objectIds.has(item.id))),interactions:cloneProject(gameProject.value.gameplay.interactions.filter(item=>level.placements.some(placement=>placement.id===item.sourcePlacementId)))},
+          screenshots:snapshot?[snapshot]:[],thumbnail:snapshot?.dataUrl||'',qualityStatus:'unreviewed'});
+        if(!record.persisted)throw new Error(t('levelEditor.saveFailed'));
+        projectStatus.value=t('levelEditor.saved');
+      }catch(error){projectStatus.value=error.message;}
+      finally{buildingPreview.value=false;editorRevision.value++;}
+    };
+    const regenerateLevelSelection = async ({selection,prompt}) => {
+      if(editorBusy.value||!selection||!prompt||!activeLevel.value)return;
+      const before=cloneProject(gameProject.value),levelId=forgeLevelId.value;
+      editingBusy.value=true;editCancelled=false;
+      projectStatus.value=t('levelEditor.busy');
+      const brief=`Replace only this selected level object: ${selection.title}. User request: ${prompt}. Its local size is ${JSON.stringify(selection.size)} metres. Build an isolated reusable object with a ground-centred pivot; the editor fits it to the previous object's bounds. Do not generate surrounding terrain, other level objects, cameras, controls or a GAME session.`;
+      try {
+        await loadModelForGeneration(codeModel.value);
+        await window.electronAPI.resetChat();
+        const output=await callLLM(buildScenePrompt({mode:'object',brief,references:selectThreeReferences(brief,skillFiles,6000),variation:`Fresh interpretation seed ${Date.now()}.`}),
+          {maxTokens:8192,temperature:.65,thoughtTokens:0,enableThinking:false},({tokenCount})=>{projectStatus.value=`${t('levelEditor.busy')} ${tokenCount} tokens`;});
+        if(editCancelled)throw new Error('Generation cancelled');
+        const body=sourceForBuilder(normalizeLLMCode(output.text));
+        const result=await renderWithRecovery({code:body,maxRepairs:2,
+          render:async candidate=>{
+            if(editCancelled)throw new Error('Generation cancelled');
+            const verdict=validateSceneBody(candidate);if(!verdict.ok)throw new Error(verdict.reason);
+            if(/\bGAME\s*\.\s*create\s*\(/.test(candidate))throw new Error('A selected object cannot start a game session');
+            const next=cloneProject(before),level=next.levels.find(item=>item.id===levelId);
+            if(selection.target.placementId){
+              const placement=level.placements.find(item=>item.id===selection.target.placementId);
+              const wrapped=`{ const replacement=new THREE.Group();\nawait (${assetBuilder(candidate)})(replacement,Math,addUpdateCallback);\nH.fitLevelReplacement(replacement,${JSON.stringify(selection.bounds)});root.add(replacement); }`;
+              const asset=addObjectAsset(next,{title:prompt.slice(0,80),code:wrapped,source:'regeneration'});
+              placement.objectId=asset.id;
+            } else setLevelPartEdit(level,{target:selection.target,transform:selection.transform,replacement:{code:candidate,title:prompt.slice(0,80),seed:String(Date.now())}});
+            await previewLevelEditor(true,next);
+            return next;
+          },
+          repair:async ({code,error})=>{
+            if(editCancelled)throw new Error('Generation cancelled');
+            const repair=await callLLM(buildSceneRepair({mode:'object',code,brief,error:error.message}),{maxTokens:2048,temperature:.2,thoughtTokens:0,enableThinking:false});
+            return applySceneEdits(code,stripThinkBlocks(repair.text));
+          }});
+        if(editCancelled)throw new Error('Generation cancelled');
+        finishLevelEdit(before,result.result);
+      }catch(error){
+        if(!editDisposed){try{await previewLevelEditor(true,before);}catch{}projectStatus.value=editCancelled?t('levelEditor.cancelled'):error.message;}
+      }finally{editingBusy.value=false;}
+    };
+    const cancelLevelRegeneration = async () => {
+      if(!editingBusy.value)return;
+      editCancelled=true;
+      await window.electronAPI?.abortChatStream?.();
+    };
+
     const previewGameProject = async () => {
       try {
         const userCode = compileGameProject(gameProject.value);
@@ -4353,6 +3429,10 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
 
     const setWorkspaceTab = async (tab) => {
       workspaceTab.value = tab;
+      if (tab === "build" && activeLevel.value) {
+        buildEditorReady.value=true;
+        await previewLevelEditor(false);
+      }
       if (tab === "play" && canTokenizeProject.value) {
         try {
           await previewGameProject();
@@ -4389,12 +3469,13 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
 
     watch(
       gameProject,
-      (project) => localStorage.setItem("bonzai-game-project", JSON.stringify(project)),
+      (project) => {try {localStorage.setItem("bonzai-game-project", JSON.stringify(project));} catch(error) {projectStatus.value=error.message;}},
       { deep: true },
     );
 
     const useExample = (example) => {
       if (example.kind) creationMode.value = example.kind;
+      objectInputMode.value = "prompt";
       form.prompt = example.prompt;
       showExamples.value = false;
     };
@@ -4422,6 +3503,55 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       await nextTick();
       await new Promise((resolve) => requestAnimationFrame(resolve));
       return threeViewer.value?.captureSnapshot?.(label, { quality: "ultra" }) || null;
+    };
+
+    const reviewRenderedConstruction = async (viewer, userCode, brief, mode, reference = null) => {
+      const initialAssemblyErrors=inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value).errors.length;
+      const captureReview = async (label) => {
+        const hero = await captureViewerSnapshot(label);
+        if (!hero) return null;
+        try { return {...hero, reviewFrames:viewer.captureQualityViews(), construction:{...viewer.inspectConstruction(),assembly:inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value)}}; }
+        catch(error) { return {...hero,reviewFrames:[],captureError:error.message}; }
+      };
+      const review = async (frame) => {
+        if (!frame?.dataUrl) throw new Error("No rendered image available for review");
+        if(frame.reviewFrames?.length!==3)throw new Error(frame.captureError || "Three inspection views could not be captured");
+        const views = frame.reviewFrames;
+        const reviews = [];
+        for (const view of views) {
+          lastStatus.value = `Reviewing visual quality (${reviews.length + 1}/${views.length})…`;
+          const image = reference ? await makeReferenceComparison(reference.dataUrl, view.dataUrl) : view.dataUrl;
+          const prompt = visualReviewPrompt(brief, !!reference, mode)
+            + `\nView: ${view.label}. This is one inspection angle of the same asset. Judge visible construction only; parts outside this view are not missing. A detail view is cropped intentionally.\nMeasured scene data: ${JSON.stringify(frame.construction || {})}`;
+          const assessment = parseVisualReview(await runVisionAnalysis(image, prompt, 900, {localReview:true}));
+          reviews.push({label:view.label,review:assessment});
+          if(assessment.verdict==='unavailable')break;
+        }
+        return {...aggregateViewReviews(reviews),construction:frame.construction};
+      };
+      const quality = await reviewSceneQuality({code:userCode,snapshot:await captureReview('Preview'),review,
+        onStage:(stage,attempt)=>{
+          lastStatus.value=stage==='review'?'Reviewing visual quality…':`Improving construction (${attempt}/2)…`;
+          _resetStream(stage==='review'?'Visual Review':'Improving Construction',4096,
+            "Checking construction from multiple angles and at close range.");
+        },
+        refine:async(candidate,assessment)=>{
+          await loadModelForGeneration(codeModel.value);
+          await window.electronAPI.resetChat();
+          const corrected=await callLLM(buildSceneRepair({mode,code:candidate,brief,
+            error:`The code renders but the visible asset fails quality review. Fix construction before decoration. ${assemblyInstructions(lastAssemblyContract.value)} The visual review is fallible: cross-check each defect against the code and original brief; do not duplicate existing parts based on an incorrect observation. ${assessment.defects.join('; ')} Measured construction: ${JSON.stringify(assessment.construction || {})}`}),
+            {maxTokens:4096,temperature:.25,thoughtTokens:0,enableThinking:false});
+          return applySceneEdits(candidate,stripThinkBlocks(corrected.text));
+        },
+        render:async(candidate)=>{
+          await viewer.applyModuleCode(normalizeLLMCode(candidate),'replace',{kind:mode});
+          assertAssembly(viewer,initialAssemblyErrors);
+          restoreViewerEnvironmentControls();
+          return captureReview('Visual refinement');
+        },
+      });
+      const {reviewFrames=[],construction,...hero}=quality.snapshot || {};
+      return {...quality,snapshot:hero.dataUrl?hero:null,screenshots:hero.dataUrl?[hero,...reviewFrames]:[]};
     };
 
     const formatHistoryDate = (value) => {
@@ -4480,6 +3610,11 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       if (!pending) return;
       dismissDeleteToast();
 
+      if (pending.scene) {
+        threeViewer.value?.clear();
+        lastGeneratedCode.value = '';lastGeneratedBrief.value='';lastAssemblyContract.value=null;
+        return;
+      }
       if (pending.all) {
         await clearObjectInferences();
         hasCopy.length = 0;
@@ -4492,19 +3627,26 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
 
     const applyInference = async (item) => {
       if (!item.code || !threeViewer.value) return;
+      await initialSceneReady;
       try {
-        creationMode.value = ["level", "scene"].includes(item.mode) ? "level" : "object";
+        creationMode.value = (item.assetKind || item.mode) === "game" ? "game" : ["level", "scene"].includes(item.assetKind || item.mode) ? "level" : "object";
         objectInputMode.value = item.mode === "reference" ? "image" : "prompt";
         referenceImage.value = item.mode === "reference" && item.referenceImage
           ? { ...item.referenceImage }
           : null;
-        await threeViewer.value.applyModuleCode(item.code, "replace");
+        await threeViewer.value.applyModuleCode(normalizeLLMCode(item.code), "replace", {kind: item.assetKind || item.mode});
         restoreViewerEnvironmentControls();
+        if (creationMode.value === 'level') {
+          const asset=materializeBuildAsset({kind:'level',title:item.title||item.prompt,code:item.code,inferenceId:item.id,thumbnail:historyThumbnail(item),levelProject:item.levelProject});
+          forgeLevelId.value=asset.id;
+        }
         // Store for refinement
         const userCodeMatch = item.code.match(
           /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
         );
         lastGeneratedCode.value = userCodeMatch ? userCodeMatch[1].trim() : '';
+        lastGeneratedBrief.value=item.prompt || '';
+        lastAssemblyContract.value=item.assemblyContract || null;
       } catch (err) {
         console.error("Failed to apply inference:", err);
       }
@@ -4514,7 +3656,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       if (!item.prompt) return;
       // Set the prompt from the inference
       form.prompt = item.prompt;
-      creationMode.value = ["level", "scene"].includes(item.mode) ? "level" : "object";
+      creationMode.value = (item.assetKind || item.mode) === "game" ? "game" : ["level", "scene"].includes(item.assetKind || item.mode) ? "level" : "object";
       objectInputMode.value = item.mode === "reference" ? "image" : "prompt";
       referenceImage.value = item.mode === "reference" && item.referenceImage
         ? { ...item.referenceImage }
@@ -4529,6 +3671,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       generationInspector.show({
         id: item.id,
         kind: "object",
+        elapsedMs: item.elapsedMs,
         mediaUrl: historyThumbnail(item),
         prompt: item.prompt || "",
         outputText: item.code || "",
@@ -4553,11 +3696,34 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       });
     };
 
+    const glbExportBusy = ref(false);
+    const glbExportStatus = ref("");
+    const downloadGLB = async (item) => {
+      if (glbExportBusy.value) return;
+      glbExportBusy.value = true;
+      glbExportStatus.value = "Preparing GLB…";
+      try {
+        const bytes = await exportCodeGLB(item.code);
+        const url = URL.createObjectURL(new Blob([bytes], { type: GLB_MIME }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `bonzai-${String(item.id || "asset").replace(/[^a-z0-9_-]/gi, "-")}.glb`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        glbExportStatus.value = "GLB exported. Runtime effects and gameplay remain in the BonzAI source.";
+      } catch (error) {
+        glbExportStatus.value = `GLB export failed: ${error.message}`;
+      } finally { glbExportBusy.value = false; }
+    };
+
     const actionsFor = (item) => {
       const minted = !!item?.nft;
       return [
         { id: "inspect", icon: "info", label: "", variant: "default", title: "Inspect generation metadata" },
         { id: "copy", icon: hasCopy[item._originalIndex] ? "check" : "content_copy", label: hasCopy[item._originalIndex] ? "Copied" : "Reuse", variant: "default", title: "Copy prompt into composer" },
+        { id: "glb", icon: "download", label: "GLB", variant: "default", title: "Export 3D model (.glb)", disabled: glbExportBusy.value || isLoading.value || !item?.success || !item?.code },
         { id: "mint", icon: minted ? "check_circle" : "token", label: minted ? "Minted" : "Mint", variant: minted ? "success" : "default", disabled: minted },
         { id: "load", icon: "visibility", label: "Load", variant: "primary", disabled: !item?.success, title: "Load this scene" },
         { id: "retry", icon: "autorenew", label: "Retry", variant: "default", disabled: isLoading.value, title: "Regenerate with the same prompt" },
@@ -4569,6 +3735,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       switch (id) {
         case "inspect": inspectInference(item); break;
         case "copy": copyPrompt(item.prompt, item._originalIndex); break;
+        case "glb": downloadGLB(item); break;
         case "mint": openMint(item); break;
         case "load": applyInference(item); break;
         case "retry": regenerateFromInference(item); break;
@@ -4662,6 +3829,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
             /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
           );
           lastGeneratedCode.value = userCodeMatch ? userCodeMatch[1].trim() : "";
+          lastGeneratedBrief.value=result.prompt || "";lastAssemblyContract.value=result.assemblyContract || null;
         }
 
         importTokenId.value = "";
@@ -4676,7 +3844,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     // MODEL MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════
     const isModelAvailable = async (filename) => {
-      const available = await window.electronAPI.checkModel(filename);
+      const available = await window.electronAPI?.checkModel?.(filename) ?? false;
       const matches = requiredModels.value.filter((model) => model.filename === filename);
       for (const match of matches) {
         modelAvailability[match.role.toLowerCase()] = available;
@@ -4688,14 +3856,14 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       const results = await Promise.all(
         requiredModels.value.map(async (model) => ({
           role: model.role.toLowerCase(),
-          available: await window.electronAPI.checkModel(model.filename),
+          available: await window.electronAPI?.checkModel?.(model.filename) ?? false,
         })),
       );
       for (const result of results) {
         modelAvailability[result.role] = result.available;
       }
       for (const model of requiredModelFiles.value) {
-        const available = await window.electronAPI.checkModel(model.filename);
+        const available = await window.electronAPI?.checkModel?.(model.filename) ?? false;
         for (const role of model.roles) {
           modelAvailability[role.toLowerCase()] = available;
         }
@@ -4742,25 +3910,24 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     // MODEL LOADING
     // ═══════════════════════════════════════════════════════════════════════
     const loadModelForGeneration = async (targetModel = codeModel.value) => {
-      if (loadedModelFilename.value === targetModel.filename) return;
+      if (loadedModelFilename.value === targetModel.filename) {
+        const runtime = await window.electronAPI.llamaRuntimeStatus?.();
+        if (runtime?.running && runtime.modelName === targetModel.filename) return;
+      }
 
       lastStatus.value = `Loading ${targetModel.role} Model...`;
       try {
-        // Cap context at 32K — 3D prompts are ~20K tokens max, and larger contexts
-        // waste memory on KV cache and cause very slow prefill (100K+ = minutes of prefill)
-        // forceReload ensures we get fresh context even if another tab loaded the model
-        // with a different context size
+        // Request at most 32K; main computes the safe allocation from actual
+        // weights and attention architecture. Q8 KV leaves room for code on 32 GB Macs.
         await window.electronAPI.loadModel({
           filename: targetModel.filename,
           parameters: targetModel.parameters,
           activeParameters: targetModel.activeParameters,
           isMoE: targetModel.isMoE,
-          // 64K — the Qwen 3.6 35B A3B model supports 128K natively.
-          // 32K was forcing the full-orrery reference to truncate
-          // generated code mid-emission; 64K gives the blueprint + the
-          // orrery skeleton + cheatsheets + rules ~48K of input while
-          // still leaving ~16-20K for output and any thinking tokens.
-          context: 65536,
+          context: Math.min(targetModel.context || 32768, 32768),
+          kvCacheTypeK: 'q8_0',
+          kvCacheTypeV: 'q8_0',
+          parallelSlots: 1,
           filesizeBytes: targetModel.filesizeBytes,
           flashAttention: targetModel.flashAttention,
           draftModel: targetModel.draftModel || null,
@@ -4786,14 +3953,14 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
 
   setObjectInfo({
     title: "Arcane Orrery",
-    description: "A breathing mechanical cosmos — armillary rings carry blue-marble planets veined with gold around a nebula core, over a mirrored moat and rune-carved dais, lit against a cold deep-space IBL."
+    description: "A breathing mechanical cosmos — armillary rings carry blue-marble planets around a nebula core, over a mirrored moat and granite dais and engraved brass dial, lit against a cold deep-space IBL."
   });
 
   // ── Scene-specific object lookdev. The viewer owns time-of-day,
   // weather, sky, clouds, and HDR environment, so this default object
   // does not call setEnvironment().
-  setAO({ radius: 0.9, intensity: 4.0, falloff: 0.3, quality: "Ultra" });
-  setBloom({ intensity: 1.0, threshold: 0.75, smoothing: 0.2, radius: 0.7 });
+  setAO({ radius: 0.16, intensity: 1.5, falloff: 0.55, quality: "High" });
+  setBloom({ intensity: 0.3, threshold: 1.2, smoothing: 0.15, radius: 0.4 });
   setColorGrade({ saturation: 1.12, contrast: 1.05 });
 
   // ── Physics world (Rapier) ─────────────────────────────────────────
@@ -4807,13 +3974,17 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // PBR material because TCSM currently collides with THREE.Water's
   // internal transmission/reflection passes (the moat uses Water, and
   // those reflected passes invalidate TCSM-patched programs).
-  const stoneTex = TEX.stone('#3a3640');
-  stoneTex.repeat.set(3, 3);
-  const daisGeo = new THREE.CylinderGeometry(0.44, 0.48, 0.06, 96);
-  const daisMat = new THREE.MeshPhysicalMaterial({
-    color: 0x7a7680, map: stoneTex,
-    roughness: 0.82, metalness: 0.05, clearcoat: 0.15,
-  });
+  // Load only these three local scans; share images throughout the assembly.
+  const [granite, marble, basinStone] = await Promise.all([
+    MAT.scanned('granite_tile',{normalStrength:.16,aoIntensity:.35,roughness:.72}),
+    MAT.scanned('marble_01',{normalStrength:.08,aoIntensity:.3,roughness:.32}),
+    MAT.scanned('dark_rock',{normalStrength:.25,aoIntensity:.5,roughness:.85}),
+  ]);
+  const gold = MAT.surface('metal',{color:0xc8a35b,metalness:1,roughness:.28,relief:.00008,repeat:[3,1]});
+  const brass = MAT.surface('metal',{color:0x9c7944,metalness:1,roughness:.36,relief:.00012,repeat:[2,1]});
+  const silver = MAT.surface('metal',{color:0xc5ccd2,metalness:1,roughness:.25,relief:.00008});
+  const daisGeo = H.worldUV(new THREE.CylinderGeometry(0.44,0.48,0.06,96),.7);
+  const daisMat = granite;
   const dais = new THREE.Mesh(daisGeo, daisMat);
   dais.position.y = -0.03;
   dais.receiveShadow = true;
@@ -4823,7 +3994,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // Gold rim inlay around the dais edge.
   const daisRim = new THREE.Mesh(
     new THREE.TorusGeometry(0.44, 0.006, 24, 128),
-    MAT.gold
+    gold
   );
   daisRim.rotation.x = Math.PI / 2;
   daisRim.position.y = 0.003;
@@ -4835,7 +4006,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // each frame, then samples a ripple normalmap to distort it.
   const moatGeo = new THREE.RingGeometry(0.50, 1.10, 128, 4);
   const moat = FLUID.oceanWater(moatGeo, {
-    color: 0x0a86c8,              // clear blue
+    color: 0x183c50,              // restrained mineral-blue water
     distortionScale: 2.2,
     speed: 1.2,
     rippleDensity: 10.0,          // tight ripples on a ~2m pool
@@ -4852,15 +4023,8 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // Stone floor BENEATH the water — becomes visible through the clear
   // water where the reflection fresnel fades. This is what gives the
   // pool depth.
-  const poolFloorTex = TEX.stone('#1a1230');
-  poolFloorTex.repeat.set(3, 3);
   const poolFloor = new THREE.Mesh(
-    new THREE.RingGeometry(0.50, 1.10, 128, 1),
-    new THREE.MeshPhysicalMaterial({
-      color: 0x4a2878, map: poolFloorTex,
-      roughness: 0.85, metalness: 0.1,
-      emissive: 0x1a0a2a, emissiveIntensity: 0.4,
-    })
+    H.worldUV(new THREE.RingGeometry(0.50,1.10,128,1),.6), basinStone
   );
   poolFloor.rotation.x = -Math.PI / 2;
   poolFloor.position.y = -0.02;
@@ -4906,18 +4070,28 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     new THREE.Vector2(0.001, 0.20),
   ];
   const baseGeo = new THREE.LatheGeometry(baseProfile, 64);
-  const baseMat = new THREE.MeshPhysicalMaterial({
-    color: 0x252028, roughness: 0.25, metalness: 0.15,
-    clearcoat: 0.85, map: baseTex,
-    emissive: 0xf5c776, emissiveMap: baseTex, emissiveIntensity: 0.35,
-  });
-  const baseMesh = new THREE.Mesh(baseGeo, baseMat);
+  const baseMat = marble;
+  const baseMesh = new THREE.Mesh(H.worldUV(baseGeo,.55), baseMat);
   baseMesh.castShadow = true; baseMesh.receiveShadow = true;
   root.add(baseMesh);
 
+  // Engraving is a narrow separate band, not emission across the stone.
+  const inscription = new THREE.Mesh(new THREE.CylinderGeometry(.3608,.3608,.048,128,1,true),
+    new THREE.MeshStandardMaterial({map:baseTex,color:0xa58a56,metalness:.85,roughness:.42}));
+  inscription.position.y=.112;inscription.name='Engraved brass collar';root.add(inscription);
+  const divisions=new THREE.InstancedMesh(H.bevelBox(.002,.0015,.022,.0005),gold,60);
+  const marker=new THREE.Object3D();
+  for(let i=0;i<60;i++){
+    const angle=i*Math.PI/30;
+    marker.position.set(Math.sin(angle)*.315,.181,Math.cos(angle)*.315);
+    marker.rotation.y=angle;marker.scale.set(i%5===0?1.5:1,1,i%5===0?1.3:.65);
+    marker.updateMatrix();divisions.setMatrixAt(i,marker.matrix);
+  }
+  divisions.name='Engraved dial divisions';root.add(divisions);
+
   // Gold rim band around the top plate of the base.
   const rimGeo = new THREE.TorusGeometry(0.34, 0.012, 24, 128);
-  const rim = new THREE.Mesh(rimGeo, MAT.gold);
+  const rim = new THREE.Mesh(rimGeo, gold);
   rim.rotation.x = Math.PI / 2;
   rim.position.y = 0.175;
   rim.castShadow = true;
@@ -4964,7 +4138,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     new THREE.Vector2(0.025, 0.60),
     new THREE.Vector2(0.020, 0.62),
   ];
-  const column = new THREE.Mesh(new THREE.LatheGeometry(columnProfile, 48), MAT.brass);
+  const column = new THREE.Mesh(new THREE.LatheGeometry(columnProfile, 48), brass);
   column.position.y = 0.18;
   column.castShadow = true;
   root.add(column);
@@ -4976,7 +4150,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // correct for an armillary sphere and anchors the head visually.
   const axisRod = new THREE.Mesh(
     new THREE.CylinderGeometry(0.018, 0.018, 0.44, 20),
-    MAT.brass
+    brass
   );
   axisRod.position.y = 1.02;   // rod spans y = 0.80 → 1.24
   axisRod.castShadow = true;
@@ -4985,7 +4159,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // Gold finial cap on the upper rod tip — a classic orrery crown.
   const finialTop = new THREE.Mesh(
     new THREE.SphereGeometry(0.028, 20, 20),
-    MAT.gold
+    gold
   );
   finialTop.position.y = 1.25;
   finialTop.castShadow = true;
@@ -5029,7 +4203,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // occlude the flare as the camera orbits.
   setLensFlare({
     position: new THREE.Vector3(0, coreY, 0),
-    strength: 0.3,
+    strength: 0.12,
     tint: 0xc28dff,
     anamorphic: 1.0,
     occlusionTest: true,
@@ -5079,9 +4253,9 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // tones (deep ocean to ice-blue) so they read as distinct worlds while
   // staying visually unified.
   const ringDefs = [
-    { r: 0.28, mat: MAT.gold,   tiltX: 0,              tiltZ: 0,              speed: 0.45, marble: { base: '#08306a', vein: '#f5c776' }, halo: 0x4a9eff },  // deep ocean
-    { r: 0.36, mat: MAT.brass,  tiltX: Math.PI / 3,    tiltZ: 0,              speed: 0.30, marble: { base: '#0a4a96', vein: '#ffd87a' }, halo: 0x5fb4ff },  // cobalt
-    { r: 0.44, mat: MAT.silver, tiltX: Math.PI / 6,    tiltZ: Math.PI / 2.5,  speed: 0.20, marble: { base: '#1a6ec8', vein: '#fce37a' }, halo: 0x7ac8ff },  // sky
+    { r: 0.28, mat: gold,   tiltX: 0,              tiltZ: 0,              speed: 0.45, marble: { base: '#08306a', vein: '#f5c776' }, halo: 0x4a9eff },  // deep ocean
+    { r: 0.36, mat: brass,  tiltX: Math.PI / 3,    tiltZ: 0,              speed: 0.30, marble: { base: '#0a4a96', vein: '#ffd87a' }, halo: 0x5fb4ff },  // cobalt
+    { r: 0.44, mat: silver, tiltX: Math.PI / 6,    tiltZ: Math.PI / 2.5,  speed: 0.20, marble: { base: '#1a6ec8', vein: '#fce37a' }, halo: 0x7ac8ff },  // sky
   ];
   const rings = [];
   for (let i = 0; i < ringDefs.length; i++) {
@@ -5103,18 +4277,12 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     ringMesh.castShadow = true;
     spinGroup.add(ringMesh);
 
-    // Procedural blue-marble texture with gold veins. Wraps the sphere
-    // twice so the vein pattern reads at any zoom. Clearcoat + low
-    // roughness gives the polished-marble highlight.
-    const marbleTex = TEX.marble(def.marble.base, def.marble.vein);
-    marbleTex.repeat.set(2, 1);
+    // Share the scanned marble maps; each planet has its own blue tint.
+    // Polished stone remains dielectric, with a fine clearcoat highlight.
     const planetMat = new THREE.MeshPhysicalMaterial({
-      map: marbleTex,
-      color: 0xffffff,
-      metalness: 0.35,
-      roughness: 0.28,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.08,
+      map:marble.map,normalMap:marble.normalMap,normalScale:new THREE.Vector2(.08,.08),
+      roughnessMap:marble.roughnessMap,color:new THREE.Color(def.marble.base),
+      metalness:0,roughness:.28,clearcoat:1,clearcoatRoughness:.12,
     });
     const planet = new THREE.Mesh(new THREE.SphereGeometry(0.032, 48, 48), planetMat);
     planet.castShadow = true;
@@ -5142,44 +4310,44 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
   // ── Atmosphere: starfield + half-dome nebula + magic aura ─────────
   // Decorative object backdrop. The actual viewer sky, clouds, weather,
   // and HDR environment remain controlled by ThreeViewer.
-  const stars = CELESTIAL.starfield({ count: 1400, radius: 9, size: 36, twinkle: 0.75 });
+  const stars = CELESTIAL.starfield({ count: 480, radius: 9, size: 12, twinkle: 0.35 });
   stars.position.y = coreY;
   root.add(stars);
 
   const nebulaInner = CELESTIAL.nebulaCloud({
     dome: true,
-    count: 420,
+    count: 140,
     bounds: { x: 6.0, y: 4.5, z: 6.0 },
     innerRadius: 4.2,
     colorA: 0x8b5cf6,
     colorB: 0xfe2d6e,
-    brightness: 1.0,
-    size: 58,
+    brightness: 0.35,
+    size: 26,
   });
   nebulaInner.position.y = 0.2;
   root.add(nebulaInner);
 
   const nebulaOuter = CELESTIAL.nebulaCloud({
     dome: true,
-    count: 260,
+    count: 90,
     bounds: { x: 9.0, y: 7.0, z: 9.0 },
     innerRadius: 6.5,
     colorA: 0x10b981,
     colorB: 0xa855f7,
-    brightness: 0.6,
-    size: 80,
+    brightness: 0.25,
+    size: 32,
   });
   nebulaOuter.position.y = 0.4;
   root.add(nebulaOuter);
 
   // Flow-field magic aura — BonzAI purple × green swirl.
   const aura = SHADER.flowParticles({
-    count: 900,
+    count: 220,
     bounds: { x: 0.55, y: 0.75, z: 0.55 },
     color:  0x8b5cf6,              // purple
     color2: 0x10b981,              // green
-    size: 32,
-    speed: 0.35,
+    size: 9,
+    speed: 0.25,
     swirl: 0.5,
   });
   aura.position.y = coreY;
@@ -5193,6 +4361,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     // ═══════════════════════════════════════════════════════════════════════
     // DEFAULT OBJECT
     // ═══════════════════════════════════════════════════════════════════════
+    let initialSceneReady = Promise.resolve();
     const loadDefaultObject = async () => {
       const viewer = await waitForViewerReady();
       if (!viewer) return;
@@ -5208,6 +4377,52 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
 
     // ═══════════════════════════════════════════════════════════════════════
     // MAIN SUBMIT HANDLER
+    const recoverGeneratedScene = async (viewer, userCode, brief) => {
+      return renderWithRecovery({
+        code: userCode,
+        render: async (candidate) => {
+          const normalized = normalizeLLMCode(candidate);
+          const check = creationMode.value === 'game' ? validateGeneratedGameCode(candidate) : validateRenderableUserCode(candidate);
+          if (!check.ok) throw new Error(check.reason);
+          const result=await viewer.applyModuleCode(normalized, "replace", {kind: creationMode.value});
+          return result;
+        },
+        onAttempt: ({ attempt, error }) => {
+          lastStatus.value = `Repairing scene (${attempt}/3)…`;
+          _resetStream(error.name==='AssemblyValidationError'?"Rebuilding Assembly":"Repairing Scene", error.name==='AssemblyValidationError'?8192:2048, "Correcting measured construction and runtime errors.");
+        },
+        repair: async ({ code: candidate, error, failures }) => {
+          const repaired = await callLLM(buildSceneRepair({ mode: creationMode.value, code: candidate, brief,
+            error: `${error.message}\nErrors encountered: ${failures.join('; ')}` }),
+            { maxTokens: 2048, temperature: 0.15, thoughtTokens: 0, enableThinking: false },
+            ({ tokenCount, elapsedMs }) => { stream.tokenCount = tokenCount; stream.elapsedMs = elapsedMs; });
+          return applySceneEdits(candidate, stripThinkBlocks(repaired.text));
+        },
+      });
+    };
+
+    const improveAssembly = async (viewer,code,brief) => {
+      lastStatus.value='Checking assembly…';
+      return repairAssembly({code,
+        validate:candidate=>{parseJavaScript(normalizeLLMCode(candidate),{ecmaVersion:'latest',sourceType:'module'});},
+        repairSyntax:async(candidate,error)=>{
+          await window.electronAPI.resetChat();
+          const response=await callLLM(buildSceneRepair({mode:creationMode.value,code:candidate,brief,error:'Syntax validation failed before rendering: '+error.message}),{maxTokens:3072,temperature:.1,thoughtTokens:0,enableThinking:false});
+          return applySceneEdits(candidate,stripThinkBlocks(response.text));
+        },
+        inspect:()=>inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value),
+        render:async candidate=>{await viewer.applyModuleCode(normalizeLLMCode(candidate),'replace',{kind:creationMode.value});restoreViewerEnvironmentControls();},
+        rebuild:async report=>{
+          lastStatus.value='Improving assembly…';
+          _resetStream('Improving Assembly',8192,'Correcting named parts and material roles.');
+          await window.electronAPI.resetChat();
+          const response=await callLLM(buildScenePrompt({mode:creationMode.value,brief,plan:JSON.stringify(lastAssemblyContract.value)})+'\n'+assemblyInstructions(lastAssemblyContract.value)+'\nMeasured issues: '+report.errors.join('; ')+'\nPrevious drawable source:\n'+code+'\nReturn a complete corrected JavaScript body.',
+            {maxTokens:8192,temperature:.3,thoughtTokens:0,enableThinking:false},({tokenCount,elapsedMs})=>{stream.tokenCount=tokenCount;stream.elapsedMs=elapsedMs;});
+          return stripThinkBlocks(response.text).replace(/^```(?:javascript|js)?\s*/,'').replace(/\s*```$/,'');
+        }
+      });
+    };
+
     const onSubmit = async () => {
       if (!form.prompt.trim() && !(isReferenceGeneration.value && referenceImage.value)) return;
       if (!canSubmitWithAccess.value) return;
@@ -5222,14 +4437,23 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       }
 
       isLoading.value = true;
+      const generationStarted = performance.now();
+      const activityId = `3d:${crypto.randomUUID()}`;
+      reportOperation({id:activityId,title:"Generating 3D",mode:"game",status:"running",stage:"Preparing",location:"3D"});
       lastStatus.value = "Preparing...";
+      lastAssemblyContract.value = null;assemblyPlanningDiagnostics.value=[];
       const submittedPrompt = form.prompt.trim() ||
         (isReferenceGeneration.value ? "Faithfully reconstruct this object" : "");
+      const creativeDirection = createCreativeDirection({ brief: submittedPrompt, history: objectInferences.value,
+        mode: creationMode.value, reference: isReferenceGeneration.value });
+      const variation = creativeDirectionPrompt(creativeDirection);
       const submittedReference = referenceImage.value
         ? { ...referenceImage.value }
         : null;
+      let lastAttemptedCode = "";
 
       try {
+        await initialSceneReady;
         const viewer = threeViewer.value;
         if (!viewer) throw new Error("Viewer not initialized");
 
@@ -5267,7 +4491,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         // one records evidence, the other resolves it into executable hierarchy.
         await loadModelForGeneration(plannerModel.value);
         lastStatus.value = "Designing blueprint...";
-        const BLUEPRINT_MAX_TOKENS = isReferenceGeneration.value ? 1200 : 768;
+        const BLUEPRINT_MAX_TOKENS = 3200;
         _resetStream(
           "Designing Blueprint",
           BLUEPRINT_MAX_TOKENS,
@@ -5275,8 +4499,9 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
             ? "Resolving visual evidence into a component hierarchy."
             : "Drafting the world before we render it.",
         );
-        const blueprintResult = await callLLM(
-          buildEnhancePrompt(submittedPrompt, referenceAnalysis),
+        lastAssemblyContract.value = creationMode.value === 'game' ? null : await planAssembly(submittedPrompt, creationMode.value, referenceAnalysis);
+        const blueprintResult = creationMode.value !== 'game' ? {text:lastAssemblyContract.value?JSON.stringify(lastAssemblyContract.value):submittedPrompt,tokenCount:0,elapsedMs:0} : await callLLM(
+          buildEnhancePrompt(submittedPrompt, referenceAnalysis) + "\n\n" + variation,
           {
             maxTokens: BLUEPRINT_MAX_TOKENS,
             temperature: 0.35,
@@ -5293,7 +4518,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         );
         const blueprint = stripThinkBlocks(blueprintResult.text) ||
           referenceAnalysis ||
-          `${detectArchetypeHint(submittedPrompt)}${submittedPrompt}`;
+          submittedPrompt;
         console.log("Reconstruction blueprint:", blueprint);
 
         // Phase 2: Generate Three.js code from blueprint
@@ -5304,7 +4529,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         lastStatus.value = isReferenceGeneration.value
           ? "Building reconstruction..."
           : "Building scene...";
-        const codePrompt = buildObjectPrompt(blueprint);
+        const codePrompt = buildObjectPrompt(blueprint, submittedPrompt, variation) + "\n" + assemblyInstructions(lastAssemblyContract.value);
         const codeMaxTokens = isReferenceGeneration.value ? 8192 : 16384;
         _resetStream(
           isReferenceGeneration.value ? "Building Reconstruction" : "Building Scene",
@@ -5370,12 +4595,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         if (renderCheck.ok && creationMode.value === "game") {
           renderCheck = validateGeneratedGameCode(userCode);
         }
-        const openBraces  = (userCode.match(/\{/g) || []).length;
-        const closeBraces = (userCode.match(/\}/g) || []).length;
-        const truncated = userCode && (openBraces - closeBraces > 5
-                                       || !/return\s+root\s*;?\s*$/.test(userCode.replace(/\s+$/, "").slice(-400))
-                                          && userCode.length > 2000
-                                          && openBraces > closeBraces);
+        const truncated = !renderCheck.ok;
         if (!userCode || truncated || !renderCheck.ok) {
           console.warn(
             `[3D] Phase-2 ${userCode ? (truncated ? 'produced truncated code' : renderCheck.reason) : 'produced empty code'} — retrying with terse prompt.`
@@ -5384,18 +4604,9 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
           const retryMaxTokens = isReferenceGeneration.value ? 4096 : 8192;
           _resetStream("Retrying", retryMaxTokens, "First pass was invalid. Rebuilding a tighter scene.");
           await window.electronAPI.resetChat();
-          const tersePrompt = `You are a Three.js developer. Output ONLY raw JavaScript. No markdown, no prose, no <think>. Start with setObjectInfo(...).
+          const tersePrompt = codePrompt + `
 
-TASK: ${blueprint}
-
-Pre-declared: THREE, scene, root, MAT, TEX, SHADER, FLUID, P, H, FX, CELESTIAL, GAME, addUpdateCallback, setObjectInfo. Cinematic post-FX baseline is already applied.
-For water/potion/blood: use FLUID.oceanWater / FLUID.fountainBasin / FLUID.stream / H.fillLiquid+FLUID.upgradeFill.
-For glow: FX.withGlow(mesh, color, {scale, intensity}).
-For physics: await P.init(); P.body(mesh, {...}).
-${creationMode.value === "game" ? "This must be playable: create one GAME session, register a player and objectives, implement a win and fail state, then call game.start()." : ""}
-Every mesh goes on root. The code MUST include root.add(...) calls for visible objects. Keep object height 0.3-1.5. No imports. No markdown fences.
-
-OUTPUT CODE:`;
+RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code'}. Produce a complete, executable implementation within the output budget. Keep the requested silhouette, material fidelity and motion. Use shared helpers to reduce code length.`;
           const retry = await callLLM(
             tersePrompt,
             { maxTokens: retryMaxTokens, temperature: 0.6, thoughtTokens: 0, enableThinking: false },
@@ -5422,7 +4633,7 @@ OUTPUT CODE:`;
         let usedReferenceFallback = false;
         if (
           isReferenceGeneration.value &&
-          (!userCode || truncated || !renderCheck.ok)
+          (!userCode || !renderCheck.ok)
         ) {
           console.warn("[3D] Reconstruction code was invalid; using visible reference relief.");
           code = draftReferenceCode;
@@ -5434,15 +4645,14 @@ OUTPUT CODE:`;
           usedReferenceFallback = true;
         }
 
+        lastAttemptedCode = userCode;
         console.log("User code:", userCode || "(empty — LLM produced no code)");
         if (!userCode) {
           throw new Error(
             "LLM produced no usable code (thinking may have consumed all tokens). Try again.",
           );
         }
-        if (!renderCheck.ok) {
-          throw new Error(`${renderCheck.reason}. Try again or use a larger 3D code model.`);
-        }
+        // Runtime recovery also repairs syntax failures from the bounded retry.
 
         // Render
         lastStatus.value = "Rendering...";
@@ -5453,146 +4663,108 @@ OUTPUT CODE:`;
         stream.tokenCount = 1;
         stream.maxTokens = 1;
         try {
-          await viewer.applyModuleCode(code, "replace");
+          await viewer.applyModuleCode(code, "replace", {kind: creationMode.value});
         } catch (renderError) {
-          if (!isReferenceGeneration.value || usedReferenceFallback) {
-            throw renderError;
+          if (!isReferenceGeneration.value) {
+            const recovered = await recoverGeneratedScene(viewer, userCode, submittedPrompt);
+            userCode = recovered.code;
+            code = normalizeLLMCode(userCode);
+          } else {
+            if (usedReferenceFallback) throw renderError;
+            console.warn(
+              "[3D] Generated reconstruction was not renderable; using visible reference relief.",
+              renderError,
+            );
+            code = draftReferenceCode;
+            userCodeMatch = code.match(
+              /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
+            );
+            userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
+            usedReferenceFallback = true;
+            await viewer.applyModuleCode(code, "replace", {kind: creationMode.value});
           }
-          console.warn(
-            "[3D] Generated reconstruction was not renderable; using visible reference relief.",
-            renderError,
-          );
-          code = draftReferenceCode;
-          userCodeMatch = code.match(
-            /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
-          );
-          userCode = userCodeMatch ? userCodeMatch[1].trim() : "";
-          usedReferenceFallback = true;
-          await viewer.applyModuleCode(code, "replace");
         }
         restoreViewerEnvironmentControls();
 
+        let designSignature = sceneDesignSignature(viewer.scene.getObjectByName('GeneratedObject'));
+        const previousDesigns = objectInferences.value.filter(item => item.prompt?.trim().replace(/\s+/g, ' ').toLowerCase() === submittedPrompt.trim().replace(/\s+/g, ' ').toLowerCase()
+          && item.assetKind === creationMode.value).map(item => item.designSignature).filter(Boolean);
+        if (!isReferenceGeneration.value && designSignature && previousDesigns.includes(designSignature)) {
+          lastStatus.value = "Exploring a new design...";
+          _resetStream("New Interpretation", 2048, "The first result repeated a previous design. Exploring a different construction.");
+          const revised = await callLLM(buildSceneRepair({ mode: creationMode.value, code: userCode, brief: submittedPrompt,
+            error: `This repeats a previous asset's geometry and materials. Make meaningful changes to unspecified design decisions while preserving all explicit user constraints. ${variation}` }),
+            { maxTokens: 2048, temperature: 0.6, thoughtTokens: 0, enableThinking: false },
+            ({ tokenCount, elapsedMs }) => { stream.tokenCount = tokenCount; stream.elapsedMs = elapsedMs; });
+          code = normalizeLLMCode(applySceneEdits(userCode, stripThinkBlocks(revised.text)));
+          await viewer.applyModuleCode(code, "replace", {kind: creationMode.value});
+          restoreViewerEnvironmentControls();
+          designSignature = sceneDesignSignature(viewer.scene.getObjectByName('GeneratedObject'));
+          if (previousDesigns.includes(designSignature)) throw new Error("The model repeated a previous design. Please generate another interpretation.");
+          userCode = code.match(/\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/)?.[1]?.trim() || '';
+        }
+
+        if (usedReferenceFallback) lastAssemblyContract.value = null;
+        if (lastAssemblyContract.value) {
+          const checked = await improveAssembly(viewer,userCode,submittedPrompt);
+          userCode=checked.code;code=normalizeLLMCode(userCode);
+        }
         // Store for refinement
         lastGeneratedCode.value = userCode;
+        lastGeneratedBrief.value = submittedPrompt;
 
         // Combined tok/s from both phases
-        const totalTokens = blueprintResult.tokenCount + codeResult.tokenCount;
-        const totalMs = blueprintResult.elapsedMs + codeResult.elapsedMs;
+        const totalTokens = (blueprintResult.tokenCount || 0) + codeResult.tokenCount;
+        const totalMs = (blueprintResult.elapsedMs || 0) + codeResult.elapsedMs;
         const tokensPerSecond = totalMs > 0 ? ((totalTokens / totalMs) * 1000).toFixed(1) : null;
 
-        lastStatus.value = usedReferenceFallback
-          ? "Draft rendered. Procedural reconstruction could not be validated."
-          : `Crafted! (${tokensPerSecond || '?'} tok/s)`;
-        let snapshot = await captureViewerSnapshot("Preview");
-        const screenshots = snapshot ? [snapshot] : [];
+        lastStatus.value = "Draft rendered. Checking visual quality…";
+        let snapshot = null;
+        let screenshots = [];
         let fidelityReview = null;
-        const fidelityPasses = [];
-        if (
-          isReferenceGeneration.value &&
-          !usedReferenceFallback &&
-          snapshot?.dataUrl
-        ) {
-          lastStatus.value = "Reviewing fidelity...";
-          _resetStream(
-            "Reviewing Fidelity",
-            1,
-            "Comparing silhouette, proportions, materials and critical details.",
-          );
-          try {
-            fidelityReview = await reviewReferenceFidelity(
-              submittedReference.dataUrl,
-              snapshot.dataUrl,
-            );
-            fidelityPasses.push(fidelityReview);
-          } catch (reviewError) {
-            fidelityReview = {
-              score: null,
-              verdict: "unavailable",
-              raw: reviewError.message,
-            };
-            fidelityPasses.push(fidelityReview);
-          }
-
-          if (
-            Number.isFinite(Number(fidelityReview?.score)) &&
-            Number(fidelityReview.score) < 0.72
-          ) {
-            lastStatus.value = "Correcting reconstruction...";
-            const stableCode = code;
-            const stableUserCode = userCode;
-            const defects = Array.isArray(fidelityReview.defects)
-              ? fidelityReview.defects.join("; ")
-              : fidelityReview.raw || "Improve visible fidelity";
-            await window.electronAPI.resetChat();
-            const correction = await callLLM(
-              buildRefinePrompt(
-                userCode,
-                `Correct the reconstruction without redesigning it. Fix these measured defects: ${defects}. Preserve accurate geometry. Fix silhouette and proportions first, then material boundaries and identity-critical details. Return the complete corrected code.`,
-              ),
-              {
-                maxTokens: 8192,
-                temperature: 0.3,
-                thoughtTokens: 0,
-                enableThinking: false,
-              },
-            );
-            const correctedCode = normalizeLLMCode(correction.text);
-            const correctedMatch = correctedCode.match(
-              /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
-            );
-            const correctedUserCode = correctedMatch ? correctedMatch[1].trim() : "";
-            const correctedCheck = validateRenderableUserCode(correctedUserCode);
-
-            if (correctedCheck.ok) {
-              try {
-                await viewer.applyModuleCode(correctedCode, "replace");
-                restoreViewerEnvironmentControls();
-                code = correctedCode;
-                userCode = correctedUserCode;
-                lastGeneratedCode.value = correctedUserCode;
-                snapshot = await captureViewerSnapshot("Fidelity refinement");
-                if (snapshot) screenshots.push(snapshot);
-                if (snapshot?.dataUrl) {
-                  const correctedReview = await reviewReferenceFidelity(
-                    submittedReference.dataUrl,
-                    snapshot.dataUrl,
-                  );
-                  fidelityReview = correctedReview;
-                  fidelityPasses.push(correctedReview);
-                }
-              } catch (correctionError) {
-                console.warn(
-                  "[3D] Correction failed validation; restoring the last good reconstruction.",
-                  correctionError,
-                );
-                code = stableCode;
-                userCode = stableUserCode;
-                await viewer.applyModuleCode(stableCode, "replace");
-                restoreViewerEnvironmentControls();
-              }
-            }
-          }
-          lastStatus.value = Number(fidelityReview?.score) >= 0.72
-            ? `Reconstruction verified (${Math.round(Number(fidelityReview.score) * 100)}%)`
-            : "Reconstruction ready";
+        let qualityStatus = "unreviewed";
+        if (!usedReferenceFallback && creationMode.value !== "game") {
+          const quality = await reviewRenderedConstruction(viewer,userCode,submittedPrompt,creationMode.value,
+            isReferenceGeneration.value ? submittedReference : null);
+          userCode = quality.code;
+          code = normalizeLLMCode(userCode);
+          lastGeneratedCode.value = userCode;
+          snapshot = quality.snapshot;
+          screenshots = quality.screenshots;
+          fidelityReview = {...quality.review,passes:quality.passes};
+          qualityStatus = quality.status;
+          designSignature = sceneDesignSignature(viewer.scene.getObjectByName("GeneratedObject"));
+        } else {
+          snapshot=await captureViewerSnapshot("Preview");screenshots=snapshot?[snapshot]:[];
         }
+        const assemblyReport=inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value);
+        if(assemblyReport.errors.length)qualityStatus='needs-refinement';
+        lastStatus.value = qualityStatus === "reviewed" ? "Visual review passed"
+          : qualityStatus === "needs-refinement" ? "Draft saved — review suggestions available"
+          : "Draft saved — visual review unavailable";
         const savedRecord = await addObjectInference(submittedPrompt, code, {
+          elapsedMs: Math.round(performance.now() - generationStarted),
           success: true,
           mode: effectiveCreationMode.value,
           assetKind: isReferenceGeneration.value ? "object" : creationMode.value,
           blueprint,
+          assemblyContract: lastAssemblyContract.value,
+          assemblyReport,
+          assemblyPlanningDiagnostics:assemblyPlanningDiagnostics.value,
+          creativeDirection,
+          designSignature,
           referenceAnalysis,
           referenceImage: submittedReference,
           usedReferenceFallback,
-          fidelityReview: fidelityReview
-            ? { ...fidelityReview, passes: fidelityPasses }
-            : null,
-          visionVerified: Number(fidelityReview?.score) >= 0.72,
+          fidelityReview,
+          qualityStatus,
+          visionVerified: !assemblyReport.errors.length && passesVisualReview(fidelityReview),
           tokensPerSecond,
           model: currentModel.value.modelname,
           screenshots,
           thumbnail: snapshot?.dataUrl || "",
         });
+        reportOperation({id:activityId,status:"completed",stage:"Ready"});
         console.log("[3D] Inference saved to history:", savedRecord?.id);
         if (creationMode.value === "level") {
           const level = materializeBuildAsset({
@@ -5610,14 +4782,16 @@ OUTPUT CODE:`;
         form.prompt = "";
         if (isReferenceGeneration.value) referenceImage.value = null;
       } catch (e) {
+        reportOperation({id:activityId,status:"failed",stage:"Failed",error:e.message});
         console.error("❌ Generation error:", e);
         lastStatus.value = "❌ Failed: " + e.message;
         try {
-          await addObjectInference(submittedPrompt, "", {
+          await addObjectInference(submittedPrompt, (e.generatedCode || lastAttemptedCode) ? normalizeLLMCode(e.generatedCode || lastAttemptedCode) : "", {
             success: false,
             mode: effectiveCreationMode.value,
             referenceImage: submittedReference,
             error: e.message,
+            notes: [e.message, ...(e.generationFailures || [])].join("\n"),
             model: currentModel.value?.modelname || "",
           });
         } catch (historyError) {
@@ -5635,16 +4809,24 @@ OUTPUT CODE:`;
     const onRefine = async () => {
       if (!refinePrompt.value.trim() || !lastGeneratedCode.value) return;
       isLoading.value = true;
+      const generationStarted = performance.now();
+      const activityId = `3d:${crypto.randomUUID()}`;
+      reportOperation({id:activityId,title:"Refining 3D",mode:"game",status:"running",stage:"Refining",location:"3D"});
+      const previous = {code:lastGeneratedCode.value,brief:lastGeneratedBrief.value,plan:lastAssemblyContract.value};
       lastStatus.value = "Refining...";
       try {
         await loadModelForGeneration(codeModel.value);
         const viewer = threeViewer.value;
         if (!viewer) throw new Error("Viewer not initialized");
 
+        if(lastAssemblyContract.value){
+          lastStatus.value='Updating assembly plan…';
+          lastAssemblyContract.value=await planAssembly(lastGeneratedBrief.value+'\nRequested revision: '+refinePrompt.value+'\nPrevious assembly: '+JSON.stringify(previous.plan)+'\nPreserve unaffected part IDs and bounds.',creationMode.value);
+        }
         // Reset chat history to free context for refinement
         await window.electronAPI.resetChat();
 
-        const prompt = buildRefinePrompt(lastGeneratedCode.value, refinePrompt.value);
+        const prompt = buildRefinePrompt(lastGeneratedCode.value, refinePrompt.value) + "\n" + assemblyInstructions(lastAssemblyContract.value);
         const refineMaxTokens = 8192;
         _resetStream("Refining", refineMaxTokens, "Sculpting on top of the existing scene.");
         const result = await callLLM(
@@ -5669,33 +4851,59 @@ OUTPUT CODE:`;
         const tokensPerSecond = result.elapsedMs > 0 ? ((result.tokenCount / result.elapsedMs) * 1000).toFixed(1) : null;
         console.log(`Refine: ${result.tokenCount} tokens in ${(result.elapsedMs / 1000).toFixed(1)}s (${tokensPerSecond || '?'} tok/s)`);
 
-        const code = normalizeLLMCode(result.text);
+        let code = normalizeLLMCode(result.text);
         const userCodeMatch = code.match(
           /\/\/ ── USER CODE START ──\n([\s\S]*?)\/\/ ── USER CODE END ──/,
         );
-        const refinedUserCode = userCodeMatch?.[1]?.trim() || "";
+        let refinedUserCode = userCodeMatch?.[1]?.trim() || "";
         if (!refinedUserCode) throw new Error("Refinement produced no code");
         const renderCheck = validateRenderableUserCode(refinedUserCode);
         if (!renderCheck.ok) throw new Error(`Refinement failed: ${renderCheck.reason}`);
 
-        lastGeneratedCode.value = refinedUserCode;
         _resetStream("Rendering", 1, "Compiling shaders and casting first light.");
         stream.tokenCount = 1;
         stream.maxTokens = 1;
-        await viewer.applyModuleCode(code, "replace");
+        const recovered = await recoverGeneratedScene(viewer, refinedUserCode, refinePrompt.value);
+        const checked=await improveAssembly(viewer,recovered.code,`${lastGeneratedBrief.value}\nRequested revision: ${refinePrompt.value}`);
+        refinedUserCode = checked.code;
+        code = normalizeLLMCode(refinedUserCode);
+        lastGeneratedCode.value = refinedUserCode;
         restoreViewerEnvironmentControls();
-        lastStatus.value = `Refined! (${tokensPerSecond || '?'} tok/s)`;
-        const snapshot = await captureViewerSnapshot("Preview");
-        await addObjectInference(`[Refine] ${refinePrompt.value}`, code, {
+        const revisedBrief = `${lastGeneratedBrief.value}\nRequested revision: ${refinePrompt.value}`.trim();
+        const quality = creationMode.value !== 'game'
+          ? await reviewRenderedConstruction(viewer,refinedUserCode,revisedBrief,creationMode.value)
+          : {code:refinedUserCode,status:'unreviewed',review:null,passes:[],snapshot:await captureViewerSnapshot('Preview')};
+        code=normalizeLLMCode(quality.code);lastGeneratedCode.value=quality.code;lastGeneratedBrief.value=revisedBrief;
+        const assemblyReport=inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value);
+        const snapshot=quality.snapshot;
+        lastStatus.value=assemblyReport.errors.length?'Draft saved — review suggestions available':quality.status==='reviewed'?'Visual review passed':quality.status==='needs-refinement'?'Draft saved — review suggestions available':'Draft saved — visual review unavailable';
+        const record=await addObjectInference(revisedBrief, code, {
+          elapsedMs: Math.round(performance.now() - generationStarted),
           success: true,
           mode: effectiveCreationMode.value,
+          assetKind: creationMode.value,
+          qualityStatus: assemblyReport.errors.length?'needs-refinement':quality.status,
+          assemblyContract: lastAssemblyContract.value,
+          assemblyReport,
+          assemblyPlanningDiagnostics:assemblyPlanningDiagnostics.value,
+          fidelityReview: quality.review ? {...quality.review,passes:quality.passes} : null,
+          visionVerified: !assemblyReport.errors.length && passesVisualReview(quality.review),
           tokensPerSecond,
           model: currentModel.value.modelname,
-          screenshots: snapshot ? [snapshot] : [],
+          screenshots: quality.screenshots || (snapshot ? [snapshot] : []),
           thumbnail: snapshot?.dataUrl || "",
         });
+        if(creationMode.value==='level'){
+          const level=materializeBuildAsset({kind:'level',title:record.prompt,code,inferenceId:record.id,thumbnail:snapshot?.dataUrl||''});
+          forgeLevelId.value=level.id;
+        }
+        reportOperation({id:activityId,status:'completed',stage:'Ready'});
         refinePrompt.value = '';
       } catch (e) {
+        lastAssemblyContract.value=previous.plan;lastGeneratedCode.value=previous.code;lastGeneratedBrief.value=previous.brief;
+        try { await threeViewer.value.applyModuleCode(normalizeLLMCode(previous.code),'replace',{kind:creationMode.value}); restoreViewerEnvironmentControls(); }
+        catch (restoreError) { console.error('Could not restore previous scene',restoreError); }
+        reportOperation({id:activityId,status:"failed",stage:"Failed",error:e.message});
         console.error("Refine error:", e);
         lastStatus.value = "Refine failed: " + e.message;
       } finally {
@@ -5718,7 +4926,7 @@ OUTPUT CODE:`;
       resumeActiveDownloadIfAny();
 
       await nextTick();
-      waitForViewerReady().then(() => {
+      initialSceneReady = waitForViewerReady().then(() => {
         restoreViewerEnvironmentControls();
         return loadDefaultObject();
       });
@@ -5733,6 +4941,9 @@ OUTPUT CODE:`;
     });
 
     onBeforeUnmount(() => {
+      editDisposed=true;
+      editCancelled=true;
+      if(editingBusy.value) window.electronAPI?.abortChatStream?.();
       // Cleanup scroll observer
       if (scrollObserver) {
         scrollObserver.disconnect();
@@ -5779,6 +4990,7 @@ OUTPUT CODE:`;
       scrollToTop,
       hasCopy,
       currentTime,
+      presentation,
       currentWeather,
       lightIntensity,
       lightingPresets,
@@ -5795,6 +5007,8 @@ OUTPUT CODE:`;
       isDownloading,
       downloadStatus,
       downloadAllModels,
+      cancelActiveDownloads,
+      isCancellingDownloads,
       downloads,
       downloadTaskList,
       form,
@@ -5803,6 +5017,9 @@ OUTPUT CODE:`;
       setWorkspaceTab,
       creationMode,
       objectInputMode,
+      levelEditor, editorRevision, editorBusy, editingBusy, editUndo, editRedo, cancelLevelRegeneration,
+      openLevelEditor, commitLevelTransform, commitLevelMarker, placeEditorAsset, regenerateLevelSelection, saveEditedLevel,
+      undoLevelEdit, redoLevelEdit,
       gameProject,
       forgeLevelId,
       forgeObjectId,
@@ -5878,9 +5095,6 @@ OUTPUT CODE:`;
       onReferenceImagePicked,
       removeReferenceImage,
       enablePhysics,
-      examplePrompts,
-      activeExamples,
-      levelExamples,
       setTimeOfDay,
       setWeather,
       performancePresets,
@@ -5927,6 +5141,7 @@ OUTPUT CODE:`;
       // Payout history
       requestOpenNetworkModal,
       // NFT Minting
+      glbExportStatus,
       mintTarget,
       openMint,
       onMinted,
@@ -5940,10 +5155,27 @@ OUTPUT CODE:`;
 </script>
 
 <style scoped>
+/* Keep editing controls compact so the canvas remains in the working viewport. */
+.three-controls-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:16px; align-items:stretch; }
+.three-controls-layout > * { min-width:0; margin:0 !important; max-height:32vh; overflow:auto; scrollbar-gutter:stable; }
+.three-controls-layout .models__activity--payouts { padding:12px !important; }
+.three-controls-layout :deep(.bz-gen-input) { padding:10px; gap:8px; }
+.three-controls-layout :deep(textarea) { min-height:64px !important; max-height:96px; }
+.three-controls-layout .environment-controls.bz-3d-environment { padding:16px !important; gap:12px; grid-template-columns:1fr; }
+.three-controls-layout .bz-3d-control-group { display:grid; grid-template-columns:100px minmax(0,1fr); align-items:start; gap:10px; }
+.three-controls-layout .bz-3d-control-head { font-size:11px; padding-top:10px; }
+.three-controls-layout .bz-3d-option { font-size:12px; }
+.three-controls-layout .bz-3d-selector { display:flex; flex-wrap:wrap; }
+.three-controls-layout .bz-3d-option { min-height:34px; padding:7px 10px; flex:1 0 auto; }
+.three-controls-layout + .viewer-container:not(.is-build) { height:clamp(280px,51vh,800px); aspect-ratio:auto; margin:16px 0; position:sticky; top:0; z-index:2; }
+@media(max-width:760px) {
+ .three-controls-layout { grid-template-columns:1fr; max-height:40vh; overflow:auto; }
+ .three-controls-layout > * { max-height:none; overflow:visible; }
+ .three-controls-layout .bz-3d-control-group { grid-template-columns:80px minmax(0,1fr); }
+ .three-controls-layout + .viewer-container:not(.is-build) { height:42vh; min-height:240px; }
+}
 .three-workspace-tabs {
-  position: sticky;
-  z-index: 40;
-  top: 0;
+  position: relative;
   display: flex;
   width: 100%;
   margin: 0 0 var(--bz-space-5);
@@ -7212,6 +6444,11 @@ p {
   border-radius: var(--bz-radius-lg, 8px);
   background: var(--bz-surface);
 }
+.bz-3d-option:focus-visible,
+.example-card:focus-visible {
+  outline: 2px solid var(--bz-accent);
+  outline-offset: 3px;
+}
 .bz-3d-control-group {
   min-width: 0;
   display: flex;
@@ -8348,7 +7585,7 @@ ol.chat .history-item:not(:first-child) hr {
 .build-director__order .build-action.is-publish {
   border-color: var(--bz-border-brand);
   background: var(--bz-purple-500);
-  color: var(--bz-fg);
+  color: var(--bz-on-accent);
 }
 
 .build-director__order .build-action:disabled {
@@ -8650,6 +7887,7 @@ ol.chat .history-item:not(:first-child) hr {
 .build-workflow__gameplay > button:not(:disabled) {
   border-color: var(--bz-border-brand);
   background: var(--bz-purple-500);
+  color: var(--bz-on-accent);
 }
 
 .build-workflow__gameplay > button:disabled {
@@ -8767,4 +8005,16 @@ ol.chat .history-item:not(:first-child) hr {
 @keyframes bz-caret {
   50% { opacity: 0; }
 }
+
+/* Keep editing controls in document flow; the canvas is never covered by panels. */
+.viewer-container.is-build {display:flex;flex-direction:column;height:auto;min-height:0;max-height:none;aspect-ratio:auto;margin:16px 0;overflow:hidden;border-radius:12px!important}
+.viewer-container.is-build .build-director {position:static;border:0;border-bottom:1px solid var(--bz-border);border-radius:0;box-shadow:none;padding:14px 16px;background:var(--bz-panel)}
+.build-marker-fields{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}.build-marker-fields fieldset{display:flex;gap:8px;border:0;padding:0;margin:0}.build-marker-fields legend{color:var(--bz-fg-mid);font-size:12px;margin-bottom:6px}.build-marker-fields label{display:flex;align-items:center;gap:6px;font-size:12px}.build-marker-fields input{width:64px;box-sizing:border-box;padding:8px;border:1px solid var(--bz-border);border-radius:6px;background:var(--bz-bg);color:var(--bz-fg)}
+@media(max-width:860px){.viewer-container.is-build .build-director__order{display:flex;grid-column:1/-1;justify-content:flex-end}}
+.viewer-container.is-build .viewer-wrapper {height:clamp(340px,54vh,720px);min-height:340px;flex:none;border-radius:0}
+.viewer-container.is-build .build-workflow {position:static;display:block;border:0;border-radius:0;padding:24px;background:var(--bz-panel)}
+.viewer-container.is-build:has(.build-workflow) .viewer-wrapper {display:none}
+.viewer-container.is-build .build-status {display:none}
+.build-gameplay summary {cursor:pointer;color:var(--bz-fg-mid);font-size:13px;padding:6px 0}.build-gameplay[open] summary {margin-bottom:8px}.level-entry{display:grid;gap:16px}.level-entry .build-workflow__levels button{display:grid;gap:8px;min-width:120px;padding:8px;border:1px solid var(--bz-border);border-radius:8px;color:var(--bz-fg);background:var(--bz-bg)}
+@media(max-width:700px){.build-director__levels{flex-wrap:wrap}.viewer-container.is-build .viewer-wrapper{height:380px}.build-director__order{flex-wrap:wrap}}
 </style>

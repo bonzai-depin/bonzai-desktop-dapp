@@ -1,9 +1,9 @@
 ---
 name: bonzai
 description: Local-first AI generation, companions, skills, and peer inference through BonzAI Desktop
-version: 2.1.0
+version: 4.0.0-rc.1
 homepage: https://bonzai.sh
-platforms: [macos, linux]
+platforms: [macos, linux, windows]
 metadata:
   hermes:
     tags: [ai, inference, image-generation, tts, music, video, companions, p2p]
@@ -18,11 +18,12 @@ Use BonzAI Desktop when a user wants local language or multimodal generation, co
 
 ## Procedure
 
-1. Check `GET http://localhost:3002/health`.
+1. Check `GET http://127.0.0.1:3002/health`. The gateway is loopback-only and is never exposed to another device.
 2. If unavailable, ask the user to start BonzAI Desktop.
-3. Send commands or chat to `POST http://localhost:3002/webhook`.
+3. Send commands or chat to `POST http://127.0.0.1:3002/webhook`.
 4. Use a stable `channelId` and set `platform` to `hermes`.
 5. Wait for the synchronous response. Initial model downloads and media generation may take several minutes.
+6. Refresh capabilities from `GET http://127.0.0.1:3002/manifest?agent=hermes` after a BonzAI update.
 
 ```json
 {
@@ -53,7 +54,7 @@ Optional companion minting commands are `!bonzai mint bare`, `companion`, `statu
 ## Direct language endpoint
 
 ```text
-Base URL: http://localhost:3002/v1
+Base URL: http://127.0.0.1:3002/v1
 Endpoint:  /chat/completions
 ```
 

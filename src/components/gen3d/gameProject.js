@@ -1,3 +1,4 @@
+import { sourceForBuilder, compileLevelParts, assetBuilder, validateTransform, sceneSourceSeed } from './levelEditing.js';
 export const GAME_PROJECT_VERSION = "1.0.0";
 export const ASSET_KINDS = Object.freeze({
   OBJECT: "object",
@@ -126,6 +127,41 @@ export function addClearCondition(project, levelId, condition = {}) {
   level.clearConditions.push(clearCondition);
   project.updatedAt = Date.now();
   return clearCondition;
+}
+
+/** Reopen an edited history snapshot with independent IDs and stable procedural seeds. */
+export function importLevelSnapshot(project, snapshot, metadata = {}) {
+  const source=JSON.parse(JSON.stringify(snapshot));
+  if(!source.level?.code || !Array.isArray(source.objects)) throw new Error('Invalid editable level snapshot');
+  const available=new Set(source.objects.map(object=>object.id));
+  for(const item of source.level.placements || []) {
+    if(!available.has(item.objectId)) throw new Error('Saved level has a missing asset');
+    validateTransform(item);
+  }
+  const next=JSON.parse(JSON.stringify(project));
+  const objectIds=new Map();
+  for(const object of source.objects){
+    const asset=addObjectAsset(next,object);
+    asset.seed=object.seed || sceneSourceSeed(object.code);
+    objectIds.set(object.id,asset.id);
+  }
+  const level=addLevel(next,{...source.level,...metadata});
+  const placementIds=new Map();
+  for(const item of source.level.placements || []){
+    if(!objectIds.has(item.objectId)) throw new Error('Saved level has a missing asset');
+    const placement=placeObject(next,level.id,objectIds.get(item.objectId),item);
+    placement.settings={...item.settings};placementIds.set(item.id,placement.id);
+  }
+  level.seed=source.level.seed || sceneSourceSeed(source.level.code);
+  level.partEdits=source.level.partEdits || {};
+  level.entry=source.level.entry || vector();level.exits=source.level.exits || [];
+  level.clearMode=source.level.clearMode || 'all';
+  level.clearConditions=(source.level.clearConditions || []).map(condition=>({...condition,targetPlacementId:placementIds.get(condition.targetPlacementId)||condition.targetPlacementId}));
+  for(const interaction of source.interactions || []){
+    if(placementIds.has(interaction.sourcePlacementId)&&placementIds.has(interaction.targetPlacementId))addInteraction(next,{...interaction,sourcePlacementId:placementIds.get(interaction.sourcePlacementId),targetPlacementId:placementIds.get(interaction.targetPlacementId)});
+  }
+  Object.assign(project,next);
+  return level;
 }
 
 export function removeClearCondition(project, levelId, conditionId) {
@@ -331,18 +367,6 @@ export function validateGameProject(project, { requireClearConditions = true } =
   return { ok: errors.length === 0, errors };
 }
 
-const sourceForBuilder = (code) => {
-  const input = String(code || "");
-  const generated = input.match(
-    /\/\/ ── USER CODE START ──\r?\n([\s\S]*?)\/\/ ── USER CODE END ──/,
-  )?.[1] || input;
-  return generated
-  .replace(/^\s*import\s+.*$/gm, "")
-  .replace(/^\s*export\s+default\s+/gm, "")
-  .replace(/\bscene\.add\s*\(\s*root\s*\)\s*;?/g, "")
-  .replace(/\breturn\s+root\s*;?/g, "");
-};
-
 const vecArgs = (value, fallback = { x: 0, y: 0, z: 0 }) => {
   const normalized = vector(value || fallback);
   return `${normalized.x}, ${normalized.y}, ${normalized.z}`;
@@ -410,10 +434,7 @@ export function compileGameProject(project) {
 
   project.objects.forEach((asset, index) => {
     lines.push(
-      `async function buildObject${index}(root) {`,
-      sourceForBuilder(asset.code).split("\n").map((line) => `  ${line}`).join("\n"),
-      `  return root;`,
-      `}`,
+      `const buildObject${index} = ${assetBuilder(asset.code)};`,
       ``,
     );
   });
@@ -423,11 +444,12 @@ export function compileGameProject(project) {
       `const levelRoot${index} = new THREE.Group();`,
       `levelRoot${index}.name = ${JSON.stringify(level.title)};`,
       `root.add(levelRoot${index});`,
-      `async function buildLevel${index}(root) {`,
+      `async function buildLevel${index}(root, Math) {`,
       sourceForBuilder(level.code).split("\n").map((line) => `  ${line}`).join("\n"),
       `  return root;`,
       `}`,
-      `await buildLevel${index}(levelRoot${index});`,
+      `await buildLevel${index}(levelRoot${index}, H.seededLevelMath(${JSON.stringify(level.seed || sceneSourceSeed(level.code))}));`,
+      compileLevelParts(level, `levelRoot${index}`),
       `game.level(${JSON.stringify(level.id)}, levelRoot${index}, { entry: new THREE.Vector3(${vecArgs(level.entry)}) });`,
       ``,
     );
@@ -437,7 +459,7 @@ export function compileGameProject(project) {
       const placementVariable = `placement${index}_${placementIndex}`;
       lines.push(
         `const ${placementVariable} = new THREE.Group();`,
-        `await buildObject${assetIndex}(${placementVariable});`,
+        `await buildObject${assetIndex}(${placementVariable}, H.seededLevelMath(${JSON.stringify(project.objects[assetIndex].seed || sceneSourceSeed(project.objects[assetIndex].code))}), addUpdateCallback);`,
         `${placementVariable}.position.set(${vecArgs(placement.position)});`,
         `${placementVariable}.rotation.set(${vecArgs(placement.rotation)});`,
         `${placementVariable}.scale.set(${vecArgs(placement.scale, { x: 1, y: 1, z: 1 })});`,

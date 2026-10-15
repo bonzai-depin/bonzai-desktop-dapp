@@ -4,13 +4,13 @@ DO NOT hand-roll a composer. The host ThreeViewer owns the composer and
 exposes tunable setters. Call the setters from inside `generate()`.
 
 ## Baseline (already applied to every scene — only override if needed)
-setFilmGrain(0.035, 0.35)
-setChromatic(0.22, 2.2)
-setColorGrade({ saturation: 1.12, contrast: 1.04 })
-setDoF({ aperture: 0.006, maxblur: 0.006 })        // auto-focus on orbit target
+setFilmGrain(0, 0)
+setChromatic(0, 2.2)
+setColorGrade({ saturation: 1, contrast: 1 })
+setDoF({ aperture: 0, maxblur: 0 })        // auto-focus on orbit target
 setUnderwater(false, { auto: true, ... })          // auto-triggers below water
-setAO({ radius: 0.6, intensity: 3.0, quality: "High" })
-setBloom({ intensity: 0.8, threshold: 0.85 })
+setAO({ radius: 0.15, intensity: 1, quality: "High" })
+setBloom({ intensity: 0.2, threshold: 1.2 })
 
 ## Overrides worth calling
 setLensFlare({ position: Vector3, strength: 0.6, occlusionTest: true, tint?, anamorphic? })
@@ -20,11 +20,7 @@ setDoF({ aperture: 0.015 })                        // stronger product-shot blur
 setAO({ radius: 1.2, intensity: 5.0, quality: "Ultra" })
 setBloom({ intensity: 1.4, threshold: 0.6 })
 await setEnvironment("studio" | "day" | "sunset" | "night" | url, { background?, intensity? })
-setHeightFog({ color: 0x0a0a14, density: 0.025, distortion: 1.0, scale: 0.04,
-               direction: { x: 0.02, y: 0, z: 0.03 },
-               boundsMin?: Vector3, boundsMax?: Vector3 })
-    // Faraz-style domain-warped fBm fog; inherits into every material.
-    // Pair with setScreenDroplets() for matched weather atmospherics.
+Weather and height fog are controlled by the viewer UI, not generated code.
 
 ## DO NOT
 Do NOT import EffectComposer, UnrealBloomPass, BokehPass, SMAAPass,
@@ -35,17 +31,19 @@ Do NOT touch `renderer.setPixelRatio` or add custom render passes.
 ## Scene-level FX (geometry, not post)
 FX.withGlow(mesh, color, { scale: 1.08, intensity: 1.3 })   // fresnel shell bloom-substitute
 FX.godRayCone({ from: Vector3, to: Vector3, color, spread?, intensity? })
-FX.scatter(targetMesh, protoMesh, count, { scaleRange?, alignToNormal?, rotateY? })
+await FX.scatter(targetMesh, protoMesh, count, { scaleRange?, alignToNormal?, rotateY? })
 FX.batch([meshes], { material? })                   // BatchedMesh single-draw-call pile
 
-## Liquids — use these, never hand-roll
+## Liquids — optional construction helpers
 FLUID.tieredFountain({ tiers: 3, baseRadius: 0.5, spacing: 0.32, pillar: true,
-                       waterColor: 0x5fb4ff, rim: MAT.gold })
+                       stoneColor: 0xc4b69c, waterColor: 0xe2f0eb })
     // Complete cascading fountain in ONE call: bowls + central pillar +
-    // pouring streams between tiers. Do NOT hand-roll fountain bowls.
+    // clear jets between tiers. Author custom profiles for bespoke architecture.
+FLUID.basinWater({ radius: 0.4, y: 0.1, depth: 0.08 }) // add inside a bespoke stone basin
 FLUID.fountainBasin({ radius: 0.5, y: 0 })  // single bowl + water pool
 FLUID.oceanWater(geometry, { color: 0x0a86c8, ... })  // flat pool / moat
-FLUID.stream({ from: Vector3, to: Vector3, radius: 0.02, color: 0x88d8ff })
+FLUID.jet({ from: Vector3, to: Vector3, radius: 0.008, color: 0xe2f0eb }) // clear cascade
+FLUID.stream({ from: Vector3, to: Vector3, radius: 0.02 }) // stylized waterfall sheets
 H.fillLiquid(vesselMesh, color, { fillLevel: 0.6 })   // liquid inside a container
 FLUID.upgradeFill(result)                             // add animated ripples
 

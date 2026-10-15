@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./BonzaiV4Liquidity.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -48,16 +49,8 @@ interface IPositionManager {
         address hooks;
     }
 
-    function mint(
-        PoolKey calldata poolKey,
-        int24 tickLower,
-        int24 tickUpper,
-        uint256 liquidity,
-        uint128 amount0Max,
-        uint128 amount1Max,
-        address owner,
-        bytes calldata hookData
-    ) external payable returns (uint256 tokenId, uint128 liquidity0, uint128 liquidity1);
+    function nextTokenId() external view returns (uint256);
+    function modifyLiquidities(bytes calldata unlockData, uint256 deadline) external payable;
 
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
 }
@@ -88,7 +81,7 @@ interface IBonzaiUniswapHook {
  * @notice Factory for atomic companion token deployment + Uniswap V4 liquidity
  * @dev Deploys ERC-20 token, creates V4 pool with fee=0 (hook-only fees),
  *      mints full-range LP position, locks LP NFT to DEAD address, and
- *      registers the pool with BonzaiUniswapHook for 33/33/34 fee capture.
+ *      registers the pool with BonzaiUniswapHook for 40/40/10/10 fee capture.
  *
  * Features:
  * - One-click token launch with 96% supply in liquidity, 4% to companion (agent wallet)
@@ -103,6 +96,8 @@ interface IBonzaiUniswapHook {
  * - Hook captures 1% of swap output: 40 wallet / 40 owner / 10 treasury / 10 MintPool
  */
 contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
+    /// @notice Lifetime number of canonical agent social-token contracts, not ERC20 units.
+    uint256 public constant MAX_SOCIAL_TOKENS = 10_000;
     using SafeERC20 for IERC20;
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -234,7 +229,7 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
      * @param symbol Token symbol - companion's first name uppercase (e.g., "AURORE")
      * @param imageURI IPFS URI of companion's profile image
      * @param agentWallet Companion's agent wallet address
-     * @param companionOwner NFT owner address (receives 33% of hook fees)
+     * @param companionOwner NFT owner address (receives 40% of hook fees)
      *
      * @return token Address of the deployed token
      * @return poolId Pool ID hash for the V4 pool
@@ -250,6 +245,7 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         // Validation
         require(msg.value >= minEthLiquidity, "Insufficient ETH for liquidity");
         require(nftTokenId > 0, "Must have minted NFT");
+        require(nftTokenId <= MAX_SOCIAL_TOKENS && allTokens.length < MAX_SOCIAL_TOKENS, "Social token supply cap reached");
         require(companionTokens[nftTokenId] == address(0), "Token already exists for this companion");
         require(agentWallet != address(0), "Invalid agent wallet address");
         require(companionOwner != address(0), "Invalid companion owner address");
@@ -297,9 +293,9 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         });
 
         // 6. Calculate sqrtPriceX96 from ETH/token ratio
-        // price = ethAmount / poolAmount (ETH per token)
+        // price = poolAmount / ethAmount (tokens per ETH)
         // sqrtPriceX96 = sqrt(price) * 2^96
-        // For currency0=ETH, currency1=token: price = amount0/amount1 = ethAmount/tokenAmount
+        // For currency0=ETH, currency1=token: price = amount1/amount0 = tokenAmount/ethAmount
         uint160 sqrtPriceX96 = _calculateSqrtPriceX96(msg.value, poolAmount);
 
         // 7. Initialize the pool
@@ -316,24 +312,25 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         newToken.approve(address(permit2), poolAmount);
         permit2.approve(token, address(positionManager), uint160(poolAmount), uint48(block.timestamp + 3600));
 
-        // 9. Mint full-range LP position (2% slippage tolerance)
-        (uint256 positionId, , ) = positionManager.mint{value: msg.value}(
-            poolKey,
-            MIN_TICK,
-            MAX_TICK,
-            0,                                      // liquidity calculated by PM from amounts
-            uint128(poolAmount * 98 / 100),         // 2% slippage tolerance on tokens
-            uint128(msg.value * 98 / 100),          // 2% slippage tolerance on ETH
-            address(this),                           // Position NFT minted to factory first
-            ""                                       // No hook data
+        // 9. Mint using the canonical V4 PositionManager action interface.
+        // Initialization and mint happen atomically at the same price; no slippage
+        // allowance is needed. Maxima follow currency0=ETH, currency1=token.
+        uint256 positionId = positionManager.nextTokenId();
+        bytes[] memory params = new bytes[](3);
+        params[0] = abi.encode(
+            poolKey, MIN_TICK, MAX_TICK,
+            uint256(BonzaiV4Liquidity.liquidity(msg.value, poolAmount, sqrtPriceX96)),
+            uint128(msg.value), uint128(poolAmount), BURN_ADDRESS, bytes("")
         );
-
-        require(positionId > 0, "Position mint failed");
-
-        // 10. Burn LP position NFT (transferred to 0xdead — no private key, the
-        //     position is permanently unreachable and liquidity stays in the pool)
-        // V4's BURN_POSITION removes liquidity first, so we use DEAD transfer
-        positionManager.safeTransferFrom(address(this), BURN_ADDRESS, positionId);
+        params[1] = abi.encode(NATIVE_ETH, token);
+        params[2] = abi.encode(NATIVE_ETH, msg.sender);
+        positionManager.modifyLiquidities{value: msg.value}(abi.encode(hex"020d14", params), block.timestamp);
+        require(IERC721(address(positionManager)).ownerOf(positionId) == BURN_ADDRESS, "Position not locked");
+        // Any rounding remainder is inaccessible to the factory administrator.
+        uint256 tokenDust = newToken.balanceOf(address(this));
+        if (tokenDust > 0) newToken.transfer(BURN_ADDRESS, tokenDust);
+        newToken.approve(address(permit2), 0);
+        permit2.approve(token, address(positionManager), 0, 0);
 
         // 11. Compute poolId and register with hook. The hook reads owner +
         //     agent wallet LIVE from the NFT contract on every swap, so we
@@ -404,6 +401,7 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
      */
     function setCompanionContract(address _companionContract) external onlyOwner {
         require(_companionContract != address(0), "Invalid address");
+        require(allTokens.length == 0 || _companionContract == companionContract, "Registry frozen after issuance");
         companionContract = _companionContract;
     }
 
@@ -456,37 +454,13 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /**
      * @dev Calculate sqrtPriceX96 from ETH and token amounts.
      *      For V4 with currency0=ETH (address(0)), currency1=token:
-     *      price = amount0 / amount1 = ethAmount / tokenAmount
+     *      price = amount1 / amount0 = tokenAmount / ethAmount
      *      sqrtPriceX96 = sqrt(price) * 2^96
      */
     function _calculateSqrtPriceX96(uint256 ethAmount, uint256 tokenAmount)
-        internal
-        pure
-        returns (uint160)
+        internal pure returns (uint160)
     {
-        require(ethAmount > 0 && tokenAmount > 0, "Zero amount");
-        // sqrtPriceX96 = sqrt(ethAmount * 2^192 / tokenAmount)
-        // Split shift to avoid overflow: (ethAmount << 192) overflows for ethAmount >= 2^64
-        // Instead: compute (ethAmount << 96) / tokenAmount, then shift result << 96 before sqrt
-        uint256 step1 = (ethAmount << 96) / tokenAmount;
-        uint256 ratioX192 = step1 << 96;
-        uint256 sqrtResult = _sqrt(ratioX192);
-        require(sqrtResult > 0 && sqrtResult <= type(uint160).max, "Invalid sqrt price");
-        return uint160(sqrtResult);
-    }
-
-    /**
-     * @dev Integer square root (Babylonian method)
-     */
-    function _sqrt(uint256 x) internal pure returns (uint256) {
-        if (x == 0) return 0;
-        uint256 z = (x + 1) / 2;
-        uint256 y = x;
-        while (z < y) {
-            y = z;
-            z = (x / z + z) / 2;
-        }
-        return y;
+        return BonzaiV4Liquidity.sqrtPrice(ethAmount, tokenAmount);
     }
 
     /// @notice Allow contract to receive ETH

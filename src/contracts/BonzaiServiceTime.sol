@@ -34,32 +34,12 @@ interface IProviderRegistry {
 
 /**
  * @title BonzaiServiceTime
- * @notice Free P2P inference accounting via direct provider self-reporting.
- *
- * Design (post-H2 redesign — no EIP-712 sessions):
- *   - Inference is FREE to consumers. No per-request payment, no signatures.
- *   - The provider measures the actual elapsed wall-clock time between
- *     receiving a request and delivering the response, then records that
- *     elapsed time on-chain via `recordServiceTime(pipelineId, seconds)`.
- *   - Provider rewards = (provider_seconds / total_seconds) × pool_provider_side
- *     for the epoch the recording lands in.
- *   - Consumers do NOT touch the chain. Mobile-app users consume inference
- *     freely without any Web3 wallet — the provider trusts the request, the
- *     measurement, and self-reports honestly. Pool dilution + the provider
- *     LVL gate are the only sybil deterrents.
- *
- * Sybil resistance (LVL gate, provider only):
- *   - The reporting provider must stake >= 1000 BONZAI on the economy chain
- *     at the moment of `recordServiceTime` (and at claim time).
- *
- * Per-call safety:
- *   - `MAX_RECORD_DURATION` (24h) caps a single record. Honest providers
- *     accumulate multiple records over an epoch.
- *
- * Pipeline -> pool mapping:
- *   0  LLM            -> 0 text       1..4 IMAGE_*       -> 2 image
- *   5..8 AUDIO/MUSIC  -> 1 audio      9 VIDEO_FAST       -> 3 video
- *   10 VISION         -> 2 image      11 PIPELINE_SHARD  -> 0 text
+ * @notice Free inference with independently attested provider accounting.
+ * @dev Provider self-reports cannot authorize rewards. An explicitly configured
+ * trusted attestor must validate completed work and submit unique receipts.
+ * Claims start paused; enabling payouts requires an operational attestor.
+ * Consumers do not need a wallet. Attestation is a protocol trust boundary,
+ * not a cryptographic proof that inference occurred.
  */
 contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
@@ -102,7 +82,9 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
     /// @notice Independent pause for provider reward claims. Lets admins
     ///         halt payouts during incident response without blocking new
     ///         service-time recording.
-    bool public claimsPaused;
+    bool public claimsPaused = true;
+    address public serviceTimeAttestor;
+    mapping(bytes32 => bool) public usedReceipts;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS / ERRORS
@@ -125,8 +107,13 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
     );
     event RecordEarningsFailed(address indexed provider, uint256 amount, bytes reason);
     event ClaimsPausedSet(bool paused);
+    event ServiceTimeAttestorUpdated(address indexed attestor);
+    event ServiceReceiptRecorded(bytes32 indexed receiptHash, address indexed provider, uint256 indexed epochId);
     event ProviderRegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
 
+    error UnverifiedServiceTime();
+    error UnauthorizedAttestor();
+    error InvalidReceipt();
     error ProviderBelowLvl1();
     error InvalidPipeline();
     error InvalidDuration();
@@ -153,59 +140,25 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
     // PROVIDER RECORD (the only entry point for accruing time)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Record `secondsServed` of inference time for `pipelineId`,
-     *         credited to the caller in the current epoch.
-     * @dev Provider-only. Provider must hold >= LVL1_THRESHOLD BONZAI.
-     *      `secondsServed` must be in [1, MAX_RECORD_DURATION].
-     *      Consumers don't sign anything — providers self-report and earn
-     *      against pool dilution. No per-request signatures.
-     */
-    function recordServiceTime(uint8 pipelineId, uint256 secondsServed)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        if (_providerStake(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
+    /// @notice Legacy unsigned reporting is deliberately disabled.
+    function recordServiceTime(uint8, uint256) external pure { revert UnverifiedServiceTime(); }
+    struct ServiceRecord { uint8 pipelineId; uint256 secondsServed; }
+    function recordServiceTimeBatch(ServiceRecord[] calldata) external pure { revert UnverifiedServiceTime(); }
+
+    function recordVerifiedServiceTime(
+        address provider, uint8 pipelineId, uint256 secondsServed, uint256 epochId, bytes32 receiptHash
+    ) external nonReentrant whenNotPaused {
+        if (msg.sender != serviceTimeAttestor || serviceTimeAttestor == address(0)) revert UnauthorizedAttestor();
+        if (provider == address(0) || receiptHash == bytes32(0) || usedReceipts[receiptHash]) revert InvalidReceipt();
+        require(epochId == mintPool.currentEpoch() && !mintPool.isEpochFinalized(epochId), "Invalid receipt epoch");
+        if (_providerStake(provider) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
         if (secondsServed == 0 || secondsServed > MAX_RECORD_DURATION) revert InvalidDuration();
-
         uint8 poolIndex = _pipelineToPool(pipelineId);
-        uint256 epochId = mintPool.currentEpoch();
-
-        providerServiceTime[epochId][poolIndex][msg.sender] += secondsServed;
+        usedReceipts[receiptHash] = true;
+        providerServiceTime[epochId][poolIndex][provider] += secondsServed;
         totalServiceTime[epochId][poolIndex] += secondsServed;
-
-        emit ServiceTimeRecorded(msg.sender, poolIndex, epochId, secondsServed, pipelineId);
-    }
-
-    /**
-     * @notice Batch variant — multiple records in a single tx.
-     */
-    struct ServiceRecord {
-        uint8 pipelineId;
-        uint256 secondsServed;
-    }
-
-    function recordServiceTimeBatch(ServiceRecord[] calldata records)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        if (_providerStake(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
-        require(records.length > 0, "Empty batch");
-
-        uint256 epochId = mintPool.currentEpoch();
-        for (uint256 i = 0; i < records.length; ) {
-            uint256 secondsServed = records[i].secondsServed;
-            if (secondsServed == 0 || secondsServed > MAX_RECORD_DURATION) revert InvalidDuration();
-
-            uint8 poolIndex = _pipelineToPool(records[i].pipelineId);
-            providerServiceTime[epochId][poolIndex][msg.sender] += secondsServed;
-            totalServiceTime[epochId][poolIndex] += secondsServed;
-
-            emit ServiceTimeRecorded(msg.sender, poolIndex, epochId, secondsServed, records[i].pipelineId);
-            unchecked { ++i; }
-        }
+        emit ServiceTimeRecorded(provider, poolIndex, epochId, secondsServed, pipelineId);
+        emit ServiceReceiptRecorded(receiptHash, provider, epochId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -282,7 +235,7 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
 
     function _providerStake(address provider) internal view returns (uint256) {
         address vault = mintPool.stakingVault();
-        if (vault == address(0)) return bonzaiToken.balanceOf(provider);
+        if (vault == address(0)) return 0;
         (uint256 amount,,,) = IBonzaiProviderStake(vault).positions(provider);
         return amount;
     }
@@ -295,8 +248,15 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
     function unpause() external onlyOwner { _unpause(); }
 
     function setClaimsPaused(bool paused_) external onlyOwner {
+        require(paused_ || serviceTimeAttestor != address(0), "Attestor required");
         claimsPaused = paused_;
         emit ClaimsPausedSet(paused_);
+    }
+
+    function setServiceTimeAttestor(address attestor) external onlyOwner {
+        serviceTimeAttestor = attestor;
+        if (attestor == address(0)) { claimsPaused = true; emit ClaimsPausedSet(true); }
+        emit ServiceTimeAttestorUpdated(attestor);
     }
 
     function setProviderRegistry(address registry) external onlyOwner {

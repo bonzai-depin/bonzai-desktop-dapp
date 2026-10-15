@@ -61,6 +61,9 @@ export const companions = sqliteTable(
     tokenId: text("token_id"),
     agentWallet: text("agent_wallet"),
 
+    // Local presentation, social-token metadata and selected workflow IDs.
+    extraJson: text("extra_json", { mode: "json" }),
+
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },

@@ -210,6 +210,31 @@ export const BonzaiRoyaltySplitterABI = [
       {
         "indexed": true,
         "internalType": "address",
+        "name": "pool",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint8",
+        "name": "poolIndex",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "PoolFeesRetried",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "oldTreasury",
         "type": "address"
       },
@@ -376,6 +401,30 @@ export const BonzaiRoyaltySplitterABI = [
     "inputs": [
       {
         "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "uint8",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "name": "pendingPoolFees",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "token",
         "type": "address"
       },
@@ -393,6 +442,24 @@ export const BonzaiRoyaltySplitterABI = [
   {
     "inputs": [],
     "name": "renounceOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "pool",
+        "type": "address"
+      },
+      {
+        "internalType": "uint8",
+        "name": "poolIndex",
+        "type": "uint8"
+      }
+    ],
+    "name": "retryPoolFees",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -434,6 +501,19 @@ export const BonzaiRoyaltySplitterABI = [
     "name": "setTreasury",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalPendingPoolFees",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

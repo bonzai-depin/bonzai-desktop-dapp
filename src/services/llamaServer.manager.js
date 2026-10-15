@@ -54,6 +54,7 @@ const SHUTDOWN_SIGKILL_MS = 5_000;
 // ─────────────────────────────────────────────────────────────────────────────
 
 let activeProcess = null;
+let activeReady = false;
 let activePort = null;
 let activeSpec = null; // { modelPath, mmprojPath, ctxSize, ngl, draftPath, rpcPeers, ... }
 let lastExitInfo = null;
@@ -181,7 +182,7 @@ async function pickFreePort() {
  *                                          that don't reference the variable
  *                                          ignore it harmlessly.
  */
-function buildArgs(spec) {
+export function buildArgs(spec) {
   const isMtpSpecDecode = spec.specType === "draft-mtp" || spec.mtp === true;
   const requestedParallelSlots = spec.parallelSlots && spec.parallelSlots >= 1 ? spec.parallelSlots : 1;
   const parallelSlots = isMtpSpecDecode ? 1 : requestedParallelSlots;
@@ -361,6 +362,7 @@ export async function startModel(spec, { resourcesPath = null } = {}) {
     env: { ...process.env },
   });
 
+  activeReady = false;
   activeProcess = proc;
   activePort = port;
   activeSpec = fullSpec;
@@ -397,6 +399,7 @@ export async function startModel(spec, { resourcesPath = null } = {}) {
     throw err;
   }
 
+  if (activeProcess === proc) activeReady = true;
   console.log(`[llama-server] Ready on :${port} (pid=${pid})`);
   return { port, pid };
 }
@@ -716,6 +719,12 @@ export async function proxyRequest(subpath, { method = "GET", headers = {}, body
 // Introspection
 // ─────────────────────────────────────────────────────────────────────────────
 
+export function getRuntimeState() {
+  return { running: !!activeProcess, pid: activeProcess?.pid || null, port: activePort,
+    phase: !activeProcess ? "stopped" : activeReady ? "ready" : "loading",
+    inFlight: activeProcess ? _inFlight : 0 };
+}
+
 export function isRunning() {
   return !!activeProcess;
 }
@@ -756,4 +765,19 @@ export async function getMetrics() {
   } catch {
     return null;
   }
+}
+
+/** Tokenize the rendered chat template so code generation can reserve output reliably. */
+export async function countPromptTokens(messages) {
+  const port = requireRunning();
+  const post = async (endpoint, body) => {
+    const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), dispatcher: llamaFetchDispatcher, signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error(`Context preflight failed (${response.status}). Restart the local model server.`);
+    return response.json();
+  };
+  const rendered = await post('/apply-template', { messages, add_generation_prompt: true, chat_template_kwargs: { enable_thinking: false } });
+  if (typeof rendered.prompt !== 'string') throw new Error('The model server did not return a chat template.');
+  const result = await post('/tokenize', { content: rendered.prompt, add_special: false, parse_special: true });
+  if (!Array.isArray(result.tokens)) throw new Error('The model server did not return a token count.');
+  return result.tokens.length;
 }

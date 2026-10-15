@@ -1,3 +1,5 @@
+import { FINANCE_READ_ACTIONS } from "./finance/actions.js";
+import { OPERATIONAL_ACTIONS } from './operationalActions.js';
 /**
  * BonzAI Company — Solo Mode governance (renderer-side adapter,
  * SQLite-backed).
@@ -14,6 +16,39 @@
 
 import { append, _notify } from "./auditLog.js";
 import { vetoModeFor, VETO_MODES } from "./charter.js";
+import { SKILL_MANIFESTS } from './skillManifests.js';
+
+const READ_ONLY_CONNECTOR_ACTIONS = new Set([...FINANCE_READ_ACTIONS, 'qbo.reportAR', 'gcal.findSlots', 'shopify.listOrders', 'notion.queryDB']);
+const EXTERNAL_ACTIONS = new Set(['runWorkflow', 'paySupplier', 'transfer', 'executeBuyback', 'publishContent', 'broadcastChannel', 'scheduleBroadcast', 'replyToInbox', 'sendCustomerOffer', 'publishFinancialReport', 'publishProductReport', 'publishComplianceReport', 'publishExperimentReport', 'retireOutput', 'fire', 'amendCharter', 'smartAgent.runWorker', 'smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings']);
+const approvedActions = new WeakMap();
+
+export function consumeOwnerApproval(companyId, pendingId, action) {
+  const approval = approvedActions.get(action);
+  if (!approval || approval.companyId !== companyId || approval.pendingId !== pendingId || approval.action !== JSON.stringify(action)) return false;
+  approvedActions.delete(action);
+  return true;
+}
+
+/** Capability assignment is not authority to spend, publish or change external records. */
+export function requiresOwnerApproval(action = {}) {
+  const operational = OPERATIONAL_ACTIONS[action.type];
+  if (operational) return !operational.read && !['grants.prepareBatch','grants.saveDossier','grants.draftDocument','purchasing.saveRequest','purchasing.saveRfq','purchasing.runReview','billing.saveInvoice','records.prepareMessage','records.runReminders'].includes(action.type);
+  // Addressed team messages stay on this device; shared record mutations need review.
+  if (action.type === 'team.updateProcurement') return true;
+  if (EXTERNAL_ACTIONS.has(action.type)) return true;
+  if(action.type === "gmao.updateProcurement" && ["ordered","received","partially_received","cancelled"].includes(action.status)) return true;
+  if(action.type === "gmao.validateProcessStep") return true;
+  if(action.type === "gmao.recordAttachment" || (action.type === "gmao.transitionWorkOrder" && ["acknowledged","en_route","on_site","restored","cancelled"].includes(action.status))) return true;
+  if (action.type === 'gmao.recordServiceAcceptance' || action.type === 'field.completeJob' || (action.type === 'gmao.transitionWorkOrder' && action.status === 'completed')) return true;
+  if (action.type === 'runFineTune' || (action.type === 'produce' && action.pipeline === 'fineTune')) return true;
+  if (action.type === 'produce' && Object.keys(action.params || {}).some(key => /(?:_path|_url)$/.test(key))) return true;
+  if (action.type === 'gmao.notifyClient') return false;
+  if(action.type==='gmao.updateQuote' && ['accepted','rejected','purchase_order_received'].includes(action.status))return true;
+  if(action.type==='gmao.registerCompliance' && action.status==='valid')return true;
+  if (['sent', 'accepted', 'paid'].includes(action.status) && ['gmao.createQuote', 'gmao.updateQuote', 'gmao.saveInvoice'].includes(action.type)) return true;
+  if (READ_ONLY_CONNECTOR_ACTIONS.has(action.type)) return false;
+  return Object.values(SKILL_MANIFESTS).some(manifest => manifest.requiredConnectors?.length && manifest.actions.some(item => item.type === action.type));
+}
 
 const _api = () => window.electronAPI?.db?.approvals || null;
 let _warned = false;
@@ -21,8 +56,8 @@ function _warnOnce(err) {
   if (_warned) return;
   _warned = true;
   console.warn(
-    "[governance] data layer not reachable. Approvals will fall back to " +
-    "auto-execute until the DB is open. Run `npm install` and restart. " +
+    "[governance] data layer not reachable. Approval-required actions are blocked " +
+    "until the DB is open. Run `npm install` and restart. " +
     "Error: " + (err?.message || err || "no IPC handler"),
   );
 }
@@ -39,6 +74,24 @@ function _classify(action) {
   if (action.type === "publishContent") return "publishContent";
   if (action.type === "broadcastChannel" || action.type === "scheduleBroadcast") return "broadcastChannel";
   if (action.type === "replyToInbox") return "replyToInbox";
+  if (action.type === "gmao.createWorkOrder") return "gmao.createWorkOrder";
+  if (action.type === "gmao.transitionWorkOrder") {
+    return action.status === "completed" ? "gmao.completeWorkOrder" : "gmao.updateStatus";
+  }
+  if (action.type === "field.completeJob") return "gmao.updateStatus";
+  if (action.type === "gmao.recordAttachment") return action.resolved === true ? "gmao.updateStatus" : "gmao.procurement";
+  if (action.type === "gmao.updateProcurement") return "gmao.procurement";
+  if (action.type === "gmao.notifyClient") return "gmao.notifyClient";
+  if (action.type === "gmao.createQuote") return "gmao.createQuote";
+  if (action.type === "gmao.updateQuote") return action.status === "sent" ? "gmao.notifyClient" : "gmao.createQuote";
+  if (action.type === "gmao.validateProcessStep") return "gmao.completeWorkOrder";
+  if (action.type === "gmao.recordServiceAcceptance") return "gmao.completeWorkOrder";
+  if (action.type === "gmao.saveInvoice") return action.status === "sent" ? "invoice.send" : "invoice.create";
+  if (action.type === "gmao.registerCompliance") return "gmao.compliance";
+  if (action.type === "gmao.exportWeeklyRegister") return "gmao.export";
+  if (action.type === "gmao.runAutomation") return "gmao.automation";
+  if (action.type === "gmao.recommendSchedule") return "gmao.recommendSchedule";
+  if (action.type === "gmao.reconcileBilling") return "gmao.reconcileBilling";
   if (action.type === "paySupplier" || action.type === "transfer") {
     const amt = Number(action.amount) || 0;
     if (amt < 10) return "spend.under.10";
@@ -54,7 +107,7 @@ function _classify(action) {
 
 export async function gateAction(companyId, charter, action, ctx = {}) {
   const cls = _classify(action);
-  const mode = vetoModeFor(charter, cls);
+  const mode = requiresOwnerApproval(action) ? VETO_MODES.APPROVE : vetoModeFor(charter, cls);
 
   if (mode === VETO_MODES.AUTO) return { pass: true, mode, cls };
   if (mode === VETO_MODES.NOTIFY) return { pass: true, notify: true, mode, cls };
@@ -63,6 +116,8 @@ export async function gateAction(companyId, charter, action, ctx = {}) {
   const row = await _safe(
     (api) => api.enqueue(companyId, {
       cls,
+      issueId: ctx.issueId || null,
+      stepId: ctx.stepId || null,
       action,
       role: ctx.role || null,
       requestedBy: ctx.companion || null,
@@ -70,10 +125,8 @@ export async function gateAction(companyId, charter, action, ctx = {}) {
     null,
   );
   if (!row) {
-    // Data layer is down → degrade safely to AUTO so the company keeps
-    // ticking. The user will see no Approvals queue; this is fine
-    // because the DB-down warning makes the situation obvious.
-    return { pass: true, mode: VETO_MODES.AUTO, cls, degraded: true };
+    // A missing approval queue cannot grant authority to execute.
+    return { pass: false, mode: VETO_MODES.APPROVE, cls, degraded: true, error: "Approval storage is unavailable. Try again when the local database is ready." };
   }
   await append(companyId, {
     kind: "approval", role: ctx.role || null, action: action.type,
@@ -95,6 +148,7 @@ export async function pending(companyId) {
 export async function approve(companyId, pendingId) {
   const action = await _safe((api) => api.approve(companyId, pendingId), null);
   if (action) {
+    approvedActions.set(action, { companyId, pendingId, action: JSON.stringify(action) });
     await append(companyId, {
       kind: "approval", role: null, action: action.type,
       status: "approved", pendingId,

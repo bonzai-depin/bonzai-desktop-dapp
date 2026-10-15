@@ -208,9 +208,7 @@
 <script>
 import { ref, computed, onBeforeUnmount, nextTick, watch } from 'vue';
 import BonzaiPulse from '../BonzaiPulse.vue';
-import { hasSkillTokenAccess, isDevMode } from '../../services/agent.service.js';
 
-const SKILL_ID = 'chart-forecaster-v1.0.0';
 
 const API_BASE =
   (typeof process !== 'undefined' && process.env?.VITE_API_BASE) ||
@@ -284,6 +282,7 @@ export default {
   props: {
     skill: { type: Object, default: null },
   },
+  emits: ['status-update', 'result-created'],
   setup(props, { emit }) {
     const assetType = ref('crypto');
     const selectedSymbols = ref(['BTC']);
@@ -517,11 +516,7 @@ export default {
     };
 
     const runForecast = async () => {
-      if (!isDevMode() && !(await hasSkillTokenAccess(SKILL_ID))) {
-        error.value = 'Skill not purchased.';
-        errorHint.value = 'Purchase this skill from the marketplace to run forecasts.';
-        return;
-      }
+      if (isForecasting.value || !selectedSymbols.value.length) return;
       isForecasting.value = true;
       error.value = null;
       errorHint.value = null;
@@ -547,6 +542,9 @@ export default {
           emit('status-update', `Forecasting ${symbol} with TimesFM…`);
           const forecastHorizon = mode.value === 'backtest' ? backtestOffsetDays.value : horizonDays.value;
           const body = await callForecast(contextHistory, forecastHorizon);
+          if (!Array.isArray(body.forecast) || body.forecast.length !== forecastHorizon || body.forecast.some(value => !Number.isFinite(value))) {
+            throw new Error(`${symbol}: the model returned an incomplete forecast. Retry before using it.`);
+          }
 
           results.push({
             symbol,
@@ -560,7 +558,8 @@ export default {
           });
         }
         assetResults.value = results;
-        generateNarrative();
+        await generateNarrative();
+        emit('result-created', { title: chartTitle.value, mode: mode.value, lookbackDays: lookbackDays.value, horizonDays: mode.value === 'backtest' ? backtestOffsetDays.value : horizonDays.value, results, narrative: narrative.value });
         emit('status-update', 'Forecast complete.');
       } catch (e) {
         console.error('[ChartForecaster]', e);

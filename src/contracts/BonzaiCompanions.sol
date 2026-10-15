@@ -97,7 +97,7 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     mapping(uint256 => uint256) private _ownerCompanionIndex;
 
     // Maximum supply of companions (scarcity bound)
-    uint256 public constant MAX_SUPPLY = 1000;
+    uint256 public constant MAX_SUPPLY = 10_000;
 
     // Maximum companions per wallet
     uint256 public constant MAX_PER_WALLET = 4;
@@ -106,6 +106,12 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
     ///         across the 6 content-type buckets so companion-related
     ///         participation rewards every category equally.
     IBonzaiMintPool public mintPool;
+
+    /// @notice Failed pool payments retain their original destination and category.
+    mapping(address => mapping(uint8 => uint256)) public pendingPoolFees;
+    uint256 public totalPendingPoolFees;
+    event PoolFeesRetried(address indexed pool, uint8 indexed poolIndex, uint256 amount);
+
 
     /// @notice Number of MintPool buckets (text, audio, image, video, 3D, training)
     uint8 public constant NUM_POOLS = 6;
@@ -263,31 +269,33 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         _creatorCompanions[msg.sender].push(tokenId);
 
         // Fee split: 50% treasury, 50% spread equally across the 6 MintPool
-        // buckets (~8.33% each). If the MintPool is unset OR a deposit
-        // reverts, the affected slice falls back to the treasury so minting
-        // is never blocked. The pool slice rounds down per bucket; any
-        // remainder rolls into the treasury slice.
+        // buckets (~8.33% each). Failed configured-pool payments stay reserved
+        // for permissionless retry. Only an unset pool or rounding remainder
+        // falls back to treasury.
         uint256 liquidityBudget = address(companionTokenFactory) == address(0) ? 0 : tokenLiquidityAmount;
         require(fee > liquidityBudget, "Mint price below liquidity reserve");
         uint256 protocolFee = fee - liquidityBudget;
         uint256 treasuryAmt = protocolFee / 2;
         uint256 poolBudget = protocolFee - treasuryAmt;
         uint256 perPool = poolBudget / NUM_POOLS;
-        uint256 distributed = 0;
+        uint256 allocatedToPool = 0;
+        address pool = address(mintPool);
 
-        if (address(mintPool) != address(0) && perPool > 0) {
+        if (pool != address(0) && perPool > 0) {
             for (uint8 i = 0; i < NUM_POOLS; ) {
-                try mintPool.depositForPool{value: perPool}(i) {
-                    distributed += perPool;
+                allocatedToPool += perPool;
+                try IBonzaiMintPool(pool).depositForPool{value: perPool}(i) {
+                    // Delivered directly.
                 } catch {
-                    emit PoolDepositFailed(address(mintPool), i, perPool);
-                    // Failed slice falls back to treasury (added below).
+                    pendingPoolFees[pool][i] += perPool;
+                    totalPendingPoolFees += perPool;
+                    emit PoolDepositFailed(pool, i, perPool);
                 }
                 unchecked { ++i; }
             }
         }
 
-        uint256 treasurySend = treasuryAmt + (poolBudget - distributed);
+        uint256 treasurySend = treasuryAmt + (poolBudget - allocatedToPool);
         if (treasurySend > 0) {
             (bool sent, ) = treasury.call{value: treasurySend}("");
             require(sent, "Treasury transfer failed");
@@ -306,6 +314,11 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
 
         // Set ERC-8004 agent identity
         _agentURIs[tokenId] = agentURI;
+        // Auto-launched token allocations and future hook revenue must use
+        // the same effective wallet, including the owner fallback.
+        if (agentWallet == address(0) && address(companionTokenFactory) != address(0)) {
+            agentWallet = msg.sender;
+        }
         if (agentWallet != address(0)) {
             _agentWallets[tokenId] = agentWallet;
             emit AgentWalletSet(tokenId, agentWallet, msg.sender);
@@ -314,13 +327,12 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         if (address(companionTokenFactory) != address(0)) {
             require(bytes(tokenName).length > 0, "Empty token name");
             require(bytes(tokenSymbol).length > 0, "Empty token symbol");
-            address launchWallet = agentWallet == address(0) ? msg.sender : agentWallet;
             (address token, bytes32 poolId) = companionTokenFactory.launchToken{value: liquidityBudget}(
                 tokenId,
                 tokenName,
                 tokenSymbol,
                 agentURI,
-                launchWallet,
+                agentWallet,
                 msg.sender
             );
             emit CompanionEconomyLaunched(tokenId, token, poolId, liquidityBudget);
@@ -635,6 +647,7 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
 
     function setCompanionTokenFactory(address newFactory) external onlyOwner {
         address old = address(companionTokenFactory);
+        require(_tokenIdCounter == 0 || old == address(0) || newFactory == old, "Token factory frozen after minting");
         companionTokenFactory = ICompanionTokenFactory(newFactory);
         emit CompanionTokenFactoryUpdated(old, newFactory);
     }
@@ -677,13 +690,21 @@ contract BonzaiCompanions is ERC721URIStorage, Ownable, ReentrancyGuard, Pausabl
         require(success && (data.length == 0 || abi.decode(data, (bool))), "Transfer failed");
     }
 
-    /**
-     * @notice Withdraw any stuck ETH
-     */
-    function withdrawETH() external onlyOwner {
+    /// @notice Anyone may deliver retained fees, without changing their beneficiary.
+    function retryPoolFees(address pool, uint8 poolIndex) external nonReentrant {
+        uint256 amount = pendingPoolFees[pool][poolIndex];
+        require(amount > 0, "No pending pool fees");
+        pendingPoolFees[pool][poolIndex] = 0;
+        totalPendingPoolFees -= amount;
+        IBonzaiMintPool(pool).depositForPool{value: amount}(poolIndex);
+        emit PoolFeesRetried(pool, poolIndex, amount);
+    }
+
+    /// @notice Recover surplus ETH only; reserved pool fees remain payable to their original pool.
+    function withdrawETH() external onlyOwner nonReentrant {
         uint256 balance = address(this).balance;
-        require(balance > 0, "No ETH to withdraw");
-        (bool sent, ) = owner().call{value: balance}("");
+        require(balance > totalPendingPoolFees, "No ETH to withdraw");
+        (bool sent, ) = owner().call{value: balance - totalPendingPoolFees}("");
         require(sent, "ETH transfer failed");
     }
 

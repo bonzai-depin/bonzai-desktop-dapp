@@ -1,5 +1,18 @@
 export const IBonzaiStakePositionsABI = [
   {
+    "inputs": [],
+    "name": "bonzaiToken",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",

@@ -1,12 +1,9 @@
 /**
  * Token Issuance Service — skill token deployment and Uniswap LP creation.
- * NOTE: All deployment/pool/liquidity functions are currently mocked pending contract deployment.
+ * Legacy skill-token issuance is unavailable until a real factory is configured.
  */
 
-import { ethers } from 'ethers';
 import { reactive, readonly } from 'vue';
-import { CONFIG } from '../config/web3.config.js';
-import { web3Service } from './web3.service.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABI DEFINITIONS
@@ -86,7 +83,7 @@ const loadIssuedTokens = () => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      state.issuedTokens = JSON.parse(stored);
+      state.issuedTokens = Object.fromEntries(Object.entries(JSON.parse(stored)).filter(([, token]) => token && !token.mock));
     }
   } catch (e) {
     console.warn('[Token] Failed to load issued tokens:', e);
@@ -123,13 +120,12 @@ const fetchDslaEthPrice = async () => {
       }
     }
 
-    console.warn('[Token] Using mock DSLA/ETH price');
-    state.dslaEthPrice = 0.0000015;
+    state.dslaEthPrice = null;
     state.dslaEthPriceUpdatedAt = Date.now();
     return state.dslaEthPrice;
   } catch (e) {
     console.error('[Token] Failed to fetch DSLA/ETH price:', e);
-    state.dslaEthPrice = 0.0000015;
+    state.dslaEthPrice = null;
     state.dslaEthPriceUpdatedAt = Date.now();
     return state.dslaEthPrice;
   } finally {
@@ -150,13 +146,12 @@ const fetchEthUsdPrice = async () => {
         return state.ethUsdPrice;
       }
     }
-    console.warn('[Token] Using mock ETH/USD price');
-    state.ethUsdPrice = 3000;
+    state.ethUsdPrice = null;
     state.ethUsdPriceUpdatedAt = Date.now();
     return state.ethUsdPrice;
   } catch (e) {
     console.error('[Token] Failed to fetch ETH/USD price:', e);
-    state.ethUsdPrice = 3000;
+    state.ethUsdPrice = null;
     return state.ethUsdPrice;
   }
 };
@@ -184,41 +179,7 @@ const deployToken = async ({ skillId, name, symbol, totalSupply }) => {
   state.error = null;
 
   try {
-    // TODO: Enable real deployment after token factory contract is deployed
-    const ENABLE_REAL_DEPLOYMENT = false;
-
-    if (!ENABLE_REAL_DEPLOYMENT) {
-      // Mock deployment
-      const mockTokenAddress = `0x${Date.now().toString(16).padStart(40, '0')}`;
-      const mockTxHash = `0x${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
-
-      const tokenData = {
-        address: mockTokenAddress,
-        name,
-        symbol,
-        totalSupply,
-        decimals: 18,
-        deployedAt: Date.now(),
-        deployTxHash: mockTxHash,
-        pools: {},
-        mock: true,
-      };
-
-      saveIssuedToken(skillId, tokenData);
-
-      state.transactions.push({
-        type: 'token-deploy',
-        skillId,
-        tokenAddress: mockTokenAddress,
-        txHash: mockTxHash,
-        timestamp: Date.now(),
-        mock: true,
-      });
-
-      return { success: true, tokenAddress: mockTokenAddress, txHash: mockTxHash, mock: true };
-    }
-
-    throw new Error('Real token deployment not yet implemented');
+    throw new Error('Skill token deployment is unavailable. Use the configured companion or model token factory.');
   } catch (e) {
     const error = e.message || String(e);
     state.error = error;
@@ -238,40 +199,7 @@ const createPool = async ({ skillId, tokenAddress, pairedToken = 'ETH', fee = FE
   state.error = null;
 
   try {
-    const ENABLE_REAL_POOLS = false;
-
-    if (!ENABLE_REAL_POOLS) {
-      // Mock pool creation
-      const mockPoolAddress = `0x${(Date.now() + 1).toString(16).padStart(40, '0')}`;
-      const mockTxHash = `0x${Math.random().toString(16).slice(2)}${(Date.now() + 1).toString(16)}`;
-
-      const tokenData = state.issuedTokens[skillId];
-      if (tokenData) {
-        tokenData.pools[pairedToken] = {
-          address: mockPoolAddress,
-          fee,
-          createdAt: Date.now(),
-          createTxHash: mockTxHash,
-          liquidity: null,
-        };
-        saveIssuedToken(skillId, tokenData);
-      }
-
-      state.transactions.push({
-        type: 'pool-create',
-        skillId,
-        poolAddress: mockPoolAddress,
-        pairedToken,
-        fee,
-        txHash: mockTxHash,
-        timestamp: Date.now(),
-        mock: true,
-      });
-
-      return { success: true, poolAddress: mockPoolAddress, txHash: mockTxHash, mock: true };
-    }
-
-    throw new Error('Real pool creation not yet implemented');
+    throw new Error('Legacy skill pool creation is unavailable.');
   } catch (e) {
     const error = e.message || String(e);
     state.error = error;
@@ -291,42 +219,7 @@ const addLiquidity = async ({ skillId, pairedToken = 'ETH', tokenAmount, pairedA
   state.error = null;
 
   try {
-    const ENABLE_REAL_LIQUIDITY = false;
-
-    if (!ENABLE_REAL_LIQUIDITY) {
-      // Mock liquidity addition
-      const mockTxHash = `0x${Math.random().toString(16).slice(2)}${(Date.now() + 2).toString(16)}`;
-      const mockLiquidityTokenId = `${Date.now()}`;
-
-      const tokenData = state.issuedTokens[skillId];
-      if (tokenData && tokenData.pools[pairedToken]) {
-        tokenData.pools[pairedToken].liquidity = {
-          tokenAmount,
-          pairedAmount,
-          startingPrice,
-          liquidityTokenId: mockLiquidityTokenId,
-          addedAt: Date.now(),
-          addTxHash: mockTxHash,
-        };
-        saveIssuedToken(skillId, tokenData);
-      }
-
-      state.transactions.push({
-        type: 'liquidity-add',
-        skillId,
-        pairedToken,
-        tokenAmount,
-        pairedAmount,
-        startingPrice,
-        txHash: mockTxHash,
-        timestamp: Date.now(),
-        mock: true,
-      });
-
-      return { success: true, txHash: mockTxHash, liquidityTokenId: mockLiquidityTokenId, mock: true };
-    }
-
-    throw new Error('Real liquidity addition not yet implemented');
+    throw new Error('Legacy skill liquidity provision is unavailable.');
   } catch (e) {
     const error = e.message || String(e);
     state.error = error;

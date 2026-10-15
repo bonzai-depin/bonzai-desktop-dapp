@@ -1,5 +1,5 @@
 <template>
-  <div ref="threeContainer" class="three-container">
+  <div ref="threeContainer" class="three-container" :class="{ 'is-level': isLevelScene }">
     <div class="loading-overlay" v-if="isGenerating">
       <BonzaiPulse variant="dot" />
       <p class="fira-sans-condensed-black-italic">Generating object...</p>
@@ -18,16 +18,35 @@
         </span>
       </div>
     </div>
-    <div class="controls-hint">
-      <span>🖱️ Drag to orbit • Scroll to zoom • Right-drag to pan</span>
+    <div v-if="isLevelScene && !hideUI" class="level-navigation" @pointerdown.stop @click.stop>
+      <div class="level-navigation__modes" role="group" aria-label="Level navigation">
+        <button type="button" :aria-pressed="navigationMode === 'orbit'" @click="setNavigationMode('orbit')"><span class="material-symbols-outlined" aria-hidden="true">360</span>Orbit</button>
+        <button v-if="!editMode" type="button" :aria-pressed="navigationMode === 'fly'" @click="setNavigationMode('fly')"><span class="material-symbols-outlined" aria-hidden="true">explore</span>Explore</button>
+        <button type="button" @click="frameLevel"><span class="material-symbols-outlined" aria-hidden="true">center_focus_strong</span>Overview</button>
+      </div>
+      <label v-if="navigationMode === 'fly'">Speed<input type="range" min="1" max="50" step="1" v-model.number="navigationSpeed" @input="_levelNavigation?.setSpeed(navigationSpeed)" /><span>{{ navigationSpeed }} m/s</span></label>
+    </div>
+    <div v-if="!hideUI" class="controls-hint">
+      <span v-if="isLevelScene && navigationMode === 'fly'">Click scene · WASD / arrows to move · Drag to look · Q / E down / up · Shift faster</span>
+      <span v-else>Drag to orbit · Scroll to zoom · Right-drag to pan</span>
     </div>
   </div>
 </template>
 
 <script>
+import { parse } from "acorn";
+import { createLevelNavigation } from "./gen3d/levelNavigation.js";
+import { assemble } from './gen3d/parametricAssembly.js';
+import { constructionHelpers } from './gen3d/constructionHelpers.js';
+import { productionGeometry } from './gen3d/productionGeometry.js';
+import { inspectScene, qualityViews } from './gen3d/sceneInspection.js';
+import { prepareGeneratedSurfaces, fitDirectionalShadow, fitLevelOrbit } from './gen3d/renderQuality.js';
+import { levelEditingHelpers, seededLevelMath, sceneSourceSeed } from './gen3d/levelEditing.js';
+import { generatedThreeAPI, awaitSceneConstruction } from './gen3d/runtimeRecovery.js';
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { PMREMGenerator } from "three";
 import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 // Vite resolves `?url` imports to the emitted asset URL so the HDR
@@ -47,6 +66,8 @@ import {
   BloomEffect,
   DepthOfFieldEffect,
   SMAAEffect,
+  ToneMappingEffect,
+  ToneMappingMode,
   BlendFunction,
   KernelSize,
 } from "postprocessing";
@@ -113,8 +134,8 @@ class FilmGrainEffect extends Effect {
       blendFunction: BlendFunction.NORMAL,
       uniforms: new Map([
         ["uTime", new Uniform(0)],
-        ["uStrength", new Uniform(0.04)],
-        ["uVignette", new Uniform(0.25)],
+        ["uStrength", new Uniform(0)],
+        ["uVignette", new Uniform(0)],
       ]),
     });
   }
@@ -353,6 +374,8 @@ export default {
   components: { BonzaiPulse },
   props: {
     hideUI: { type: Boolean, default: false },
+    editMode: { type: Boolean, default: false },
+    presentation: { type: String, default: "environment" },
     enablePhysics: { type: Boolean, default: true },
     initialTimeOfDay: { type: String, default: "day" },
     initialWeather: { type: String, default: "sunny" },
@@ -361,6 +384,9 @@ export default {
     return {
       isGenerating: false,
       isReady: false,
+      isLevelScene: false,
+      navigationMode: "orbit",
+      navigationSpeed: 8,
       currentTimeOfDay: this.initialTimeOfDay || "day",
       currentWeather: this.initialWeather || "sunny",
       lightIntensity: 1.0,
@@ -424,16 +450,17 @@ export default {
     this._presentationStage = null;
     this._lastHeroMetrics = null;
 
-    // Shim: LLMs often call mesh.computeBoundingBox() instead of mesh.geometry.computeBoundingBox()
+    // A Mesh-level boundingBox accessor aliases InstancedMesh's aggregate
+    // bounds to its source geometry and empties both during computation.
+    // Remove the legacy accessor (also handles an existing hot-reloaded viewer).
+    if (Object.getOwnPropertyDescriptor(THREE.Mesh.prototype, 'boundingBox')?.get) {
+      delete THREE.Mesh.prototype.boundingBox;
+    }
     if (!THREE.Mesh.prototype.computeBoundingBox) {
       THREE.Mesh.prototype.computeBoundingBox = function () {
         this.geometry.computeBoundingBox();
+        return this.geometry.boundingBox;
       };
-      Object.defineProperty(THREE.Mesh.prototype, 'boundingBox', {
-        get() { return this.geometry ? this.geometry.boundingBox : null; },
-        set(v) { if (this.geometry) this.geometry.boundingBox = v; },
-        configurable: true,
-      });
     }
 
     this._presets = {
@@ -614,6 +641,9 @@ export default {
     this.cleanup();
   },
   watch: {
+    presentation() {
+      if (this._lightingMetrics) this._retargetLookdevRig(this._lightingMetrics);
+    },
     initialTimeOfDay(mode) {
       if (mode && mode !== this.currentTimeOfDay) this.setTimeOfDay(mode);
     },
@@ -622,6 +652,51 @@ export default {
     },
   },
   methods: {
+    _renderScene() {
+      const render = () => this.composer ? this.composer.render() : this.renderer.render(this.scene, this.camera);
+      if (this.presentation !== 'studio' || this._activeEngine?.GAME?.active) return render();
+      // Hide only the viewer backdrop during rendering. Restore it immediately
+      // so weather, game worlds and environment controls retain their state.
+      const backdrop = [this._skyMesh, this._stars, this._cloudShell, this._cloudGroup,
+        ...['ground', 'groundTint', 'grid', 'celestial', 'ambientParticles'].map(key => this._sceneObjects.get(key))].filter(Boolean);
+      const visibility = backdrop.map(node => node.visible);
+      const background = this.scene.background;
+      const environment = this.scene.environment;
+      const environmentIntensity = this.scene.environmentIntensity;
+      const exposure = this.renderer.toneMappingExposure;
+      const fog = this.scene.fog;
+      this._studioEnvironment ||= this._proceduralEnvMap("softbox");
+      const strengths = { ambient: .06, hemi: .18, main: 2.6, fill: .32, fill2: .1, rim: .65, bounce: .05 };
+      const lights = Object.entries(this._lights || {}).map(([name, light]) => ({
+        light, name, intensity: light.intensity, color: light.color.getHex(), ground: light.groundColor?.getHex(),
+      }));
+      this._studioBackground ||= new THREE.Color(0x20242a);
+      try {
+        backdrop.forEach(node => { node.visible = false; });
+        this.scene.background = this._studioBackground;
+        this.scene.environment = this._studioEnvironment;
+        this.scene.environmentIntensity = .65;
+        this.renderer.toneMappingExposure = 1.05 * this.lightIntensity;
+        lights.forEach(({light,name}) => {
+          light.color.setHex(0xffffff);
+          light.groundColor?.setHex(0x777777);
+          light.intensity = (strengths[name] ?? 1) * this.lightIntensity;
+        });
+        this.scene.fog = null;
+        render();
+      } finally {
+        backdrop.forEach((node, i) => { node.visible = visibility[i]; });
+        this.scene.background = background;
+        this.scene.environment = environment;
+        this.scene.environmentIntensity = environmentIntensity;
+        this.renderer.toneMappingExposure = exposure;
+        lights.forEach(({light,intensity,color,ground}) => {
+          light.intensity = intensity; light.color.setHex(color);
+          if (ground != null) light.groundColor.setHex(ground);
+        });
+        this.scene.fog = fog;
+      }
+    },
     screenToGroundPosition(clientX, clientY, groundY = 0) {
       const element = this.renderer?.domElement || this.$refs.threeContainer;
       if (!element || !this.camera) throw new Error("3D viewer is not ready");
@@ -753,6 +828,7 @@ export default {
       controls.autoRotate = true;
       controls.autoRotateSpeed = 0.65;
       this.controls = markRaw(controls);
+      this._levelNavigation = createLevelNavigation({camera, element:renderer.domElement, orbit:controls});
       this.clock = markRaw(new THREE.Clock());
       this.setupSkySphere();
       this.setupCloudShell();
@@ -812,6 +888,7 @@ export default {
       };
 
       const onMouseDown = (event) => {
+        if (this.isLevelScene) return;
         if (event.button !== 2) return; // Right click only
         event.preventDefault();
         const intersects = getIntersects(event);
@@ -837,6 +914,7 @@ export default {
       };
 
       const onMouseMove = (event) => {
+        if (this.isLevelScene) return;
         if (dragging) {
           const rect = el.getBoundingClientRect();
           mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -962,6 +1040,13 @@ export default {
       const self = this;
       const SOFT = this._getSoftCircleTexture();
       return {
+        ...levelEditingHelpers,
+        ...productionGeometry,
+        ...constructionHelpers,
+        assemble,
+        // Reusable chamfered geometry; dimensions are centred like BoxGeometry.
+        bevelBox: (width = 1, height = 1, depth = 1, radius = .04, segments = 3) =>
+          new RoundedBoxGeometry(width, height, depth, Math.max(1, Math.min(6, segments)), Math.min(radius, Math.min(width, height, depth) * .49)),
         // ═══════════════════════════════════════════════════════════════════
         // MATERIAL HELPERS - Realistic & Stylized
         // ═══════════════════════════════════════════════════════════════════
@@ -3071,14 +3156,11 @@ export default {
       if (this.scene.environment) {
         this._envMap = this.scene.environment;
       }
-      if (ground?.material && this.scene.environment) {
+      if (ground?.material && this.scene.environment && ground.material.envMap !== this.scene.environment) {
         ground.material.envMap = this.scene.environment;
-        ground.material.envMapIntensity = THREE.MathUtils.clamp(ground.material.envMapIntensity || 2.15, 1.8, 2.6);
         ground.material.needsUpdate = true;
       }
-      if (this.scene.environment && (this.scene.environmentIntensity ?? 0) < 1.25) {
-        this.scene.environmentIntensity = 1.25;
-      }
+      // Restoring the backdrop must not silently boost image-based lighting.
       this.scene.background = this._activeSkyBackground();
     },
     setupStars() {
@@ -3163,21 +3245,8 @@ export default {
       glow.visible = false;
       group.add(glow);
       this._celestialGlow = glow;
-      const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);
-      sunLight.castShadow = true;
-      sunLight.shadow.mapSize.width = 8192;
-      sunLight.shadow.mapSize.height = 8192;
-      sunLight.shadow.camera.near = 10;
-      sunLight.shadow.camera.far = 2000;
-      sunLight.shadow.camera.left = -8;
-      sunLight.shadow.camera.right = 8;
-      sunLight.shadow.camera.top = 8;
-      sunLight.shadow.camera.bottom = -8;
-      sunLight.shadow.bias = -0.0001;
-      group.add(sunLight);
-      sunLight.target = new THREE.Object3D();
-      this.scene.add(sunLight.target);
-      this._lights.sun = sunLight;
+      // The visible celestial body is not another lighting rig. The main
+      // directional below owns sunlight and its scene-fitted shadow map.
       const craterGroup = new THREE.Group();
       const craterMat = new THREE.MeshBasicMaterial({
         color: 0xaabbcc,
@@ -3259,23 +3328,19 @@ export default {
       ctx.shadowBlur = 0;
       const tex = new THREE.CanvasTexture(texCanvas);
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      tex.anisotropy = 8;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
       tex.repeat.set(18, 18);
       const groundMat = new THREE.MeshPhysicalMaterial({
-        color: 0x3a2388,
+        color: 0xffffff,
         map: tex,
         envMap: this._envMap || null,
-        metalness: 0.84,
-        roughness: 0.085,
+        metalness: 0.55,
+        roughness: 0.20,
         clearcoat: 1.0,
-        clearcoatRoughness: 0.015,
-        envMapIntensity: 2.15,
+        clearcoatRoughness: 0.12,
+        envMapIntensity: 1.0,
       });
-      // Ground stays purple PBR for the dome but gains TWO weather
-      // responses: wet shine (rain darkens color + drops roughness for
-      // puddle reflectivity) and snow cover (tints white + dulls
-      // roughness toward 1.0). Both driven by shared uniforms we
-      // update each frame from weather state.
       const groundWeatherUniforms = {
         uGroundWet:  { value: 0 },    // 0..1 — rain
         uGroundSnow: { value: 0 },    // 0..1 — snow
@@ -3287,12 +3352,10 @@ export default {
         shader.fragmentShader = shader.fragmentShader
           .replace("#include <common>",
             "#include <common>\nuniform float uGroundWet;\nuniform float uGroundSnow;")
-          .replace("#include <output_fragment>",
-            // Snow tint — pushes color + roughness toward clean white.
-            "gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.95, 0.96, 0.98), uGroundSnow * 0.85);\n"
-            // Wet darken — damp surfaces are darker than dry.
-            + "gl_FragColor.rgb *= mix(1.0, 0.72, uGroundWet);\n"
-            + "#include <output_fragment>");
+          .replace("#include <color_fragment>",
+            "#include <color_fragment>\n"
+            + "diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.93, 0.98), uGroundSnow * 0.95);\n"
+            + "diffuseColor.rgb *= mix(1.0, 0.72, uGroundWet);\n");
         // Lower material roughness via onBeforeCompile hook: inject a
         // `roughnessFactor *= mix(1.0, 0.25, uGroundWet)` so wet ground
         // becomes sharply reflective while dry stays matte.
@@ -3324,6 +3387,7 @@ export default {
       tint.rotation.x = -Math.PI / 2;
       tint.position.y = 0.002;
       tint.renderOrder = -5;
+      tint.visible = false;
       tint.userData.excludeFromBBox = true;
       this.scene.add(tint);
       this._sceneObjects.set("groundTint", tint);
@@ -3332,69 +3396,27 @@ export default {
       this.setupAmbientParticles();
     },
     setupSquareGrid(radius) {
-      const group = new THREE.Group();
-      const gridColor = 0xb499ff,
-        gridSize = radius * 2,
-        cellSize = 2,
-        lineCount = Math.floor(gridSize / cellSize);
-      for (let i = -lineCount / 2; i <= lineCount / 2; i++) {
-        const pos = i * cellSize;
-        if (Math.abs(pos) < radius) {
-          const half = Math.sqrt(radius * radius - pos * pos);
-          const fade = 0.45 * (1 - Math.abs(pos) / radius);
-          const hGeo = new THREE.BufferGeometry();
-          hGeo.setAttribute(
-            "position",
-            new THREE.BufferAttribute(
-              new Float32Array([-half, 0.008, pos, half, 0.008, pos]),
-              3
-            )
-          );
-          group.add(
-            new THREE.Line(
-              hGeo,
-              new THREE.LineBasicMaterial({
-                color: gridColor,
-                transparent: true,
-                opacity: fade,
-              })
-            )
-          );
-          const vGeo = new THREE.BufferGeometry();
-          vGeo.setAttribute(
-            "position",
-            new THREE.BufferAttribute(
-              new Float32Array([pos, 0.008, -half, pos, 0.008, half]),
-              3
-            )
-          );
-          group.add(
-            new THREE.Line(
-              vGeo,
-              new THREE.LineBasicMaterial({
-                color: gridColor,
-                transparent: true,
-                opacity: fade,
-              })
-            )
-          );
-        }
+      // One draw call, not one material and draw call for each grid line.
+      const positions = [];
+      const colors = [];
+      const color = new THREE.Color(0x656b79);
+      for (let pos = -radius + 2; pos < radius; pos += 2) {
+        const half = Math.sqrt(radius * radius - pos * pos);
+        const fade = 1 - Math.abs(pos) / radius;
+        positions.push(-half, 0.008, pos, half, 0.008, pos, pos, 0.008, -half, pos, 0.008, half);
+        for (let i = 0; i < 4; i++) colors.push(color.r * fade, color.g * fade, color.b * fade);
       }
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(radius - 0.045, radius, 128),
-        new THREE.MeshBasicMaterial({
-          color: gridColor,
-          transparent: true,
-          opacity: 0.55,
-          side: THREE.DoubleSide,
-        })
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.0085;
-      group.add(ring);
-      this.scene.add(group);
-      this._sceneObjects.set("grid", group);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      const grid = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.16, depthWrite: false,
+      }));
+      grid.visible = false;
+      this.scene.add(grid);
+      this._sceneObjects.set("grid", grid);
     },
+
     setupCloudLayer() {
       const cloudGroup = new THREE.Group();
       const cloudCanvas = document.createElement("canvas");
@@ -3532,6 +3554,8 @@ export default {
           ySpeed: (Math.random() - 0.5) * 0.18,
         });
       }
+      // Atmospheric particles belong to authored content, not every asset preview.
+      pts.visible = false;
       this.scene.add(pts);
       this._sceneObjects.set("ambientParticles", pts);
     },
@@ -3824,6 +3848,10 @@ export default {
           filmGrain,
         ),
       );
+      // Offscreen HDR render targets bypass WebGLRenderer's toneMapping. Map
+      // highlights once at the end, before output conversion and antialiasing.
+      this._toneMappingEffect = new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC });
+      composer.addPass(new EffectPass(this.camera, this._toneMappingEffect));
       composer.addPass(new EffectPass(this.camera, smaa));
 
       this.composer = markRaw(composer);
@@ -3844,8 +3872,8 @@ export default {
       if (opts.hue !== undefined)        u.get("uHueShift").value   = opts.hue;
       if (opts.saturation !== undefined) u.get("uSaturation").value = opts.saturation;
       if (opts.contrast !== undefined)   u.get("uContrast").value   = opts.contrast;
-      if (opts.lift)  u.get("uLift").value.set(opts.lift);
-      if (opts.gain)  u.get("uGain").value.set(opts.gain);
+      if (opts.lift !== undefined) u.get("uLift").value.set(opts.lift);
+      if (opts.gain !== undefined) u.get("uGain").value.set(opts.gain);
     },
     setDoF(opts = {}) {
       if (!this._dofEffect) return;
@@ -4202,7 +4230,7 @@ export default {
       const geom = new THREE.SphereGeometry(5, 32, 16);
       let top, bottom;
       if (preset === "softbox") {
-        top = new THREE.Color(0xffffff); bottom = new THREE.Color(0x666a78);
+        top = new THREE.Color(0xaaaeb6); bottom = new THREE.Color(0x606773);
       } else if (preset === "night") {
         top = new THREE.Color(0x0a1428); bottom = new THREE.Color(0x020308);
       } else {
@@ -4215,10 +4243,19 @@ export default {
         fragmentShader: `varying vec3 v; uniform vec3 topCol; uniform vec3 botCol; void main(){ float t = v.y * 0.5 + 0.5; gl_FragColor = vec4(mix(botCol, topCol, t), 1.0); }`,
       });
       envScene.add(new THREE.Mesh(geom, mat));
+      if(preset === 'softbox') {
+        // Large HDR emitters provide broad highlights plus dark intervals for
+        // metal/glass readability. No network HDR or light geometry in the asset.
+        for(const [position,size,strength] of [
+          [[-2.6,2.3,1.8],[2.2,3.1],5], [[2.8,1.6,1],[1.1,2.6],2.5], [[.5,2.6,-2.5],[2.3,.65],4]
+        ]) {
+          const panel=new THREE.Mesh(new THREE.PlaneGeometry(...size),new THREE.MeshBasicMaterial({color:new THREE.Color().setRGB(strength,strength,strength),side:THREE.DoubleSide,toneMapped:false}));
+          panel.position.set(...position);panel.lookAt(0,0,0);envScene.add(panel);
+        }
+      }
       const envMap = pmrem.fromScene(envScene, 0.04).texture;
       pmrem.dispose();
-      geom.dispose();
-      mat.dispose();
+      envScene.traverse(node=>{node.geometry?.dispose();node.material?.dispose();});
       return envMap;
     },
     setUnderwater(active = true, opts = {}) {
@@ -4360,6 +4397,8 @@ export default {
       this._sunRays.visible = false;
       if (this.currentWeather === "sunny") this._syncSkyWeatherUniforms("sunny");
       this.renderer.toneMappingExposure = p.exposure * this.lightIntensity;
+      this._applyLightingBalance();
+      if (this._lightingMetrics) this._retargetLookdevRig(this._lightingMetrics);
     },
     // Engine-level quality preset. Trades visual richness for FPS so
     // users on integrated GPUs or on battery can stay at 60. Call with:
@@ -4932,47 +4971,31 @@ export default {
           pixelRatio: 1.0,
           n8ao: { enabled: false },
           smaa: false,
-          chromatic: 0,
-          bloom: { intensity: 0.5, radius: 0.5 },
           dofAllowed: false,
-          filmGrain: { strength: 0.01, vignette: 0.15 },
-          colorGrade: { saturation: 1.0, contrast: 1.0 },
           bvhTriThreshold: Infinity,   // never build BVHs
           shadowMapSize: 1024,
         },
         medium: {
           pixelRatio: Math.min(window.devicePixelRatio, 1.25),
-          n8ao: { enabled: true, quality: "Low", intensity: 2.0 },
+          n8ao: { enabled: true, quality: "Low" },
           smaa: true,
-          chromatic: 0.06,
-          bloom: { intensity: 0.7, radius: 0.6 },
           dofAllowed: false,
-          filmGrain: { strength: 0.02, vignette: 0.2 },
-          colorGrade: { saturation: 1.05, contrast: 1.02 },
           bvhTriThreshold: 2000,
           shadowMapSize: 2048,
         },
         high: {
           pixelRatio: Math.min(window.devicePixelRatio, 2),
-          n8ao: { enabled: true, quality: "High", intensity: 2.5 },
+          n8ao: { enabled: true, quality: "High" },
           smaa: true,
-          chromatic: 0.08,
-          bloom: { intensity: 0.7, radius: 0.6 },
           dofAllowed: true,
-          filmGrain: { strength: 0.025, vignette: 0.22 },
-          colorGrade: { saturation: 1.08, contrast: 1.02 },
           bvhTriThreshold: 500,
           shadowMapSize: 4096,
         },
         ultra: {
           pixelRatio: Math.min(window.devicePixelRatio, 2),
-          n8ao: { enabled: true, quality: "Ultra", intensity: 3.5 },
+          n8ao: { enabled: true, quality: "Ultra" },
           smaa: true,
-          chromatic: 0.12,
-          bloom: { intensity: 0.85, radius: 0.75 },
           dofAllowed: true,
-          filmGrain: { strength: 0.03, vignette: 0.25 },
-          colorGrade: { saturation: 1.12, contrast: 1.05 },
           bvhTriThreshold: 300,
           shadowMapSize: 4096,
         },
@@ -4987,7 +5010,7 @@ export default {
         if (this.composer) this.composer.setSize(sz.x, sz.y);
       }
       // Shadow map resolution.
-      if (this._lights?.main?.shadow) {
+      if (this._lights?.main?.shadow && this._lights.main.shadow.mapSize.width !== q.shadowMapSize) {
         this._lights.main.shadow.mapSize.width = q.shadowMapSize;
         this._lights.main.shadow.mapSize.height = q.shadowMapSize;
         if (this._lights.main.shadow.map) {
@@ -5000,14 +5023,10 @@ export default {
         this._n8aoPass.enabled = q.n8ao.enabled;
         if (q.n8ao.enabled) {
           this._n8aoPass.setQualityMode(q.n8ao.quality);
-          this._n8aoPass.configuration.intensity = q.n8ao.intensity;
         }
       }
       // Chromatic + bloom + film grain + color grade — post axes.
-      this.setChromatic(q.chromatic, 2.2);
-      this.setBloom(q.bloom);
-      this.setFilmGrain(q.filmGrain.strength, q.filmGrain.vignette);
-      this.setColorGrade(q.colorGrade);
+      // Performance presets change sampling quality, not the asset's art direction.
       // DoF gating — low/medium skip bokeh entirely regardless of
       // what the generated scene tries to set.
       this._dofAllowed = q.dofAllowed;
@@ -5082,12 +5101,7 @@ export default {
         this._lightningActive = false;
         this._lightningFlashTime = 0;
       }
-      const dimFactor = p.ambientDim || 1.0;
-      if (this._lights.ambient) {
-        this._lights.ambient.intensity =
-          (this._presets[this.currentTimeOfDay]?.ambient?.intensity || 2.0) *
-          dimFactor;
-      }
+      this._applyLightingBalance();
       // Scene-level lens rain — tied to the weather preset so the
       // droplets-on-lens post FX matches the particle rain and fog.
       if (p.lensDroplets !== undefined) {
@@ -5231,12 +5245,7 @@ export default {
           if (this._lights.ambient) this._lights.ambient.intensity = peak;
           if (this._lightningFlashTime <= 0) {
             this._lightningActive = false;
-            const p = this._weatherPresets[this.currentWeather];
-            if (this._lights.ambient) {
-              this._lights.ambient.intensity =
-                (this._presets[this.currentTimeOfDay]?.ambient?.intensity || 2) *
-                (p?.ambientDim || 1);
-            }
+            this._applyLightingBalance();
           }
         }
         // Fog removed — skip density lerp (scene.fog is null).
@@ -5262,7 +5271,7 @@ export default {
         }
 
         for (const cb of this._updateCallbacks) {
-          if (cb._disabled) continue;
+          if (cb._disabled || this._isEditingLevel) continue;
           try { cb({ deltaTime: dt, time: t }); cb._errorCount = 0; }
           catch (err) {
             cb._errorCount = (cb._errorCount || 0) + 1;
@@ -5272,7 +5281,8 @@ export default {
             }
           }
         }
-        if (this.controls) this.controls.update();
+        if (this._levelNavigation?.enabled) this._levelNavigation.update(dt);
+        else if (this.controls) this.controls.update();
         // CSM must update its cascade frustums each frame so the shadow
         // maps stay aligned with the moving camera.
         if (this._csm) this._csm.update();
@@ -5293,8 +5303,7 @@ export default {
         this._restoreViewerAtmosphere();
         const clearPreset = this._presets[this.currentTimeOfDay] || this._presets.day;
         if (this.renderer && clearPreset) this.renderer.setClearColor(clearPreset.skyMid ?? clearPreset.skyTop, 1);
-        if (this.composer) this.composer.render();
-        else this.renderer.render(this.scene, this.camera);
+        this._renderScene();
         this.updateStats(dt);
         this._animationId = requestAnimationFrame(loop);
       };
@@ -5309,8 +5318,11 @@ export default {
           this.$refs.fpsDisplay.innerText = fps.toFixed(1) + " FPS";
         }
         if (this.$refs.objectCountDisplay) {
-          this.$refs.objectCountDisplay.innerText =
-            (this.scene ? this.scene.children.length : 0) + " Objects";
+          let objects = 0;
+          this.scene?.getObjectByName('GeneratedObject')?.traverse(node => {
+            if (node.isMesh && node.visible && !node.userData?.excludeFromBBox) objects += node.isInstancedMesh ? node.count : 1;
+          });
+          this.$refs.objectCountDisplay.innerText = objects + " Objects";
         }
         this._frameCount = 0;
         this._lastFrameTime = 0;
@@ -5324,22 +5336,64 @@ export default {
     },
     setLightIntensity(i) {
       this.lightIntensity = i;
-      const p = this._presets[this.currentTimeOfDay];
-      if (!p) return;
-      if (this._lights.fill) this._lights.fill.intensity = p.fill.intensity * i;
-      if (this._lights.ambient)
-        this._lights.ambient.intensity = p.ambient.intensity * i;
-      if (this._lights.hemi)
-        this._lights.hemi.intensity = p.hemisphere.intensity * i;
-      this.renderer.toneMappingExposure = p.exposure * i;
+      this._applyLightingBalance();
+    },
+    _applyLightingBalance() {
+      const p = this._presets[this.currentTimeOfDay] || this._presets.day;
+      const dim = this._weatherPresets[this.currentWeather]?.ambientDim ?? 1;
+      const L = this._lights;
+      if (L.main) { L.main.intensity = p.main.intensity * this.lightIntensity; L.main.color.set(p.main.color); }
+      if (L.ambient) L.ambient.intensity = p.ambient.intensity * .1 * dim * this.lightIntensity;
+      if (L.hemi) L.hemi.intensity = p.hemisphere.intensity * .22 * this.lightIntensity;
+      if (L.fill) L.fill.intensity = p.fill.intensity * .18 * this.lightIntensity;
+      if (L.fill2) L.fill2.intensity = .1 * this.lightIntensity;
+      if (L.rim) L.rim.intensity = .28 * this.lightIntensity;
+      if (L.bounce) L.bounce.intensity = .05 * this.lightIntensity;
+      this.scene.environmentIntensity = this.currentTimeOfDay === 'night' ? .25 : .65;
+      this.renderer.toneMappingExposure = (this.currentTimeOfDay === 'night' ? 1.05 : 1) * this.lightIntensity;
     },
     setAutoRotate(enabled) {
       if (this.controls) {
-        this.controls.autoRotate = enabled;
-        this.controls.update();
+        this.controls.autoRotate = this.isLevelScene ? false : enabled;
+        if(this.controls.enabled) this.controls.update();
       }
     },
+    setNavigationMode(mode) {
+      if (!this.isLevelScene || this._activeEngine?.GAME?.active) return;
+      this.navigationMode = mode;
+      this._levelNavigation?.setEnabled(mode === 'fly');
+      this._levelNavigation?.setSpeed(this.navigationSpeed);
+    },
+    frameLevel() {
+      if (!this._levelBounds) return;
+      const size=this._levelBounds.getSize(new THREE.Vector3());
+      this._levelNavigation?.setEnabled(false);
+      const frame=fitLevelOrbit(this._levelBounds,this.camera.getEffectiveFOV(),this.camera.aspect);
+      this.controls.target.copy(frame.target);
+      this.camera.position.copy(frame.position);
+      this.camera.far=Math.max(2500,frame.distance*80);
+      this.controls.maxDistance=Math.max(12,size.length()*6);
+      // A level needs a near plane suitable for close inspection even after
+      // framing a large map. Object framing scales it too aggressively.
+      this.camera.near=.05;this.camera.updateProjectionMatrix();
+      this.controls.minDistance=.1;
+      this.controls.autoRotate=false;
+      this.controls.update();
+      this._levelNavigation?.setEnabled(this.navigationMode === 'fly');
+    },
+    _configureLevel(root, bounds) {
+      this.isLevelScene=true;this._levelBounds=bounds.clone();
+      this.navigationMode='orbit';
+      const size=bounds.getSize(new THREE.Vector3());
+      this.navigationSpeed=Math.max(2,Math.min(30,Math.round(Math.max(size.x,size.z)/10)));
+      this._levelNavigation?.setSpeed(this.navigationSpeed);
+      this._lightingMetrics = { box: bounds.clone(), center: bounds.getCenter(new THREE.Vector3()), size, radius: size.length()/2 };
+      this._retargetLookdevRig(this._lightingMetrics);
+      this.frameLevel();
+      for(const key of ['ground','groundTint','grid']) {const item=this._sceneObjects.get(key);if(item)item.visible=false;}
+    },
     resetCamera() {
+      if(this.isLevelScene) return this.frameLevel();
       if (this.camera && this.controls) {
         this.camera.position.set(4, 3, 5);
         this.controls.target.set(0, 0.8, 0);
@@ -5352,23 +5406,29 @@ export default {
       const oldPixelRatio = this.renderer.getPixelRatio();
       const oldQuality = this._renderQuality || "high";
       const oldAutoRotate = this.controls?.autoRotate;
+      const oldCamera = { near:this.camera.near, far:this.camera.far, position: this.camera.position.clone(), quaternion: this.camera.quaternion.clone(), target: this.controls?.target.clone() };
       try {
         if (quality !== "interactive") {
           this.setRenderQuality("ultra");
           this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5));
           if (this.controls) {
             this.controls.autoRotate = false;
-            this.controls.update();
+            if(this.controls.enabled) this.controls.update();
           }
-          if (this._lastHeroMetrics) this._frameHeroObject(this._lastHeroMetrics);
+          if (!opts.preserveView && this._lastHeroMetrics) this._frameHeroObject(this._lastHeroMetrics);
         }
         if (this.scene) this.scene.background = this._activeSkyBackground();
         this._restoreViewerAtmosphere();
         const clearPreset = this._presets[this.currentTimeOfDay] || this._presets.day;
         if (this.renderer && clearPreset) this.renderer.setClearColor(clearPreset.skyMid ?? clearPreset.skyTop, 1);
-        if (this.composer) this.composer.render();
-        else this.renderer.render(this.scene, this.camera);
-        const dataUrl = this.renderer.domElement.toDataURL("image/png");
+        this._renderScene();
+        let dataUrl;
+        if(opts.maxEdge) {
+          const source=this.renderer.domElement, ratio=Math.min(1,opts.maxEdge/Math.max(source.width,source.height));
+          const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(source.width*ratio));canvas.height=Math.max(1,Math.round(source.height*ratio));
+          canvas.getContext('2d').drawImage(source,0,0,canvas.width,canvas.height);
+          dataUrl=canvas.toDataURL('image/jpeg',.9);
+        } else dataUrl = this.renderer.domElement.toDataURL("image/png");
         if (!dataUrl || dataUrl === "data:," || dataUrl.length < 128) return null;
         return {
           name: String(label || "preview").toLowerCase().replace(/\s+/g, "-"),
@@ -5384,16 +5444,51 @@ export default {
         if (quality !== "interactive") {
           this.setRenderQuality(oldQuality);
           this.renderer.setPixelRatio(oldPixelRatio);
+          this.camera.near=oldCamera.near;this.camera.far=oldCamera.far;this.camera.updateProjectionMatrix();
+          this.camera.position.copy(oldCamera.position);
+          this.camera.quaternion.copy(oldCamera.quaternion);
+          if (oldCamera.target) this.controls.target.copy(oldCamera.target);
+          this.camera.updateMatrixWorld(true);
           if (this.controls && oldAutoRotate !== undefined) {
             this.controls.autoRotate = oldAutoRotate;
-            this.controls.update();
           }
         }
       }
     },
+    captureQualityViews() {
+      const root = this.scene?.getObjectByName('GeneratedObject');
+      if (!root || !this.camera) return [];
+      const saved = { position:this.camera.position.clone(), quaternion:this.camera.quaternion.clone(),
+        target:this.controls?.target.clone(), enabled:this.controls?.enabled, near:this.camera.near, far:this.camera.far };
+      try {
+        if(this.controls)this.controls.enabled=false;
+        return qualityViews(root, this.camera.fov, this.camera.aspect).map(view => {
+          this.camera.position.copy(view.position);
+          this.camera.near = Math.max(.001, view.distance / 1000);
+          this.camera.far = Math.max(saved.far, view.distance * 20);
+          if (this.controls) this.controls.target.copy(view.target);
+          this.camera.lookAt(view.target);
+          this.camera.updateProjectionMatrix(); this.camera.updateMatrixWorld(true);
+          return this.captureSnapshot(view.label, { quality:'ultra', preserveView:true, maxEdge:768 });
+        }).filter(Boolean);
+      } finally {
+        this.camera.position.copy(saved.position);this.camera.quaternion.copy(saved.quaternion);
+        this.camera.near=saved.near;this.camera.far=saved.far;
+        if(saved.target){this.controls.target.copy(saved.target);this.controls.enabled=saved.enabled;}
+        this.camera.updateProjectionMatrix();this.camera.updateMatrixWorld(true);
+        this._renderScene();
+      }
+    },
+    inspectConstruction() {
+      const root = this.scene?.getObjectByName('GeneratedObject');
+      return root ? inspectScene(root) : null;
+    },
     clear() {
       if (!this.scene) return;
+      this._levelNavigation?.setEnabled(false);this.isLevelScene=false;this.navigationMode='orbit';this._levelBounds=null;
+      for(const key of ['ground','groundTint','grid']) {const item=this._sceneObjects.get(key);if(item)item.visible=key==='ground';}
       this._activeEngine?.GAME?.dispose?.();
+      this._activeEngine?.disposeSurfaces?.();
       this._activeEngine = null;
       this._updateCallbacks = [];
       // Reset post-FX that a previous scene might have enabled.
@@ -5437,6 +5532,7 @@ export default {
         this._presentationStage = null;
       }
       this._lastHeroMetrics = null;
+      this._lightingMetrics = null;
       const toRemove = [];
       this.scene.traverse((obj) => {
         if (
@@ -5645,21 +5741,12 @@ export default {
       target.y += metrics.size.y * 0.08;
       const radius = Math.max(metrics.radius, 1.2);
       const main = this._lights.main;
-      main.position.set(target.x - radius * 1.4, target.y + radius * 2.2, target.z + radius * 1.55);
-      main.intensity = 1.15 * this.lightIntensity;
+      const direction = this.presentation === 'studio' ? new THREE.Vector3(-1.4, 2.2, 1.55)
+        : new THREE.Vector3(...(this._presets[this.currentTimeOfDay]?.main.position || [-3, 7, 4]));
+      main.position.copy(target).addScaledVector(direction.normalize(), radius * 3);
       main.target.position.copy(target);
       main.target.updateMatrixWorld();
-      if (main.shadow?.camera) {
-        const extent = Math.max(radius * 1.55, 2.4);
-        const cam = main.shadow.camera;
-        cam.left = -extent;
-        cam.right = extent;
-        cam.top = extent;
-        cam.bottom = -extent;
-        cam.near = 0.05;
-        cam.far = Math.max(radius * 6, 12);
-        cam.updateProjectionMatrix();
-      }
+      fitDirectionalShadow(main, metrics.box);
       if (this._lights.fill) this._lights.fill.position.set(target.x + radius * 2.0, target.y + radius * 1.2, target.z + radius * 1.8);
       if (this._lights.fill2) this._lights.fill2.position.set(target.x - radius * 1.9, target.y + radius * 0.9, target.z - radius * 1.8);
       if (this._lights.rim) this._lights.rim.position.set(target.x, target.y + radius * 1.2, target.z - radius * 2.5);
@@ -5668,11 +5755,11 @@ export default {
     _frameHeroObject(metrics, { animate = false } = {}) {
       if (!metrics || !this.camera || !this.controls) return;
       const target = metrics.center.clone();
-      target.y += metrics.size.y * 0.08;
-      const fov = THREE.MathUtils.degToRad(this.camera.fov || 45);
-      const fitHeightDistance = (metrics.size.y * 0.5) / Math.tan(fov * 0.5);
-      const fitWidthDistance = (Math.max(metrics.size.x, metrics.size.z) * 0.5) / Math.tan(fov * 0.5) / Math.max(this.camera.aspect || 1, 0.1);
-      const dist = Math.max(fitHeightDistance, fitWidthDistance, metrics.radius * 1.75, 2.4);
+      const fov = THREE.MathUtils.degToRad(this.camera.getEffectiveFOV());
+      const horizontalFov = 2 * Math.atan(Math.tan(fov / 2) * Math.max(this.camera.aspect || 1, 0.1));
+      // Fit a bounding sphere at any orbit angle and viewport aspect. The
+      // previous axis-only fit clipped tall assets when seen from above.
+      const dist = metrics.radius / Math.sin(Math.min(fov, horizontalFov) / 2);
       const dir = new THREE.Vector3(0.78, 0.52, 0.92).normalize();
       const pos = target.clone().addScaledVector(dir, dist * 1.18);
       this.controls.target.copy(target);
@@ -5689,18 +5776,19 @@ export default {
       this.controls.update();
     },
     _applyGeneratedLookdev(root) {
+      if (this._activeEngine?.GAME?.active || root.userData?.worldScale) return null;
       const metrics = this._normalizeGeneratedPresentation(root);
       if (!metrics) return null;
+      this._lightingMetrics = metrics;
       this._ensurePresentationStage(metrics);
       this._retargetLookdevRig(metrics);
       this._frameHeroObject(metrics);
-      this.setAO({ radius: Math.max(0.35, metrics.maxDim * 0.28), intensity: 3.1, falloff: 0.22, quality: "High" });
-      this.setBloom({ intensity: 0.78, threshold: 0.88, smoothing: 0.16, radius: 0.68 });
-      this.setColorGrade({ saturation: 1.1, contrast: 1.04 });
+      // Framing must not override the postprocessing choices made by the asset.
       return metrics;
     },
     autoEnhanceObject(obj, THREE) {
       const envMap = this._envMap;
+      prepareGeneratedSurfaces(obj, this.renderer.capabilities.getMaxAnisotropy());
 
       // ── Auto-scale: fit object within 1.5 unit max dimension ──
       // Build the bbox from HERO meshes only — a large backdrop marked
@@ -5720,7 +5808,7 @@ export default {
       if (heroBox.isEmpty()) heroBox.setFromObject(obj);
       const tempSize = heroBox.getSize(new THREE.Vector3());
       const maxDim = Math.max(tempSize.x, tempSize.y, tempSize.z);
-      if (maxDim > 1.5) {
+      if (maxDim > 1.5 && !this._activeEngine?.GAME?.active && !obj.userData?.worldScale) {
         const scale = 1.5 / maxDim;
         obj.scale.multiplyScalar(scale);
         // Recompute from hero-only descendants after scaling.
@@ -5742,68 +5830,15 @@ export default {
       // `this` is rebound inside the non-arrow traverse callback, so
       // capture the component reference for _csm / _bloomPass access.
       const self = this;
-      let renderOrderCounter = 10;
       obj.traverse(function (n) {
         if (n.isMesh && n.material) {
-          n.material.needsUpdate = true;
-          if (envMap && n.material.isMeshPhysicalMaterial) {
-            n.material.envMap = envMap;
-            n.material.envMapIntensity = 0.65;
-          } else {
-            n.material.envMapIntensity = 0.65;
+          // Respect authored optical properties, including water transmission,
+          // rough stone and multi-material meshes. Integration must not restyle assets.
+          for (const material of (Array.isArray(n.material) ? n.material : [n.material])) {
+            // Use scene.environment for default IBL so Studio can supply neutral
+            // illumination. Explicit authored material.envMap remains untouched.
+            material.needsUpdate = true;
           }
-          if (!("clearcoat" in n.material)) {
-            n.material.clearcoat = 0.2;
-          }
-          if (n.material.roughness > 0.8) n.material.roughness = 0.55;
-          // Fix transmission materials (liquids, glass, gems)
-          if (n.material.transmission && n.material.transmission > 0) {
-            // Detect liquid materials misusing transmission (transparent+opacity < 1,
-            // or low IOR suggesting liquid not glass/gems). Convert to MeshStandardMaterial
-            // so they render as visible colored volumes inside glass containers.
-            const isLiquid = n.material.transparent && n.material.opacity < 1;
-            const hasLowIOR = n.material.ior && n.material.ior < 1.45;
-            if (isLiquid || hasLowIOR) {
-              const color = n.material.color ? n.material.color.clone() : new THREE.Color(0x888888);
-              // Use color as emissive fallback so liquid color is always visible
-              const emissive = (n.material.emissive && n.material.emissive.r + n.material.emissive.g + n.material.emissive.b > 0)
-                ? n.material.emissive.clone() : color.clone().multiplyScalar(0.7);
-              const emissiveI = Math.max(n.material.emissiveIntensity || 0, 0.5);
-              n.material = new THREE.MeshStandardMaterial({
-                color,
-                emissive,
-                emissiveIntensity: emissiveI,
-                transparent: true,
-                opacity: n.material.opacity || 0.85,
-                side: THREE.DoubleSide,
-                depthWrite: false,
-                roughness: 0.2,
-                metalness: 0.0,
-              });
-            } else {
-              // True transmission (glass, gems) — keep as-is, don't force transparent
-              n.material.side = THREE.DoubleSide;
-              // Strip attenuationColor if liquid_fill sibling exists — attenuation
-              // tints the liquid and hides its true color through the glass
-              if (n.material.attenuationColor) {
-                let hasLiquid = false;
-                obj.traverse((c) => { if (c.name === "liquid_fill") hasLiquid = true; });
-                if (hasLiquid) {
-                  n.material.attenuationColor = new THREE.Color(0xffffff);
-                  n.material.attenuationDistance = Infinity;
-                }
-              }
-            }
-            n.renderOrder = renderOrderCounter++;
-          } else if (n.material.transparent) {
-            // Non-transmission transparent materials (alpha-blended)
-            n.material.depthWrite = false;
-            n.renderOrder = renderOrderCounter++;
-          } else {
-            n.renderOrder = 2;
-          }
-          n.castShadow = true;
-          n.receiveShadow = true;
           // three-mesh-bvh: build an accelerated BVH for any geometry
           // with >500 triangles. Below that the overhead of building
           // the BVH outweighs the raycast speedup. The BVH is used by
@@ -5817,133 +5852,62 @@ export default {
               try { n.geometry.computeBoundsTree({ maxLeafSize: 10 }); } catch (_) {}
             }
           }
-          // CSM: patch every receiving material so it samples from the
-          // cascaded shadow maps instead of the legacy directional map.
-          // Idempotent — setupMaterial tags the material and skips if
-          // already patched.
-          if (self._csm && n.material && !n.material.userData?.csmPatched) {
-            try {
-              self._csm.setupMaterial(n.material);
-              n.material.userData = n.material.userData || {};
-              n.material.userData.csmPatched = true;
-            } catch (_) {}
-          }
-          // Sync wet-surface uniform with the active weather on every
-          // generation — if rain is on and the generated scene has any
-          // SHADER.wetSurface material, it wets immediately.
-          if (n.material?.userData?.wetSurface && n.material.uniforms?.uRainFactor) {
-            n.material.uniforms.uRainFactor.value = self._rainFactor || 0;
-          }
-          // Height fog: opt this material into the custom fog branch
-          // (via USE_HEIGHT_FOG define) and wire its uniforms. Materials
-          // without the define keep stock fog — this prevents Water's
-          // internal reflector materials from failing to link.
-          if (self._heightFog?.enabled && n.material && !n.material.userData?._heightFogPatched) {
-            const fogUniforms = self._heightFog.uniforms;
-            n.material.defines = n.material.defines || {};
-            n.material.defines.USE_HEIGHT_FOG = "";
-            n.material.userData = n.material.userData || {};
-            n.material.userData._heightFogPatched = true;
-            const prev = n.material.onBeforeCompile;
-            n.material.onBeforeCompile = (shader, renderer) => {
-              if (prev) prev(shader, renderer);
-              Object.assign(shader.uniforms, fogUniforms);
-            };
-            n.material.needsUpdate = true;
+          for (const material of (Array.isArray(n.material) ? n.material : [n.material])) {
+            // CSM: patch every receiving material so it samples from the
+            // cascaded shadow maps instead of the legacy directional map.
+            // Idempotent — setupMaterial tags the material and skips if
+            // already patched.
+            if (self._csm && material && !material.userData?.csmPatched) {
+              try {
+                self._csm.setupMaterial(material);
+                material.userData = material.userData || {};
+                material.userData.csmPatched = true;
+              } catch (_) {}
+            }
+            // Sync wet-surface uniform with the active weather on every
+            // generation — if rain is on and the generated scene has any
+            // SHADER.wetSurface material, it wets immediately.
+            if (material?.userData?.wetSurface && material.uniforms?.uRainFactor) {
+              material.uniforms.uRainFactor.value = self._rainFactor || 0;
+            }
+            // Height fog: opt this material into the custom fog branch
+            // (via USE_HEIGHT_FOG define) and wire its uniforms. Materials
+            // without the define keep stock fog — this prevents Water's
+            // internal reflector materials from failing to link.
+            if (self._heightFog?.enabled && material && !material.userData?._heightFogPatched) {
+              const fogUniforms = self._heightFog.uniforms;
+              material.defines = material.defines || {};
+              material.defines.USE_HEIGHT_FOG = "";
+              material.userData = material.userData || {};
+              material.userData._heightFogPatched = true;
+              const prev = material.onBeforeCompile;
+              material.onBeforeCompile = (shader, renderer) => {
+                if (prev) prev(shader, renderer);
+                Object.assign(shader.uniforms, fogUniforms);
+              };
+              material.needsUpdate = true;
+            }
           }
         }
       });
-      // Gentle bloom boost for generated objects
-      if (this._bloomPass) {
-        // Leave bloom at its configured level — bumping it every frame
-        // undoes our tame baseline and produces the "sun halo blown over
-        // a stone fountain" look.
-      }
-      this._upgradeWeakMaterials(obj, THREE);
+      // Authored unlit and physical materials remain intact.
 
       // Keep HDR in scene.environment for reflections only; the visible sky
       // is the time-of-day skydome mesh.
       this.scene.background = this._activeSkyBackground();
     },
-    async applyModuleCode(code, mode = "replace") {
+    async applyModuleCode(code, mode = "replace", options = {}) {
       this.isGenerating = true;
+      let generationStarted = false;
       try {
         if (!code || typeof code !== "string")
           throw new Error("Code must be a non-empty string");
         
-        let fixedCode = code;
-        // Auto-fix LLM brace mismatches. CRITICAL: scope the fix to the
-        // USER CODE block (between the START/END markers) — NOT the
-        // whole module. Previously we scanned the entire wrapped
-        // string and removed the last `}` on imbalance, but a stray
-        // `}` emitted by the LLM mid-code closes the generate()
-        // function early, making `scene.add(root); return root;`
-        // land outside any function → "Illegal return statement".
-        // The wrapper is always balanced; imbalances come from user
-        // code, so we trim trailing `}` from the USER CODE block
-        // until it's balanced.
-        const START = "// ── USER CODE START ──";
-        const END   = "// ── USER CODE END ──";
-        const sIdx = fixedCode.indexOf(START);
-        const eIdx = fixedCode.indexOf(END);
-        if (sIdx >= 0 && eIdx > sIdx) {
-          const blockStart = sIdx + START.length;
-          let block = fixedCode.slice(blockStart, eIdx);
-          const countBraces = (s) => {
-            // Count braces, ignoring those inside strings/comments.
-            let o = 0, c = 0, i = 0, inStr = null, inLine = false, inBlock = false;
-            while (i < s.length) {
-              const ch = s[i];
-              if (inLine) { if (ch === "\n") inLine = false; i++; continue; }
-              if (inBlock) {
-                if (ch === "*" && s[i + 1] === "/") { inBlock = false; i += 2; continue; }
-                i++; continue;
-              }
-              if (inStr) {
-                if (ch === "\\") { i += 2; continue; }
-                if (ch === inStr) inStr = null;
-                i++; continue;
-              }
-              if (ch === "/" && s[i + 1] === "/") { inLine = true; i += 2; continue; }
-              if (ch === "/" && s[i + 1] === "*") { inBlock = true; i += 2; continue; }
-              if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; i++; continue; }
-              if (ch === "{") o++;
-              else if (ch === "}") c++;
-              i++;
-            }
-            return { o, c };
-          };
-          let { o: bo, c: bc } = countBraces(block);
-          // Trim trailing `}` from user code until balanced (or gave up).
-          let removed = 0;
-          while (bc > bo && removed < 5) {
-            const lastBrace = block.lastIndexOf("}");
-            if (lastBrace === -1) break;
-            block = block.slice(0, lastBrace) + block.slice(lastBrace + 1);
-            bc--;
-            removed++;
-          }
-          // Append missing `}` to user code block if still short (capped).
-          let appended = 0;
-          while (bo > bc && appended < 5) {
-            block = block + "\n}";
-            bc++;
-            appended++;
-          }
-          if (removed > 0 || appended > 0) {
-            console.warn(
-              `[ThreeViewer] Auto-balanced user code: removed ${removed} trailing }, appended ${appended} }`
-            );
-            fixedCode = fixedCode.slice(0, blockStart) + block + fixedCode.slice(eIdx);
-          }
-        }
-        // Final guard — full module balance check.
-        const fopen  = (fixedCode.match(/{/g) || []).length;
-        const fclose = (fixedCode.match(/}/g) || []).length;
-        if (fopen !== fclose)
-          throw new Error(
-            `Syntax error: mismatched braces (${fopen} vs ${fclose})`
-          );
+        let fixedCode;
+        // Parse real JavaScript: strings, comments and GLSL braces are data.
+        // Never "balance" them by deleting or appending program statements.
+        try { fixedCode = awaitSceneConstruction(code); parse(fixedCode, {ecmaVersion:'latest',sourceType:'module'}); }
+        catch(error) { throw new Error(`Invalid generated module: ${error.message}`); }
         const blob = new Blob([fixedCode], { type: "text/javascript" });
         const url = URL.createObjectURL(blob);
         let mod;
@@ -5963,19 +5927,17 @@ export default {
         // animation / physics tick the module just registered got deleted.
         // Now clear runs first so the new module's callbacks survive.
         if (mode === "replace") this.clear();
+        generationStarted = true;
 
-        // Baseline AAA post stack — barely-perceptible on each axis
-        // so the composite reads as "cinematic" rather than "blurry
-        // frame with RGB fringing." Generator code can override any
-        // of these per scene. DoF defaults to OFF so scenes only get
-        // bokeh when they explicitly opt in.
-        this.setFilmGrain(0.025, 0.22);
-        this.setChromatic(0.08, 2.2);
-        this.setColorGrade({ saturation: 1.08, contrast: 1.02 });
+        // Neutral reset before execution. Scene code may explicitly opt into effects.
+        this.setFilmGrain(0, 0);
+        this.setChromatic(0, 2.2);
+        this.setColorGrade({ hue: 0, saturation: 1, contrast: 1, lift: 0x000000, gain: 0xffffff });
         this.setDoF({ aperture: 0.0, maxblur: 0.0 });
         this.setUnderwater(false, { auto: true, color: 0x1a3860, distort: 0.005, rays: 0.45 });
-        this.setAO({ radius: 0.6, intensity: 2.5, falloff: 0.25, quality: "High" });
-        this.setBloom({ intensity: 0.7, threshold: 0.9, smoothing: 0.15, radius: 0.6 });
+        this.setAO({ radius: options.kind === 'level' || options.kind === 'game' ? 1.2 : .18, intensity: 1.35, falloff: 0.65 });
+        this.setBloom({ intensity: 0.2, threshold: 1.2, smoothing: 0.15, radius: 0.4 });
+        this.setLensFlare({ strength: 0 });
 
         const addUpdateCallback = (cb) => {
           if (typeof cb === "function") this._updateCallbacks.push(cb);
@@ -5995,7 +5957,8 @@ export default {
         this._activeEngine = _engine;
 
         const ctx = {
-          THREE,
+          sceneMath: seededLevelMath(sceneSourceSeed(fixedCode)),
+          THREE: generatedThreeAPI(THREE),
           helpers,
           scene: this.scene,
           camera: this.camera,
@@ -6036,15 +5999,16 @@ export default {
           setBloom:        (opts) => this.setBloom(opts),
           _engine,
         };
-        const result = await Promise.race([
-          generate(ctx),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Generation timeout (30s)")),
-              30000
-            )
-          ),
-        ]);
+        let generationTimer;
+        let result;
+        try {
+          result = await Promise.race([
+            generate(ctx),
+            new Promise((_, reject) => {
+              generationTimer = setTimeout(() => reject(new Error("Generation timeout (30s)")), 30000);
+            }),
+          ]);
+        } finally { clearTimeout(generationTimer); }
         // (clear() already ran above — do NOT call it again here or the
         // update callbacks the generator just registered would be wiped.)
         if (result && result.isObject3D) {
@@ -6078,13 +6042,11 @@ export default {
           ) {
             throw new Error("Generated scene contains no visible geometry");
           }
+          if(options.kind === 'level' || options.kind === 'scene') result.userData.worldScale=true;
+          const construction = inspectScene(result);
+          if (construction.errors.length) throw new Error(construction.errors.join("; "));
           this.autoEnhanceObject(result, THREE);
-          // Engine-level liquid auto-fill — detects vessel-shaped
-          // LatheGeometry (concave profile, open top) and fills any
-          // that lack liquid. Runs regardless of what the prompt was
-          // about, so a potion/flask/fountain/tub/bowl always contains
-          // correctly-placed water even if the LLM forgot FLUID.*.
-          this._autoFillVessels(result, helpers, _engine);
+          // An empty vessel is valid; only explicit fluid tags opt into normalization.
 
           // Convention-driven liquid normalization. Walks the scene once
           // and upgrades any mesh tagged with userData.fluid /
@@ -6107,18 +6069,35 @@ export default {
           // liquid floating in world space (the "vertical green baton
           // inside a tilted flask" bug). Bullet-proof try/catch inside.
           this._snapLiquidsToContainers(result);
-          // Engine-level fallback ambience — starfield, aura, glow
-          // shells, lens flare — fills in what weaker generations skip.
-          await this._applyFallbackAmbience(result, _engine);
+          // Preserve authored ambience without injecting stars, glow or flares.
           result.name = "GeneratedObject";
           this.scene.add(result);
-          this._applyGeneratedLookdev(result);
+          if(result.userData.worldScale && !_engine.GAME?.active) this._configureLevel(result, this._getHeroBounds(result)?.box || generatedBounds);
+          else this._applyGeneratedLookdev(result);
+          // Validate animation and compile an actual frame before emitting success.
+          // Three.js normally only logs shader failures, leaving a blank "success".
+          for (const callback of this._updateCallbacks) callback({ time: 0, deltaTime: 0 });
+          const animatedConstruction=inspectScene(result);
+          if(animatedConstruction.errors.length)throw new Error(animatedConstruction.errors.join("; "));
+          const previousShaderChecks = this.renderer.debug.checkShaderErrors;
+          const previousShaderError = this.renderer.debug.onShaderError;
+          try {
+            this.renderer.debug.checkShaderErrors = true;
+            this.renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
+              throw new Error(`Generated shader failed: ${[gl.getProgramInfoLog(program), gl.getShaderInfoLog(vertex), gl.getShaderInfoLog(fragment)].filter(Boolean).join(' ').slice(0, 2000)}`);
+            };
+            this._renderScene();
+          } finally {
+            this.renderer.debug.onShaderError = previousShaderError;
+            this.renderer.debug.checkShaderErrors = previousShaderChecks;
+          }
         } else {
           throw new Error("Generator returned no Three.js object");
         }
         this.$emit?.("generation-success", { mode, hasResult: !!result });
         return result;
       } catch (err) {
+        if (generationStarted && mode === "replace") this.clear();
         console.error(err);
         this.$emit?.("generation-error", { error: err, message: err.message });
         throw err;
@@ -6127,6 +6106,10 @@ export default {
       }
     },
     cleanup() {
+      this._levelNavigation?.dispose();
+      this._activeEngine?.disposeSurfaces?.();
+      this._studioEnvironment?.dispose?.();
+      this._studioEnvironment = null;
       this._activeEngine?.GAME?.dispose?.();
       this._activeEngine = null;
       window.removeEventListener("resize", this.onWindowResize);
@@ -6245,6 +6228,8 @@ export default {
 .three-container {
   position: relative;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
   height: 100%;
   display: flex;
   align-items: center;
@@ -6309,6 +6294,8 @@ export default {
   position: absolute;
   bottom: 20px;
   right: 20px;
+  max-width: calc(100% - 40px);
+  box-sizing: border-box;
   background: var(--bz-scrim-deep);
   padding: 10px 16px;
   border-radius: 4px;
@@ -6320,4 +6307,19 @@ export default {
   font-size: 12px;
   letter-spacing: 0.02em;
 }
+</style>
+
+<style>
+.level-navigation {position:absolute;top:16px;left:16px;right:16px;z-index:5;display:flex;flex-wrap:wrap;gap:8px;pointer-events:none;color:var(--bz-fg);font-family:var(--bz-font-body);}
+.level-navigation__modes,.level-navigation > label {display:flex;align-items:center;gap:4px;padding:4px;background:var(--bz-panel);border:1px solid var(--bz-border-strong);border-radius:var(--bz-r);pointer-events:auto;}
+.level-navigation button {display:flex;align-items:center;gap:6px;padding:8px 10px;background:transparent;border:1px solid transparent;border-radius:var(--bz-r-sm);color:var(--bz-fg);font:inherit;font-size:13px;cursor:pointer;}
+.level-navigation button[aria-pressed=true] {background:var(--bz-accent-soft);border-color:var(--bz-accent);}
+.level-navigation button:hover {background:var(--bz-raised);}
+.level-navigation button .material-symbols-outlined {font-size:18px;}
+.level-navigation > label {padding:6px 12px;gap:10px;font-size:12px;}
+.level-navigation input {width:90px;accent-color:var(--bz-accent);}
+.level-navigation > label span {min-width:42px;font-variant-numeric:tabular-nums;}
+.three-container canvas:focus-visible {outline:1px solid var(--bz-accent);outline-offset:-1px;}
+@media(max-width:1100px){.three-container.is-level .perf-stats{bottom:90px;flex-direction:row;left:12px;gap:6px;}.three-container.is-level .stat-notification{font-size:12px;padding:8px;}}
+@media(max-width:600px){.three-container .controls-hint {left:12px;right:12px;bottom:12px;max-width:calc(100% - 24px);white-space:normal;font-size:11px;}.level-navigation{top:12px;left:12px;right:12px;}}
 </style>

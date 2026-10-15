@@ -1,6 +1,15 @@
+import { stripeMinorUnits } from "./finance/money.js";
+import { FINANCE_ACTIONS } from "./finance/actions.js";
+import { executeFinanceAction } from "./finance/executor.js";
 import * as connectors from "./connectors.js";
+import { OPERATIONAL_ACTIONS } from './operationalActions.js';
+import { searchSuppliers } from "./supplierSourcing.js";
 
 export const SUPPORTED_CONNECTOR_ACTIONS = new Set([
+  "sourcing.searchSuppliers",
+  ...Object.keys(OPERATIONAL_ACTIONS),
+  "team.directory", "team.readConversation", "team.requestWork", "team.reply", "team.readProcurement", "team.updateProcurement",
+  ...Object.keys(FINANCE_ACTIONS), "finance.reconcilePayouts", "finance.listEvidence", "finance.readEvidence",
   "stripe.createCheckout", "stripe.refund", "stripe.createSubscription", "stripe.cancelSubscription", "stripe.chargeOnFile",
   "hubspot.upsertContact", "hubspot.createDeal", "hubspot.advanceDeal",
   "qbo.createInvoice", "qbo.recordPayment", "qbo.payBill", "qbo.sendInvoice", "qbo.reportAR",
@@ -12,6 +21,13 @@ export const SUPPORTED_CONNECTOR_ACTIONS = new Set([
   "whatsapp.sendMessage", "whatsapp.sendTemplate",
   "shopify.createProduct", "shopify.updateProduct", "shopify.listOrders", "shopify.fulfillOrder", "shopify.refundOrder",
   "notion.createPage", "notion.appendBlock", "notion.queryDB",
+  // Local-first operational executors (routed before connector dispatch).
+  "gmao.searchWorkOrders", "gmao.getDossier", "gmao.scheduleWorkOrder", "gmao.generateDocument", "gmao.acknowledgeHandoff",
+  "gmao.bootstrap", "gmao.generatePreventive", "gmao.createWorkOrder", "gmao.transitionWorkOrder",
+  "gmao.addEvidence", "gmao.recordAttachment", "gmao.updateProcurement", "gmao.notifyClient",
+  "gmao.evaluateSla", "gmao.createQuote", "gmao.updateQuote", "gmao.recordServiceAcceptance", "gmao.validateProcessStep", "gmao.saveInvoice", "gmao.registerCompliance",
+  "gmao.exportWeeklyRegister", "gmao.runAutomation", "gmao.recommendSchedule", "gmao.reconcileBilling",
+  "field.prepareWorkOrder", "field.trackJob", "field.completeJob", "field.followUp",
 ]);
 
 function encodeForm(data, prefix = "", out = new URLSearchParams()) {
@@ -26,18 +42,26 @@ function encodeForm(data, prefix = "", out = new URLSearchParams()) {
 }
 
 const actionConnector = (actionType) => ({
-  stripe: "stripe", hubspot: "hubspot", qbo: "quickbooks",
+  qonto: "qonto", stripe: "stripe", hubspot: "hubspot", qbo: "quickbooks",
   sage: "sage_accounting", twilio: "twilio", whatsapp: "twilio",
   slack: "slack", gcal: "google_calendar", email: "sendgrid",
-  shopify: "shopify", notion: "notion",
+  shopify: "shopify", notion: "notion", sourcing: "brave_search",
 })[actionType.split(".")[0]];
 
 export async function executeConnectorAction(companyId, actionType, params, idempotencyKey) {
   const kind = actionConnector(actionType);
   if (!kind) throw new Error(`No production executor is registered for ${actionType}`);
-  const connector = await connectors.getByKind(companyId, kind);
+  if (!params.connectorId && ["stripe", "qonto"].includes(kind)) {
+    const accounts = (await connectors.list(companyId)).filter(item => item.kind === kind && item.status === "active");
+    if (accounts.length > 1) throw new Error(`Choose connectorId: multiple ${kind} accounts are connected`);
+  }
+  const connector = params.connectorId ? await connectors.get(companyId, params.connectorId) : await connectors.getByKind(companyId, kind);
+  if (connector && connector.kind !== kind) throw new Error("Connector kind does not match action");
   if (!connector) throw new Error(`${kind} connector is not active`);
   const call = (spec) => connectors.request(companyId, connector, { ...spec, idempotencyKey });
+
+  if (FINANCE_ACTIONS[actionType]) return executeFinanceAction(actionType, params, call, idempotencyKey);
+  if (actionType === "sourcing.searchSuppliers") return searchSuppliers(params, call);
 
   switch (actionType) {
     case "stripe.createCheckout": {
@@ -51,23 +75,27 @@ export async function executeConnectorAction(companyId, actionType, params, idem
       return { id: data.id, sessionId: data.id, shareLink: data.url, summary: `Checkout ${data.id} created` };
     }
     case "stripe.refund": {
-      const body = encodeForm({ charge: params.chargeId, amount: params.amount ? Math.round(Number(params.amount) * 100) : undefined }).toString();
+      const amount = stripeMinorUnits(params.amount, params.currency);
+      if (!/^ch_[a-zA-Z0-9]+$/.test(params.chargeId || "")) throw new Error("A Stripe charge ID is required");
+      const charge = await call({ url: `https://api.stripe.com/v1/charges/${params.chargeId}`, method: "GET" });
+      if (charge.currency !== String(params.currency).toLowerCase() || amount > charge.amount - charge.amount_refunded) throw new Error("Refund amount or currency does not match the charge’s remaining refundable balance");
+      const body = encodeForm({ charge: params.chargeId, amount }).toString();
       const data = await call({ url: "https://api.stripe.com/v1/refunds", method: "POST", authMode: "basic", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-      return { id: data.id, summary: `Refund ${data.id} is ${data.status}` };
+      return { id: data.id, status: data.status === 'succeeded' ? 'completed' : 'pending', providerStatus: data.status, receipt: data, summary: `Refund ${data.id} is ${data.status}` };
     }
     case "stripe.createSubscription": {
       const body = encodeForm({ customer: params.customerId, items: [{ price: params.priceId }] }).toString();
       const data = await call({ url: "https://api.stripe.com/v1/subscriptions", method: "POST", authMode: "basic", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-      return { id: data.id, summary: `Subscription ${data.id} created` };
+      return { id: data.id, providerStatus: data.status, receipt: data, status: ['active', 'trialing'].includes(data.status) ? 'completed' : 'pending', summary: `Subscription ${data.id} is ${data.status}` };
     }
     case "stripe.cancelSubscription": {
       const data = await call({ url: `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(params.subscriptionId)}`, method: "DELETE", authMode: "basic" });
       return { id: data.id, summary: `Subscription ${data.id} cancelled` };
     }
     case "stripe.chargeOnFile": {
-      const body = encodeForm({ amount: Math.round(Number(params.amount) * 100), currency: params.currency || "usd", customer: params.customerId, confirm: true, off_session: true, description: params.memo }).toString();
+      const body = encodeForm({ amount: stripeMinorUnits(params.amount, params.currency), currency: String(params.currency).toLowerCase(), customer: params.customerId, confirm: true, off_session: true, description: params.memo }).toString();
       const data = await call({ url: "https://api.stripe.com/v1/payment_intents", method: "POST", authMode: "basic", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-      return { id: data.id, summary: `Payment ${data.id} is ${data.status}` };
+      return { id: data.id, status: data.status === 'succeeded' ? 'completed' : 'pending', providerStatus: data.status, receipt: data, summary: `Payment ${data.id} is ${data.status}` };
     }
     case "hubspot.upsertContact": {
       const data = await call({ url: "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert", method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inputs: [{ idProperty: "email", id: params.email, properties: { email: params.email, ...(params.props || {}) } }] }) });
@@ -131,8 +159,14 @@ export async function executeConnectorAction(companyId, actionType, params, idem
       const payload = actionType === "email.sendTemplate"
         ? { from: { email: from }, personalizations: [personalization], template_id: params.templateId }
         : { from: { email: from }, personalizations: [personalization], subject: params.subject, content: [{ type: "text/html", value: params.html || "" }] };
-      await call({ url: "https://api.sendgrid.com/v3/mail/send", method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      return { id: `email-${Date.now()}`, summary: `Email sent to ${params.to}` };
+      if (params.attachments) {
+        if (!Array.isArray(params.attachments) || params.attachments.some(a=>!a.filename||!a.content||!/^[A-Za-z0-9+/=]+$/.test(a.content))) throw new Error('Invalid email attachments');
+        payload.attachments=params.attachments.map(({content,filename,type})=>({content,filename,type:type||'application/octet-stream',disposition:'attachment'}));
+      }
+      const response = await call({ includeResponseMetadata: true, url: "https://api.sendgrid.com/v3/mail/send", method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      return { externalId: response.headers?.['x-message-id'] || null, status: 'submitted',
+        receipt: { provider: 'sendgrid', httpStatus: response.status, recipient: params.to },
+        summary: `Email accepted for delivery to ${params.to}; delivery is not confirmed` };
     }
     case "gcal.findSlots": {
       const calendarId = params.calendarId || "primary";
@@ -170,7 +204,7 @@ export async function executeConnectorAction(companyId, actionType, params, idem
         ...(params.mediaUrl ? { MediaUrl: params.mediaUrl } : {}),
       }).toString();
       const data = await call({ url: `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(connector.accountIdentifier)}/Messages.json`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-      return { id: data.sid, summary: `${whatsapp ? "WhatsApp" : "Message"} sent to ${params.to}` };
+      return { id: data.sid, providerStatus: data.status, status: 'submitted', summary: `${whatsapp ? "WhatsApp" : "Message"} accepted (${data.status || 'queued'}) for ${params.to}` };
     }
     case "twilio.broadcastSMS": {
       const recipients = Array.isArray(params.recipients) ? params.recipients.slice(0, 100) : [];
@@ -183,7 +217,7 @@ export async function executeConnectorAction(companyId, actionType, params, idem
         const data = await call({ url: `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(connector.accountIdentifier)}/Messages.json`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
         sent.push(data.sid);
       }
-      return { id: sent[0], ids: sent, summary: `${sent.length} messages sent` };
+      return { id: sent[0], ids: sent, status: 'submitted', summary: `${sent.length} messages accepted for delivery` };
     }
     case "twilio.placeCall": {
       if (!connector.accountIdentifier || !params.from) throw new Error("Twilio Account SID and sender number are required");

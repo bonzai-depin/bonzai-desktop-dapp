@@ -26,17 +26,18 @@ const MINT_POOL_ABI = [
   'function genesisTime() view returns (uint256)',
   'function isEpochFinalized(uint256 epochId) view returns (bool)',
   'function getEpochInfo(uint256 epochId) view returns (uint256 startTime, uint256 endTime, uint256 totalRegistered, bool finalized)',
-  'function getEpochDeposits(uint256 epochId) view returns (uint256[6])',
+  'function getEpochHolderDeposits(uint256 epochId) view returns (uint256[6])',
   'function getEpochClaimedPerPool(uint256 epochId) view returns (uint256[6])',
   'function getAllTotalDeposited() view returns (uint256[6])',
   'function getAllPoolThresholds() view returns (uint256[6])',
   'function qualifiesForPool(address user, uint8 poolIndex) view returns (bool)',
-  'function previewClaim(uint256 epochId, uint8 poolIndex, address user) view returns (uint256)',
+  'function previewHolderClaim(uint256 epochId, uint8 poolIndex, address user) view returns (uint256)',
   'function hasClaimedEpoch(uint256 epochId, address user, uint8 poolIndex) view returns (bool)',
   'function isRegistered(uint256 epochId, address user) view returns (bool)',
   'function registeredBalances(uint256 epochId, address user) view returns (uint256)',
   'function totalClaimed() view returns (uint256)',
   'function claimConfirmedBlock(uint256 epochId, address user) view returns (uint256)',
+  'function MIN_CLAIM_BLOCK_GAP() view returns (uint256)',
   'function NUM_POOLS() view returns (uint256)',
 
   // Write functions
@@ -97,18 +98,13 @@ async function getPoolContract(withSigner = false) {
   }
 
   if (withSigner) {
+    await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
     const browserProvider = await web3Service.getBrowserProvider();
     const signer = await browserProvider.getSigner();
     return new ethers.Contract(poolAddress, MINT_POOL_ABI, signer);
   }
 
-  let provider;
-  try {
-    provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
-  } catch { /* */ }
-  if (!provider) {
-    provider = new ethers.JsonRpcProvider(CONFIG.networks[ECONOMY_NETWORK_KEY].rpc);
-  }
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
   return new ethers.Contract(poolAddress, MINT_POOL_ABI, provider);
 }
 
@@ -148,7 +144,7 @@ async function fetchPoolStats() {
       const prevEpochId = state.currentEpoch - 1;
       const [epochInfo, epochDeposits] = await Promise.all([
         contract.getEpochInfo(prevEpochId),
-        contract.getEpochDeposits(prevEpochId),
+        contract.getEpochHolderDeposits(prevEpochId),
       ]);
 
       if (epochInfo.finalized) {
@@ -187,6 +183,10 @@ async function fetchPoolStats() {
   } catch (e) {
     console.error('[MintPool] fetchPoolStats failed:', e);
     state.error = e.message;
+    state.lastFetch = null;
+    state.latestFinalizedEpoch = null;
+    state.userQualifies = [false, false, false, false, false, false];
+    throw e;
   } finally {
     state.isLoading = false;
   }
@@ -194,9 +194,8 @@ async function fetchPoolStats() {
 
 /**
  * Register for the current epoch.
- * Sends a Chainlink Functions request to fetch cross-chain BONZAI balances.
- * The contract callback adds Base balance on-chain and completes registration.
- * Registration is async — the user must wait for the oracle callback.
+ * Records a stake locked through the claim window on the economy chain.
+ * Registration is complete when the transaction confirms.
  *
  * @returns {Promise<{success: boolean, txHash?: string, error?: string}>}
  */
@@ -216,7 +215,8 @@ async function registerForEpoch() {
     const receipt = await tx.wait();
     console.log(`[MintPool] Registration request confirmed in block ${receipt.blockNumber}`);
 
-    // Parse RegistrationRequested event for requestId
+    // Registration is complete in the confirmed transaction.
+    // Compatibility field for older callers:
     let requestId = null;
     for (const log of receipt.logs) {
       try {
@@ -230,14 +230,14 @@ async function registerForEpoch() {
       }
     }
 
-    console.log(`[MintPool] Oracle request sent: ${requestId}. Waiting for callback...`);
+    await fetchPoolStats().catch(() => {});
 
     return {
       success: true,
       txHash: receipt.hash,
       requestId,
       epochId: state.currentEpoch,
-      pending: true,
+      pending: false,
     };
   } catch (e) {
     console.error('[MintPool] registerForEpoch failed:', e);
@@ -250,8 +250,7 @@ async function registerForEpoch() {
 
 /**
  * Confirm balance before claiming (flash loan protection).
- * Sends a Chainlink Functions request to re-verify the user still holds
- * >= registered balance. The callback sets the confirmed block.
+ * Verifies the registered stake onchain and records the confirmation block.
  * Must be called in a separate block BEFORE claimEpoch/claimEpochBatch.
  *
  * @param {number} epochId - Epoch to confirm claim for
@@ -273,7 +272,7 @@ async function confirmClaim(epochId) {
     const receipt = await tx.wait();
     console.log(`[MintPool] Confirm claim request confirmed in block ${receipt.blockNumber}`);
 
-    return { success: true, txHash: receipt.hash, epochId, pending: true };
+    return { success: true, txHash: receipt.hash, epochId, pending: false };
   } catch (e) {
     console.error('[MintPool] confirmClaim failed:', e);
     state.error = e.message;
@@ -325,7 +324,7 @@ async function claimEpoch(epochId, poolIndex) {
       }
     }
 
-    await fetchPoolStats();
+    await fetchPoolStats().catch(() => {});
 
     // Mirror the claim into the SQL web3 cache (Phase 7b/8b). The
     // dashboard reads from this cache to render claim history without
@@ -383,7 +382,7 @@ async function claimEpochBatch(epochId, poolIndices) {
     const receipt = await tx.wait();
     console.log(`[MintPool] Batch claim confirmed in block ${receipt.blockNumber}`);
 
-    await fetchPoolStats();
+    await fetchPoolStats().catch(() => {});
 
     return { success: true, txHash: receipt.hash, epochId, poolIndices };
   } catch (e) {
@@ -399,13 +398,11 @@ async function claimEpochBatch(epochId, poolIndices) {
  * Check if user has claimed a specific epoch/pool
  */
 async function hasClaimedEpoch(epochId, poolIndex) {
-  try {
+  {
     const contract = await getPoolContract(false);
     const userAddress = web3Service.state.walletAddress;
     if (!userAddress) return false;
     return await contract.hasClaimedEpoch(epochId, userAddress, poolIndex);
-  } catch {
-    return false;
   }
 }
 
@@ -413,13 +410,11 @@ async function hasClaimedEpoch(epochId, poolIndex) {
  * Preview claimable amount for a specific epoch/pool
  */
 async function previewClaim(epochId, poolIndex) {
-  try {
+  {
     const contract = await getPoolContract(false);
     const userAddress = web3Service.state.walletAddress;
     if (!userAddress) return 0n;
-    return await contract.previewClaim(epochId, poolIndex, userAddress);
-  } catch {
-    return 0n;
+    return await contract.previewHolderClaim(epochId, poolIndex, userAddress);
   }
 }
 
@@ -427,14 +422,27 @@ async function previewClaim(epochId, poolIndex) {
  * Check if user is registered for a specific epoch
  */
 async function isRegisteredForEpoch(epochId) {
-  try {
+  {
     const contract = await getPoolContract(false);
     const userAddress = web3Service.state.walletAddress;
     if (!userAddress) return false;
     return await contract.isRegistered(epochId, userAddress);
-  } catch {
-    return false;
   }
+}
+
+/** Restore confirmation state after reload and wait for the onchain block gap. */
+async function getClaimStatus(epochId, wallet = web3Service.state.walletAddress) {
+  if (!wallet) return { confirmedBlock: 0, blocksRemaining: 0, claimReady: false };
+  const contract = await getPoolContract(false);
+  const provider = await web3Service.getProvider(ECONOMY_NETWORK_KEY);
+  const [confirmed, gap, current] = await Promise.all([
+    contract.claimConfirmedBlock(epochId, wallet),
+    contract.MIN_CLAIM_BLOCK_GAP(),
+    provider.getBlockNumber(),
+  ]);
+  const confirmedBlock = Number(confirmed);
+  const blocksRemaining = confirmedBlock ? Math.max(0, confirmedBlock + Number(gap) - Number(current)) : 0;
+  return { confirmedBlock, blocksRemaining, claimReady: confirmedBlock > 0 && blocksRemaining === 0 };
 }
 
 // Computed values
@@ -458,6 +466,7 @@ export const mintPoolService = {
   hasClaimedEpoch,
   isRegisteredForEpoch,
   previewClaim,
+  getClaimStatus,
 
   // Constants
   POOL_LABELS,

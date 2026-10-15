@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("BonzAI staking-centered utility economy", function () {
   async function deployFixture() {
@@ -39,6 +40,22 @@ describe("BonzAI staking-centered utility economy", function () {
     expect(position.weight).to.be.gt(position.amount);
   });
 
+  it("honors the selected lock multiplier throughout the promised term and expires it", async function () {
+    const { alice, stakingVault } = await deployFixture();
+    await stakingVault.connect(alice).stake(ethers.parseEther("5000"), 365 * 86400);
+    const until = (await stakingVault.positions(alice.address)).lockedUntil;
+    await time.increase(2 * 86400);
+    expect(await stakingVault.lockMultiplierBps(alice.address)).to.equal(17000);
+    await stakingVault.connect(alice).stake(ethers.parseEther("1000"), 0);
+    expect(await stakingVault.lockMultiplierBps(alice.address)).to.equal(17000);
+    expect((await stakingVault.positions(alice.address)).lockedUntil).to.equal(until);
+    await expect(stakingVault.connect(alice).unstake(1)).to.be.revertedWithCustomError(stakingVault,"StakeStillLocked");
+    await time.increaseTo(until);
+    expect(await stakingVault.lockMultiplierBps(alice.address)).to.equal(10000);
+    await stakingVault.connect(alice).unstake(ethers.parseEther("6000"));
+    expect(await stakingVault.utilityWeight(alice.address)).to.equal(0);
+  });
+
   it("preserves contribution royalties and adds a separate staking bonus", async function () {
     const { alice, bob, treasury, payer, stakingVault, revenueRouter } = await deployFixture();
     const assetId = ethers.id("fine-tune-model-with-data-owners");
@@ -55,24 +72,59 @@ describe("BonzAI staking-centered utility economy", function () {
       ["trainer", "data_owner"],
     );
 
-    await revenueRouter.connect(payer).depositRevenue(assetId, { value: ethers.parseEther("1") });
+    const routeId = await revenueRouter.routeIdFor(alice.address, assetId);
+    const treasuryBefore = await ethers.provider.getBalance(treasury.address);
+    await revenueRouter.connect(payer).depositRevenue(routeId, { value: ethers.parseEther("1") });
 
-    const aliceClaim = await revenueRouter.claimable(assetId, alice.address);
-    const bobClaim = await revenueRouter.claimable(assetId, bob.address);
+    const aliceClaim = await revenueRouter.claimable(routeId, alice.address);
+    const bobClaim = await revenueRouter.claimable(routeId, bob.address);
 
     expect(aliceClaim + bobClaim).to.equal(ethers.parseEther("0.9"));
     expect(aliceClaim).to.be.gt(ethers.parseEther("0.48"));
     expect(bobClaim).to.be.gt(ethers.parseEther("0.32"));
-    expect(await ethers.provider.getBalance(treasury.address)).to.be.gt(ethers.parseEther("10000"));
+    expect(await ethers.provider.getBalance(treasury.address) - treasuryBefore).to.equal(ethers.parseEther("0.1"));
   });
 
-  it("prevents another wallet from replacing a contribution route", async function () {
-    const { alice, bob, revenueRouter } = await deployFixture();
+  it("isolates identical asset IDs by publisher and locks shares at registration", async function () {
+    const { alice, bob, payer, revenueRouter } = await deployFixture();
     const assetId = ethers.id("immutable-origin");
-    await revenueRouter.connect(alice).registerRoute(assetId, "bonzai://origin", [alice.address], [10000], [9000], ["creator"]);
-    await expect(
-      revenueRouter.connect(bob).registerRoute(assetId, "bonzai://fake", [bob.address], [10000], [9000], ["creator"]),
-    ).to.be.revertedWithCustomError(revenueRouter, "RouteAlreadyOwned");
+    await revenueRouter.connect(bob).registerRoute(assetId, "bonzai://fake", [bob.address], [10000], [0], ["creator"]);
+    await revenueRouter.connect(alice).registerRoute(assetId, "bonzai://origin", [alice.address], [10000], [0], ["creator"]);
+    const routeId = await revenueRouter.routeIdFor(alice.address, assetId);
+    await expect(revenueRouter.connect(alice).registerRoute(assetId, "changed", [bob.address], [10000], [0], ["creator"]))
+      .to.be.revertedWithCustomError(revenueRouter, "RouteLocked");
+    await revenueRouter.connect(payer).depositRevenue(routeId, { value: 10000 });
+    expect(await revenueRouter.claimable(routeId, alice.address)).to.equal(8000);
+    expect(await revenueRouter.claimable(routeId, bob.address)).to.equal(0);
+  });
+
+  it("preserves activated base allocations when governance changes fees", async function () {
+    const { owner, alice, payer, revenueRouter } = await deployFixture();
+    const source = ethers.id("fixed-base-revenue");
+    await revenueRouter.connect(alice).registerRoute(source, "bonzai://fixed", [alice.address], [10000], [0], ["creator"]);
+    await revenueRouter.connect(owner).setTreasuryBps(3000);
+    const routeId = await revenueRouter.routeIdFor(alice.address, source);
+    await revenueRouter.connect(payer).depositRevenue(routeId, { value: 10000 });
+    expect(await revenueRouter.claimable(routeId, alice.address)).to.equal(8000);
+  });
+
+  it("rejects duplicate recipients that multiply one wallet's staking bonus", async function () {
+    const { alice, revenueRouter } = await deployFixture();
+    await expect(revenueRouter.connect(alice).registerRoute(ethers.id("duplicate"), "uri", [alice.address, alice.address], [5000,5000], [0,0], ["a","b"]))
+      .to.be.revertedWithCustomError(revenueRouter, "InvalidRecipient");
+  });
+
+  it("allocates bonus dust only to staked recipients and conserves all wei", async function () {
+    const { alice, bob, treasury, payer, stakingVault, revenueRouter } = await deployFixture();
+    await stakingVault.connect(alice).stake(ethers.parseEther("1000"), 0);
+    const source = ethers.id("dust");
+    await revenueRouter.connect(alice).registerRoute(source, "uri", [alice.address,bob.address], [5000,5000], [0,0], ["trainer","data"]);
+    const routeId = await revenueRouter.routeIdFor(alice.address, source);
+    await expect(revenueRouter.connect(payer).depositRevenue(routeId, {value: 103})).to.changeEtherBalance(treasury, 10);
+    expect(await revenueRouter.claimable(routeId, alice.address)).to.equal(51);
+    expect(await revenueRouter.claimable(routeId, bob.address)).to.equal(42);
+    await expect(revenueRouter.connect(alice).claim(routeId)).to.changeEtherBalance(alice, 51);
+    await expect(revenueRouter.connect(alice).claim(routeId)).to.be.revertedWithCustomError(revenueRouter,"NothingToClaim");
   });
 
   it("allows an authorized evaluation registry to update contribution scores", async function () {

@@ -18,7 +18,17 @@ describe("BonzaiMintPool", function () {
   // HELPERS — Arbitrum-local: balance read directly on-chain, no CRE.
   // ═══════════════════════════════════════════════════════════════════════════
 
-  async function registerUser(mintPool, user) {
+  async function lockUserStake(mintPool, user) {
+    const token = await ethers.getContractAt("MockERC20", await mintPool.bonzaiToken());
+    const vault = await ethers.getContractAt("BonzaiStakingVault", await mintPool.stakingVault());
+    const liquid = await token.balanceOf(user.address);
+    if (liquid > 0n) {
+      await token.connect(user).approve(await vault.getAddress(), liquid);
+      await vault.connect(user).stake(liquid, 30 * 86400);
+    }
+  }
+  async function stakeAndRegisterUser(mintPool, user) {
+    await lockUserStake(mintPool, user);
     return mintPool.connect(user).registerForEpoch();
   }
   async function confirmUserClaim(mintPool, user, epochId) {
@@ -58,11 +68,13 @@ describe("BonzaiMintPool", function () {
     await mintPool.setCollectiblesFactory(treasury.address);
     await mintPool.connect(treasury).setAuthorizedMinter(treasury.address, true);
 
+    await lockUserStake(mintPool, user1);
+    await lockUserStake(mintPool, user2);
     // Use auto-mine off + manual mine so both registrations hit the same
     // block, yielding identical time-weighted multipliers.
     await ethers.provider.send("evm_setAutomine", [false]);
-    await registerUser(mintPool, user1);
-    await registerUser(mintPool, user2);
+    await mintPool.connect(user1).registerForEpoch();
+    await mintPool.connect(user2).registerForEpoch();
     await ethers.provider.send("evm_mine", []);
     await ethers.provider.send("evm_setAutomine", [true]);
 
@@ -199,17 +211,17 @@ describe("BonzaiMintPool", function () {
       );
       await mintPool.setStakingVault(await stakingVault.getAddress());
       await token.mint(user1.address, ethers.parseEther("5000"));
-      await expect(registerUser(mintPool, user1)).to.be.revertedWith("Below LVL1 threshold");
+      await expect(mintPool.connect(user1).registerForEpoch()).to.be.revertedWith("Below LVL1 threshold");
       await token.connect(user1).approve(await stakingVault.getAddress(), ethers.MaxUint256);
-      await stakingVault.connect(user1).stake(ethers.parseEther("5000"), 0);
-      await registerUser(mintPool, user1);
+      await stakingVault.connect(user1).stake(ethers.parseEther("5000"), 30 * 86400);
+      await stakeAndRegisterUser(mintPool, user1);
       expect(await mintPool.registeredBalances(0, user1.address)).to.equal(ethers.parseEther("5000"));
     });
 
     it("registers a user with sufficient BONZAI balance", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("5000"));
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       expect(await mintPool.isRegistered(0, user1.address)).to.equal(true);
       expect(await mintPool.registeredBalances(0, user1.address)).to.equal(ethers.parseEther("5000"));
     });
@@ -217,14 +229,14 @@ describe("BonzaiMintPool", function () {
     it("reverts when balance is below LVL1 threshold (and user is not unlocked)", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("100"));
-      await expect(registerUser(mintPool, user1)).to.be.revertedWith("Below LVL1 threshold");
+      await expect(stakeAndRegisterUser(mintPool, user1)).to.be.revertedWith("Below LVL1 threshold");
     });
 
     it("emits Registered event", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       const balance = ethers.parseEther("5000");
       await token.mint(user1.address, balance);
-      await expect(registerUser(mintPool, user1))
+      await expect(stakeAndRegisterUser(mintPool, user1))
         .to.emit(mintPool, "Registered")
         .withArgs(0, user1.address, balance);
     });
@@ -232,14 +244,14 @@ describe("BonzaiMintPool", function () {
     it("reverts when registering twice in the same epoch", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("5000"));
-      await registerUser(mintPool, user1);
-      await expect(registerUser(mintPool, user1)).to.be.revertedWith("Already registered");
+      await stakeAndRegisterUser(mintPool, user1);
+      await expect(stakeAndRegisterUser(mintPool, user1)).to.be.revertedWith("Already registered");
     });
 
     it("snapshots thresholds on first registration of an epoch", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("5000"));
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       expect(await mintPool.epochThresholdSnapshotted(0)).to.equal(true);
     });
   });
@@ -352,26 +364,25 @@ describe("BonzaiMintPool", function () {
       const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("5000"));
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       await time.increase(EPOCH_DURATION);
       await expect(confirmUserClaim(mintPool, user1, 0)).to.emit(mintPool, "ClaimConfirmed");
     });
 
-    it("reverts when balance dropped below registered amount", async function () {
-      const { mintPool, token, user1 } = await loadFixture(deployMintPool);
+    it("prevents the registered stake from leaving before confirmation", async function () {
+      const { mintPool, token, stakingVault, user1 } = await loadFixture(deployMintPool);
       const balance = ethers.parseEther("5000");
       await token.mint(user1.address, balance);
-      await registerUser(mintPool, user1);
-      // Burn half the user's BONZAI
-      await token.connect(user1).transfer("0x000000000000000000000000000000000000dEaD", balance / 2n);
+      await stakeAndRegisterUser(mintPool, user1);
+      await expect(stakingVault.connect(user1).unstake(balance / 2n)).to.be.revertedWithCustomError(stakingVault, "StakeStillLocked");
       await time.increase(EPOCH_DURATION);
-      await expect(confirmUserClaim(mintPool, user1, 0)).to.be.revertedWith("Balance dropped since registration");
+      await expect(confirmUserClaim(mintPool, user1, 0)).to.emit(mintPool, "ClaimConfirmed");
     });
 
     it("reverts when called outside the claim window", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("5000"));
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       await time.increase(EPOCH_DURATION);
       await time.increase(EPOCH_DURATION); // skip past the claim window
       await expect(confirmUserClaim(mintPool, user1, 0)).to.be.revertedWith("Claim window closed");
@@ -398,7 +409,7 @@ describe("BonzaiMintPool", function () {
       // user3 holds tokens, registers, but never mints. Should not be able to claim.
       await token.mint(user3.address, ethers.parseEther("50000"));
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, user3);
+      await stakeAndRegisterUser(mintPool, user3);
       await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
       await time.increase(EPOCH_DURATION);
       await confirmUserClaim(mintPool, user3, 0);
@@ -413,7 +424,7 @@ describe("BonzaiMintPool", function () {
       const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("50000"));
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
       await recordMintFor(mintPool, treasury, user1, 5); // activity gate satisfied for pool 5
       await time.increase(EPOCH_DURATION);
@@ -449,7 +460,7 @@ describe("BonzaiMintPool", function () {
       const balance = ethers.parseEther("5000");
       await token.mint(user1.address, balance);
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
       await recordMintFor(mintPool, treasury, user1, 0);
       await time.increase(EPOCH_DURATION);
@@ -469,7 +480,7 @@ describe("BonzaiMintPool", function () {
       const balance = ethers.parseEther("50000");
       await token.mint(user1.address, balance);
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       // Deposit in two pools
       await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
       await mintPool.connect(treasury).depositForPool(2, { value: ethers.parseEther("2") });
@@ -494,7 +505,7 @@ describe("BonzaiMintPool", function () {
       const { mintPool, token, user1, treasury } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("50000"));
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, user1);
+      await stakeAndRegisterUser(mintPool, user1);
       await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
       await mintPool.connect(treasury).depositForPool(2, { value: ethers.parseEther("2") });
       // Only mint in pool 0 — pool 2 should be skipped
@@ -571,7 +582,7 @@ describe("BonzaiMintPool", function () {
       const { mintPool, token, user3, treasury } = await loadFixture(deployMintPool);
       await token.mint(user3.address, ethers.parseEther("50000"));
       await mintPool.setContentContract(treasury.address);
-      await registerUser(mintPool, user3);
+      await stakeAndRegisterUser(mintPool, user3);
       await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther("1") });
       await time.increase(EPOCH_DURATION);
       // user3 never minted — preview should be 0 even though they registered

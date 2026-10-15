@@ -13,7 +13,7 @@ The application combines an Electron and Vue desktop client, local language and 
 - Chat and code with downloadable GGUF language models.
 - Generate and edit images with local diffusion pipelines.
 - Create speech, voices, and music.
-- Generate text-to-video and image-to-video clips.
+- Generate text-to-video and image-to-video clips, including MiniMax H3 video with synchronized audio.
 - Build 3D objects from text or from a prompt plus reference image.
 - Generate complete Three.js levels and refine them conversationally.
 - Fine-tune supported models and retain the resulting artifacts.
@@ -120,13 +120,15 @@ cd bonzai-desktop-dapp
 npm install
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r src/server/requirements.txt
+python scripts/install-python-deps.py
 
 cp .env.example .env
 npm start
 ```
 
 `npm start` builds the Electron main and preload bundles, starts the Vite renderer, and launches Electron. The Python server is spawned by the desktop process in development.
+
+The launcher selects the activated virtual environment, project `.venv`, or legacy `bonzai` environment before falling back to PATH. To select another interpreter, launch with `BONZAI_PYTHON_PATH=/absolute/path/to/python npm start` (set the environment variable separately in PowerShell). Install Python dependencies with that same interpreter.
 
 Most local creation features do not require wallet configuration. Populate only the environment variables needed for the integrations you are developing. Never commit private keys, access tokens, mnemonics, connector credentials, or production `.env` files.
 
@@ -139,9 +141,11 @@ npm run build:vite          # Electron and renderer production bundles
 npm test                    # Hardhat contract suite
 npm run test:game-runtime   # 3D game runtime
 npm run test:connectors     # Company connector contracts
+npm run test:startup        # Python startup and responsive peer discovery
 npm run test:web3           # Protocol payment services
 npm run test:demo           # Product demo pipeline
 npm run test:i18n           # Translation catalog consistency
+python test/test_minimax_h3_gguf.py # MiniMax H3 GGUF loader
 npm run web3:verify:offline # Static production configuration checks
 gitleaks git .              # Full-history credential scan
 ```
@@ -169,6 +173,7 @@ Security-sensitive issues should not be disclosed in a public issue. Follow the 
 - [Engineering documentation index](docs/README.md)
 - [Company architecture and product intent](docs/BONZAI_BACK_OFFICE.md)
 - [3D and game engine](docs/BONZAI_3D_GAME_ENGINE.md)
+- [MiniMax H3 video](docs/MINIMAX_H3.md)
 - [Protocol architecture](docs/BONZAI_V4_ARCHITECTURE.md)
 - [Companion-token skill access](docs/COMPANION_TOKEN_ACCESS.md)
 - [Environment configuration](.env.example)

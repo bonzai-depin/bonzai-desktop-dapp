@@ -2,92 +2,32 @@ export const IPositionManagerABI = [
   {
     "inputs": [
       {
-        "components": [
-          {
-            "internalType": "address",
-            "name": "currency0",
-            "type": "address"
-          },
-          {
-            "internalType": "address",
-            "name": "currency1",
-            "type": "address"
-          },
-          {
-            "internalType": "uint24",
-            "name": "fee",
-            "type": "uint24"
-          },
-          {
-            "internalType": "int24",
-            "name": "tickSpacing",
-            "type": "int24"
-          },
-          {
-            "internalType": "address",
-            "name": "hooks",
-            "type": "address"
-          }
-        ],
-        "internalType": "struct IPositionManager.PoolKey",
-        "name": "poolKey",
-        "type": "tuple"
-      },
-      {
-        "internalType": "int24",
-        "name": "tickLower",
-        "type": "int24"
-      },
-      {
-        "internalType": "int24",
-        "name": "tickUpper",
-        "type": "int24"
+        "internalType": "bytes",
+        "name": "unlockData",
+        "type": "bytes"
       },
       {
         "internalType": "uint256",
-        "name": "liquidity",
+        "name": "deadline",
         "type": "uint256"
-      },
-      {
-        "internalType": "uint128",
-        "name": "amount0Max",
-        "type": "uint128"
-      },
-      {
-        "internalType": "uint128",
-        "name": "amount1Max",
-        "type": "uint128"
-      },
-      {
-        "internalType": "address",
-        "name": "owner",
-        "type": "address"
-      },
-      {
-        "internalType": "bytes",
-        "name": "hookData",
-        "type": "bytes"
       }
     ],
-    "name": "mint",
+    "name": "modifyLiquidities",
+    "outputs": [],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextTokenId",
     "outputs": [
       {
         "internalType": "uint256",
-        "name": "tokenId",
+        "name": "",
         "type": "uint256"
-      },
-      {
-        "internalType": "uint128",
-        "name": "liquidity0",
-        "type": "uint128"
-      },
-      {
-        "internalType": "uint128",
-        "name": "liquidity1",
-        "type": "uint128"
       }
     ],
-    "stateMutability": "payable",
+    "stateMutability": "view",
     "type": "function"
   },
   {

@@ -191,6 +191,19 @@ export const CompanionTokenFactoryABI = [
   },
   {
     "inputs": [],
+    "name": "MAX_SOCIAL_TOKENS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_TICK",
     "outputs": [
       {

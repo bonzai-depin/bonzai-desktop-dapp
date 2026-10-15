@@ -52,9 +52,9 @@
                     v-if="mode !== 'music'"
                     class="bz-select audio-language-select"
                   >
-                    <select v-model="language">
+                    <select v-model="language" :aria-label="$t('audio.language')" data-i18n-skip>
                       <option
-                        v-for="(name, code) in languages"
+                        v-for="(name, code) in localizedLanguages"
                         :key="code"
                         :value="code"
                       >
@@ -83,6 +83,10 @@
 
                 <!-- MUSIC MODE INPUTS -->
                 <div v-if="mode === 'music'" class="music-workspace mb-4">
+                  <div class="audio-control-row music-mode-controls">
+                    <button type="button" class="bz-btn bz-btn--ghost" :aria-pressed="!musicAdvanced" @click="musicAdvanced = false">{{ $t('rcWorkflows.simple') }}</button>
+                    <button type="button" class="bz-btn bz-btn--ghost" :aria-pressed="musicAdvanced" @click="musicAdvanced = true">{{ $t('rcWorkflows.advanced') }}</button>
+                  </div>
                   <!-- ═══════════════════════════════════════════════════════════
                        SECTION 1: LYRICS GENERATION
                        ═══════════════════════════════════════════════════════════ -->
@@ -91,11 +95,11 @@
                     <div class="field has-text-left">
                       <label
                         class="audio-field-label fira-sans-condensed-black-italic"
-                      >
+                       for="audio-lyricsTheme">
                         Song Concept
                       </label>
                       <div class="lyrics-gen-row mt-3">
-                        <input
+                        <input id="audio-lyricsTheme"
                           class="bz-field-input"
                           type="text"
                           v-model="lyricsTheme"
@@ -109,6 +113,7 @@
                           <div class="bz-select">
                             <select
                               v-model="musicVocalLanguage"
+                              :aria-label="$t('audio.language')"
                             >
                               <option value="en">🇺🇸 English</option>
                               <option value="zh">🇨🇳 Chinese</option>
@@ -128,6 +133,7 @@
                             class="input is-dark is-medium custom-language-input skill-float-right"
                             type="text"
                             v-model="customVocalLanguage"
+                            :aria-label="$t('audio.language')"
                             placeholder="e.g. Creole, Swahili, Hindi..."
                             style="
                               height: 50px;
@@ -155,7 +161,7 @@
                           >
                             auto_awesome
                           </span>
-                          <span>Generate</span>
+                          <span>{{ $t("rcWorkflows.draftLyrics") }}</span>
                         </button>
                       </div>
                       <p v-if="lyricsError" class="help is-danger mt-2">
@@ -165,11 +171,11 @@
                     <hr />
                     <!-- Lyrics Textarea -->
                     <div class="field mt-2 has-text-left">
-                      <label class="audio-field-label fira-sans-condensed-black-italic">
+                      <label class="audio-field-label fira-sans-condensed-black-italic" for="audio-musicLyrics">
                         Lyrics
                       </label>
                       <div class="control mt-3">
-                        <textarea
+                        <textarea id="audio-musicLyrics"
                           class="bz-field-textarea"
                           v-model="musicLyrics"
                           placeholder="[intro]&#10;(instrumental)&#10;&#10;[verse]&#10;Walking through the city lights&#10;Everything feels so alive tonight&#10;Stars above are shining bright&#10;&#10;[chorus]&#10;We're on fire, burning bright&#10;Dancing through the neon night&#10;Nothing's gonna stop us now&#10;&#10;[bridge]&#10;When the world falls down around us&#10;We'll rise up from the ground&#10;&#10;[outro]&#10;(fade out)"
@@ -178,60 +184,60 @@
                       </div>
                       <div class="structure-tags-help mt-2">
                         <span class="help-label">Structure Tags:</span>
-                        <span
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[intro]')"
                         >
                           [intro]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[verse]')"
                         >
                           [verse]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[chorus]')"
                         >
                           [chorus]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[bridge]')"
                         >
                           [bridge]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[outro]')"
                         >
                           [outro]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[instrumental]')"
                         >
                           [instrumental]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[build]')"
                         >
                           [build]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable mr-1"
                           @click="insertTag('[drop]')"
                         >
                           [drop]
-                        </span>
-                        <span
+                        </button>
+                        <button type="button"
                           class="skill-chip is-clickable"
                           @click="insertTag('[breakdown]')"
                         >
                           [breakdown]
-                        </span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -249,7 +255,7 @@
                     <div class="params-grid mt-5">
                       <!-- Duration -->
                       <div class="param-item">
-                        <label class="param-label">
+                        <label class="param-label" for="audio-musicDuration">
                           <span class="material-symbols-outlined">timer</span>
                           Duration
                           <span
@@ -260,7 +266,7 @@
                           </span>
                         </label>
                         <div class="param-control">
-                          <input
+                          <input id="audio-musicDuration"
                             type="range"
                             v-model.number="musicDuration"
                             min="10"
@@ -273,7 +279,7 @@
 
                       <!-- BPM -->
                       <div class="param-item">
-                        <label class="param-label">
+                        <label class="param-label" for="audio-musicBPM">
                           <span class="material-symbols-outlined">speed</span>
                           BPM
                           <span
@@ -284,7 +290,7 @@
                           </span>
                         </label>
                         <div class="param-control">
-                          <input
+                          <input id="audio-musicBPM"
                             type="range"
                             v-model.number="musicBPM"
                             min="40"
@@ -297,14 +303,14 @@
 
                       <!-- Key -->
                       <div class="param-item">
-                        <label class="param-label mb-2">
+                        <label class="param-label mb-2" for="audio-musicKey">
                           <span class="material-symbols-outlined">
                             music_note
                           </span>
                           Key
                         </label>
                         <div class="param-control select-control">
-                          <select
+                          <select id="audio-musicKey"
                             v-model="musicKey"
                             class="select is-small is-dark"
                           >
@@ -318,14 +324,14 @@
 
                       <!-- Time Signature -->
                       <div class="param-item">
-                        <label class="param-label mb-2">
+                        <label class="param-label mb-2" for="audio-musicTimeSignature">
                           <span class="material-symbols-outlined">
                             grid_4x4
                           </span>
                           Time Sig
                         </label>
                         <div class="param-control select-control">
-                          <select
+                          <select id="audio-musicTimeSignature"
                             v-model="musicTimeSignature"
                             class="select is-small is-dark"
                           >
@@ -339,15 +345,15 @@
                     </div>
 
                     <!-- Advanced Parameters -->
-                    <div class="params-grid mt-3 advanced-params">
+                    <div v-if="musicAdvanced" class="params-grid mt-3 advanced-params">
                       <!-- Inference Steps -->
                       <div class="param-item">
-                        <label class="param-label">
+                        <label class="param-label" for="audio-musicSteps">
                           <span class="material-symbols-outlined">repeat</span>
                           Steps
                         </label>
                         <div class="param-control">
-                          <input
+                          <input id="audio-musicSteps"
                             type="range"
                             v-model.number="musicSteps"
                             :min="1"
@@ -364,14 +370,14 @@
 
                       <!-- Guidance Scale -->
                       <div class="param-item">
-                        <label class="param-label">
+                        <label class="param-label" for="audio-musicGuidance">
                           <span class="material-symbols-outlined">
                             linear_scale
                           </span>
                           Guidance
                         </label>
                         <div class="param-control">
-                          <input
+                          <input id="audio-musicGuidance"
                             type="range"
                             v-model.number="musicGuidance"
                             min="1"
@@ -388,12 +394,12 @@
 
                       <!-- Seed -->
                       <div class="param-item">
-                        <label class="param-label">
+                        <label class="param-label" for="audio-musicSeed">
                           <span class="material-symbols-outlined">casino</span>
                           Seed
                         </label>
                         <div class="param-control">
-                          <input
+                          <input id="audio-musicSeed"
                             type="number"
                             v-model.number="musicSeed"
                             min="-1"
@@ -408,14 +414,14 @@
 
                       <!-- Shift -->
                       <div class="param-item">
-                        <label class="param-label">
+                        <label class="param-label" for="audio-musicShift">
                           <span class="material-symbols-outlined">
                             swap_horiz
                           </span>
                           Shift
                         </label>
                         <div class="param-control">
-                          <input
+                          <input id="audio-musicShift"
                             type="range"
                             v-model.number="musicShift"
                             min="1"
@@ -426,7 +432,7 @@
                           <span class="param-value">{{ musicShift }}</span>
                         </div>
                         <p class="param-help">
-                          Noise schedule shift (default: 4)
+                          Noise schedule shift (default: 3)
                         </p>
                       </div>
                     </div>
@@ -435,7 +441,8 @@
                   <!-- ═══════════════════════════════════════════════════════════
                        SECTION 2: CAPTION / STYLE DESCRIPTION
                        ═══════════════════════════════════════════════════════════ -->
-                  <div class="music-section music-section--palette">
+                  <div v-if="musicAdvanced" class="music-section music-section--palette">
+                    <input v-model="musicStyleSearch" type="search" class="bz-field-input" :aria-label="$t('rcWorkflows.searchStyles')" :placeholder="$t('rcWorkflows.searchStyles')" />
                     <!-- Dimension Selectors -->
                     <div class="dimension-selectors">
                       <!-- Genre -->
@@ -446,8 +453,8 @@
                       </h3>
                       <div class="dimension-row">
                         <div class="dimension-tags">
-                          <span
-                            v-for="g in genreOptions"
+                          <button type="button"
+                            v-for="g in filterMusicOptions(genreOptions)"
                             :key="g"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -456,7 +463,7 @@
                             @click="toggleDimension('genre', g)"
                           >
                             {{ g }}
-                          </span>
+                          </button>
                         </div>
                       </div>
                       <hr />
@@ -469,8 +476,8 @@
                       </h3>
                       <div class="dimension-row">
                         <div class="dimension-tags">
-                          <span
-                            v-for="m in moodOptions"
+                          <button type="button"
+                            v-for="m in filterMusicOptions(moodOptions)"
                             :key="m"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -481,7 +488,7 @@
                             @click="toggleDimension('mood', m)"
                           >
                             {{ m }}
-                          </span>
+                          </button>
                         </div>
                       </div>
                       <hr />
@@ -493,8 +500,8 @@
                       </h3>
                       <div class="dimension-row">
                         <div class="dimension-tags">
-                          <span
-                            v-for="i in instrumentOptions"
+                          <button type="button"
+                            v-for="i in filterMusicOptions(instrumentOptions)"
                             :key="i"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -505,7 +512,7 @@
                             @click="toggleDimension('instrument', i)"
                           >
                             {{ i }}
-                          </span>
+                          </button>
                         </div>
                       </div>
                       <hr />
@@ -518,8 +525,8 @@
                       </h3>
                       <div class="dimension-row" v-if="!musicInstrumental">
                         <div class="dimension-tags">
-                          <span
-                            v-for="v in vocalOptions"
+                          <button type="button"
+                            v-for="v in filterMusicOptions(vocalOptions)"
                             :key="v"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -528,7 +535,7 @@
                             @click="toggleDimension('vocal', v)"
                           >
                             {{ v }}
-                          </span>
+                          </button>
                         </div>
                       </div>
                       <hr />
@@ -540,8 +547,8 @@
                       </h3>
                       <div class="dimension-row">
                         <div class="dimension-tags">
-                          <span
-                            v-for="p in productionOptions"
+                          <button type="button"
+                            v-for="p in filterMusicOptions(productionOptions)"
                             :key="p"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -552,7 +559,7 @@
                             @click="toggleDimension('production', p)"
                           >
                             {{ p }}
-                          </span>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -562,6 +569,7 @@
                     class="music-section music-section--direction has-text-left"
                   >
                     <span
+                      id="audio-direction-label"
                       class="audio-panel-title fira-sans-condensed-black-italic"
                       style="width: auto !important"
                     >
@@ -571,6 +579,7 @@
                       <textarea
                         class="bz-field-textarea"
                         v-model="musicCaption"
+                        aria-labelledby="audio-direction-label"
                         placeholder="pop rock, energetic, electric guitar, drums, male vocals, polished production, 120 BPM"
                         rows="2"
                         style="resize: none"
@@ -578,35 +587,10 @@
                     </div>
                   </div>
 
-                  <!-- Generate Button & Semantic Toggle -->
+                  <!-- Generate controls -->
                   <div
                     class="music-generate-bar generate-row"
                   >
-                    <div class="bz-select">
-                      <select
-                        v-model="musicQuality"
-                      >
-                        <option value="fast">Fast (v1.5)</option>
-                        <option value="quality">Quality (v1.5 XL)</option>
-                      </select>
-                    </div>
-
-                    <input
-                      type="checkbox"
-                      v-model="musicSemantic"
-                      id="music_semantic"
-                      class="music-toggle"
-                    />
-                    <label for="music_semantic">
-                      <span
-                        class="material-symbols-outlined"
-                        style="font-size: 32px !important"
-                      >
-                        neurology
-                      </span>
-                      Semantic
-                    </label>
-
                     <input
                       type="checkbox"
                       v-model="musicOffload"
@@ -692,62 +676,19 @@
                   </div>
                 </div>
 
-                <!-- READINESS CTA -->
-                <div
-                  v-if="showUpdateCTA && readiness.currentMode == mode"
-                  class="audio-notice audio-notice--danger"
-                >
-                  <div class="audio-notice__body">
-                    <strong class="audio-notice__title fira-sans-condensed-black-italic">
-                      Download Required
-                    </strong>
-                    <span v-if="readiness.missingRepos.length">
-                      <ul>
-                        <li v-for="d in readiness.repoDetails" :key="d.repo">
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-1"
-                          >
-                            deployed_code
-                          </span>
-                          {{ d.repo }}
-                        </li>
-                      </ul>
-                    </span>
-
-                    <span v-if="readiness.missingGguf">
-                      <ul>
-                        <li v-for="gguf in readiness.ggufNames" :key="gguf">
-                          <span
-                            class="material-symbols-outlined is-size-3 mr-1"
-                          >
-                            deployed_code
-                          </span>
-                          {{ gguf }}
-                        </li>
-                      </ul>
-                    </span>
-
-                    <span v-if="readiness.notes.length">
-                      Notes:
-                      <ul>
-                        <li v-for="(n, i) in readiness.notes" :key="i">
-                          • {{ n }}
-                        </li>
-                      </ul>
-                    </span>
-                  </div>
-                  <button
-                    class="bz-btn bz-btn--agent-cta fira-sans-condensed-black-italic"
-                    @click="prefetchForMode"
-                    :disabled="downloads.active || readiness.authRequired"
-                    title="(Re)download required files"
-                  >
-                    <span class="material-symbols-outlined" aria-hidden="true">
-                      download
-                    </span>
-                    Download Now
-                  </button>
-                </div>
+                <DownloadRequirement category="audio"
+                  v-if="(showUpdateCTA && readiness.currentMode === mode) || downloads.active"
+                  :items="[...readiness.repoDetails, ...readiness.ggufNames]"
+                  :active="downloads.active"
+                  cancellable
+                  :cancelling="isCancellingDownloads"
+                  @cancel="cancelCurrentPipeline"
+                  :progress="downloads.total_progress || downloads.progress || 0"
+                  :tasks="downloadTaskList"
+                  :disabled="readiness.authRequired"
+                  :error="readiness.authRequired ? $t('rcDownloads.authRequired') : downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''"
+                  @download="prefetchForMode"
+                />
 
                 <!-- GENERATION ERROR -->
                 <div
@@ -757,51 +698,6 @@
                   <div class="audio-notice__body">
                     <strong class="audio-notice__title fira-sans-condensed-black-italic">Generation failed</strong>
                     <span>{{ generation.error }}</span>
-                  </div>
-                </div>
-
-                <!-- DOWNLOAD PROGRESS -->
-                <div
-                  v-if="downloads && downloads.active"
-                  class="audio-progress-card"
-                >
-                  <div class="audio-progress-card__head">
-                    <span class="audio-progress-card__title audio-progress-card__title--pill fira-sans-condensed-black-italic">
-                      <BonzaiPulse variant="dot" />
-                      Downloading
-                    </span>
-                    <span class="audio-progress-card__pct fira-sans-condensed-black-italic">
-                      {{ Math.round(downloads.total_progress || 0) }}%
-                    </span>
-                  </div>
-                  <BonzaiPulse variant="bar" :percent="downloads.progress || 0" />
-                  <div
-                    v-if="downloadTaskList.length"
-                    class="audio-download-taskwrap"
-                  >
-                    <ul>
-                      <li
-                        v-for="t in downloadTaskList"
-                        :key="t.task_id"
-                        class="is-size-7 columns"
-                        style="text-transform: lowercase"
-                      >
-                        <div class="column has-text-left">
-                          <span class="material-symbols-outlined is-size-6">
-                            deployed_code
-                          </span>
-                          {{ t.filename }} —
-                          <span class="fira-sans-condensed-black-italic">
-                            {{ t.status }}
-                          </span>
-                        </div>
-                        <div
-                          class="column is-2 fira-sans-condensed-black-italic has-text-right"
-                        >
-                          {{ Math.round(t.progress || 0) }}%
-                        </div>
-                      </li>
-                    </ul>
                   </div>
                 </div>
 
@@ -991,7 +887,9 @@
     @minted="onMinted"
   />
 
-  <Transition name="bz-image-toast">
+  <Teleport to="body">
+    <div v-if="pendingDelete" class="bz-confirmation-backdrop" aria-hidden="true"></div>
+    <Transition name="bz-image-toast">
     <div
       v-if="pendingDelete"
       class="bz-image-delete-toast"
@@ -1010,6 +908,7 @@
       </button>
     </div>
   </Transition>
+  </Teleport>
 </template>
 
 <script>
@@ -1037,8 +936,11 @@ import {
   clearError,
 } from "../stores/generationStore";
 import AccessRequirements from "./AccessRequirements.vue";
+import { recordedMintGeneration } from "../services/mintValidation.js";
 import MintModal from "./MintModal.vue";
 import BonzaiPulse from "./BonzaiPulse.vue";
+import DownloadRequirement from "./DownloadRequirement.vue";
+import { cancelLocalDownloads } from "../services/downloadCancellation.js";
 import BonzaiWaveform from "./BonzaiWaveform.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
@@ -1046,6 +948,8 @@ import ModeChipBar from "./generative/ModeChipBar.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
 import { addAudioInference } from "../stores/inferenceStore.js";
 import { inspector } from "../services/generationInspector.service.js";
+import { generationElapsedMs } from "../shared/generationTiming.js";
+import { useI18n } from "../i18n/index.js";
 
 const API_BASE =
   (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
@@ -1057,7 +961,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeAudio",
-  components: {
+  components: { DownloadRequirement,
     AccessRequirements,
     MintModal,
     BonzaiPulse,
@@ -1068,6 +972,7 @@ export default {
   },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
+    const { t, locale } = useI18n();
     const audioModeItems = [
       { value: "tts", label: "Text to Speech", icon: "record_voice_over" },
       { value: "clone", label: "Voice Clone", icon: "genetics" },
@@ -1081,27 +986,27 @@ export default {
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
 
+    let mintSelectionRequest = 0;
     const openMint = async (inference) => {
+      const request = ++mintSelectionRequest;
       // Prefer MP3 for minting (smaller, universally playable)
       const mp3Path = inference.answer?.data?.audio_path_mp3;
       const wavPath = inference.answer?.data?.audio_path;
-      const audioPath = mp3Path || wavPath;
-      const isMp3 = !!mp3Path;
       let content = null;
-      if (audioPath && window.electronAPI?.readFileAsBase64) {
-        try {
-          content = await window.electronAPI.readFileAsBase64(audioPath);
-        } catch (e) {
-          console.warn("[GenerativeAudio] Could not read audio file:", e);
-        }
+      let isMp3 = false;
+      for (const [path,mp3] of [[mp3Path,true],[wavPath,false]]) {
+        if (!path || !window.electronAPI?.readFileAsBase64) continue;
+        try { content = await window.electronAPI.readFileAsBase64(path); if(content){isMp3=mp3;break;} }
+        catch { /* Try the original WAV when the optional MP3 is missing. */ }
       }
+      if (request !== mintSelectionRequest) return;
       mintTarget.value = {
         inferenceType: "audio",
         inferenceId: inference.id,
         content,
         contentType: isMp3 ? "audio/mpeg" : "audio/wav",
         prompt: inference.question,
-        generation: {
+        generation: recordedMintGeneration(inference, {
           type: inference.isMusic
             ? "music"
             : inference.hasClone
@@ -1110,7 +1015,7 @@ export default {
           model: inference.model || "kokoro",
           timestamp: inference.timestamp,
           elapsedMs: inference.elapsedMs || null,
-        },
+        }),
       };
     };
 
@@ -1125,6 +1030,9 @@ export default {
 
     // ------------ basic state -------------
     const selectedModel = ref("multilingual");
+    const musicAdvanced = ref(false);
+    const musicStyleSearch = ref("");
+    const filterMusicOptions = (options) => options.filter((option) => option.toLocaleLowerCase().includes(musicStyleSearch.value.trim().toLocaleLowerCase()));
     const mode = ref("tts"); // 'tts', 'clone', or 'music'
     const language = ref("en");
     const exaggerationPct = ref(50); // 0-100 -> maps to 0.0-1.0
@@ -1195,9 +1103,9 @@ export default {
     const musicSteps = ref(8);
     const musicGuidance = ref(7.0);
     const musicSeed = ref(-1);
-    const musicShift = ref(4.0);
-    const musicQuality = ref("fast"); // "fast" (v1.5 turbo 2B) or "quality" (v1.5 XL turbo 4B)
-    const musicSemantic = ref(false); // Use 5Hz LLM for semantic audio codes
+    const musicShift = ref(3.0);
+    const musicQuality = ref("quality"); // Backward-compatible state; XL Turbo is now the only backend.
+    const musicSemantic = ref(false); // Backward-compatible state; Diffusers is DiT-only.
     const musicOffload = ref(false); // CPU offload (disabled by default for speed)
     const musicVocalLanguage = ref("en");
     const customVocalLanguage = ref("");
@@ -1528,6 +1436,11 @@ export default {
       zh: "Chinese",
     };
 
+    const localizedLanguages = computed(() => {
+      const names = new Intl.DisplayNames([locale.value], { type: "language" });
+      return Object.fromEntries(Object.keys(languages).map((code) => [code, names.of(code)]));
+    });
+
     const languageFlags = {
       ar: "🇸🇦",
       da: "🇩🇰",
@@ -1608,18 +1521,18 @@ export default {
 
     const promptPlaceholder = computed(() => {
       if (mode.value === "music") {
-        return "Quick style override (optional - use dimension selectors above for full control)...";
+        return t("audio.musicOverride");
       }
       if (mode.value === "clone") {
         if (!synthesisBase64.value) {
-          return "Upload a reference audio file first...";
+          return t("audio.referenceFirst");
         }
         if (!referenceTranscript.value.trim()) {
-          return "Enter the transcript of your reference audio above...";
+          return t("audio.transcriptFirst");
         }
-        return `Enter text in ${languages[language.value]} to speak in the cloned voice...`;
+        return t("audio.clonePlaceholder", { language: localizedLanguages.value[language.value] });
       }
-      return `Enter text in ${languages[language.value]} to convert to speech...`;
+      return t("audio.speechPlaceholder", { language: localizedLanguages.value[language.value] });
     });
 
     // Sync main prompt input with musicCaption for music mode
@@ -1997,9 +1910,9 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           musicSteps.value = params.steps || 8;
           musicGuidance.value = params.guidance || 7.0;
           musicSeed.value = params.seed || -1;
-          musicShift.value = params.shift || 4.0;
-          musicQuality.value = params.quality || "fast";
-          musicSemantic.value = params.semantic || false;
+          musicShift.value = params.shift || 3.0;
+          musicQuality.value = "quality";
+          musicSemantic.value = false;
           musicOffload.value = params.offload || false;
           musicInstrumental.value = params.instrumental || false;
           musicVocalLanguage.value = params.vocalLanguage || "en";
@@ -2030,7 +1943,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     const generation = computed(() => generationStore.state.audio);
 
     // ------------ pipeline/endpoint maps --
-    // Use Qwen TTS for both modes (design for TTS, clone for voice cloning)
+    // Chatterbox V3 backs both quality TTS and voice cloning routes.
     const endpointForMode = () => {
       if (mode.value === "music") return "/audio/music";
       if (mode.value === "clone") return "/audio/quality/clone";
@@ -2114,8 +2027,12 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       return sumPct / tasks.length;
     };
 
+    const trackedDownloadPipelines = new Set();
+    const cancelledDownloadPipelines = new Set();
+    const isCancellingDownloads = ref(false);
+
     const applyPipelineUpdate = (p) => {
-      if (!p) return;
+      if (!p || isCancellingDownloads.value || cancelledDownloadPipelines.has(p.pipeline_id)) return;
       downloads.pipelineId = p.pipeline_id || downloads.pipelineId;
       downloads.status = p.status || downloads.status || "downloading";
 
@@ -2240,6 +2157,8 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
     const connectAndSubscribe = (pipelineId, websocketUrl) => {
       if (!pipelineId) return;
+      trackedDownloadPipelines.add(pipelineId);
+      cancelledDownloadPipelines.delete(pipelineId);
       ensureDownloadsSocket(websocketUrl || WS_DL);
       downloads.active = true;
       downloads.pipelineId = pipelineId;
@@ -2266,10 +2185,13 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       "audio_turbo",
       "kokoro",
       "audio_quality_clone",
+      "chatterbox_clone",
       "qwen3_tts_clone",
       "audio_quality_design",
+      "chatterbox_design",
       "qwen3_tts_design",
       "audio_quality_persona",
+      "chatterbox_persona",
       "qwen3_tts_persona",
       "music",
       "ace_step",
@@ -2297,18 +2219,19 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     };
 
     const cancelCurrentPipeline = async () => {
-      if (!downloads.pipelineId) return;
+      if (isCancellingDownloads.value) return;
+      const pipelineIds = [...trackedDownloadPipelines];
+      if (!pipelineIds.length && downloads.pipelineId) pipelineIds.push(downloads.pipelineId);
+      if (!pipelineIds.length) return;
+      isCancellingDownloads.value = true;
       try {
-        const { status } = await axios.post(
-          `${API_BASE}/downloads/cancel/${downloads.pipelineId}`,
-          {},
-          { validateStatus: () => true },
-        );
-        if (status === 200) {
-          downloads.status = "cancelled";
-          downloads.active = false;
-        }
-      } catch {}
+        await cancelLocalDownloads({ pipelineIds, apiBase: API_BASE });
+        pipelineIds.forEach(id => cancelledDownloadPipelines.add(id));
+        trackedDownloadPipelines.clear();
+        downloads.status = "cancelled";
+        downloads.active = false;
+      } catch { downloads.status = "failed"; }
+      finally { isCancellingDownloads.value = false; }
     };
 
     const retryCurrentPipeline = async () => {
@@ -2521,6 +2444,9 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         );
 
         if (res.status === 202) {
+          if (Array.isArray(res.data?.pipelines_started)) {
+            res.data.pipelines_started.forEach(id => trackedDownloadPipelines.add(id));
+          }
           const started = Array.isArray(res.data?.pipelines_started)
             ? res.data.pipelines_started
             : [];
@@ -2609,7 +2535,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           lyrics: musicInstrumental.value
             ? undefined
             : musicLyrics.value.trim() || undefined,
-          quality: musicQuality.value,
+          quality: "quality",
           duration: musicDuration.value,
           bpm: musicBPM.value,
           keyscale: musicKey.value || undefined,
@@ -2621,12 +2547,12 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           instrumental: musicInstrumental.value,
           vocal_language: vocalLang,
           song_name: songName.value.trim() || undefined,
-          semantic: musicSemantic.value,
+          semantic: false,
           offload: musicOffload.value,
           auto_download: true,
         };
       } else if (mode.value === "clone" && synthesisBase64.value) {
-        // Clone mode: use reference audio with Qwen TTS clone endpoint
+        // Clone mode: use reference audio with Chatterbox V3.
         payload = {
           text: prompt,
           ref_audio_base64: synthesisBase64.value,
@@ -2635,7 +2561,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           auto_download: true,
         };
       } else {
-        // TTS mode: use voice design with Qwen TTS design endpoint
+        // TTS mode: seed a reusable Chatterbox persona from the description.
         // Build voice instruction based on selected gender and language
         const genderDesc = voiceGender.value === "male" ? "Male" : "Female";
         const langName = languages[language.value] || "English";
@@ -2661,7 +2587,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
       ensureGenerationSocket();
       startGeneration("audio"); // Initialize generation state
-      const _genStart = Date.now();
+      const _genStart = performance.now();
 
       const onSuccess = async (response) => {
         // Check for audio_path in response data
@@ -2678,7 +2604,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
           // Only store serializable data - axios response contains non-serializable properties
           // Build inference record with all parameters for restoration
-          const elapsedMs = Date.now() - _genStart;
+          const elapsedMs = Math.round(performance.now() - _genStart);
           const newInference = {
             question: prompt,
             answer: {
@@ -2689,10 +2615,8 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
             language: language.value,
             model:
               mode.value === "music"
-                ? musicQuality.value === "quality"
-                  ? "ace-step-v1.5-xl-turbo"
-                  : "ace-step-v1.5-turbo"
-                : "qwen3-tts",
+                ? "ace-step-v1.5-xl-turbo-diffusers"
+                : "chatterbox-multilingual-v3",
             hasClone: mode.value === "clone",
             isMusic: mode.value === "music",
             voiceGender: voiceGender.value,
@@ -2784,6 +2708,9 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         });
 
         if (res.status === 202) {
+          if (Array.isArray(res.data?.pipelines_started)) {
+            res.data.pipelines_started.forEach(id => trackedDownloadPipelines.add(id));
+          }
           const pid =
             res.data?.pipeline_id ||
             (Array.isArray(res.data?.pipelines_started) &&
@@ -2876,7 +2803,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         kind: isMusic ? "music" : "audio",
         mediaUrl: fileUrl(audioPath),
         prompt: promptText,
-        model: inference.model || data.model || (isMusic ? "ACE-Step" : isClone ? "Qwen3-TTS" : "Kokoro"),
+        model: inference.model || data.model || (isMusic ? "ACE-Step" : isClone ? "Chatterbox V3" : "Kokoro"),
         modelId: inference.pipeline || data.pipeline || (isMusic ? "music" : isClone ? "audio_quality" : "audio_turbo"),
         status: inference.error ? "Error" : "Complete",
         errorMessage: inference.errorMessage || inference.error || "",
@@ -2885,7 +2812,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         mintState: inference.nft || null,
         ts: inference.timestamp || inference.ts,
         createdAt: inference.createdAt,
-        elapsedMs: inference.elapsedMs || (inference.elapsed ? Number(inference.elapsed) * 1000 : null),
+        elapsedMs: generationElapsedMs(inference),
         extra: {
           mode: isMusic ? "Music" : isClone ? "Voice clone" : "Text to speech",
           language: languages[inference.language] || inference.language || language.value,
@@ -3109,11 +3036,13 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
     return {
       selectedModel,
+      musicAdvanced, musicStyleSearch, filterMusicOptions,
       mode,
       audioModeItems,
       voiceGenderItems,
       language,
       languages,
+      localizedLanguages,
       languageFlags,
       exaggerationPct,
       form,
@@ -3156,6 +3085,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       importHistory,
       prefetchForMode,
       cancelCurrentPipeline,
+      isCancellingDownloads,
       retryCurrentPipeline,
       probeCurrentMode,
       handleSynthesisFile,
@@ -3379,6 +3309,8 @@ h2.bz-h2 {
   color: var(--bz-fg);
 }
 
+.music-mode-controls { grid-column: 1 / -1; justify-content: flex-start; }
+.music-mode-controls [aria-pressed="true"] { background: var(--bz-control-selected-bg); color: var(--bz-control-selected-fg); border-color: var(--bz-control-selected-border); }
 .audio-language-select {
   flex: 0 0 auto;
 }
@@ -3699,7 +3631,7 @@ hr {
   transition: 200ms ease-in;
 }
 ::placeholder {
-  color: var(--bz-border) !important;
+  color: var(--bz-fg-muted) !important;
   opacity: 1 !important;
 }
 .button.chat.bz-btn--running {
@@ -4528,7 +4460,7 @@ ol.chat {
   background: var(--bz-canvas);
 }
 .music-section--lyrics { grid-column: 1; }
-.music-section--settings { grid-column: 2; grid-row: 1; }
+.music-section--settings { grid-column: 2; grid-row: 2; }
 .music-section--palette,
 .music-section--direction,
 .music-generate-bar { grid-column: 1 / -1; }

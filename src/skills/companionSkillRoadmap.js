@@ -18,7 +18,7 @@ export const COMPANION_CAREERS = Object.freeze({
     summary: "Turns expertise into persuasive proposals, contracts, and polished client communication.",
     strengths: ["reading", "education", "social"],
     marketplaceSkills: ["roleplay-companion-v1.0.0"],
-    companySkills: ["skill.pdf_proposal", "skill.docusign", "skill.notion_docs", "skill.convertkit_newsletter"],
+    companySkills: ["skill.pdf_proposal", "skill.docusign", "skill.notion_docs", "skill.convertkit_newsletter", "skill.gmao_compliance", "skill.gmao_contract"],
     roadmap: ["Proposal Intelligence", "Brand Voice Guardian", "Tender Response Studio"],
   },
   mai: {
@@ -30,7 +30,7 @@ export const COMPANION_CAREERS = Object.freeze({
     summary: "Qualifies demand, books meetings, and keeps every customer conversation moving.",
     strengths: ["social", "education", "travel"],
     marketplaceSkills: ["meditation-forge-v1.0.0"],
-    companySkills: ["skill.twilio_voice", "skill.twilio_sms", "skill.twilio_whatsapp", "skill.sendgrid_email", "skill.google_calendar", "skill.hubspot_lite", "skill.calendly_booking", "skill.teachable_course", "skill.notion_docs", "skill.docusign", "skill.clio_matter", "skill.slack_team"],
+    companySkills: ["skill.twilio_voice", "skill.twilio_sms", "skill.twilio_whatsapp", "skill.sendgrid_email", "skill.google_calendar", "skill.hubspot_lite", "skill.calendly_booking", "skill.teachable_course", "skill.notion_docs", "skill.docusign", "skill.clio_matter", "skill.slack_team", "skill.gmao_maintenance", "skill.field_coordination"],
     roadmap: ["Lead Qualification", "Customer Recovery", "Account Expansion"],
   },
   marcus: {
@@ -42,7 +42,7 @@ export const COMPANION_CAREERS = Object.freeze({
     summary: "Controls cash, contracts, compliance, and portfolio risk with disciplined review.",
     strengths: ["finance", "housing", "reading"],
     marketplaceSkills: ["robinhood-portfolio-council-v1.0.0", "prediction-market-maker-v1.0.0", "chart-forecaster-v1.0.0"],
-    companySkills: ["skill.qbo_invoicing", "skill.sage_accounting", "skill.stripe_checkout", "skill.stripe_subscriptions", "skill.permit_filer", "skill.docusign", "skill.clio_matter", "skill.notion_docs"],
+    companySkills: ["skill.qbo_invoicing", "skill.sage_accounting", "skill.stripe_checkout", "skill.stripe_subscriptions", "skill.permit_filer", "skill.docusign", "skill.clio_matter", "skill.notion_docs", "skill.gmao_contract", "skill.gmao_finance", "skill.gmao_compliance"],
     roadmap: ["Cash Flow Command", "Margin Sentinel", "Contract Risk Review"],
   },
   james: {
@@ -54,7 +54,7 @@ export const COMPANION_CAREERS = Object.freeze({
     summary: "Builds reliable operating systems, team cadence, and accountable delivery.",
     strengths: ["education", "reading", "sports"],
     marketplaceSkills: ["tcg-analysis-v1.0.0", "mass-chat-v1.0.0"],
-    companySkills: ["skill.google_calendar", "skill.slack_team", "skill.linear_issues", "skill.notion_docs", "skill.field_coordination", "skill.fulfillment_coordination", "skill.teachable_course", "skill.calendly_booking", "skill.shopify_store", "skill.printful", "skill.printify", "skill.optimoroute"],
+    companySkills: ["skill.google_calendar", "skill.slack_team", "skill.linear_issues", "skill.notion_docs", "skill.field_coordination", "skill.fulfillment_coordination", "skill.teachable_course", "skill.calendly_booking", "skill.shopify_store", "skill.printful", "skill.printify", "skill.optimoroute", "skill.gmao_contract", "skill.gmao_maintenance"],
     roadmap: ["SOP Builder", "Capacity Planner", "Executive Operating Review"],
   },
   damon: {
@@ -77,7 +77,7 @@ export const COMPANION_CAREERS = Object.freeze({
     title: "Growth Creative Director",
     summary: "Combines creative production with measurable acquisition and campaign learning.",
     strengths: ["fashion", "beauty", "social"],
-    marketplaceSkills: ["roleplay-companion-v1.0.0", "video-captioning-v1.0.0", "live-streaming-v1.0.0"],
+    marketplaceSkills: ["roleplay-companion-v1.0.0", "video-captioning-v1.0.0", "finger-frame-director-v1.0.0", "live-streaming-v1.0.0"],
     companySkills: ["skill.meta_ads", "skill.google_ads", "skill.gbp_reviews", "skill.sendgrid_email", "skill.hubspot_lite", "skill.convertkit_newsletter", "skill.twilio_sms", "skill.notion_docs"],
     roadmap: ["Campaign Foundry", "Creative Performance Lab", "Social Listening Desk"],
   },
@@ -102,7 +102,7 @@ export const COMPANION_CAREERS = Object.freeze({
     summary: "Makes complex knowledge clear through learning products and visual communication.",
     strengths: ["education", "reading", "beauty"],
     marketplaceSkills: ["meditation-forge-v1.0.0", "video-captioning-v1.0.0", "mass-chat-v1.0.0"],
-    companySkills: ["skill.notion_docs", "skill.teachable_course", "skill.pdf_proposal", "skill.meta_ads"],
+    companySkills: ["skill.notion_docs", "skill.teachable_course", "skill.pdf_proposal", "skill.meta_ads", "skill.gmao_maintenance"],
     roadmap: ["Course Architect", "Knowledge Base Curator", "Visual Explainer"],
   },
   arjun: {
@@ -114,7 +114,7 @@ export const COMPANION_CAREERS = Object.freeze({
     summary: "Models economics, pricing, and portfolio choices before capital is committed.",
     strengths: ["finance", "education", "travel"],
     marketplaceSkills: ["robinhood-portfolio-council-v1.0.0", "polymarket-top-performers-v1.0.0", "chart-forecaster-v1.0.0"],
-    companySkills: ["skill.qbo_invoicing", "skill.sage_accounting", "skill.stripe_checkout", "skill.stripe_subscriptions", "skill.docusign", "skill.notion_docs"],
+    companySkills: ["skill.qbo_invoicing", "skill.sage_accounting", "skill.stripe_checkout", "skill.stripe_subscriptions", "skill.docusign", "skill.notion_docs", "skill.gmao_finance"],
     roadmap: ["Pricing Architect", "Unit Economics Lab", "Revenue Forecast"],
   },
   sofia: {

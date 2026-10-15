@@ -1,9 +1,9 @@
 <template>
-  <div class="form-shell">
+  <div class="form-shell company-screen">
     <div class="form-header">
       <h1 class="fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined is-size-1 mr-2">add_business</span>
-        Create a Workflow Team
+        {{ $ui('Build a custom team') }}
       </h1>
       <button class="bz-btn is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
         <span class="material-symbols-outlined is-size-3 mr-2">close</span>
@@ -11,61 +11,63 @@
       </button>
     </div>
 
-    <hr />
+    <p class="form-intro">{{ $ui('Choose the agents and responsibilities for a custom workflow. For a ready-to-use process with its own inputs and results, start from a template.') }}</p>
 
     <!-- ── Identity ─────────────────────────────────────── -->
-    <section class="form-section models__activity--payouts">
+    <section class="form-section">
       <h2 class="section-title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined">badge</span>
         Identity
       </h2>
       <div class="field">
-        <label class="label fira-sans-condensed-black-italic">Team name</label>
+        <label for="team-name" class="label fira-sans-condensed-black-italic">Team name</label>
         <input
-          v-model.trim="form.name"
+          id="team-name" v-model.trim="form.name"
           class="input is-medium"
-          placeholder="WeeklyHaiku Co."
-          maxlength="64"
+          :placeholder="$ui('My creative team')"
+          maxlength="64" required
         />
       </div>
       <div class="field">
-        <label class="label fira-sans-condensed-black-italic">Mission (one sentence)</label>
+        <label for="team-mission" class="label fira-sans-condensed-black-italic">{{ $ui('What should this team achieve?') }}</label>
         <textarea
-          v-model.trim="form.mission"
+          id="team-mission" v-model.trim="form.mission"
           class="textarea"
           rows="2"
-          placeholder="Mint one haiku per day. Sell at $1. Email weekly digest to subscribers."
+          placeholder="Prepare weekly product campaigns, follow up qualified leads, and report the results for approval."
         ></textarea>
       </div>
     </section>
 
+    <details class="form-section">
+      <summary class="section-title">Advanced configuration</summary>
     <!-- ── Rules + currency ───────────────────────────────── -->
-    <section class="form-section models__activity--payouts">
+    <section class="form-section">
       <h2 class="section-title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined">rule</span>
         Rules
       </h2>
       <div class="field-row">
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Currency</label>
+          <label for="team-currency" class="label fira-sans-condensed-black-italic">Currency</label>
           <div class="select skill-fullwidth is-medium">
-            <select v-model="form.currency">
+            <select id="team-currency" v-model="form.currency">
               <option v-for="c in currencies" :key="c" :value="c">{{ c }}</option>
             </select>
           </div>
         </div>
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Per-run spend cap</label>
+          <label for="team-spend-cap" class="label fira-sans-condensed-black-italic">Per-run spend cap</label>
           <input
-            v-model.number="form.perHeartbeatSpendCap"
+            id="team-spend-cap" v-model.number="form.perHeartbeatSpendCap"
             class="input is-medium"
             type="number" min="0" step="0.5"
           />
         </div>
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Reserve floor</label>
+          <label for="team-reserve-floor" class="label fira-sans-condensed-black-italic">Reserve floor</label>
           <input
-            v-model.number="form.reserveFloor"
+            id="team-reserve-floor" v-model.number="form.reserveFloor"
             class="input is-medium"
             type="number" min="0" step="0.5"
           />
@@ -73,12 +75,12 @@
       </div>
       <div class="field-row">
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Coordinator cadence (min)</label>
-          <input v-model.number="form.ceoMin" class="input is-medium" type="number" min="1" step="1" />
+          <label for="team-coordinator-cadence" class="label fira-sans-condensed-black-italic">Coordinator cadence (min)</label>
+          <input id="team-coordinator-cadence" v-model.number="form.ceoMin" class="input is-medium" type="number" min="1" step="1" />
         </div>
         <div class="field">
-          <label class="label fira-sans-condensed-black-italic">Teammate cadence (min)</label>
-          <input v-model.number="form.roleMin" class="input is-medium" type="number" min="1" step="1" />
+          <label for="team-member-cadence" class="label fira-sans-condensed-black-italic">Teammate cadence (min)</label>
+          <input id="team-member-cadence" v-model.number="form.roleMin" class="input is-medium" type="number" min="1" step="1" />
         </div>
       </div>
       <div class="field">
@@ -98,7 +100,7 @@
     </section>
 
     <!-- ── Execution mode (parallel/sequential per task class) ── -->
-    <section class="form-section models__activity--payouts">
+    <section class="form-section">
       <h2 class="section-title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined">stacks</span>
         Execution mode
@@ -119,13 +121,10 @@
           </div>
         </div>
         <div class="field" v-if="form.execution.llm.mode === 'parallel'">
-          <label class="label fira-sans-condensed-black-italic">Max concurrent LLM calls</label>
-          <input v-model.number="form.execution.llm.maxConcurrent" class="input is-medium" type="number" min="1" max="8" />
+          <label for="team-llm-concurrency" class="label fira-sans-condensed-black-italic">Max concurrent LLM calls</label>
+          <input id="team-llm-concurrency" v-model.number="form.execution.llm.maxConcurrent" class="input is-medium" type="number" min="1" max="8" />
         </div>
-        <div class="field" v-if="form.execution.llm.mode === 'parallel'">
-          <label class="label fira-sans-condensed-black-italic">Memory budget (GB)</label>
-          <input v-model.number="form.execution.llm.memoryBudgetGB" class="input is-medium" type="number" min="4" step="2" />
-        </div>
+
       </div>
 
       <div class="field-row">
@@ -144,24 +143,27 @@
           </div>
         </div>
         <div class="field" v-if="form.execution.diffusion.mode === 'parallel'">
-          <label class="label fira-sans-condensed-black-italic">Max concurrent diffusion jobs</label>
-          <input v-model.number="form.execution.diffusion.maxConcurrent" class="input is-medium" type="number" min="1" max="4" />
+          <label for="team-diffusion-concurrency" class="label fira-sans-condensed-black-italic">Max concurrent diffusion jobs</label>
+          <input id="team-diffusion-concurrency" v-model.number="form.execution.diffusion.maxConcurrent" class="input is-medium" type="number" min="1" max="4" />
         </div>
       </div>
 
     </section>
 
+    </details>
     <!-- ── Team + per-teammate LLM ─────────────────────────── -->
-    <section class="form-section models__activity--payouts">
+    <section class="form-section">
       <h2 class="section-title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined">groups</span>
         Teammates
       </h2>
+      <p v-if="rosterError" class="bz-notice bz-notice--danger" role="alert">{{ rosterError }}</p>
+      <p v-else-if="!companions.length" class="muted">{{ $ui('Create a smart agent in Smart Agents before choosing your team.') }}</p>
       <div class="role-table">
         <div class="role-row role-row--header">
           <div class="col-role">Function</div>
-          <div class="col-companion">Hire companion</div>
-          <div class="col-llm">Preferred LLM</div>
+          <div class="col-companion">Smart agent</div>
+          <div class="col-llm">AI model</div>
         </div>
         <div
           v-for="roleKey in displayedRoleKeys"
@@ -173,23 +175,16 @@
           </div>
           <div class="col-companion">
             <div class="select skill-fullwidth is-small">
-              <select v-model="form.companions[roleKey]">
-                <option :value="null">— inherit —</option>
+              <select v-model="form.companions[roleKey]" :aria-label="`${roleDisplayName(roleKey)} · Smart agent`">
+                <option :value="null">{{ $ui('Not assigned') }}</option>
                 <option v-for="comp in companions" :key="comp.id" :value="comp.id">
-                  {{ comp.name }} · {{ comp.title }}
+                  {{ comp.name }}
                 </option>
               </select>
             </div>
           </div>
           <div class="col-llm">
-            <div class="select skill-fullwidth is-small">
-              <select v-model="form.llms[roleKey]">
-                <option :value="null">— current —</option>
-                <option v-for="llm in llmOptions" :key="llm.key" :value="llm.key">
-                  {{ llm.label }}
-                </option>
-              </select>
-            </div>
+            <CompanyWorkerModel v-model="form.llms[roleKey]" :role-key="roleKey" :role-label="roleDisplayName(roleKey)" :worker-id="form.companions[roleKey]" :disabled="!form.companions[roleKey]" />
           </div>
         </div>
       </div>
@@ -208,18 +203,19 @@
     <hr />
     <div v-if="errors.length" class="bz-notice bz-notice--danger">
       <ul>
-        <li v-for="(err, i) in errors" :key="i">{{ err }}</li>
+        <li v-for="(err, i) in errors" :key="i">{{ $ui(err) }}</li>
       </ul>
     </div>
+    <p v-if="!form.companions.CEO" class="form-intro">{{ $ui('Assign a coordinator to create this workflow. Other roles are optional.') }}</p>
     <div class="submit-row">
       <button
         class="bz-btn bz-btn--primary bz-btn--lg fira-sans-condensed-black-italic mr-5"
         :class="{ 'bz-btn--running': busy }"
-        :disabled="busy"
+        :disabled="busy || !form.name.trim() || !form.companions.CEO"
         @click="submit"
       >
         <span class="material-symbols-outlined is-size-3 mr-2">add_business</span>
-        Create Team
+        {{ $ui('Create a smart workflow') }}
       </button>
       <button class="bz-btn bz-btn--lg is-light fira-sans-condensed-black-italic" @click="$emit('cancel')">
         <span class="material-symbols-outlined is-size-3 mr-2">close</span>
@@ -230,47 +226,37 @@
 </template>
 
 <script>
-import { ref, reactive, computed } from "vue";
+import "./company-design.css";
+import { ref, reactive, computed, onMounted, watch } from "vue";
+import { loadSmartAgents, smartAgentCatalog, SMART_AGENT_CREATE_CAPABILITIES } from "../../services/smartAgentCatalog.js";
 import companyStore from "../../stores/companyStore.js";
-import { DEFAULT_COMPANIONS, LLM_BASE_MODELS, listAllLLMs } from "../../skills/flagship.js";
-import { getCompanionCareer, getCompanySkillsForCompanion } from "../../skills/companionSkillRoadmap.js";
-import { formatModelLabel, formatRoleTitle } from "../../services/company/presentation.js";
+import CompanyWorkerModel from "./CompanyWorkerModel.vue";
+import { formatRoleTitle } from "../../services/company/presentation.js";
 
 const QUICK_ROLES = ["CEO", "CFO", "CMO", "CPO", "Producer:text", "GeneralCounsel"];
 
 export default {
   name: "CompanyForm",
+  components: { CompanyWorkerModel },
   emits: ["cancel", "formed"],
   setup(_, { emit }) {
     const store = companyStore;
     const showAdvanced = ref(false);
     const busy = ref(false);
     const errors = ref([]);
+    const rosterError = ref('');
+    let rosterReady = false;
 
     const roleLibrary = store.state.roleLibrary;
     const currencies = store.state.currencies;
-    const companions = DEFAULT_COMPANIONS.map((c) => ({
-      id: c.id,
-      name: c.name,
-      title: getCompanionCareer(c.id)?.title || "Agentic specialist",
-    }));
-
-    // Build a flat list of (key,label) from LLM_BASE_MODELS for the picker.
-    // Sort by parameter count for readability.
-    const llmOptions = computed(() => {
-      return Object.keys(LLM_BASE_MODELS)
-        .map((baseKey) => {
-          const m = LLM_BASE_MODELS[baseKey];
-          return {
-            key: `llm_${baseKey}`,
-            label: `${formatModelLabel(m.name)} (${m.parameters >= 1e9 ? `${(m.parameters / 1e9).toFixed(1)}B` : m.parameters})`,
-            params: m.parameters || 0,
-          };
-        })
-        .sort((a, b) => a.params - b.params);
+    onMounted(() => {
+      void loadSmartAgents().then(() => { rosterReady = true; consumeHireRequest(); }).catch((error) => {
+        rosterError.value = error.message || 'Unable to load saved smart agents.';
+      });
     });
+    const companions = computed(() => smartAgentCatalog.agents);
 
-    const availablePipelines = ["text", "image", "audio", "video", "3d", "music", "vision"];
+    const availablePipelines = [...SMART_AGENT_CREATE_CAPABILITIES];
 
     const form = reactive({
       name: "",
@@ -280,7 +266,7 @@ export default {
       reserveFloor: 0,
       ceoMin: 60,
       roleMin: 30,
-      allowedPipelines: ["text"],
+      allowedPipelines: [...SMART_AGENT_CREATE_CAPABILITIES],
       // Split into two parallel maps so the form is simpler.
       companions: Object.fromEntries(Object.keys(roleLibrary).map((k) => [k, null])),
       llms: Object.fromEntries(Object.keys(roleLibrary).map((k) => [k, null])),
@@ -289,6 +275,16 @@ export default {
         diffusion: { mode: "sequential", maxConcurrent: 1 },
       },
     });
+
+    function consumeHireRequest() {
+      const id = smartAgentCatalog.pendingHireId;
+      if (!rosterReady || !id || !companions.value.some((companion) => companion.id === id)) return;
+      // Preserve an explicit selection made while the roster was loading.
+      if (form.companions.CEO) return;
+      form.companions.CEO = id;
+      smartAgentCatalog.pendingHireId = null;
+    }
+    watch(() => [smartAgentCatalog.pendingHireId, smartAgentCatalog.loaded], consumeHireRequest, { immediate: true });
 
     const advancedRoleKeys = computed(() =>
       Object.keys(roleLibrary).filter((k) => !QUICK_ROLES.includes(k)),
@@ -300,6 +296,7 @@ export default {
 
     async function submit() {
       errors.value = [];
+      if (!form.name.trim() || !form.companions.CEO) { errors.value = ["Give the workflow a name and assign a coordinator."]; return; }
       busy.value = true;
       try {
         // Compose final roles map: drop unfilled rows; combine companion + llm.
@@ -311,7 +308,7 @@ export default {
           if (!companion) continue;          // companion required to fill a role
           roles[key] = {
             companion,
-            grantedSkills: getCompanySkillsForCompanion(companion),
+            pipelines: [...SMART_AGENT_CREATE_CAPABILITIES],
             employment: { type: "companion-hire", companionId: companion },
           };
           if (llm) roles[key].llm = llm;
@@ -350,8 +347,8 @@ export default {
     }
 
     return {
-      form, busy, errors, showAdvanced,
-      roleLibrary, currencies, companions, availablePipelines, llmOptions,
+      form, busy, errors, rosterError, showAdvanced,
+      roleLibrary, currencies, companions, availablePipelines,
       displayedRoleKeys, advancedRoleKeys,
       roleDisplayName,
       submit,
@@ -366,7 +363,7 @@ hr {
   width: 100%;
   border: none;
   height: 1px;
-  background: linear-gradient(to right, transparent, var(--bz-fg), transparent);
+  background: var(--bz-border);
 }
 .material-symbols-outlined {
   font-variation-settings: "FILL" 0, "wght" 100, "GRAD" -25, "opsz" 48;
@@ -409,12 +406,12 @@ hr {
   text-align: left !important;
 }
 
-/* ───────── Sections (glass cards) ───────── */
+/* Form sections use the same spacing and surfaces as the workspace. */
 .form-section {
-  margin-bottom: var(--bz-space-4);
-  padding: var(--bz-space-4) !important;
+  margin-bottom: var(--bz-space-5);
+  padding: var(--bz-space-6) !important;
   border: 1px solid var(--bz-border);
-  border-radius: var(--bz-r) !important;
+  border-radius: var(--bz-r-lg) !important;
   background: var(--bz-card);
   box-shadow: none;
 }
@@ -439,29 +436,37 @@ hr {
   line-height: 1.5;
 }
 
-/* ───────── Form fields (glass inputs) ───────── */
+/* Form fields */
 .label {
+  display: block;
+  margin-bottom: 8px;
   color: var(--bz-fg-mid) !important;
   font-style: normal;
-  font-size: var(--bz-size-meta);
-  font-weight: 700;
+  font: 500 14px/1.45 var(--bz-font-body);
   letter-spacing: 0;
 }
 .input, .textarea, .select select {
   background: var(--bz-card) !important;
-  border: 1px solid var(--bz-border) !important;
-  border-radius: var(--bz-r-sm);
+  border: 1px solid var(--bz-border-strong) !important;
+  border-radius: var(--bz-r);
+  font: 400 15px/1.5 var(--bz-font-body);
+  min-height: 44px;
+  padding: 10px 12px;
   color: var(--bz-fg) !important;
 }
+.form-shell :is(.input, .textarea, .select) { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.form-shell .select { display: block; }
+.form-shell .select select { width: 100%; max-width: 100%; }
 .input:focus, .textarea:focus, .select select:focus {
   border-color: var(--bz-border-brand) !important;
-  box-shadow: 0 0 0 2px var(--bz-purple-soft) !important;
+  box-shadow: none !important;
+  outline: none;
 }
 .field-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1em;
-  margin-bottom: 1em;
+  gap: 24px;
+  margin-bottom: 24px;
 }
 
 /* ───────── Chips (pipelines + execution mode) ───────── */
@@ -483,10 +488,11 @@ hr {
   font-style: normal;
   font-weight: 600;
 }
-.chip input, .mode-chip input { display: none; }
+.chip input, .mode-chip input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.chip:focus-within, .mode-chip:focus-within { outline: 2px solid var(--bz-accent); outline-offset: 3px; }
 .chip:hover, .mode-chip:hover {
   background: var(--bz-border);
-  border-color: var(--bz-fg-low);
+  border-color: var(--bz-fg-mid);
 }
 .chip.is-on, .mode-chip.is-on {
   background: var(--bz-control-selected-bg);
@@ -533,24 +539,26 @@ hr {
 .role-row:hover {
   background: var(--bz-raised);
 }
+.role-row > div { min-width: 0; }
+.role-row :is(.select, select) { width: 100%; max-width: 100%; min-width: 0; }
 .role-row--header {
   background: transparent;
   border: none;
   font-weight: 700;
-  font-size: 0.85rem;
-  text-transform: uppercase;
+  font-size: 13px;
+  text-transform: none;
   letter-spacing: 0;
-  color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
   padding: 0.3em 1em;
 }
 .col-role strong {
   color: var(--bz-fg);
   display: block;
-  font-style: italic;
+  font-style: normal;
 }
 .role-desc {
   font-size: 12px;
-  color: var(--bz-fg-low);
+  color: var(--bz-fg-mid);
   margin-top: 0.25em;
 }
 
@@ -575,7 +583,7 @@ hr {
     flex-direction: column;
   }
   .role-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .role-row--header {
     display: none;
@@ -584,7 +592,7 @@ hr {
 
 /* ───────── Notification override ───────── */
 .notification.is-danger {
-  background: rgba(241, 70, 104, 0.18) !important;
+  background: var(--bz-danger-soft) !important;
   border: 1px solid var(--bz-danger) !important;
   color: var(--bz-fg) !important;
 }
@@ -592,4 +600,14 @@ hr {
   margin: 0;
   padding-left: 1.5em;
 }
+.form-shell .field { margin-bottom: 24px; }
+.form-shell .bz-btn { font: 500 14px/1.4 var(--bz-font-body); border-radius: var(--bz-r); min-height: 40px; }
+.form-shell :is(button, summary):focus-visible { outline: 2px solid var(--bz-accent); outline-offset: 3px; }
+@media(max-width:760px) { .form-section { padding: 20px !important; } }
+@media(prefers-reduced-motion:reduce) { .form-shell * { transition: none !important; animation: none !important; } }
+.form-shell details.form-section > .form-section { border: 0; border-radius: 0 !important; background: transparent; padding: 24px 0 !important; margin-bottom: 0; }
+.form-shell details.form-section > .form-section + .form-section { border-top: 1px solid var(--bz-border); }
+.form-shell details > summary { cursor: pointer; }
+.form-shell :is(h1, label, p, strong) { overflow-wrap: anywhere; }
+.form-shell .bz-btn { height: auto; white-space: normal; }
 </style>

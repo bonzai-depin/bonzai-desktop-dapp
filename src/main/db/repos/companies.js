@@ -48,14 +48,13 @@ export function getById(id) {
   return r?.charter ?? null;
 }
 
-export function list() {
+export function list({ includeDemos = false } = {}) {
   const { orm } = get();
-  return orm.select().from(companies).orderBy(desc(companies.updatedAt)).all().map((r) => r.charter);
+  return orm.select().from(companies).orderBy(desc(companies.updatedAt)).all().map((r) => r.charter).filter(c => includeDemos || !c.demoRun);
 }
 
 export function listIds() {
-  const { db } = get();
-  return db.prepare("SELECT id FROM companies ORDER BY updated_at DESC").all().map((r) => r.id);
+  return list().map(c => c.id);
 }
 
 export function setStatus(id, status) {

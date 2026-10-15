@@ -13,34 +13,52 @@
       </div>
     </header>
 
-    <div class="bz-train__quick-steps" aria-label="Workflow overview">
-      <article v-for="step in modeSteps" :key="step.label" class="bz-train__quick-step">
-        <span class="material-symbols-outlined" aria-hidden="true">{{ step.icon }}</span>
-        <div>
-          <strong class="fira-sans-condensed-black-italic">{{ step.label }}</strong>
-          <small>{{ step.copy }}</small>
-        </div>
-      </article>
-    </div>
+    <nav class="bz-train__journey" aria-label="Workflow progress">
+      <div v-for="(step, index) in journeySteps" :key="step" :class="{ 'is-current': journeyStage === index, 'is-complete': journeyStage > index }">
+        <span class="bz-metric">{{ journeyStage > index ? '✓' : '0' + (index + 1) }}</span>
+        <strong>{{ step }}</strong>
+      </div>
+    </nav>
 
-    <!-- Access gate -->
-    <AccessRequirements level="LVL6" />
 
     <!-- ============================================================ -->
     <!-- TUNE MODE                                                    -->
     <!-- ============================================================ -->
+    <div class="bz-train__workspace">
     <div v-if="mode === 'tune'" class="bz-train__body">
 
-      <!-- Step 1: Import Dataset -->
       <section class="bz-train__section">
+        <h3 class="bz-train__section-title"><span class="bz-train__step-num">1</span>{{ $t('rcTraining.chooseTarget') }}</h3>
+        <div class="bz-train__capability-status" role="status">
+          <span>{{ trainingInfoLoading ? $t('rcTraining.loadingModels') : trainingInfoError || $t('rcTraining.localTraining') }}</span>
+          <button type="button" class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="trainingInfoLoading || training.active" @click="loadTrainingInfo">{{ $t('rcTraining.refreshModels') }}</button>
+        </div>
+        <label class="bz-train__search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input v-model="modelQuery" type="search" placeholder="Find a model or publisher" aria-label="Search supported models" /></label>
+        <p v-if="modelQuery && !(mode === 'tune' ? visibleTuneModels.length : visibleAblitModels.length)" class="bz-train__helper">No matching models. Try another name.</p>
+        <div class="bz-train__model-catalog" role="group" :aria-label="$t('rcTraining.baseModel')">
+          <button v-for="model in visibleTuneModels" :key="model.key" type="button" class="bz-train__ablit-card"
+            :class="{ 'is-selected': selectedTarget === 'text' && tuneConfig.base_model === model.key }"
+            :aria-pressed="selectedTarget === 'text' && tuneConfig.base_model === model.key"
+            :disabled="training.active || !targetAvailable('text')" @click="selectTarget('text'); tuneConfig.base_model = model.key">
+            <span class="material-symbols-outlined" aria-hidden="true">neurology</span>
+            <strong>{{ model.name }}</strong><small>{{ model.repo }}</small>
+            <span class="bz-train__selection">{{ selectedTarget === 'text' && tuneConfig.base_model === model.key ? 'Selected' : 'Select model' }}</span>
+          </button>
+        </div>
+        <p v-if="!llmModels.length && !trainingInfoLoading" class="bz-train__helper">Supported models will appear here when the local training service is available.</p>
+      </section>
+
+      <!-- Step 2: Import Dataset -->
+      <section class="bz-train__section" :class="{ 'is-pending': !canImportDataset }">
         <h3 class="bz-train__section-title">
-          <span class="bz-train__step-num">1</span>
-          Import Dataset
+          <span class="bz-train__step-num">2</span>
+          {{ $t('rcTraining.importDataset') }}
         </h3>
         <div
+          v-if="canImportDataset"
           class="bz-train__dropzone"
           :class="{ 'is-dragover': isDragOver, 'has-data': jsonlRows.length > 0 }"
-          @dragover.prevent="isDragOver = true"
+          @dragover.prevent="isDragOver = canImportDataset"
           @dragleave="isDragOver = false"
           @drop.prevent="onDrop"
         >
@@ -52,6 +70,8 @@
               type="file"
               accept=".jsonl,.json,.txt,.md,.bonzai-contribution-pack"
               class="bz-train__dropzone-input"
+              :aria-label="$t('rcTraining.importDataset')"
+              :disabled="training.active"
               @change="onFileSelect"
             />
           </template>
@@ -68,7 +88,7 @@
                 <span v-if="hasContributionPack && contributionSummary?.averageQuality !== null" class="skill-chip skill-chip--muted">
                   Quality {{ contributionSummary.averageQuality }}/100
                 </span>
-                <button class="bz-iconbtn" style="margin-left:auto" @click="clearJsonl" title="Clear">
+                <button class="bz-iconbtn" style="margin-left:auto" @click="clearJsonl" :disabled="training.active" :title="$t('common.clear')" :aria-label="$t('common.clear')">
                   <span class="material-symbols-outlined">close</span>
                 </button>
               </div>
@@ -113,23 +133,23 @@
                 </div>
                 <div class="bz-train__contribution-grid">
                   <div class="bz-train__contribution-stat">
-                    <span class="bz-mono">{{ contributionSummary.recordCount }}</span>
+                    <span class="bz-mono bz-metric">{{ contributionSummary.recordCount }}</span>
                     <small>usable records</small>
                   </div>
                   <div class="bz-train__contribution-stat">
-                    <span class="bz-mono">{{ contributionSummary.publishable }}</span>
+                    <span class="bz-mono bz-metric">{{ contributionSummary.publishable }}</span>
                     <small>publishable</small>
                   </div>
                   <div class="bz-train__contribution-stat">
-                    <span class="bz-mono">{{ contributionSummary.royaltyBearing }}</span>
+                    <span class="bz-mono bz-metric">{{ contributionSummary.royaltyBearing }}</span>
                     <small>royalty-bearing</small>
                   </div>
                   <div class="bz-train__contribution-stat">
-                    <span class="bz-mono">{{ formatPercent(contributionSummary.trainingAllowed, contributionSummary.recordCount) }}</span>
+                    <span class="bz-mono bz-metric">{{ formatPercent(contributionSummary.trainingAllowed, contributionSummary.recordCount) }}</span>
                     <small>training allowed</small>
                   </div>
                   <div class="bz-train__contribution-stat">
-                    <span class="bz-mono">{{ contributionSummary.dataOwnerCount || 0 }}</span>
+                    <span class="bz-mono bz-metric">{{ contributionSummary.dataOwnerCount || 0 }}</span>
                     <small>data owners</small>
                   </div>
                 </div>
@@ -161,6 +181,7 @@
             </div>
           </template>
         </div>
+        <div v-else class="bz-train__pending"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span><strong>Your examples, your model.</strong><p>Select a model above to import a JSONL dataset or contribution pack.</p></div>
       </section>
 
       <section v-if="ledgerPreview.length" class="bz-train__section bz-train__ledger">
@@ -185,101 +206,27 @@
         </div>
       </section>
 
-      <!-- Step 2: Choose Target -->
-      <section class="bz-train__section">
-        <h3 class="bz-train__section-title">
-          <span class="bz-train__step-num">2</span>
-          Choose Target
-        </h3>
-        <div class="bz-train__targets">
-          <button
-            v-for="t in targets" :key="t.key"
-            class="bz-train__target-card"
-            :class="{ 'is-selected': selectedTarget === t.key }"
-            @click="selectedTarget = t.key"
-          >
-            <span class="material-symbols-outlined bz-train__target-icon">{{ t.icon }}</span>
-            <span class="bz-train__target-name">{{ t.name }}</span>
-            <span class="bz-train__target-model">{{ t.model }}</span>
-            <span class="bz-train__target-desc">{{ t.desc }}</span>
-          </button>
-        </div>
-      </section>
-
       <!-- Step 3: Configure -->
-      <section class="bz-train__section" v-if="selectedTarget">
+      <section class="bz-train__section" v-if="canImportDataset && jsonlRows.length">
         <h3 class="bz-train__section-title">
           <span class="bz-train__step-num">3</span>
           Configure
         </h3>
 
-        <!-- Model picker for text -->
-        <div v-if="selectedTarget === 'text'" class="bz-train__config-group">
-          <label class="bz-train__label">Base Model</label>
-          <div class="bz-train__model-pills">
-            <button
-              v-for="m in llmModels" :key="m.key"
-              class="bz-train__model-pill"
-              :class="{ 'is-selected': tuneConfig.base_model === m.key }"
-              @click="tuneConfig.base_model = m.key"
-            >
-              {{ m.name }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Model picker for audio -->
-        <div v-if="selectedTarget === 'audio'" class="bz-train__config-group">
-          <label class="bz-train__label">Base Model</label>
-          <div class="bz-train__model-pills">
-            <button
-              v-for="m in audioModels" :key="m.key"
-              class="bz-train__model-pill"
-              :class="{ 'is-selected': tuneConfig.base_model === m.key }"
-              @click="tuneConfig.base_model = m.key"
-            >
-              {{ m.name }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Instance prompt for image -->
-        <div v-if="selectedTarget === 'image'" class="bz-train__config-group">
-          <label class="bz-train__label">Base Model</label>
-          <div class="bz-train__model-pills">
-            <button
-              v-for="m in imageModels" :key="m.key"
-              class="bz-train__model-pill"
-              :class="{ 'is-selected': tuneConfig.base_model === m.key }"
-              @click="tuneConfig.base_model = m.key"
-            >
-              {{ m.name }}
-            </button>
-          </div>
-        </div>
-
-        <div v-if="selectedTarget === 'image'" class="bz-train__config-group">
-          <label class="bz-train__label">Instance Prompt</label>
-          <input
-            v-model="tuneConfig.instance_prompt"
-            class="bz-train__input"
-            placeholder="e.g. a photo of sks person"
-          />
-        </div>
-
+        <p class="bz-train__helper">Start with the defaults, then adjust for your dataset and available memory.</p>
         <!-- Shared LoRA config -->
         <div class="bz-train__config-grid">
           <div class="bz-train__config-group">
-            <label class="bz-train__label">LoRA Rank</label>
-            <select v-model.number="tuneConfig.lora_rank" class="bz-train__select">
+            <label class="bz-train__label" for="training-rank">LoRA Rank</label>
+            <select id="training-rank" :disabled="training.active" v-model.number="tuneConfig.lora_rank" class="bz-train__select">
               <option :value="4">4</option><option :value="8">8</option>
               <option :value="16">16</option><option :value="32">32</option>
               <option :value="64">64</option><option :value="128">128</option>
             </select>
           </div>
           <div class="bz-train__config-group">
-            <label class="bz-train__label">Learning Rate</label>
-            <select v-model="tuneConfig.learning_rate" class="bz-train__select">
+            <label class="bz-train__label" for="training-rate">Learning Rate</label>
+            <select id="training-rate" :disabled="training.active" v-model="tuneConfig.learning_rate" class="bz-train__select">
               <option value="1e-5">1e-5</option>
               <option value="5e-5">5e-5</option>
               <option value="1e-4">1e-4</option>
@@ -287,15 +234,15 @@
             </select>
           </div>
           <div class="bz-train__config-group">
-            <label class="bz-train__label">Epochs</label>
+            <label class="bz-train__label" for="training-epochs">Epochs</label>
             <div class="bz-train__slider-row">
-              <input type="range" min="1" max="10" v-model.number="tuneConfig.epochs" class="bz-train__slider" />
-              <span class="bz-mono bz-train__slider-val">{{ tuneConfig.epochs }}</span>
+              <input id="training-epochs" :disabled="training.active" type="range" min="1" max="10" v-model.number="tuneConfig.epochs" class="bz-train__slider" />
+              <span class="bz-mono bz-train__slider-val bz-metric">{{ tuneConfig.epochs }}</span>
             </div>
           </div>
           <div class="bz-train__config-group">
-            <label class="bz-train__label">Batch Size</label>
-            <select v-model.number="tuneConfig.batch_size" class="bz-train__select">
+            <label class="bz-train__label" for="training-batch">Batch Size</label>
+            <select id="training-batch" :disabled="training.active" v-model.number="tuneConfig.batch_size" class="bz-train__select">
               <option :value="1">1</option><option :value="2">2</option>
               <option :value="4">4</option><option :value="8">8</option>
             </select>
@@ -305,33 +252,21 @@
         <!-- Options -->
         <div class="bz-train__options">
           <label class="bz-train__checkbox">
-            <input type="checkbox" v-model="tuneConfig.use_4bit" />
-            <span>4-bit quantization (QLoRA, CUDA only)</span>
+            <input type="checkbox" v-model="tuneConfig.use_4bit" :disabled="training.active || !trainingInfo?.capabilities?.['4bit_quantization']" />
+            <span>{{ $t(trainingInfo?.capabilities?.['4bit_quantization'] ? 'rcTraining.quantAvailable' : 'rcTraining.quantUnavailable') }}</span>
           </label>
           <label class="bz-train__checkbox">
-            <input type="checkbox" v-model="tuneConfig.uncensor" />
+            <input type="checkbox" v-model="tuneConfig.uncensor" :disabled="training.active" />
             <span>Uncensor (remove refusal patterns)</span>
           </label>
         </div>
       </section>
 
-      <!-- Start Button -->
-      <div class="bz-train__actions" v-if="selectedTarget && jsonlRows.length > 0">
-        <button
-          class="bz-btn bz-btn--primary bz-btn--lg"
-          :disabled="training.active || (selectedTarget === 'image' && !tuneConfig.instance_prompt)"
-          @click="startTuneTraining"
-        >
-          <span class="material-symbols-outlined" style="font-size:18px">play_arrow</span>
-          {{ training.active ? 'Training…' : 'Start Training' }}
-        </button>
-      </div>
-
       <!-- Training Progress -->
       <div v-if="training.active" class="bz-train__progress-card">
         <div class="bz-train__progress-header">
           <span class="bz-train__progress-stage">{{ stageLabel(training.stage) }}</span>
-          <span class="bz-mono">{{ training.pct }}%</span>
+          <span class="bz-mono bz-metric">{{ training.pct }}%</span>
         </div>
         <div class="bz-train__progress-bar">
           <div class="bz-train__progress-fill" :style="{ width: training.pct + '%' }" />
@@ -351,33 +286,45 @@
 
       <!-- Model Selector -->
       <section class="bz-train__section">
-        <h3 class="bz-train__section-title">Select Model</h3>
+        <h3 class="bz-train__section-title"><span class="bz-train__step-num">1</span>{{ $t('rcTraining.selectModel') }}</h3>
+        <div class="bz-train__capability-status" role="status">
+          <span>{{ trainingInfoLoading ? $t('rcTraining.loadingModels') : trainingInfoError || (ablitModels.length ? $t('rcTraining.ablitDownload') : $t('rcTraining.noModels')) }}</span>
+          <button type="button" class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="trainingInfoLoading || ablPipeline.active" @click="loadTrainingInfo">{{ $t('rcTraining.refreshModels') }}</button>
+        </div>
+
+        <label class="bz-train__search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input v-model="modelQuery" type="search" placeholder="Find a model or publisher" aria-label="Search supported models" /></label>
+        <p v-if="modelQuery && !(mode === 'tune' ? visibleTuneModels.length : visibleAblitModels.length)" class="bz-train__helper">No matching models. Try another name.</p>
         <div class="bz-train__ablit-grid">
           <button
-            v-for="m in ablitModels" :key="m.key"
+            v-for="m in visibleAblitModels" :key="m.key"
+            type="button"
+            :disabled="ablPipeline.active"
+            :aria-pressed="ablitConfig.base_model === m.key"
             class="bz-train__ablit-card"
             :class="{ 'is-selected': ablitConfig.base_model === m.key }"
             @click="ablitConfig.base_model = m.key"
           >
-            <span class="bz-train__ablit-name">{{ m.name }}</span>
-            <span class="bz-train__ablit-repo bz-mono">{{ m.repo }}</span>
+            <span class="material-symbols-outlined" aria-hidden="true">neurology</span><span class="bz-train__ablit-name">{{ m.name }}</span>
+            <span class="bz-train__ablit-repo bz-mono">{{ m.repo }}</span><span class="bz-train__selection">{{ ablitConfig.base_model === m.key ? 'Selected' : 'Select model' }}</span>
           </button>
         </div>
       </section>
 
       <!-- Method + Quantization -->
-      <section class="bz-train__section" v-if="ablitConfig.base_model">
+      <section class="bz-train__section">
+        <h3 class="bz-train__section-title"><span class="bz-train__step-num">2</span>Method &amp; output</h3>
+        <p class="bz-train__helper">Choose the modification method and the size of your exported GGUF model.</p>
         <div class="bz-train__config-row">
           <div class="bz-train__config-group">
             <label class="bz-train__label">Method</label>
-            <div class="bz-train__chips">
+            <div class="bz-train__chips bz-train__methods">
               <button
                 v-for="m in ablitMethods" :key="m.value"
                 class="bz-train__chip"
-                :class="{ 'is-selected': ablitConfig.method === m.value }"
+                :class="{ 'is-selected': ablitConfig.method === m.value }" :aria-pressed="ablitConfig.method === m.value" :disabled="ablPipeline.active"
                 @click="ablitConfig.method = m.value"
               >
-                {{ m.label }}
+                <strong>{{ m.label }}</strong><small>{{ m.description }}</small>
               </button>
             </div>
           </div>
@@ -387,12 +334,13 @@
               <button
                 v-for="q in ablitQuants" :key="q"
                 class="bz-train__chip"
-                :class="{ 'is-selected': ablitConfig.quantization === q }"
+                :class="{ 'is-selected': ablitConfig.quantization === q }" :aria-pressed="ablitConfig.quantization === q" :disabled="ablPipeline.active"
                 @click="ablitConfig.quantization = q"
               >
                 {{ q }}
               </button>
             </div>
+            <p class="bz-train__helper">Q4_K_M balances file size and precision. Q8_0 retains more precision; F16 skips quantization and produces a larger file.</p>
           </div>
         </div>
       </section>
@@ -483,28 +431,40 @@
         </div>
       </section>
 
-      <!-- Start Button -->
-      <div class="bz-train__actions" v-if="ablitConfig.base_model">
-        <button
-          class="bz-btn bz-btn--primary bz-btn--lg"
-          :disabled="ablPipeline.active"
-          @click="startAbliteration"
-        >
-          <span class="material-symbols-outlined" style="font-size:18px">science</span>
-          {{ ablPipeline.active ? 'Abliterating…' : 'Abliterate' }}
-        </button>
-      </div>
-
       <!-- Abliteration Progress -->
       <div v-if="ablPipeline.active" class="bz-train__progress-card">
         <div class="bz-train__progress-header">
           <span class="bz-train__progress-stage">{{ stageLabel(ablPipeline.stage) }}</span>
-          <span class="bz-mono">{{ ablPipeline.pct }}%</span>
+          <span class="bz-mono bz-metric">{{ ablPipeline.pct }}%</span>
         </div>
         <div class="bz-train__progress-bar">
           <div class="bz-train__progress-fill" :style="{ width: ablPipeline.pct + '%' }" />
         </div>
       </div>
+    </div>
+
+    <aside class="bz-train__review" aria-label="Run summary">
+      <div class="bz-train__review-icon"><span class="material-symbols-outlined" aria-hidden="true">{{ mode === 'tune' ? 'tune' : 'lock_open' }}</span></div>
+      <p class="bz-eyebrow">{{ mode === 'tune' ? 'Your next adapter' : 'Your next model' }}</p>
+      <h2>{{ selectedModelName || 'Make it your own.' }}</h2>
+      <p class="bz-train__helper">{{ mode === 'tune' ? 'Teach a model your style, vocabulary and domain with examples from your own data.' : 'Modify refusal behavior, then inspect the quality report before using the result.' }}</p>
+      <dl>
+        <div><dt>Runs on</dt><dd>{{ trainingInfo?.device || 'This device' }}</dd></div>
+        <template v-if="mode === 'tune'">
+          <div><dt>Dataset</dt><dd>{{ jsonlRows.length ? jsonlRows.length + ' examples' : 'Not imported' }}</dd></div>
+          <div><dt>Training passes</dt><dd class="bz-metric">{{ tuneConfig.epochs }}</dd></div>
+          <div><dt>Output</dt><dd>LoRA adapter</dd></div>
+        </template>
+        <template v-else>
+          <div><dt>Method</dt><dd>{{ ablitMethods.find(method => method.value === ablitConfig.method)?.label }}</dd></div>
+          <div><dt>Output</dt><dd>{{ ablitConfig.quantization }} · GGUF</dd></div>
+        </template>
+      </dl>
+      <p class="bz-train__review-status" role="status">{{ runHint }}</p>
+      <button v-if="mode === 'tune'" type="button" class="bz-btn bz-btn--primary" :disabled="!canStartTraining" @click="startTuneTraining"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>{{ training.active ? 'Training…' : 'Start training' }}</button>
+      <button v-else type="button" class="bz-btn bz-btn--primary" :disabled="!canStartAbliteration" @click="startAbliteration"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>{{ ablPipeline.active ? 'Abliterating…' : 'Start uncensoring' }}</button>
+      <small>Local processing. Starting a run may download the publisher’s original model weights.</small>
+    </aside>
     </div>
 
     <!-- ============================================================ -->
@@ -513,7 +473,7 @@
     <div v-if="training.error || ablPipeline.error" class="bz-notice bz-notice--danger" style="margin-top:var(--bz-space-3)">
       <span class="material-symbols-outlined bz-notice__icon">error</span>
       <span>{{ training.error || ablPipeline.error }}</span>
-      <button class="bz-iconbtn bz-iconbtn--sm" @click="training.error = ''; ablPipeline.error = ''">
+      <button type="button" class="bz-iconbtn bz-iconbtn--sm" :aria-label="$t('common.close')" @click="training.error = ''; ablPipeline.error = ''">
         <span class="material-symbols-outlined">close</span>
       </button>
     </div>
@@ -524,15 +484,17 @@
     <section class="bz-train__section bz-train__models-section">
       <div class="bz-train__section-header">
         <h3 class="bz-train__section-title">Trained Models</h3>
-        <button class="bz-iconbtn" @click="loadTrainedModels" title="Refresh">
+        <button class="bz-iconbtn" @click="loadTrainedModels" :disabled="modelsLoading" title="Refresh model library" aria-label="Refresh model library">
           <span class="material-symbols-outlined">refresh</span>
         </button>
       </div>
-      <div v-if="trainedModels.length === 0" class="bz-train__empty">
+      <p v-if="modelsError" class="bz-train__helper" role="alert">{{ modelsError }}</p>
+      <p v-if="modelsLoading" class="bz-train__helper" role="status">Loading your model library…</p>
+      <div v-if="!modelsLoading && !modelsError && trainedModels.length === 0" class="bz-train__empty">
         <span class="material-symbols-outlined" style="font-size:32px;color:var(--bz-fg-faint)">inventory_2</span>
-        <p>No trained models yet. Start a training run above.</p>
+        <p>Your trained models will appear here, ready to export and use.</p>
       </div>
-      <div v-else class="bz-train__model-list">
+      <div v-if="trainedModels.length" class="bz-train__model-list">
         <div v-for="m in trainedModels" :key="m.id" class="bz-train__model-card">
           <div class="bz-train__model-card-top">
             <span class="skill-chip" :class="modelTypeChip(m.type)">{{ modelTypeLabel(m.type) }}</span>
@@ -566,16 +528,16 @@
               <span class="material-symbols-outlined" style="font-size:14px">token</span> Mint
             </button>
             <button
-              v-if="m.validation?.status !== 'passed'"
+              v-if="!localValidationPassed(m)"
               class="bz-btn bz-btn--ghost bz-btn--sm"
               :disabled="modelValidation.loading && modelValidation.activeModelId === m.id"
               @click="validateModelForIssuance(m)"
             >
-              <span class="material-symbols-outlined" style="font-size:14px">verified</span>
-              {{ modelValidation.loading && modelValidation.activeModelId === m.id ? 'Testing...' : 'Test model' }}
+              <span class="material-symbols-outlined" style="font-size:14px" aria-hidden="true">fact_check</span>
+              {{ $t(modelValidation.loading && modelValidation.activeModelId === m.id ? 'rcTraining.checkingFiles' : 'rcTraining.checkFiles') }}
             </button>
             <button
-              v-if="m.validation?.status === 'passed' && m.nft?.tokenId && !m.fineTuneToken?.tokenAddress"
+              v-if="localValidationPassed(m) && m.nft?.tokenId && !m.fineTuneToken?.tokenAddress"
               class="bz-btn bz-btn--ghost bz-btn--sm"
               :disabled="!fineTuneTokenConfigured"
               @click="prepareTokenLaunch(m)"
@@ -593,10 +555,10 @@
               {{ modelRegistryPublish.activeModelId === m.id && modelRegistryPublish.loading ? 'Publishing...' : 'Registry' }}
             </button>
             <button
-              v-if="m.nft?.tokenId && !m.revenueRoute?.assetId"
+              v-if="m.fineTuneToken?.tokenAddress && m.fineTuneToken?.poolId && !m.revenueRoute?.assetId"
               class="bz-btn bz-btn--ghost bz-btn--sm"
               :disabled="!bonzaiRevenueRouterService.isConfigured() || revenueRoutePublish.loading"
-              :title="bonzaiRevenueRouterService.isConfigured() ? 'Register contributor revenue route' : 'Revenue router is not configured'"
+              :title="bonzaiRevenueRouterService.isConfigured() ? 'Register contributor fees as the original model token creator' : 'Revenue router is not configured'"
               @click="publishModelRevenueRoute(m)"
             >
               <span class="material-symbols-outlined" style="font-size:14px">account_balance</span>
@@ -609,6 +571,7 @@
             >
               <span class="material-symbols-outlined" style="font-size:14px">account_tree</span> Provenance
             </button>
+            <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="hubModelId = hubModelId === m.id ? '' : m.id"><span class="material-symbols-outlined">cloud_upload</span> Hugging Face</button>
             <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="exportModel(m)">
               <span class="material-symbols-outlined" style="font-size:14px">download</span> Export
             </button>
@@ -616,6 +579,7 @@
               <span class="material-symbols-outlined" style="font-size:16px">delete</span>
             </button>
           </div>
+          <HubPublish v-if="hubModelId === m.id" :model-id="m.id" :api-base="API_BASE" @close="hubModelId = ''" />
           <div v-if="modelValidation.activeModelId === m.id && modelValidation.error" class="bz-train__contribution-alert is-error">
             {{ modelValidation.error }}
           </div>
@@ -635,8 +599,9 @@
               <button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="tokenLaunch.generating" @click="generateTokenProfile(m)">
                 {{ tokenLaunch.generating ? 'Generating identity...' : 'Generate identity' }}
               </button>
-              <span class="skill-chip skill-chip--success">Validated {{ shortHash(m.validation?.hash) }}</span>
+              <span class="skill-chip" data-i18n-skip>{{ $t('rcTraining.localCheckPassed') }} {{ shortHash(m.validation?.hash) }}</span>
             </div>
+            <p class="bz-train__token-note" data-i18n-skip>{{ $t('rcTraining.publicationScope') }}</p>
             <p class="bz-train__token-note">
               Revenue route is attached from {{ m.data_owner_wallets?.length || 0 }} data owner{{ (m.data_owner_wallets?.length || 0) === 1 ? '' : 's' }} and this model's provenance manifest.
             </p>
@@ -678,10 +643,10 @@
 </template>
 
 <script setup>
+import HubPublish from './HubPublish.vue'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import axios from 'axios'
 import { io } from 'socket.io-client'
-import AccessRequirements from './AccessRequirements.vue'
 import MintModal from './MintModal.vue'
 import { useBonzaiWeb3 } from '../composables/useBonzaiWeb3.js'
 import {
@@ -709,23 +674,12 @@ const props = defineProps({
 })
 
 
+const hubModelId = ref('')
 const modeTitle = computed(() => props.mode === 'uncensor' ? 'Uncensor' : 'Tune')
 const modeSubtitle = computed(() => props.mode === 'uncensor'
   ? 'Remove refusal behavior and verify the result.'
   : 'Train local adapters from your data.'
 )
-const modeSteps = computed(() => props.mode === 'uncensor'
-  ? [
-      { icon: 'travel_explore', label: 'Probe', copy: 'Find refusal circuits.' },
-      { icon: 'content_cut', label: 'Excise', copy: 'Remove the behavior vector.' },
-      { icon: 'verified', label: 'Verify', copy: 'Check coherence before export.' },
-    ]
-  : [
-      { icon: 'dataset', label: 'Import', copy: 'Load data with provenance.' },
-      { icon: 'tune', label: 'Train', copy: 'Create a local adapter.' },
-      { icon: 'account_tree', label: 'Route', copy: 'Attach contributors and revenue.' },
-    ])
-
 /* ── API base ──────────────────────────────────────────────────── */
 const API_BASE = import.meta.env.VITE_API_BASE
   || window.electronAPI?.env?.API_BASE
@@ -747,35 +701,24 @@ const contributionPublish = reactive({
   result: null,
 })
 
-const targets = [
-  { key: 'text',  name: 'Text',  icon: 'chat',         model: 'Qwen 3.5 / 3.6',  desc: 'LoRA fine-tune LLMs for custom behavior' },
-  { key: 'image', name: 'Image', icon: 'image',         model: 'Z-Image Turbo',    desc: 'LoRA fine-tune diffusion for custom styles' },
-  { key: 'audio', name: 'Audio', icon: 'graphic_eq',    model: 'Qwen TTS / ACE-Step', desc: 'Voice LoRA or music LoRA adapters' },
-  { key: 'video', name: 'Video', icon: 'movie',         model: 'Wan 2.2 I2V',      desc: 'Video LoRA for motion and style' },
-]
-
-const llmModels = [
-  { key: 'qwen3_5_0_8b', name: 'Qwen3.5 0.8B' },
-  { key: 'qwen_3_6_27b', name: 'Qwen3.6 27B' },
-]
-
-const audioModels = [
-  { key: 'qwen-tts', name: 'Qwen TTS Voice' },
-  { key: 'ace-step', name: 'ACE-Step Music' },
-]
-
-const imageModels = [
-  { key: 'z-image-turbo', name: 'Z-Image Turbo' },
-  { key: 'sdxl-base-1.0', name: 'SDXL 1.0' },
-]
+const trainingInfo = ref(null)
+const trainingInfoLoading = ref(false)
+const trainingInfoError = ref('')
+const llmModels = computed(() => (trainingInfo.value?.supported_llm_models || []).filter(model => typeof model.key === 'string' && typeof model.repo === 'string').map(model => ({ ...model, name: model.name || model.repo.split('/').pop() })))
+const canImportDataset = computed(() => targetAvailable(selectedTarget.value) && llmModels.value.some(model => model.key === tuneConfig.base_model))
+function targetAvailable(target) {
+  return target === 'text' && !trainingInfoLoading.value && !trainingInfoError.value && llmModels.value.length > 0
+    && trainingInfo.value?.training_modalities?.text?.implemented !== false
+}
+function selectTarget(target) { if (!training.active && targetAvailable(target)) selectedTarget.value = target }
 
 const tuneConfig = reactive({
-  base_model: 'qwen3_5_0_8b',
+  base_model: '',
   lora_rank: 16,
   learning_rate: '2e-4',
   epochs: 3,
   batch_size: 4,
-  use_4bit: true,
+  use_4bit: false,
   uncensor: false,
   instance_prompt: '',
 })
@@ -789,10 +732,10 @@ const ablitConfig = reactive({
 })
 
 const ablitMethods = [
-  { value: 'basic',     label: 'Basic' },
-  { value: 'advanced',  label: 'Advanced' },
-  { value: 'nuclear',   label: 'Nuclear' },
-  { value: 'informed',  label: 'Informed' },
+  { value: 'basic', label: 'Basic', description: 'One refusal direction. A simple baseline.' },
+  { value: 'advanced', label: 'Advanced', description: 'Multiple directions, with two norm-preserving passes.' },
+  { value: 'nuclear', label: 'Nuclear', description: 'Maximum intervention with combined techniques.' },
+  { value: 'informed', label: 'Informed', description: 'Analyze the model and adapt the intervention.' },
 ]
 
 const ablitQuants = ['Q2_K', 'Q3_K_M', 'Q4_K_M', 'Q5_K_M', 'Q8_0', 'F16']
@@ -820,6 +763,8 @@ const ablPipeline = reactive({
 
 /* ── Trained models ────────────────────────────────────────────── */
 const trainedModels = ref([])
+const modelsLoading = ref(false)
+const modelsError = ref('')
 const showMintModal = ref(false)
 const mintTarget = ref(null)
 const modelEconomy = ref({})
@@ -937,32 +882,50 @@ function tokenDefaults(model) {
 /* ── JSONL Import ──────────────────────────────────────────────── */
 function onDrop(e) {
   isDragOver.value = false
+  if (!canImportDataset.value || training.active) return
   const file = e.dataTransfer?.files?.[0]
   if (file) parseDatasetFile(file)
 }
 
 function onFileSelect(e) {
+  if (!canImportDataset.value || training.active) return
   const file = e.target?.files?.[0]
   if (file) parseDatasetFile(file)
 }
 
+function supportedTextRows(rows) {
+  return rows.length > 0 && rows.every(row => {
+    if (!row || typeof row !== 'object' || /audio|image|video/.test(row.kind || '') || row.image || row.image_url || row.image_base64 || row.audio || row.audio_url || row.waveform || row.video || row.video_url || row.frames) return false
+    if (row.training_allowed === false || row.training_material_policy?.trainingAllowed === false) return false
+    return (typeof row.text === 'string' && row.text.trim().length > 0)
+      || (typeof row.prompt === 'string' && typeof row.completion === 'string' && (row.prompt.trim() || row.completion.trim()))
+  })
+}
+const canStartTraining = computed(() => canImportDataset.value && !training.active && !ablPipeline.active && supportedTextRows(jsonlRows.value))
 function parseDatasetFile(file) {
+  if (!canImportDataset.value || training.active) return
   const reader = new FileReader()
+  reader.onerror = () => { training.error = i18n.t('rcTraining.readFailed') }
   reader.onload = (e) => {
-    const text = e.target.result
-    const parsed = parseDatasetText(text, file.name)
-    if (parsed.rows.length === 0) return
-    jsonlRows.value = parsed.rows
-    jsonlColumns.value = parsed.columns
-    jsonlFileName.value = file.name
-    contributionPack.value = parsed.contributionPack
-    activeContributionLedgerId.value = ''
-
-    if (parsed.contributionPack) {
-      const entry = appendContributionLedgerEntry(parsed.contributionPack, detectedType.value)
-      activeContributionLedgerId.value = entry.id
-      contributionLedger.value = loadContributionLedger()
-    }
+    if (!canImportDataset.value || training.active) return
+    try {
+      const text = String(e.target.result || '')
+      const plainText = /\.(txt|md)$/i.test(file.name)
+      const parsed = plainText ? { rows: text.trim() ? [{ text }] : [], columns: ['text'], contributionPack: null } : parseDatasetText(text, file.name)
+      if (!supportedTextRows(parsed.rows)) throw new Error(i18n.t('rcTraining.invalidDataset'))
+      if (parsed.contributionPack?.validation?.errors?.length) throw new Error(i18n.t('rcTraining.invalidPack'))
+      jsonlRows.value = parsed.rows
+      jsonlColumns.value = parsed.columns
+      jsonlFileName.value = file.name
+      contributionPack.value = parsed.contributionPack
+      activeContributionLedgerId.value = ''
+      training.error = ''
+      if (parsed.contributionPack) {
+        const entry = appendContributionLedgerEntry(parsed.contributionPack, 'text')
+        activeContributionLedgerId.value = entry.id
+        contributionLedger.value = loadContributionLedger()
+      }
+    } catch (error) { training.error = error.message || i18n.t('rcTraining.readFailed') }
   }
   reader.readAsText(file)
 }
@@ -1092,7 +1055,7 @@ function setupSocket() {
 }
 
 async function startTuneTraining() {
-  if (!jsonlRows.value.length) return
+  if (!canStartTraining.value) { training.error = i18n.t('rcTraining.invalidSelection'); return }
 
   training.active = true
   training.error = ''
@@ -1122,7 +1085,7 @@ async function startTuneTraining() {
     const dsResp = await axios.post(`${API_BASE}/training/datasets`, {
       name: datasetName,
       type: detectedType.value,
-      files: [{ filename: jsonlFileName.value || 'data.jsonl', content_base64: base64 }],
+      files: [{ filename: 'data.jsonl', content_base64: base64 }],
       provenance: trainingProvenance,
     })
 
@@ -1141,12 +1104,13 @@ async function startTuneTraining() {
     }
 
     // Pick endpoint
-    const endpointMap = { text: 'llm', image: 'sdxl', audio: 'audio', video: 'video' }
-    const endpoint = endpointMap[detectedType.value] || 'llm'
+    const endpoint = 'llm' // Desktop currently imports validated text datasets only.
 
     const payload = {
       dataset_id: datasetId,
       ...tuneConfig,
+      lora_r: tuneConfig.lora_rank,
+      use_4bit: Boolean(trainingInfo.value?.capabilities?.['4bit_quantization'] && tuneConfig.use_4bit),
       learning_rate: parseFloat(tuneConfig.learning_rate),
       training_provenance: trainingProvenance,
     }
@@ -1172,7 +1136,7 @@ async function startTuneTraining() {
 }
 
 async function startAbliteration() {
-  if (!ablitConfig.base_model) return
+  if (!canStartAbliteration.value) { ablPipeline.error = abliterationBlocker.value || i18n.t('rcTraining.invalidSelection'); return }
 
   ablPipeline.active = true
   ablPipeline.completed = false
@@ -1199,18 +1163,58 @@ async function startAbliteration() {
 
 /* ── Data loading ──────────────────────────────────────────────── */
 async function loadTrainedModels() {
+  if (modelsLoading.value) return
+  modelsLoading.value = true
+  modelsError.value = ''
   try {
-    const resp = await axios.get(`${API_BASE}/training/models`)
-    trainedModels.value = applyModelEconomy(resp.data?.models || [])
-  } catch { /* silent */ }
+    const resp = await axios.get(`${API_BASE}/training/models`, { timeout: 8000 })
+    if (!Array.isArray(resp.data?.models)) throw new Error('Invalid model library response')
+    trainedModels.value = applyModelEconomy(resp.data.models)
+  } catch { modelsError.value = 'Unable to load your model library. Check the local service and refresh.' }
+  finally { modelsLoading.value = false }
 }
 
-async function loadAblitModels() {
+const abliterationBlocker = computed(() => {
+  if (trainingInfoLoading.value) return i18n.t('rcTraining.loadingModels')
+  if (trainingInfoError.value) return trainingInfoError.value
+  if (!ablitModels.value.length) return i18n.t('rcTraining.noModels')
+  if (trainingInfo.value?.abliteration_convert_available !== true) return i18n.t('rcTraining.converterMissing')
+  if (ablitConfig.quantization !== 'F16' && trainingInfo.value?.abliteration_quantize_available !== true) return i18n.t('rcTraining.quantizerMissing')
+  return ''
+})
+const canStartAbliteration = computed(() => !abliterationBlocker.value && !ablPipeline.active && !training.active && ablitModels.value.some(model => model.key === ablitConfig.base_model))
+async function loadTrainingInfo() {
+  if (trainingInfoLoading.value || training.active || ablPipeline.active) return
+  trainingInfoLoading.value = true
+  trainingInfoError.value = ''
   try {
-    const resp = await axios.get(`${API_BASE}/training/info`)
-    ablitModels.value = resp.data?.abliteration_models || []
-  } catch { /* silent */ }
+    const resp = await axios.get(`${API_BASE}/training/info`, { timeout: 8000 })
+    const data = resp.data
+    if (!data || !Array.isArray(data.supported_llm_models) || !Array.isArray(data.abliteration_models)) throw new Error('Invalid capabilities')
+    trainingInfo.value = data
+    ablitModels.value = data.abliteration_models.filter(model => typeof model.key === 'string' && typeof model.repo === 'string')
+    if (!llmModels.value.some(model => model.key === tuneConfig.base_model)) tuneConfig.base_model = llmModels.value[0]?.key || ''
+    if (!ablitModels.value.some(model => model.key === ablitConfig.base_model)) ablitConfig.base_model = ''
+    if (!data.capabilities?.['4bit_quantization']) tuneConfig.use_4bit = false
+  } catch {
+    trainingInfo.value = null
+    ablitModels.value = []
+    trainingInfoError.value = i18n.t('rcTraining.serverUnavailable')
+  } finally { trainingInfoLoading.value = false }
 }
+
+const modelQuery = ref('')
+const matchesModel = model => `${model.name || ''} ${model.repo}`.toLowerCase().includes(modelQuery.value.trim().toLowerCase())
+const visibleTuneModels = computed(() => llmModels.value.filter(matchesModel))
+const visibleAblitModels = computed(() => ablitModels.value.filter(matchesModel))
+const selectedModelName = computed(() => props.mode === 'tune'
+  ? (selectedTarget.value === 'text' ? llmModels.value.find(model => model.key === tuneConfig.base_model)?.name : '')
+  : ablitModels.value.find(model => model.key === ablitConfig.base_model)?.name)
+const journeySteps = computed(() => props.mode === 'tune' ? ['Choose model', 'Add examples', 'Train & export'] : ['Choose model', 'Configure output', 'Run & review'])
+const journeyStage = computed(() => !selectedModelName.value ? 0 : props.mode === 'tune' ? (jsonlRows.value.length ? 2 : 1) : (ablPipeline.active || ablPipeline.completed ? 2 : 1))
+const runHint = computed(() => trainingInfoLoading.value ? 'Checking this device…' : trainingInfoError.value || (props.mode === 'tune'
+  ? (!canImportDataset.value ? 'Choose a supported model to begin.' : !jsonlRows.value.length ? 'Import examples to prepare your run.' : !supportedTextRows(jsonlRows.value) ? 'Use text or prompt / completion rows in your dataset.' : training.active ? 'Training in progress.' : 'Ready to train locally.')
+  : abliterationBlocker.value || (!selectedModelName.value ? 'Choose a model to begin.' : ablPipeline.active ? 'Uncensoring in progress.' : 'Ready to run locally.')))
 
 /* ── Model actions ─────────────────────────────────────────────── */
 function registryDatasetIdsForModel(provenance) {
@@ -1261,6 +1265,8 @@ async function mintModel(model) {
     prompt: `BonzAI fine-tuned model: ${model.base_model || model.filename || model.id}`,
     generation: {
       type: 'fine-tuned-model',
+      license: model.license || provenance?.license,
+      commercialAllowed: model.commercialAllowed,
       model: model.base_model || model.filename || model.id,
       timestamp: model.created_at ? new Date(model.created_at).getTime() : Date.now(),
       modelProvenance: provenance,
@@ -1272,8 +1278,14 @@ async function mintModel(model) {
   showMintModal.value = true
 }
 
+function localValidationPassed(model) {
+  return model?.validation?.status === 'passed'
+    && model.validation.scheme === 'bonzai-local-artifact-sha256-v1'
+    && /^0x[0-9a-f]{64}$/i.test(model.validation.hash || '')
+}
+
 function prepareTokenLaunch(model) {
-  if (model.validation?.status !== 'passed') return
+  if (!localValidationPassed(model)) return
   const defaults = tokenDefaults(model)
   tokenLaunch.activeModelId = model.id
   tokenLaunch.name = defaults.name
@@ -1301,8 +1313,8 @@ async function launchModelToken(model) {
     tokenLaunch.error = 'Fine-tune token factory is not configured.'
     return
   }
-  if (model.validation?.status !== 'passed' || !model.validation?.hash) {
-    tokenLaunch.error = 'Test and validate this model before token issuance.'
+  if (!localValidationPassed(model)) {
+    tokenLaunch.error = i18n.t('rcTraining.checkBeforeIssuance')
     return
   }
 
@@ -1312,6 +1324,7 @@ async function launchModelToken(model) {
   try {
     const provenance = await modelProvenance(model)
     const result = await fineTuneTokenService.launchFineTuneToken(
+      model.nft.contractAddress,
       model.nft.tokenId,
       tokenLaunch.name.trim(),
       tokenLaunch.symbol.trim().toUpperCase(),
@@ -1330,6 +1343,8 @@ async function launchModelToken(model) {
     tokenLaunch.result = result
     updateModelEconomy(model.id, {
       fineTuneToken: {
+        contentCollection: result.contentCollection,
+        contentTokenId: result.contentTokenId,
         tokenAddress: result.tokenAddress,
         poolId: result.poolId,
         symbol: result.symbol,
@@ -1343,22 +1358,29 @@ async function launchModelToken(model) {
         launchedAt: new Date().toISOString(),
       },
     })
-    if (bonzaiRevenueRouterService.isConfigured() && result.poolId) {
-      const route = await bonzaiRevenueRouterService.registerModelRevenueRoute(
-        { ...model, fineTuneToken: { poolId: result.poolId } },
-        provenance,
-        result.poolId,
-      )
-      updateModelEconomy(model.id, {
-        revenueRoute: {
-          assetId: route.assetId,
-          txHash: route.txHash,
-          participants: route.participants,
-          registeredAt: new Date().toISOString(),
-        },
-      })
-    }
+    // Token issuance is already final. A later route failure must not present
+    // the launch as failed or invite a duplicate financial transaction.
     tokenLaunch.activeModelId = ''
+    if (bonzaiRevenueRouterService.isConfigured() && result.poolId) {
+      try {
+        const route = await bonzaiRevenueRouterService.registerModelRevenueRoute(
+          { ...model, fineTuneToken: { poolId: result.poolId, tokenAddress: result.tokenAddress } },
+          provenance,
+          result.poolId,
+        )
+        updateModelEconomy(model.id, {
+          revenueRoute: {
+            assetId: route.assetId,
+            txHash: route.txHash,
+            participants: route.participants,
+            registeredAt: new Date().toISOString(),
+          },
+        })
+      } catch (error) {
+        revenueRoutePublish.activeModelId = model.id
+        revenueRoutePublish.error = `${i18n.t('rcTraining.routePending')} ${error.message || ''}`
+      }
+    }
   } catch (err) {
     tokenLaunch.error = err.message || 'Fine-tune token launch failed'
   } finally {
@@ -1373,7 +1395,7 @@ async function validateModelForIssuance(model) {
   try {
     const resp = await axios.post(`${API_BASE}/training/models/${model.id}/validate`)
     const validation = resp.data?.validation
-    if (!validation || validation.status !== 'passed') throw new Error('Model validation did not pass')
+    if (!localValidationPassed({ validation })) throw new Error(i18n.t('rcTraining.checkBeforeIssuance'))
     model.validation = validation
     updateModelEconomy(model.id, { validation })
   } catch (err) {
@@ -1594,11 +1616,8 @@ function metricClass(key, val) {
 }
 
 /* ── Watch target → update base_model ──────────────────────────── */
-watch(selectedTarget, (t) => {
-  if (t === 'text') tuneConfig.base_model = 'qwen3_5_0_8b'
-  else if (t === 'image') tuneConfig.base_model = 'z-image-turbo'
-  else if (t === 'audio') tuneConfig.base_model = 'qwen-tts'
-  else if (t === 'video') tuneConfig.base_model = 'wan-2.2'
+watch(selectedTarget, target => {
+  if (target === 'text' && !llmModels.value.some(model => model.key === tuneConfig.base_model)) tuneConfig.base_model = llmModels.value[0]?.key || ''
 })
 
 /* ── Lifecycle ─────────────────────────────────────────────────── */
@@ -1607,7 +1626,7 @@ onMounted(() => {
   modelEconomy.value = loadModelEconomy()
   contributionLedger.value = loadContributionLedger()
   loadTrainedModels()
-  loadAblitModels()
+  loadTrainingInfo()
 })
 
 onBeforeUnmount(() => {
@@ -1619,7 +1638,9 @@ onBeforeUnmount(() => {
 /* ── Layout ──────────────────────────────────────────────────── */
 .bz-train {
   position: relative;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
+  color: var(--bz-fg);
   padding: var(--bz-space-5) var(--bz-space-5) var(--bz-space-8);
   overflow-y: auto;
   display: flex;
@@ -2005,6 +2026,13 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.bz-train__capability-status { display: flex; align-items: center; justify-content: space-between; gap: var(--bz-space-3); color: var(--bz-fg-mid); font-size: var(--bz-size-meta); line-height: var(--bz-line-body); }
+.bz-train__capability-status button { flex-shrink: 0; min-height: 36px; }
+.bz-train__target-card:disabled { cursor: not-allowed; background: var(--bz-panel); }
+.bz-train__target-card:disabled .bz-train__target-icon { color: var(--bz-fg-low); }
+.bz-train__target-card .bz-train__target-desc { color: var(--bz-fg-mid); }
+@media (max-width: 560px) { .bz-train__capability-status { align-items: flex-start; flex-direction: column; } }
+
 /* ── Target Cards ────────────────────────────────────────────── */
 .bz-train__targets {
   display: grid;
@@ -2304,15 +2332,15 @@ onBeforeUnmount(() => {
 }
 .bz-train__stage.is-done .bz-train__stage-dot {
   background: var(--bz-emerald-500);
-  color: white;
+  color: var(--bz-on-success);
 }
 .bz-train__stage.is-running .bz-train__stage-dot {
   background: var(--bz-purple-500);
-  color: white;
+  color: var(--bz-on-accent);
 }
 .bz-train__stage.is-error .bz-train__stage-dot {
   background: var(--bz-danger);
-  color: white;
+  color: var(--bz-on-danger);
 }
 .bz-train__stage-spinner {
   width: 14px;
@@ -2585,4 +2613,67 @@ onBeforeUnmount(() => {
     padding: var(--bz-space-1);
   }
 }
+
+/* Model-first workspace: one scrolling surface, a working area and run review. */
+.bz-train { padding: 32px; gap: 24px; }
+.bz-train > * { flex-shrink: 0; }
+.bz-train__hero { padding-bottom: 24px; margin: 0; }
+.bz-train__title { font-size: 44px; line-height: 1.15; margin-top: 8px; }
+.bz-train__subtitle { white-space: normal; line-height: 1.6; margin-top: 8px; }
+.bz-train__journey { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid var(--bz-border); }
+.bz-train__journey > div { display: flex; align-items: center; gap: 12px; padding: 0 12px 18px; color: var(--bz-fg-mid); border-bottom: 2px solid transparent; }
+.bz-train__journey .is-current { color: var(--bz-fg); border-color: var(--bz-accent); }
+.bz-train__journey .is-complete { color: var(--bz-success); }
+.bz-train__journey span { font-size: 24px; }
+.bz-train__journey strong { font-weight: 500; }
+.bz-train__workspace { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 32px; align-items: start; }
+.bz-train__body { min-width: 0; gap: 28px; }
+.bz-train__section { padding: 0 0 24px; background: transparent; border: 0; border-bottom: 1px solid var(--bz-border); border-radius: 0; }
+.bz-train__section-title { font-size: 20px; margin-bottom: 16px; }
+.bz-train__step-num { background: var(--bz-raised); color: var(--bz-fg); font-family: var(--bz-font-metric); width: 28px; height: 28px; }
+.bz-train__capability-status { display: flex; gap: 12px; align-items: center; justify-content: space-between; color: var(--bz-fg-mid); line-height: 1.5; margin-bottom: 16px; }
+.bz-train__capability-status button { flex-shrink: 0; }
+.bz-train__helper { color: var(--bz-fg-mid); font-size: 13px; line-height: 1.6; margin: 10px 0 16px; }
+.bz-train__search { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--bz-border-strong); border-radius: var(--bz-r-sm); background: var(--bz-panel); margin-bottom: 16px; color: var(--bz-fg-mid); }
+.bz-train__search input { border: 0; background: transparent; color: var(--bz-fg); font: inherit; width: 100%; min-width: 0; outline: none; }
+.bz-train__search:focus-within { outline: 2px solid var(--bz-accent); outline-offset: 2px; }
+.bz-train__search input::placeholder { color: var(--bz-fg-mid); }
+.bz-train__model-catalog,.bz-train__ablit-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; max-height: 360px; overflow-y: auto; padding: 3px; }
+.bz-train__ablit-card { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left; min-width: 0; padding: 18px; background: var(--bz-panel); color: var(--bz-fg); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-r); }
+.bz-train__ablit-card.is-selected { border-color: var(--bz-accent); background: var(--bz-raised); box-shadow: inset 3px 0 var(--bz-accent); }
+.bz-train__ablit-card small,.bz-train__ablit-repo { color: var(--bz-fg-mid); font: inherit; font-size: 12px; overflow-wrap: anywhere; white-space: normal; }
+.bz-train__ablit-name,.bz-train__ablit-card strong { font-size: 16px; color: var(--bz-fg); overflow-wrap: anywhere; }
+.bz-train__selection { font-size: 12px; color: var(--bz-fg-mid); margin-top: auto; padding-top: 8px; }
+.bz-train__ablit-card.is-selected .bz-train__selection { color: var(--bz-fg); }
+.bz-train__ablit-card:focus-visible,.bz-train__chip:focus-visible { outline: 2px solid var(--bz-accent); outline-offset: 2px; }
+.bz-train__pending { padding: 32px 24px; border: 1px dashed var(--bz-border-strong); border-radius: var(--bz-r); display: grid; gap: 10px; text-align: center; color: var(--bz-fg-mid); }
+.bz-train__pending .material-symbols-outlined { font-size: 32px; }
+.bz-train__pending p { margin: 0; font-size: 13px; }
+.bz-train__dropzone { min-height: 210px; background: var(--bz-panel); }
+.bz-train__config-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
+.bz-train__config-row { grid-template-columns: 1fr; gap: 24px; }
+.bz-train__chips { gap: 8px; }
+.bz-train__chip { min-height: 40px; color: var(--bz-fg); background: var(--bz-panel); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-r-sm); }
+.bz-train__chip.is-selected { background: var(--bz-control-selected-bg); color: var(--bz-control-selected-fg); border-color: var(--bz-control-selected-bg); }
+.bz-train__review { position: sticky; top: 0; padding: 24px; border: 1px solid var(--bz-border-strong); border-radius: var(--bz-r); background: var(--bz-card); min-width: 0; }
+.bz-train__review-icon { display: grid; place-items: center; width: 48px; height: 48px; background: var(--bz-raised); border-radius: var(--bz-r); margin-bottom: 24px; }
+.bz-train__review-icon span { font-size: 28px; }
+.bz-train__review h2 { font-family: var(--bz-font-metric); font-size: 28px; line-height: 1.2; margin: 10px 0; overflow-wrap: anywhere; }
+.bz-train__review dl { margin: 24px 0; }
+.bz-train__review dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--bz-border); font-size: 13px; }
+.bz-train__review dt { color: var(--bz-fg-mid); }
+.bz-train__review dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.bz-train__review-status { color: var(--bz-fg-mid); font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+.bz-train__review button { width: 100%; min-height: 44px; }
+.bz-train__review > small { display: block; color: var(--bz-fg-mid); font-size: 12px; line-height: 1.5; margin-top: 16px; }
+.bz-train__models-section { border-top: 1px solid var(--bz-border); padding-top: 24px; border-bottom: 0; }
+.bz-train__empty { padding: 32px; color: var(--bz-fg-mid); background: var(--bz-panel); margin-top: 16px; border-radius: var(--bz-r); }
+@media (max-width: 1100px) { .bz-train__workspace { grid-template-columns: minmax(0,1fr) 260px; gap: 20px; } .bz-train__model-catalog,.bz-train__ablit-grid { grid-template-columns: 1fr; } }
+@media (max-width: 850px) { .bz-train { padding: 20px; } .bz-train__workspace { grid-template-columns: 1fr; } .bz-train__review { position: static; } .bz-train__hero { grid-template-columns: 1fr; } .bz-train__hero-stats { justify-content: flex-start; } .bz-train__capability-status { align-items: flex-start; flex-direction: column; } .bz-train__journey > div { padding: 0 4px 12px; gap: 6px; font-size: 12px; } .bz-train__journey span { font-size: 18px; } }
+
+.bz-train__methods { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.bz-train__methods .bz-train__chip { height: auto; min-height: 94px; font-size: 14px; display: grid; gap: 6px; text-align: left; white-space: normal; padding: 14px; }
+.bz-train__methods small { font-size: 12px; line-height: 1.5; }
+.bz-train__pending > .material-symbols-outlined { justify-self: center; }
+.bz-train__review h2 { font-weight: 900; }
 </style>

@@ -1,3 +1,4 @@
+import { clearCompanyDrafts } from './company/viewDrafts.js';
 /**
  * BonzAI Company — top-level service facade
  *
@@ -24,7 +25,10 @@ import * as gov from "./company/governance.solo.js";
 import * as dist from "./company/distribution.solo.js";
 import * as issues from "./company/issues.js";
 import * as goalsSvc from "./company/goals.js";
+import * as gmao from "./company/gmao.js";
 import * as scheduler from "./company/heartbeat.js";
+import { operationalCharter } from './company/operationalCharter.js';
+import * as automationRuntime from "./company/automationRuntime.js";
 import * as port from "./company/portability.js";
 import * as connectors from "./company/connectors.js";
 import * as packs from "./company/skillPacks.js";
@@ -32,6 +36,13 @@ import * as templates from "./company/templates.js";
 import { SKILL_MANIFESTS, listManifests } from "./company/skillManifests.js";
 import { dispatchAction, queueDepths, clearQueues } from "./company/dispatcher.js";
 import { memoryService } from "./memory.service.js";
+
+const nativeRuntime = () => !window.__BONZAI_COMPANY_RUNTIME__ && window.electronAPI?.companyRuntime;
+async function schedule(method, charterOrId) {
+  const remote = nativeRuntime();
+  if (remote) return remote.invoke(method === 'stop' ? 'stop' : 'start', [typeof charterOrId === 'string' ? charterOrId : charterOrId.id]);
+  return scheduler[method](charterOrId);
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Persistence — SQLite-backed via electronAPI.db.companies.* with a
@@ -69,14 +80,9 @@ async function _writeIndex(_ids) {
   }
 }
 async function _saveCharter(charter) {
-  const clean = _plain(charter);
   const api = _api();
-  if (api) {
-    try { await api.save(clean); return; }
-    catch (err) { _warnDbOnce(err); }
-  }
-  // Legacy fallback
-  await window.electronAPI?.store?.set?.(CHARTER_KEY(clean.id), clean);
+  if (!api) throw new Error('Company storage is unavailable. Restart the app before changing this company.');
+  await api.save(_plain(charter));
 }
 async function _loadCharter(id) {
   const api = _api();
@@ -88,11 +94,9 @@ async function _loadCharter(id) {
 }
 async function _deleteCharter(id) {
   const api = _api();
-  if (api) {
-    try { await api.remove(id); }
-    catch (err) { _warnDbOnce(err); }
-  }
-  // Always also clean the legacy key (no-op if missing)
+  if (!api) throw new Error('Company storage is unavailable. No company was deleted.');
+  await api.remove(id);
+  clearCompanyDrafts(id);
   await window.electronAPI?.store?.delete?.(CHARTER_KEY(id));
 }
 
@@ -123,7 +127,7 @@ export async function listCompanies() {
   const out = [];
   for (const id of ids) {
     const c = await _loadCharter(id);
-    if (c) out.push(c);
+    if (c && !c.demoRun) out.push(c);
   }
   return out;
 }
@@ -135,10 +139,11 @@ export async function getCompany(id) {
 
 /** Form a new company from a partial config. Persists + starts the heartbeat. */
 export async function formCompany(cfg) {
+  // Local teams are free: no wallet, NFT, subscription or stake check belongs here.
   // Strip Vue reactivity proxies BEFORE the data enters the engine — the
   // form passes a `reactive()` object and downstream IPC calls would
   // otherwise blow up with "could not be cloned."
-  const charter = makeCharter(_plain(cfg));
+  const charter = operationalCharter(makeCharter(_plain(cfg)));
   const v = validateCharter(charter);
   if (!v.ok) throw new Error("invalid charter: " + v.errors.join("; "));
   await _saveCharter(charter);
@@ -153,14 +158,13 @@ export async function formCompany(cfg) {
   });
   await _seedTeamMemory(charter, "formed");
   await _registerPoolModels(charter);
-  scheduler.start(charter);
+  await schedule('start', charter);
   return charter;
 }
 
 /**
  * Walk the role table and register every distinct LLM the charter
- * declares with the multi-instance pool. Also configures the pool's
- * memory budget from the charter's execution.llm.memoryBudgetGB.
+ * declares with the multi-instance pool. The device owns its memory budget.
  *
  * No-op if the renderer doesn't expose pool IPC (older build) or if
  * the charter doesn't declare any per-role llm assignments.
@@ -170,12 +174,8 @@ async function _registerPoolModels(charter) {
   // Only relevant for parallel mode — sequential / swap go through legacy
   if (charter.execution?.llm?.mode !== "parallel") return;
 
-  // Configure budget
-  try {
-    await window.electronAPI.poolConfigure({
-      memoryBudgetGB: charter.execution?.llm?.memoryBudgetGB || 22,
-    });
-  } catch {}
+  // The inference pool belongs to the device. Starting a team must not
+  // overwrite the memory budget for every other team and regular chat.
 
   // Lazy import — avoid pulling flagship.js into every code path
   const { LLM_BASE_MODELS, resolveLLM } = await import("../skills/flagship.js");
@@ -258,7 +258,7 @@ async function _seedTeamMemory(charter, reason = "charter") {
         project: charter.name,
         companionName: assignment.companion || roleKey,
         skill: roleKey,
-        text: `${roleKey} is staffed by ${assignment.companion || "an unassigned companion"}. ${def?.description || ""} Connectors: ${(assignment.connectors || []).join(", ") || "none yet"}. Skills: ${(assignment.grantedSkills || []).join(", ") || "none yet"}.`,
+        text: `${roleKey} is staffed by ${assignment.companion || "an unassigned companion"}. ${def?.description || ""} Connectors: ${(assignment.connectors || []).join(", ") || "none yet"}. All available agent workflows can be used as needed. Existing integration permissions: ${(assignment.grantedSkills || []).join(", ") || "none"}.`,
         summary: `${roleKey} role memory seed for ${charter.name}`,
         noteKind: "role_setup",
         createdAt: new Date(stamp).toISOString(),
@@ -284,7 +284,7 @@ export async function updateCompany(charter) {
   });
   await _seedTeamMemory(charter, "updated");
   await _registerPoolModels(charter);
-  scheduler.updateCharter(charter);
+  await schedule('updateCharter', charter);
   return charter;
 }
 
@@ -295,25 +295,27 @@ export async function pauseCompany(id) {
   c.status = "paused";
   c.updatedAt = Date.now();
   await _saveCharter(c);
+  await schedule('stop', id);
   await audit.append(id, { kind: "system", action: "pause", status: "executed" });
   return c;
 }
 
 /** Resume a paused company. */
 export async function resumeCompany(id) {
-  const c = await _loadCharter(id);
-  if (!c) throw new Error("not found");
+  const previous = await _loadCharter(id);
+  if (!previous) throw new Error("not found");
+  const c = operationalCharter(previous);
   c.status = "active";
   c.updatedAt = Date.now();
   await _saveCharter(c);
   await audit.append(id, { kind: "system", action: "resume", status: "executed" });
-  scheduler.start(c);
+  await schedule('start', c);
   return c;
 }
 
 /** Permanently dissolve. Wipes all per-company state. */
 export async function dissolveCompany(id) {
-  scheduler.stop(id);
+  await schedule('stop', id);
   await _deleteCharter(id);
   await audit.clear(id);
   await treasury.reset(id);
@@ -321,6 +323,7 @@ export async function dissolveCompany(id) {
   await dist.clear(id);
   await issues.clear(id);
   await goalsSvc.clear(id);
+  await automationRuntime.clear(id);
   await connectors.clear(id);
   await clearQueues(id);
   const ids = (await _readIndex()).filter((x) => x !== id);
@@ -330,14 +333,56 @@ export async function dissolveCompany(id) {
 
 /** Boot every saved company. Call once on app start. */
 export async function bootAll() {
+  if (nativeRuntime()) return nativeRuntime().invoke('boot', []);
   const list = await listCompanies();
-  for (const c of list) {
+  for (let index = 0; index < list.length; index++) {
+    let c = list[index];
+    if (c.template?.id === "hvac_residential" && c.template?.version !== "3.0-operations") {
+      c = await _upgradeHvacCharter(c);
+      list[index] = c;
+    }
     if (c.status === "active") {
+      const upgraded = operationalCharter(c);
+      if (upgraded !== c) { c = upgraded; await _saveCharter(c); list[index] = c; }
       await _registerPoolModels(c);
       scheduler.start(c);
     }
   }
   return list;
+}
+
+async function _upgradeHvacCharter(charter) {
+  const { draft } = templates.applyTemplate("hvac_residential", {
+    businessName: charter.name,
+    metro: charter.businessContext?.territory || "ses clients",
+  }, { name: charter.name, demoMode: charter.demoMode === true });
+  const roles = { ...(charter.roles || {}) };
+  for (const [roleKey, defaults] of Object.entries(draft.roles || {})) {
+    const current = roles[roleKey];
+    roles[roleKey] = current
+      ? { ...defaults, ...current, grantedSkills: [...new Set([...(current.grantedSkills || []), ...(defaults.grantedSkills || [])])] }
+      : defaults;
+  }
+  const upgraded = {
+    ...charter,
+    roles,
+    grantedSkills: [...new Set([...(charter.grantedSkills || []), ...(draft.grantedSkills || [])])],
+    skillPacks: [...new Set([...(charter.skillPacks || []), ...(draft.skillPacks || [])])],
+    initialGoals: [...new Set([...(charter.initialGoals || []), ...(draft.initialGoals || [])])],
+    rules: {
+      ...(charter.rules || {}),
+      vetoMode: { ...(charter.rules?.vetoMode || {}), ...(draft.rules?.vetoOverrides || {}) },
+    },
+    template: { ...(charter.template || {}), id: "hvac_residential", version: "3.0-operations", upgradedAt: Date.now() },
+    updatedAt: Date.now(),
+  };
+  await _saveCharter(upgraded);
+  await gmao.ensure(upgraded.id, { name: "Maintenance clients", holderName: upgraded.name });
+  await audit.append(upgraded.id, {
+    kind: "system", role: null, action: "upgradeHvacGmao", status: "executed",
+    note: "équipe HVAC mise à niveau vers les opérations maintenance et achats v3",
+  });
+  return upgraded;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -354,6 +399,14 @@ export const getTreasuryState = (id) => treasury.getState(id);
 
 export const pendingApprovals = (id) => gov.pending(id);
 
+export async function requestSmartAgentJobAction(id, action) {
+  if (!['smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings'].includes(action?.type) || !action.agentId || !action.jobId) throw new Error('Choose a smart agent and an existing job.');
+  const charter = await _loadCharter(id);
+  const result = await gov.gateAction(id, charter, _plain(action), { role: 'CEO', companion: action.agentId });
+  if (!result.queued) throw new Error(result.error || 'The approval could not be saved. No transaction was sent.');
+  return result;
+}
+
 /**
  * Approve a queued action and immediately dispatch it.
  *
@@ -364,11 +417,21 @@ export const pendingApprovals = (id) => gov.pending(id);
  * without the user having to scroll.
  */
 export async function approveAction(id, pendingId) {
+  if (nativeRuntime()) return nativeRuntime().invoke('approve', [id, pendingId]);
   const charter = await _loadCharter(id);
+  const pending = (await gov.pending(id)).find(item => item.id === pendingId);
+  if (!pending) throw new Error('This action is no longer waiting for approval.');
+  if (pending.issueId) {
+    const { resumeApprovedTask } = await import('./company/dispatcher.js');
+    return resumeApprovedTask(charter, pending);
+  }
+  if (charter.status !== 'active') throw new Error('Resume the company before approving execution.');
   const action = await gov.approve(id, pendingId);
+  if (!action) throw new Error('The approval could not be recorded. No action was executed.');
   const { resolveRoleCompanion: r } = await import("./company/charter.js");
-  const ceo = r(charter, "CEO");
-  return dispatchAction(charter, "CEO", ceo?.companion, action, { pendingId });
+  const roleKey = pending.role || 'CEO';
+  const assigned = r(charter, roleKey);
+  return dispatchAction(charter, roleKey, pending.requestedBy || assigned?.companion, action, { pendingId });
 }
 
 export const rejectAction = (id, pendingId, reason) => gov.reject(id, pendingId, reason);
@@ -392,13 +455,15 @@ export const rejectAction = (id, pendingId, reason) => gov.reject(id, pendingId,
  */
 export async function createGoal(companyId, input) {
   const clean = _plain(input);
-  const goal = await goalsSvc.create(companyId, {
+  const charter = await _loadCharter(companyId);
+  const maxAttempts = charter?.automation?.maxAttempts || 3;
+  const goalInput = {
     title: clean.title,
     rationale: clean.rationale,
     missionAlignment: clean.missionAlignment || clean.rationale,
     deadline: clean.deadline,
     createdBy: "user",
-  });
+  };
   const tasks = Array.isArray(clean.tasks) && clean.tasks.length
     ? clean.tasks
     : [{
@@ -406,25 +471,15 @@ export async function createGoal(companyId, input) {
         description: clean.rationale || clean.missionAlignment || "",
         priority: "normal",
       }];
-  const createdIssues = [];
-  // Lazy import — avoid circular reference, route via charter helper for routing.
-  const { routeGoalToRole, ROLE_LIBRARY } = await import("./company/charter.js");
-  for (const task of tasks) {
-    const taskTitle = (task.title || "").trim();
-    if (!taskTitle) continue;
-    const explicit = task.assigneeRole && ROLE_LIBRARY[task.assigneeRole] ? task.assigneeRole : null;
-    const roleKey = explicit || routeGoalToRole({ directive: taskTitle });
-    const issue = await issues.create(companyId, {
-      title: taskTitle,
-      description: task.description || "",
-      priority: task.priority || "normal",
-      assigneeRole: roleKey,
-      goalId: goal.id,
-      createdBy: "user",
-    });
-    if (issue) createdIssues.push(issue);
-  }
-  return { ...goal, createdIssues };
+  const { routeGoalToRole, ROLE_LIBRARY } = await import('./company/charter.js');
+  const taskInputs = tasks.map(task => {
+    const title = String(task.title || '').trim();
+    if (!title) throw new Error('Every task needs a title.');
+    return { title, description: task.description || '', priority: task.priority || 'normal',
+      assigneeRole: task.assigneeRole && ROLE_LIBRARY[task.assigneeRole] ? task.assigneeRole : routeGoalToRole({ directive: title, description: task.description }, charter),
+      createdBy: 'user', maxAttempts };
+  });
+  return goalsSvc.createWithTasks(companyId, goalInput, taskInputs);
 }
 
 export const listGoals = (id, filter) => goalsSvc.list(id, _plain(filter));
@@ -478,18 +533,22 @@ export const removeContent = (id, contentId) => dist.remove(id, contentId);
 // ─────────────────────────────────────────────────────────────────────────
 
 export async function tickNow(id) {
+  if (nativeRuntime()) return nativeRuntime().invoke('tickCEO', [id]);
   const c = await _loadCharter(id);
   if (!c) throw new Error("not found");
   return scheduler.manualCEOTick(c);
 }
 
 export async function tickRoleNow(id, roleKey) {
+  if (nativeRuntime()) return nativeRuntime().invoke('tickRole', [id, roleKey]);
   const c = await _loadCharter(id);
   if (!c) throw new Error("not found");
   return scheduler.manualRoleTick(c, roleKey);
 }
 
 export const getQueueDepths = (id) => queueDepths(id);
+export const getAutomationStatus = (id) => automationRuntime.status(id);
+export const getAutomationRuns = (id, limit) => automationRuntime.recent(id, limit);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Portability
@@ -509,7 +568,7 @@ export async function importCompany(bundle, opts) {
     ids.push(charter.id);
     await _writeIndex(ids);
   }
-  scheduler.start(charter);
+  // Restored companies remain paused until the owner reviews them.
   return charter;
 }
 
@@ -538,6 +597,7 @@ export async function formFromTemplate(templateId, answers, ownerOverrides = {})
     businessContext: draft.businessContext,
     teamMemory: draft.teamMemory,
     provisioning: draft.provisioning,
+    workspace: draft.workspace,
     grantedSkills: draft.grantedSkills,
     pendingConnectors: draft.pendingConnectors,
     skillPacks: draft.skillPacks,
@@ -550,7 +610,19 @@ export async function formFromTemplate(templateId, answers, ownerOverrides = {})
     vetoMode: { ..._defaultVetoMap(), ...(draft.rules?.vetoOverrides || {}) },
     demoMode: cleanOverrides.demoMode === true,
   };
-  return formCompany(cfg);
+  const company = await formCompany(cfg);
+  if (templateId === "hvac_residential") {
+    await gmao.ensure(company.id, {
+      name: cleanOverrides.contractName || "Maintenance clients",
+      marketNumber: answers?.marketNumber || null,
+      holderName: company.name,
+      emergencyPhone: answers?.emergencyPhone || null,
+      currency: "EUR",
+      vatRate: answers?.vatRate ?? 0,
+      demoData: cleanOverrides.demoMode === true,
+    });
+  }
+  return company;
 }
 
 function _defaultVetoMap() {
@@ -578,6 +650,17 @@ function _defaultVetoMap() {
     "accounting.closeBooks": VETO_MODES.APPROVE,
     "process.map": VETO_MODES.AUTO,
     "process.improve": VETO_MODES.NOTIFY,
+    "gmao.createWorkOrder": VETO_MODES.AUTO,
+    "gmao.updateStatus": VETO_MODES.NOTIFY,
+    "gmao.completeWorkOrder": VETO_MODES.APPROVE,
+    "gmao.createQuote": VETO_MODES.AUTO,
+    "gmao.updateQuote": VETO_MODES.NOTIFY,
+    "gmao.recordServiceAcceptance": VETO_MODES.APPROVE,
+    "gmao.saveInvoice": VETO_MODES.APPROVE,
+    "gmao.procurement": VETO_MODES.NOTIFY,
+    "gmao.notifyClient": VETO_MODES.NOTIFY,
+    "gmao.compliance": VETO_MODES.NOTIFY,
+    "gmao.export": VETO_MODES.AUTO,
     "spend.under.10": VETO_MODES.AUTO,
     "spend.under.50": VETO_MODES.NOTIFY,
     "spend.under.250": VETO_MODES.APPROVE,
@@ -607,6 +690,50 @@ export const removeConnector = (id, connId) => connectors.remove(id, connId);
 export const connectorHealth = (id) => connectors.healthSummary(id);
 
 // ─────────────────────────────────────────────────────────────────────────
+// HVAC GMAO — local contract, assets, maintenance, SLA and evidence
+// ─────────────────────────────────────────────────────────────────────────
+
+export const ensureGmao = (id, input) => gmao.ensure(id, _plain(input));
+export const getGmaoSnapshot = (id) => gmao.snapshot(id);
+export const saveGmaoContract = (id, input) => gmao.saveContract(id, _plain(input));
+export const saveGmaoSite = (id, input) => gmao.saveSite(id, _plain(input));
+export const saveGmaoAsset = (id, input) => gmao.saveAsset(id, _plain(input));
+export const importGmaoAssets = (id, rows) => gmao.importAssets(id, _plain(rows));
+export const saveGmaoPlan = (id, input) => gmao.savePlan(id, _plain(input));
+export const createGmaoWorkOrder = (id, input) => gmao.createWorkOrder(id, _plain(input));
+export const updateGmaoWorkOrder = (id, workOrderId, input) => gmao.updateWorkOrder(id, workOrderId, _plain(input));
+export const transitionGmaoWorkOrder = (id, workOrderId, status, input) => gmao.transitionWorkOrder(id, workOrderId, status, _plain(input));
+export const addGmaoEvent = (id, workOrderId, input) => gmao.addEvent(id, workOrderId, _plain(input));
+export const recordGmaoAttachmentSheet = (id, workOrderId, input) => gmao.recordAttachmentSheet(id, workOrderId, _plain(input));
+export const saveGmaoProcurement = (id, input) => gmao.saveProcurement(id, _plain(input));
+export const saveGmaoNotification = (id, input) => gmao.saveNotification(id, _plain(input));
+export const addGmaoDocument = (id, input) => gmao.addDocument(id, _plain(input));
+export const saveGmaoDocumentFile = (id, file, input) => gmao.saveDocumentFile(id, file, _plain(input));
+export const saveGmaoCompliance = (id, input) => gmao.saveCompliance(id, _plain(input));
+export const saveGmaoSubcontractor = (id, input) => gmao.saveSubcontractor(id, _plain(input));
+export const saveGmaoRate = (id, input) => gmao.saveRate(id, _plain(input));
+export const createGmaoQuote = (id, workOrderId, input) => gmao.createQuote(id, workOrderId, _plain(input));
+export const updateGmaoQuote = (id, quoteId, input) => gmao.updateQuote(id, quoteId, _plain(input));
+export const validateGmaoProcessStep = (id, workOrderId, input) => gmao.validateProcessStep(id, workOrderId, _plain(input));
+export const recordGmaoServiceAcceptance = (id, workOrderId, input) => gmao.recordServiceAcceptance(id, workOrderId, _plain(input));
+export const saveGmaoInvoice = (id, input) => gmao.saveInvoice(id, _plain(input));
+export const saveGmaoOnCallShift = (id, input) => gmao.saveOnCallShift(id, _plain(input));
+export const generateGmaoPreventive = (id, now) => gmao.generatePreventive(id, now);
+export const evaluateGmaoSla = (id, now) => gmao.evaluateSla(id, now);
+export const ingestGmaoDocumentFile = (id, file, input) => gmao.ingestDocumentFile(id, file, _plain(input));
+export const applyGmaoDocumentIntake = (id, intakeId, input) => gmao.applyDocumentIntake(id, intakeId, _plain(input));
+export const resolveGmaoRecommendation = (id, recommendationId, status, input) => gmao.resolveRecommendation(id, recommendationId, status, _plain(input));
+export const recommendGmaoSchedule = (id, workOrderId, candidates) => gmao.recommendSchedule(id, workOrderId, _plain(candidates));
+export const recordGmaoAssetSignal = (id, assetId, input) => gmao.recordAssetSignal(id, assetId, _plain(input));
+export const saveGmaoBillingLine = (id, input) => gmao.saveBillingLine(id, _plain(input));
+export const reconcileGmaoBilling = (id, workOrderId) => gmao.reconcileBilling(id, workOrderId);
+export const runGmaoAutomation = (id, now) => gmao.runAutomation(id, now);
+export const exportGmaoWeeklyRegister = (id, options) => gmao.exportWeeklyRegister(id, _plain(options));
+export const exportGmaoInventory = (id) => gmao.exportInventory(id);
+export const downloadGmaoCsv = gmao.downloadCsv;
+export const onGmaoChange = gmao.onChanged;
+
+// ─────────────────────────────────────────────────────────────────────────
 // Skill packs + manifests
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -630,3 +757,15 @@ export {
   validateCharter,
   makeCharter,
 };
+
+export const saveGmaoClient = (id,...args) => gmao.saveClient(id,...args.map(_plain));
+export const saveGmaoServiceContract = (id,...args) => gmao.saveServiceContract(id,...args.map(_plain));
+export const saveGmaoSupplier = (id,...args) => gmao.saveSupplier(id,...args.map(_plain));
+export const acknowledgeGmaoHandoff = (id,...args) => gmao.acknowledgeHandoff(id,...args.map(_plain));
+export const saveGmaoOutbox = (id,...args) => gmao.saveOutbox(id,...args.map(_plain));
+export const resolveGmaoOutbox = (id,...args) => gmao.resolveOutbox(id,...args.map(_plain));
+export const getGmaoDossier = (id,...args) => gmao.getDossier(id,...args.map(_plain));
+export const searchGmaoWorkOrders = (id,...args) => gmao.searchWorkOrders(id,...args.map(_plain));
+export const generateGmaoDocument = (id,...args) => gmao.generateDocument(id,...args.map(_plain));
+export const sendGmaoOutbox = (id,...args) => gmao.sendOutbox(id,...args.map(_plain));
+export const checkGmaoDelivery = (id,...args) => gmao.checkDelivery(id,...args.map(_plain));

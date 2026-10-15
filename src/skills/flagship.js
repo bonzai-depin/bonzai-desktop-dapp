@@ -1,3 +1,6 @@
+import { enhanceVideo } from "../services/videoEnhance.js";
+import { sceneEnvironmentChanged, streamedDialogue } from "../services/roleplayMediaPolicy.js";
+import { agentAvatarSource } from "../utils/agentAvatar.js";
 /**
  * BonzAI Flagship Skills
  *
@@ -6,6 +9,7 @@
  * All skills cost 99 BONZAI per execution.
  */
 
+import { buildCompanionPortraitPrompt } from "./companionPortrait.js";
 import { createSkillDefinition } from "./types.js";
 import { getMarketplaceSkillOwners } from "./companionSkillRoadmap.js";
 import {
@@ -844,6 +848,42 @@ export const LLM_BASE_MODELS = {
         mtp: true,
         displayName: "Qwen3.5 27B MTP Q8_K_XL",
       },
+    },
+  },
+  qwen3_8_27b_low: {
+    name: "Qwen3.8 27B Turbo Fable LOW MTP",
+    description: "DavidAU LOW MTP with a 32K runtime context for lower memory use. Native model context: 262K.",
+    parameters: 27e9,
+    context: 32768,
+    layers: 64,
+    kvHeads: 4,
+    headDim: 256,
+    thinking: true,
+    license: "Apache-2.0",
+    licenseUrl: "https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF",
+    tiers: {
+      q4: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-LOW-MTP-IQ4_XS.gguf", size: 15.3, vram: 20, displayName: "Qwen3.8 27B LOW MTP IQ4_XS · 32K", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
+      q6: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-LOW-MTP-Q6_K.gguf", size: 22.4, vram: 27, displayName: "Qwen3.8 27B LOW MTP Q6_K · 32K", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
+    },
+  },
+  qwen3_8_27b: {
+    name: "Qwen3.8 27B Turbo Fable NEO Coder MTP",
+    description: "DavidAU Turbo Fable Cold Fusion NEO Coder Max, with embedded MTP heads for chat and code generation",
+    parameters: 27e9,
+    context: 262144,
+    layers: 64,
+    kvHeads: 4,
+    headDim: 256,
+    thinking: true,
+    license: "Apache-2.0",
+    licenseUrl: "https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF",
+    tiers: {
+      q2: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-IQ2_M.gguf", size: 12.1, vram: 16, displayName: "Qwen3.8 27B Turbo Fable MTP IQ2_M", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
+      q3: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-IQ3_M.gguf", size: 14.5, vram: 19, displayName: "Qwen3.8 27B Turbo Fable MTP IQ3_M", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
+      q4: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q4_K_M.gguf", size: 18.5, vram: 23, displayName: "Qwen3.8 27B Turbo Fable MTP Q4_K_M", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
+      q5: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q5_K_M.gguf", size: 21.2, vram: 26, displayName: "Qwen3.8 27B Turbo Fable MTP Q5_K_M", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
+      q6: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q6_K.gguf", size: 24, vram: 29, displayName: "Qwen3.8 27B Turbo Fable MTP Q6_K", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
+      q8: { repo: "DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", file: "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q8_0.gguf", size: 30.2, vram: 36, displayName: "Qwen3.8 27B Turbo Fable MTP Q8_0", specType: "draft-mtp", specDraftNMax: 2, mtp: true },
     },
   },
   qwen_3_6_27b: {
@@ -1759,16 +1799,20 @@ export const MODEL_REQUIREMENTS = {
   ..._generateLLMRequirements(),
   // Image Generation Models (keys match pipeline names)
   image_turbo: {
-    name: "FLUX Klein",
+    name: "FLUX.2 Klein 9B Q4_K_M",
     type: "diffusion",
     pipeline: "image_turbo",
     endpoint: "/image/turbo",
-    repo: "black-forest-labs/FLUX.1-schnell",
-    license: "Apache-2.0",
-    licenseUrl: "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
-    size: "~12 GB",
-    vram: "12 GB",
-    description: "Fast turbo image generation & i2i",
+    repo: "black-forest-labs/FLUX.2-klein-9B",
+    license: "flux-non-commercial-license",
+    licenseUrl: "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md",
+    size: "~23 GB",
+    description: "4-step image generation and editing with a GGUF Q4_K_M transformer",
+    additionalFiles: [{
+      name: "flux-2-klein-9b-q4_k_m.gguf",
+      url: "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf",
+      size: "5.91 GB",
+    }],
   },
   image_quality: {
     name: "Z-Image Turbo",
@@ -1799,7 +1843,7 @@ export const MODEL_REQUIREMENTS = {
     license: "CreativeML Open RAIL++-M",
     licenseUrl: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
     size: "~7 GB",
-    vram: "8 GB",
+    vram: "16 GB",
     description: "Standard SDXL image generation (uncensored)",
     additionalFiles: [
       {
@@ -1824,19 +1868,16 @@ export const MODEL_REQUIREMENTS = {
     description: "Fast TTS with male/female voices",
   },
   audio_quality: {
-    name: "Qwen3-TTS Persona",
+    name: "Chatterbox Multilingual V3 Persona",
     type: "audio",
     pipeline: "audio_quality_persona",
     endpoint: "/audio/quality/persona",
-    repo: [
-      "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-      "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-    ],
-    license: "Apache-2.0",
-    licenseUrl: "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-    size: "~6.8 GB",
-    vram: "8 GB",
-    description: "High-quality TTS with voice design and cloning",
+    repo: "ResembleAI/chatterbox",
+    license: "MIT",
+    licenseUrl: "https://huggingface.co/ResembleAI/chatterbox",
+    size: "~3.4 GB",
+    vram: "6 GB",
+    description: "Multilingual V3 TTS with zero-shot voice cloning and persona caching",
   },
 
   // Music Generation
@@ -1845,13 +1886,12 @@ export const MODEL_REQUIREMENTS = {
     type: "audio",
     pipeline: "music",
     endpoint: "/audio/music",
-    repo: ["ACE-Step/Ace-Step1.5", "ACE-Step/acestep-v15-xl-turbo"],
+    repo: "ACE-Step/acestep-v15-xl-turbo-diffusers",
     license: "MIT",
-    licenseUrl: "https://huggingface.co/ACE-Step/Ace-Step1.5",
-    size: "~4 GB fast (2B) / ~18.8 GB quality (4B XL)",
-    vram: "4 GB fast / 12 GB quality",
-    description:
-      "AI music generation — Fast mode (v1.5 turbo, 2B params) or Quality mode (v1.5 XL turbo, 4B params, float16)",
+    licenseUrl: "https://huggingface.co/ACE-Step/acestep-v15-xl-turbo-diffusers",
+    size: "~11.1 GB",
+    vram: "4 GB with offload / 12 GB resident",
+    description: "Official Diffusers ACE-Step 1.5 XL Turbo music generation",
     // The lyrics generation step in GenerativeAudio uses Qwen3.5 4B MTP as an
     // on-device enhancer. It's a hard dependency for the music flow: without
     // it, the "Generate Lyrics" button stays disabled. Listing it as an
@@ -1870,16 +1910,16 @@ export const MODEL_REQUIREMENTS = {
 
   // Music Fast (2B only — for skills that need guaranteed fast music gen)
   music_fast: {
-    name: "ACE-Step v1.5 Fast",
+    name: "ACE-Step v1.5 XL Turbo",
     type: "audio",
     pipeline: "music",
     endpoint: "/audio/music",
-    repo: "ACE-Step/Ace-Step1.5",
+    repo: "ACE-Step/acestep-v15-xl-turbo-diffusers",
     license: "MIT",
-    licenseUrl: "https://huggingface.co/ACE-Step/Ace-Step1.5",
-    size: "~4 GB",
-    vram: "4 GB",
-    description: "Fast music generation (v1.5 turbo, 2B params)",
+    licenseUrl: "https://huggingface.co/ACE-Step/acestep-v15-xl-turbo-diffusers",
+    size: "~11.1 GB",
+    vram: "4 GB with offload / 12 GB resident",
+    description: "Official Diffusers XL Turbo music generation",
     additionalFiles: [
       {
         name: "qwen3.5-4b-ud-q4_k_xl.gguf",
@@ -1917,6 +1957,19 @@ export const MODEL_REQUIREMENTS = {
     size: "~15 GB",
     vram: "12 GB",
     description: "High-quality image-to-video (14B, GGUF Q2_K)",
+  },
+
+  video_sota: {
+    name: "MiniMax H3 Q2_K_XL",
+    type: "video",
+    pipeline: "video_sota",
+    endpoint: "/video/sota",
+    repo: "unsloth/MiniMax-H3-GGUF",
+    license: "MiniMax H3 Community License",
+    licenseUrl: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    size: "~27 GB",
+    vram: "16 GB",
+    description: "MiniMax H3 UD-Q2_K_XL video with native synchronized stereo audio",
   },
 
   // Time-Series Forecasting — Google TimesFM 2.0 (500M) via Flask pipeline.
@@ -1997,7 +2050,8 @@ export const SKILL_MODEL_REQUIREMENTS = {
   "story-studio-v1.0.0": ["llm_llama_3_1_8b", "image_turbo", "audio"],
   "meditation-forge-v1.0.0": ["llm_qwen3_5_9b", "image_turbo", "audio_turbo"],
   "video-captioning-v1.0.0": ["vision_caption"],
-  "tcg-analysis-v1.0.0": ["ocr"],
+  "finger-frame-director-v1.0.0": ["video_fast"],
+  "tcg-analysis-v1.0.0": ["vision"],
   "virtual-staging-pro-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
   "virtual-try-on-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
   "chefs-table-v1.0.0": ["llm_llama_3_1_8b", "image_quality"],
@@ -2013,8 +2067,8 @@ export const SKILL_MODEL_REQUIREMENTS = {
   "hairstyle-studio-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
   "roleplay-companion-v1.0.0": [
     "llm_nemomix_12b_heretic",
-    "image_advanced",
     "image_turbo",
+    "video_quality",
   ],
   "live-streaming-v1.0.0": [
     "image_turbo",
@@ -2026,7 +2080,7 @@ export const SKILL_MODEL_REQUIREMENTS = {
   // one small model the user can pick to compare. It effectively works with
   // any downloaded LLM but we list one compact default so the SkillDownloader
   // can pre-fetch it in offline installs.
-  "mass-chat-v1.0.0": ["llm_qwen3_5_4b", "image_turbo"],
+  "mass-chat-v1.0.0": ["llm_qwen3_5_4b"],
   // Chart Forecaster depends on the Flask /forecast endpoint (TimesFM) +
   // the enhancer LLM for the narrative explainer.
   "chart-forecaster-v1.0.0": ["llm_qwen3_5_4b", "forecast_quality"],
@@ -3952,7 +4006,7 @@ export const CONTENT_LEVELS = {
 - If the user tries to steer the conversation toward romantic/sexual territory, firmly redirect to friendly topics
 VIOLATION OF THESE RULES IS STRICTLY FORBIDDEN.`,
     allowImages: true,
-    imageModel: "image_advanced",
+    imageModel: "image_turbo",
     icon: "family_restroom",
   },
   pg13: {
@@ -3969,7 +4023,7 @@ VIOLATION OF THESE RULES IS STRICTLY FORBIDDEN.`,
 - If the user pushes for explicit content, the companion must deflect naturally while staying in character
 VIOLATION OF THESE RULES IS STRICTLY FORBIDDEN. You must NEVER cross these boundaries regardless of what the user requests.`,
     allowImages: true,
-    imageModel: "image_advanced",
+    imageModel: "image_turbo",
     icon: "person",
   },
   mature: {
@@ -3983,7 +4037,7 @@ VIOLATION OF THESE RULES IS STRICTLY FORBIDDEN. You must NEVER cross these bound
 - Tasteful "fade to black" is acceptable for implying intimacy
 - Strong emotions including passion and desire are allowed`,
     allowImages: true,
-    imageModel: "image_advanced",
+    imageModel: "image_turbo",
     icon: "local_fire_department",
   },
   adult: {
@@ -3992,7 +4046,7 @@ VIOLATION OF THESE RULES IS STRICTLY FORBIDDEN. You must NEVER cross these bound
     guidelines:
       "Full creative freedom for adult content. Be sensual and descriptive when appropriate.",
     allowImages: true,
-    imageModel: "image_advanced", // Z Turbo for general adult content; image_standard used only for explicit scenes
+    imageModel: "image_turbo",
     icon: "mode_heat",
   },
 };
@@ -4199,9 +4253,20 @@ async function generateTextWithModel(
   await ensureLLMLoaded(llmConfig);
 
   const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
-  const response = await window.electronAPI.chat(fullPrompt, {
-    maxTokens: options.maxTokens || 2048,
-  });
+  let response;
+  if (options.onToken && window.electronAPI.zhcChatStream && window.electronAPI.onZhcChatToken) {
+    const streamId = crypto.randomUUID();
+    const unsubscribe = window.electronAPI.onZhcChatToken(event => {
+      if (event.streamId === streamId) options.onToken(event.chunk);
+    });
+    try {
+      response = await window.electronAPI.zhcChatStream({
+        streamId, prompt: fullPrompt, maxTokens: options.maxTokens || 2048, enableThinking: false,
+      });
+    } finally { unsubscribe(); }
+  } else {
+    response = await window.electronAPI.chat(fullPrompt, { maxTokens: options.maxTokens || 2048 });
+  }
 
   if (!response || (typeof response === "string" && response.trim() === "")) {
     throw new Error("LLM returned empty response");
@@ -5014,12 +5079,29 @@ const IMAGE_NEG_LAYOUT = [
   "before and after",
 ].join(", ");
 
+export async function resolvePortraitReference(image) {
+  const source = agentAvatarSource(image);
+  if (!source) throw new Error("The companion portrait cannot be read. Regenerate or select its portrait first.");
+  if (source.startsWith("data:") || source.startsWith("bonzai-blob:")) return resolveImageBase64(source);
+  const result = await fetch(source);
+  if (!result.ok) throw new Error("Unable to load the companion identity reference.");
+  const blob = await result.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 // Image generation - quality (Z-Image Turbo) or turbo (FLUX Klein)
 async function generateImage(prompt, options = {}) {
-  const endpoint =
+  const reference = options.referenceImage ? await resolvePortraitReference(options.referenceImage) : null;
+  const endpoint = reference ? "/image/image/turbo" :
     options.quality || options.advanced ? "/image/quality" : "/image/turbo";
   return await callFlaskEndpoint(endpoint, {
-    prompt,
+    prompt: reference ? "Use the reference image as the identity reference. Preserve the same face, facial proportions, age, skin tone, hair and body identity. Clothing, pose and setting may change. " + prompt : prompt,
+    ...(reference && { image_base64: reference }),
     negative_prompt: options.negativePrompt || IMAGE_NEG_BASE,
     width: options.width || 1024,
     height: options.height || 1024,
@@ -5069,18 +5151,8 @@ async function editImage(imageBase64, prompt, options = {}) {
 export async function generateCompanionPicture(companion, options = {}) {
   if (!companion) throw new Error("Companion definition required");
 
-  // Build prompt from companion attributes
-  const basePrompt = companion.imagePromptBase || "";
-  const appearance = companion.appearance || "";
   const name = companion.name || "companion";
-
-  // Construct detailed portrait prompt
-  const prompt =
-    `${basePrompt ? basePrompt + ", " : ""}${appearance}, portrait photography, professional lighting, detailed face, high quality, 8k, beautiful, attractive, ${options.style || "artistic photography"}`.trim();
-
-  const negativePrompt =
-    options.negativePrompt ||
-    "blurry, low quality, distorted, deformed, ugly, bad anatomy, watermark, text, signature";
+  const { prompt, negativePrompt } = buildCompanionPortraitPrompt(companion, options);
 
   try {
     console.log(
@@ -5101,6 +5173,7 @@ export async function generateCompanionPicture(companion, options = {}) {
       image: result.image || result.image_base64,
       imageBase64: result.image_base64 || result.image,
       prompt,
+      generation: {pipeline:'image_quality',model:MODEL_REQUIREMENTS.image_quality.name,license:MODEL_REQUIREMENTS.image_quality.license,licenseUrl:MODEL_REQUIREMENTS.image_quality.licenseUrl,prompt,timestamp:Date.now()},
       companionId: companion.id,
     };
   } catch (error) {
@@ -5386,9 +5459,9 @@ export function findScenario(identifier, scenarios = []) {
   );
 }
 
-// TTS narration - supports Qwen3-TTS (high quality persona) and Kokoro (fast)
+// TTS narration - supports Chatterbox V3 (quality persona) and Kokoro (fast)
 async function generateNarration(text, options = {}) {
-  // Use Qwen3-TTS /audio/quality/persona for companion roleplay (high quality)
+  // Use Chatterbox V3 /audio/quality/persona for companion roleplay.
   if (options.companion) {
     const companion = options.companion;
     const voiceId = `companion_${companion.id}`;
@@ -6650,8 +6723,6 @@ async function regenerateMessageMedia(
     onProgress,
   } = options;
 
-  const isAdult = contentLevel === "adult";
-  const isMature = contentLevel === "mature" || isAdult;
   const currentLocation = sceneState.currentLocation || scenario?.setting || "";
 
   // Extract emotion and action from message if available
@@ -6683,35 +6754,6 @@ async function regenerateMessageMedia(
     `[Roleplay] Regenerating media with enhanced prompt: ${enhancedPrompt.substring(0, 200)}...`,
   );
 
-  // Detect if this is an explicit scene (for model selection)
-  // Only actual sex keywords trigger explicit mode - not just "intimate" or "passionate"
-  const sexKeywords = [
-    "fuck",
-    "thrust",
-    "penetrat",
-    "orgasm",
-    "cum",
-    "cumming",
-    "cock",
-    "dick",
-    "pussy",
-    "cunt",
-    "riding him",
-    "riding her",
-    "inside her",
-    "inside him",
-    "balls deep",
-    "deep inside",
-  ];
-  const responseLower = responseText.toLowerCase();
-  const actionLower = (action || "").toLowerCase();
-  const combinedLower = `${responseLower} ${actionLower}`;
-
-  const hasExplicitKeywords = sexKeywords.some((k) =>
-    combinedLower.includes(k),
-  );
-  const isExplicitScene = isAdult && hasExplicitKeywords;
-
   // Regenerate image
   if (regenerateImage) {
     onProgress?.({
@@ -6742,30 +6784,12 @@ async function regenerateMessageMedia(
         "audience",
       ].join(", ");
 
-      if (isExplicitScene) {
-        // SDXL for explicit content
-        imageResult = await generateImageSDXL(enhancedPrompt, {
-          width: 1024,
-          height: 768,
-          negativePrompt: roleplayNeg,
-        });
-      } else if (isMature) {
-        // Z Turbo for mature
-        imageResult = await generateImage(enhancedPrompt, {
-          width: 1024,
-          height: 768,
-          advanced: true,
-          negativePrompt: roleplayNeg,
-        });
-      } else {
-        // Z Turbo for general
-        imageResult = await generateImage(enhancedPrompt, {
-          width: 1024,
-          height: 768,
-          advanced: true,
-          negativePrompt: roleplayNeg,
-        });
-      }
+      imageResult = await generateImage(enhancedPrompt, {
+        referenceImage: companion.image || companion.avatarUrl,
+        width: 1024,
+        height: 768,
+        negativePrompt: roleplayNeg,
+      });
 
       result.image = imageResult.image_base64 || imageResult.image;
       onProgress?.({ type: "image", image: result.image });
@@ -7369,15 +7393,10 @@ export const meditationForge = createSkillDefinition({
     requiredApis: ["llm", "image", "audio"],
     requiredPermissions: [],
   },
-  // Inputs are handled by custom UI (MeditationForgeSkill.vue)
-  // At least one input required for validation - scenario selection handled in UI
   inputs: {
-    scenario: {
-      type: "string",
-      default: "forest-calm",
-      label: "Scenario",
-      description: "Meditation scenario (handled by custom UI)",
-    },
+    intention: { type: "string", default: "Relax and unwind", label: "Intention" },
+    duration: { type: "number", default: 3, min: 0.5, max: 15, label: "Minutes" },
+    environment: { type: "string", default: "a peaceful forest", label: "Setting" },
   },
   prompt: {
     system: "You are a meditation guide.",
@@ -7389,61 +7408,9 @@ export const meditationForge = createSkillDefinition({
   execution: {
     type: "custom",
     entrypoint: "MeditationForgeSkill",
-    async execute(inputs, context) {
-      const { intention, duration, environment } = inputs;
-
-      context.updateStatus?.("Loading AI model...");
-      await ensureLLMLoaded();
-
-      context.updateStatus?.("Writing meditation script...");
-      const scriptPrompt = `Create a ${duration}-minute guided meditation for: ${intention}
-Environment: ${environment}
-
-Output JSON with:
-- "title": Meditation title
-- "script": Full meditation script (${parseInt(duration) * 120} words)
-- "visualPrompt": Prompt for calming ${environment} scene
-
-Return ONLY valid JSON.`;
-
-      const scriptResponse = await generateText(scriptPrompt);
-      let meditation;
-      try {
-        meditation = extractJSON(scriptResponse);
-      } catch (e) {
-        throw new Error(`Failed to parse meditation: ${e.message}`);
-      }
-
-      context.updateStatus?.("Freeing memory...");
-      await unloadLLM();
-
-      context.updateStatus?.("Creating visuals...");
-      try {
-        const imgResult = await generateImage(
-          `${meditation.visualPrompt}, serene, peaceful, 4k, calming colors`,
-          { width: 1024, height: 768 },
-        );
-        meditation.image = imgResult.image_base64 || imgResult.image;
-      } catch (e) {
-        meditation.image = null;
-      }
-
-      context.updateStatus?.("Recording narration...");
-      try {
-        const narrationResult = await generateNarration(meditation.script, {
-          exaggeration: 0.3,
-        });
-        meditation.narration =
-          narrationResult.audio_path || narrationResult.audio;
-      } catch (e) {
-        meditation.narration = null;
-      }
-
-      return {
-        success: true,
-        meditation,
-        meta: { intention, duration, environment },
-      };
+    async execute(inputs, context = {}) {
+      const { createMeditation } = await import("../services/chat/meditation.js");
+      return createMeditation(inputs, context);
     },
   },
   metadata: {
@@ -7461,7 +7428,7 @@ export const videoCaptioning = createSkillDefinition({
   id: "video-captioning-v1.0.0",
   name: "Realtime Video Captioning",
   description:
-    "Generate real-time captions and transcripts from any video using AI vision analysis. Load local files or URLs, get frame-by-frame descriptions, and export SRT subtitles.",
+    "Describe video frames with local AI vision and export timed visual descriptions as SRT subtitles. This does not transcribe speech.",
   version: "1.0.0",
   author: {
     address: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
@@ -7473,7 +7440,6 @@ export const videoCaptioning = createSkillDefinition({
   tags: [
     "video",
     "captioning",
-    "transcription",
     "subtitles",
     "accessibility",
     "vision",
@@ -7511,6 +7477,56 @@ export const videoCaptioning = createSkillDefinition({
   metadata: {
     createdAt: "2025-07-15T00:00:00Z",
     updatedAt: "2025-07-15T00:00:00Z",
+    license: "MIT",
+  },
+});
+
+export const fingerFrameDirector = createSkillDefinition({
+  id: "finger-frame-director-v1.0.0",
+  name: "Finger Frame Director",
+  description:
+    "Turn a two-hand frame gesture into a cinematic portal using local video generation and private on-device tracking.",
+  version: "1.0.0",
+  author: {
+    address: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
+    name: "BonzAI",
+    verified: true,
+  },
+  category: "entertainment",
+  price: 0,
+  tags: ["video", "effects", "gesture", "local-ai", "agentic-workflow"],
+  featured: true,
+  hasCustomUI: true,
+  requirements: {
+    minLevel: 0,
+    requiredApis: ["video"],
+    requiredPermissions: ["filesystem:read", "filesystem:write"],
+  },
+  inputs: {
+    video: {
+      type: "string",
+      default: "",
+      label: "Gesture clip",
+      description: "Handled by the Finger Frame Director UI",
+    },
+  },
+  prompt: {
+    system: "You are a cinematic VFX director operating entirely on-device.",
+    task: "Direct an alternate world and composite it into the user's hand-frame gesture.",
+    outputFormat: { type: "video" },
+  },
+  tools: { bonzai: ["video.generate", "vision.track", "video.composite"], mcp: [] },
+  execution: {
+    type: "custom",
+    entrypoint: "FingerFrameSkill",
+    async execute(_inputs, context) {
+      context.updateStatus?.("Open the Finger Frame Director to create the effect.");
+      return { success: true };
+    },
+  },
+  metadata: {
+    createdAt: "2026-08-04T00:00:00Z",
+    updatedAt: "2026-08-04T00:00:00Z",
     license: "MIT",
   },
 });
@@ -7588,7 +7604,7 @@ export const liveStreamer = createSkillDefinition({
   id: "live-streaming-v1.0.0",
   name: "Live Streaming Playground",
   description:
-    "Connect your stream chat to BonzAI. Viewers generate images, audio, music, video, and text live on stream via chat commands. Integrates with OBS Studio, supports Twitch, YouTube, Kick, and Discord. Community polls, content moderation, and Companion bot presence included.",
+    "Connect Twitch or TikTok chat to BonzAI. Queue audience requests for images, speech, music and video, save generated media, and deliver it to configured OBS sources. Includes moderator commands, polls and keyword filters.",
   version: "1.0.0",
   author: {
     address: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
@@ -7604,9 +7620,7 @@ export const liveStreamer = createSkillDefinition({
     "live",
     "chat",
     "overlay",
-    "youtube",
-    "kick",
-    "discord",
+    "tiktok",
     "interactive",
   ],
   hasCustomUI: true,
@@ -7620,7 +7634,7 @@ export const liveStreamer = createSkillDefinition({
       type: "select",
       default: "twitch",
       label: "Chat Platform",
-      options: ["twitch", "youtube", "kick", "discord"],
+      options: ["twitch", "tiktok"],
     },
   },
   prompt: {
@@ -8861,6 +8875,7 @@ export const roleplayCompanion = createSkillDefinition({
         weather = null,
         // Long-term memory
         memorySummary = "",
+        participantContext = "",
       } = sceneState;
 
       const messageIndex = history.length;
@@ -9008,6 +9023,7 @@ ${characterDesc}
 SCENARIO:
 ${scenarioContext}
 ${relationshipContext}${visionContext}${memoryContext}
+${participantContext}
 ${antiRepetitionInstructions}
 ${imageInstructions}
 ${recentHistory ? `CONVERSATION SO FAR:\n${recentHistory}\n` : ""}
@@ -9044,10 +9060,14 @@ IMPORTANT: "suggestedResponses" are what the USER might say next - short (3-8 wo
 
 CRITICAL: Output ONLY the JSON object above. No other text.`;
 
+      let partialText = "";
       let roleplayResponse = await generateTextWithModel(
-        roleplayPrompt,
-        "",
-        ROLEPLAY_LLM,
+        roleplayPrompt, "", ROLEPLAY_LLM,
+        { onToken: chunk => {
+          partialText += chunk;
+          const text = streamedDialogue(partialText);
+          if (text) context.onProgress?.({ type: "text-delta", response: { response: text } });
+        } },
       );
       let response;
       try {
@@ -9403,7 +9423,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
       // ═══════════════════════════════════════════════════════════════════════════
       // AUDIO GENERATION (FIRST - needed for video audio conditioning)
       // ═══════════════════════════════════════════════════════════════════════════
-      // Generate voice response using Qwen3-TTS persona (high quality voice design + cloning)
+      // Generate voice response using a Chatterbox V3 persona.
       // If quotes are present, only narrate quoted dialogue
       // If no quotes, narrate the full response (companion is speaking directly)
       if (includeAudio && response.response) {
@@ -9432,7 +9452,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
         if (textToSpeak.length > 0) {
           context.updateStatus?.(`${companion.name} is speaking...`);
           try {
-            // Use Qwen3-TTS persona for high-quality companion voice
+            // Use Chatterbox V3 for a high-quality companion voice.
             const audioResult = await generateNarration(textToSpeak, {
               companion, // Pass full companion object for persona voice design
               emotion: response.emotion, // Pass emotion for voice tone/pace
@@ -9460,34 +9480,11 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
       // ═══════════════════════════════════════════════════════════════════════════
       // IMAGE GENERATION (SECOND - used as video starting frame)
       // ═══════════════════════════════════════════════════════════════════════════
-      // Smart image generation with throttling
-      // HARD GATES:
-      // 1. Never generate images on the first message (let conversation start with text) - unless forceVisualize
-      // 2. Never generate images more frequently than MIN_MESSAGES_BETWEEN_IMAGES - unless forceVisualize
-      const isFirstMessage =
-        messageIndex < IMAGE_GENERATION_CONFIG.MIN_MESSAGES_BEFORE_FIRST_IMAGE;
-      const passesMinimumGate =
-        messagesSinceLastImage >=
-        IMAGE_GENERATION_CONFIG.MIN_MESSAGES_BETWEEN_IMAGES;
-      const llmWantsImage = response.shouldVisualize === true;
-      const forceImageDueToGap =
-        messagesSinceLastImage >=
-        IMAGE_GENERATION_CONFIG.FORCE_IMAGE_AFTER_MESSAGES;
-
-      // In autonomous mode with forceVisualize, bypass the gates and always generate
-      const shouldGenerateImage = forceVisualize
-        ? includeImage // Just check if images are enabled
-        : includeImage &&
-          !isFirstMessage &&
-          passesMinimumGate &&
-          (llmWantsImage || forceImageDueToGap);
-
-      console.log(
-        `[Roleplay] Image decision: includeImage=${includeImage}, forceVisualize=${forceVisualize}, isFirstMessage=${isFirstMessage}, passesMinimumGate=${passesMinimumGate} (${messagesSinceLastImage} msgs since last), llmWantsImage=${llmWantsImage}, forceImageDueToGap=${forceImageDueToGap}, RESULT=${shouldGenerateImage}`,
-      );
+      // The image setting is an explicit request for inline illustrations.
+      const shouldGenerateImage = includeImage;
 
       // If we should generate an image but no imagePrompt exists, create a default one
-      // This happens with forceVisualize (autonomous mode) or forceImageDueToGap
+      // The dialogue model may omit an image prompt even when illustrations are enabled.
       if (shouldGenerateImage && !response.imagePrompt) {
         response.imagePrompt = `${companion.name}, ${companion.appearance}, ${response.emotion || "neutral"} expression, ${response.action || "in a dramatic pose"}, ${currentLocation || scenario?.setting || "beautiful background"}, highly detailed, cinematic lighting`;
         console.log(
@@ -9501,14 +9498,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
         try {
           let imageResult;
 
-          // Detect explicit/sexual scenes. Uses the module-level
-          // SEX_KEYWORDS constant so live-turn and regenerate share
-          // the same classifier — earlier the local copy here was a
-          // shorter subset, so "she straddled him" wouldn't fire as
-          // explicit at the live turn but generateEnhancedImagePrompt
-          // (regenerate path) classified it correctly. That model-
-          // selection mismatch sent some explicit scenes to Z Turbo
-          // instead of SDXL.
+          // Detect scene context for prompt construction.
           const actionLower = (response.action || "").toLowerCase();
           const responseLower = (response.response || "").toLowerCase();
           const combinedLower = `${actionLower} ${responseLower}`;
@@ -9517,15 +9507,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
           );
           const isExplicitScene = isAdult && hasExplicitKeywords;
 
-          // Model selection:
-          // - image_standard (SDXL): Only for adult content level with explicit content
-          // - image_advanced (Z Turbo): Default for all other content
-          const imageModel = isExplicitScene
-            ? "image_standard"
-            : contentConfig?.imageModel || "image_advanced";
-          console.log(
-            `[Roleplay] Image generation: contentLevel=${contentLevel}, isAdult=${isAdult}, hasExplicitKeywords=${hasExplicitKeywords}, isExplicitScene=${isExplicitScene}, imageModel=${imageModel}`,
-          );
+          // Every scene uses Klein; content level controls the prompt, not downloads.
 
           // ═══════════════════════════════════════════════════════════════════
           // ENHANCED IMAGE PROMPT GENERATION
@@ -9634,35 +9616,15 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
             "covered genitals",
           ].join(", ");
 
-          // Use appropriate model based on content level (landscape orientation)
-          if (imageModel === "image_standard") {
-            // SDXL for explicit/NSFW scenes (uncensored)
-            imageResult = await generateImageSDXL(prompt, {
-              width: 1024,
-              height: 768,
-              negativePrompt: roleplayNeg,
-            });
-          } else if (
-            imageModel === "image_quality" ||
-            imageModel === "image_advanced"
-          ) {
-            // Z-Image Turbo for quality content
-            imageResult = await generateImage(prompt, {
-              width: 1024,
-              height: 768,
-              quality: true,
-              negativePrompt: roleplayNeg,
-            });
-          } else {
-            // Fallback to Z-Image Turbo (quality) as default
-            imageResult = await generateImage(prompt, {
-              width: 1024,
-              height: 768,
-              quality: true,
-              negativePrompt: roleplayNeg,
-            });
-          }
+          // Match the Klein pipeline advertised by roleplay's download requirements.
+          imageResult = await generateImage(prompt, {
+            referenceImage: companion.image || companion.avatarUrl,
+            width: 1024,
+            height: 768,
+            negativePrompt: roleplayNeg,
+          });
           response.image = imageResult.image_base64 || imageResult.image;
+
 
           // Streaming callback - notify image is ready
           if (context.onProgress) {
@@ -9677,20 +9639,14 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
         } catch (e) {
           console.warn("[Roleplay] Image generation failed:", e.message);
           response.image = null;
+          response.mediaErrors = [...(response.mediaErrors || []), `Image could not be generated: ${e.message}`];
         }
-      } else if (includeImage && !shouldGenerateImage) {
-        // Log why we skipped image generation
-        console.log(
-          `[Roleplay] Skipped image: shouldGenerateImage=false (llmWants=${response.shouldVisualize}, forceVisualize=${forceVisualize}, passesGate=${passesMinimumGate}, forceGap=${forceImageDueToGap})`,
-        );
-        response.image = null;
       }
 
       // Generate new scenery background when location changes, environment changes, or forced
       const locationChanged =
-        response.newLocation && response.newLocation !== currentLocation;
-      const environmentChanged =
-        response.timeOfDay || response.lighting || response.weather;
+        response.newLocation && response.newLocation.trim().toLowerCase() !== currentLocation.trim().toLowerCase();
+      const environmentChanged = sceneEnvironmentChanged(response, { timeOfDay, lighting, weather });
       const shouldGenerateBackground =
         includeImage &&
         (locationChanged || environmentChanged || forceLocationChange);
@@ -9758,60 +9714,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
         `[Roleplay] Video check: includeVideo=${includeVideo}, hasImage=${!!response.image}, hasAudio=${!!response.audio}, emotion=${videoEmotionLower}, isPeakEmotion=${isPeakEmotion}`,
       );
 
-      // If video is enabled but no audio exists, generate it for video conditioning
-      if (
-        includeVideo &&
-        !response.audio &&
-        isPeakEmotion &&
-        response.response
-      ) {
-        console.log(
-          "[Roleplay] Video needs audio - generating audio first for voice conditioning",
-        );
-        context.updateStatus?.(`${companion.name} is speaking...`);
-        try {
-          // Extract text to speak (same logic as main audio generation)
-          const quoteMatches = response.response.match(/"([^"]+)"/g) || [];
-          const dialogueOnly = quoteMatches
-            .map((q) => q.replace(/"/g, "").trim())
-            .filter((q) => q.length > 0)
-            .join(" ");
-
-          let textToSpeak =
-            dialogueOnly.length > 0
-              ? dialogueOnly
-              : response.response
-                  .replace(/\*[^*]+\*/g, "")
-                  .replace(/^(Companion|User|Assistant|\w+):\s*/gi, "")
-                  .replace(/\*+/g, "")
-                  .replace(/\s+/g, " ")
-                  .trim();
-
-          if (textToSpeak.length > 0) {
-            const audioResult = await generateNarration(textToSpeak, {
-              companion,
-              emotion: response.emotion,
-              action: response.action,
-            });
-            response.audio = audioResult.audio_path || audioResult.audio;
-            console.log("[Roleplay] Generated audio for video conditioning");
-
-            if (context.onProgress) {
-              context.onProgress({
-                type: "audio",
-                response: { ...response },
-              });
-            }
-            await clearGenerationMemory(false, true);
-          }
-        } catch (e) {
-          console.warn(
-            "[Roleplay] Failed to generate audio for video:",
-            e.message,
-          );
-        }
-      }
-
+      // Wan uses a starting image; video must never enable voice implicitly.
       // If video is enabled but no image exists, generate one for the video
       if (includeVideo && !response.image && isPeakEmotion) {
         console.log(
@@ -9870,12 +9773,13 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
             "black bar",
             "covered genitals",
           ].join(", ");
-          const videoImageResult = await generateImageSDXL(
+          const videoImageResult = await generateImage(
             `${videoImagePrompt}, cinematic, film still, single scene composition, high quality`,
-            { width: 1024, height: 768, negativePrompt: videoFrameNeg },
+            { width: 1024, height: 768, negativePrompt: videoFrameNeg, referenceImage: companion.image || companion.avatarUrl },
           );
           response.image =
             videoImageResult.image_base64 || videoImageResult.image;
+
           console.log("[Roleplay] Generated image for video input");
 
           // Notify UI of image
@@ -10039,56 +9943,22 @@ Write ONLY the video description paragraph, nothing else:`;
             if (videoData.video_path || videoData.video_base64) {
               let finalVideoPath = videoData.video_path;
 
-              // Auto-enhance: x4 spatial + 4x temporal. /video/enhance
-              // returns 202 the first time when ESRGAN weights still need
-              // to download — wait and retry. Skip silently on hard
-              // failure (fall back to raw 512×320).
+              // Restore detail without changing the scene's timing. Keep the
+              // original available if restoration fails, and record that state.
               if (finalVideoPath) {
                 try {
-                  const enhBody = JSON.stringify({
-                    video_path: finalVideoPath,
-                    upscale: true,
-                    interp_factor: 4,
-                    variant: "default",
-                    auto_download: true,
+                  const enhanced = await enhanceVideo({
+                    baseUrl: `http://localhost:${port}`, videoPath: finalVideoPath, headers: videoHeaders,
+                    onProgress: progress => context.updateStatus?.(progress.stage === "downloading"
+                      ? `Downloading SeedVR2… ${progress.percent}%`
+                      : "Enhancing video with SeedVR2…"),
                   });
-                  let enhDone = null;
-                  for (let attempt = 0; attempt < 12; attempt++) {
-                    // ≤ 60s
-                    const enhResp = await fetch(
-                      `http://localhost:${port}/video/enhance`,
-                      {
-                        method: "POST",
-                        headers: videoHeaders,
-                        body: enhBody,
-                      },
-                    );
-                    if (enhResp.status === 202) {
-                      await new Promise((res) => setTimeout(res, 5000));
-                      continue;
-                    }
-                    if (enhResp.ok) {
-                      enhDone = await enhResp.json();
-                    } else {
-                      console.warn(
-                        `[Roleplay] Enhance failed (${enhResp.status}); using raw 512×320`,
-                      );
-                    }
-                    break;
-                  }
-                  if (enhDone?.video_path) {
-                    finalVideoPath = enhDone.video_path;
-                    console.log(
-                      "[Roleplay] Video enhanced (x4 + RIFE 4x):",
-                      finalVideoPath,
-                    );
-                  } else if (!enhDone) {
-                    console.warn(
-                      "[Roleplay] Enhance timed out waiting for weight download",
-                    );
-                  }
-                } catch (e) {
-                  console.warn("[Roleplay] Enhance error:", e?.message || e);
+                  finalVideoPath = enhanced.video_path;
+                  response.videoEnhancement = { status: "completed", backend: enhanced.backend,
+                    model: enhanced.model, outputSize: enhanced.output_size, outputFps: enhanced.output_fps };
+                } catch (error) {
+                  response.videoEnhancement = { status: "failed", error: error?.message || String(error) };
+                  console.warn("[Roleplay] Enhancement failed; keeping the original video:", error?.message || error);
                 }
               }
 
@@ -11928,7 +11798,7 @@ export const chartForecaster = createSkillDefinition({
 export const robinhoodPortfolioCouncil = createSkillDefinition({
   id: "robinhood-portfolio-council-v1.0.0",
   name: "Robinhood Portfolio Council",
-  description: "A local five-role team for Robinhood research, risk review, order preparation, and policy-gated execution.",
+  description: "Read account and market information through connected brokerage tools, review each account action, and save its result.",
   version: "1.0.0",
   author: {
     address: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
@@ -11940,7 +11810,7 @@ export const robinhoodPortfolioCouncil = createSkillDefinition({
   tags: ["robinhood", "portfolio", "trading", "mcp", "risk", "agentic-team"],
   featured: true,
   marketplace: {
-    roi: "Policy control",
+    roi: "Reviewed brokerage actions",
     distribution: "BonzAI Marketplace",
   },
   requirements: {
@@ -11958,8 +11828,8 @@ export const robinhoodPortfolioCouncil = createSkillDefinition({
     },
   },
   prompt: {
-    system: "You are a policy-bound portfolio council. Never bypass the user's mandate or imply guaranteed returns.",
-    task: "Research, challenge, and prepare the user's requested portfolio workflow. Require exact approval before any mutation.",
+    system: "Help the user understand connected brokerage tools and their results. Do not claim portfolio limits are enforced or imply guaranteed returns.",
+    task: "Retrieve the requested account or market information with available tools. Require fresh approval of the exact tool and parameters before any account change.",
     outputFormat: { type: "json" },
   },
   tools: { bonzai: [], mcp: [] },
@@ -11978,6 +11848,7 @@ const flagshipSkillCatalog = [
   roleplayCompanion, // Roleplay Companion
   meditationForge, // Meditation Forge
   videoCaptioning, // Video Captioning
+  fingerFrameDirector, // Finger Frame Director
   tcgAnalysis, // Trading Card Game Analysis
   liveStreamer, // Live Streaming Playground
   massChat, // Mass Chat (education, $9.99)

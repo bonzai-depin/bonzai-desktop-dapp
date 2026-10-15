@@ -69,8 +69,8 @@ const DEPLOY_CONFIG = {
   // BonzaiUnlock price in wei (1 ETH)
   unlockPrice: ethers.parseEther('1.0'),
 
-  // Hook permission flags: afterSwap (bit 7) + afterSwapReturnDelta (bit 4) = 0x0090
-  hookFlags: 0x0090,
+  // Hook permission flags: afterSwap (bit 6) + afterSwapReturnDelta (bit 2) = 0x0044
+  hookFlags: 0x0044,
   hookFlagsMask: 0x3FFF, // last 14 bits
 
   // P2P Provider Registry config
@@ -261,7 +261,7 @@ async function wireContract(signer, contractAddr, abi, functionName, args, label
  * @returns {string} Salt as bytes32 hex string
  */
 function mineCREATE2Salt(deployerAddr, initCodeHash) {
-  console.log('  Mining CREATE2 salt for hook address flags 0x0090...');
+  console.log('  Mining CREATE2 salt for hook address flags 0x0044...');
   const flags = BigInt(DEPLOY_CONFIG.hookFlags);
   const mask = BigInt(DEPLOY_CONFIG.hookFlagsMask);
 
@@ -286,6 +286,7 @@ function mineCREATE2Salt(deployerAddr, initCodeHash) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function main() {
+  if (!DRY_RUN) throw new Error('Legacy Base MVP deployment is disabled: its payment and staking wiring does not implement the v4 RC. Use the reviewed single-chain deployment workflow and production preflight.');
   // Setup provider and signer
   const rpcUrl = process.env.BASE_RPC_URL || 'https://base.llamarpc.com';
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -641,17 +642,12 @@ async function main() {
     'BonzaiCompanions.setCompanionTokenFactory(companionFactory)',
   );
 
-  // Wire FineTuneTokenFactory → BonzaiCollectibles implementation (NFT ownership check)
-  // TODO: FineTuneTokenFactory.setContentContract should point to CollectiblesFactory,
-  // and the contract needs to be updated to verify NFT ownership on user-specific clones
-  // (ERC-1167). Currently it checks the implementation address, but NFTs are minted on
-  // per-user clone addresses. The contract's launchToken should accept a `collection`
-  // parameter and verify it was created by the factory.
+  // Verify membership in the canonical factory, then ownership in the model's collection.
   const fineTuneFactoryAbi = fineTuneFactoryCompiled.FineTuneTokenFactory.abi;
   await wireContract(
     signer, deployedAddresses.FineTuneTokenFactory, fineTuneFactoryAbi,
-    'setContentContract', [deployedAddresses.BonzaiCollectibles],
-    'FineTuneTokenFactory.setContentContract(collectiblesImpl)',
+    'setContentContract', [deployedAddresses.BonzaiCollectiblesFactory],
+    'FineTuneTokenFactory.setContentContract(collectiblesFactory)',
   );
   await wireContract(
     signer, deployedAddresses.FineTuneTokenFactory, fineTuneFactoryAbi,
@@ -760,7 +756,7 @@ async function main() {
   console.log('═══ Post-deploy checklist ═══');
   console.log('  [ ] Verify all contracts on BaseScan (npx hardhat verify or manual)');
   console.log('  [ ] Update web3.config.js with deployed addresses');
-  console.log('  [ ] Verify hook address has correct permission bits (0x0090)');
+  console.log('  [ ] Verify hook address has correct permission bits (0x0044)');
   console.log('  [ ] Set Transfer Validator on BonzaiCollectibles clones for ERC721-C (Limit Break)');
   console.log('  [ ] Set contractURI on BonzaiCompanions for OpenSea collection metadata');
   console.log('  [ ] Test: mint content NFT, verify fee split 80/20');

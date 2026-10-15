@@ -1,0 +1,26 @@
+const locales = ['fr', 'es', 'ja', 'ko', 'zh', 'ru'];
+const rows = [
+ ['Result preview', 'Aperçu du résultat', 'Vista previa del resultado', '結果のプレビュー', '결과 미리보기', '结果预览', 'Предпросмотр результата'],
+ ['Saved results', 'Résultats enregistrés', 'Resultados guardados', '保存した結果', '저장된 결과', '已保存的结果', 'Сохранённые результаты'],
+ ['Search results', 'Rechercher un résultat', 'Buscar resultados', '結果を検索', '결과 검색', '搜索结果', 'Поиск результатов'],
+ ['Result type', 'Type de résultat', 'Tipo de resultado', '結果の種類', '결과 유형', '结果类型', 'Тип результата'],
+ ['No matching results.', 'Aucun résultat correspondant.', 'No hay resultados coincidentes.', '一致する結果がありません。', '일치하는 결과가 없습니다.', '没有匹配的结果。', 'Подходящих результатов нет.'],
+ ['No saved results yet.', 'Aucun résultat enregistré pour le moment.', 'Aún no hay resultados guardados.', '保存された結果はまだありません。', '아직 저장된 결과가 없습니다.', '尚无已保存的结果。', 'Пока нет сохранённых результатов.'],
+ ['Your creations will appear here', 'Vos créations apparaîtront ici', 'Tus creaciones aparecerán aquí', '作成したものがここに表示されます', '창작물이 여기에 표시됩니다', '您的创作将显示在这里', 'Здесь появятся ваши работы'],
+ ['Generated text, images, audio and videos are saved here automatically, including results waiting for your review.', 'Les textes, images, audios et vidéos générés sont enregistrés ici automatiquement, y compris les résultats à vérifier.', 'Los textos, imágenes, audios y vídeos generados se guardan aquí automáticamente, incluidos los resultados pendientes de revisión.', '生成したテキスト、画像、音声、動画は、確認待ちの結果も含めてここに自動保存されます。', '생성된 텍스트, 이미지, 오디오, 동영상은 검토 대기 중인 결과를 포함하여 여기에 자동 저장됩니다.', '生成的文本、图片、音频和视频会自动保存在这里，包括等待您审核的结果。', 'Созданные тексты, изображения, аудио и видео сохраняются здесь автоматически, включая результаты, ожидающие проверки.'],
+ ['Start a task', 'Lancer une tâche', 'Iniciar una tarea', 'タスクを開始', '작업 시작', '开始任务', 'Начать задачу'],
+ ['Creations & files', 'Créations et fichiers', 'Creaciones y archivos', '作品とファイル', '창작물 및 파일', '创作与文件', 'Работы и файлы'],
+ ['Task history', 'Historique des tâches', 'Historial de tareas', 'タスク履歴', '작업 기록', '任务历史', 'История задач'],
+ ['Documents & records', 'Documents et dossiers', 'Documentos y registros', '文書と記録', '문서 및 기록', '文档与记录', 'Документы и записи'],
+ ['Open task', 'Ouvrir la tâche', 'Abrir tarea', 'タスクを開く', '작업 열기', '打开任务', 'Открыть задачу'],
+ ['View task', 'Voir la tâche', 'Ver tarea', 'タスクを表示', '작업 보기', '查看任务', 'Посмотреть задачу'],
+ ['Loading preview…', 'Chargement de l’aperçu…', 'Cargando vista previa…', 'プレビューを読み込み中…', '미리보기 로드 중…', '正在加载预览…', 'Загрузка предпросмотра…'],
+ ['Retry preview', 'Recharger l’aperçu', 'Reintentar vista previa', 'プレビューを再試行', '미리보기 다시 시도', '重试预览', 'Повторить предпросмотр'],
+ ['Saved file', 'Fichier enregistré', 'Archivo guardado', '保存したファイル', '저장된 파일', '已保存文件', 'Сохранённый файл'],
+ ['This preview could not be opened. Download the file to try another player.', 'Impossible d’ouvrir cet aperçu. Téléchargez le fichier pour essayer un autre lecteur.', 'No se pudo abrir esta vista previa. Descarga el archivo para probar otro reproductor.', 'プレビューを開けませんでした。ファイルをダウンロードして別のプレーヤーをお試しください。', '이 미리보기를 열 수 없습니다. 파일을 다운로드하여 다른 플레이어로 시도하세요.', '无法打开此预览。请下载文件并尝试使用其他播放器。', 'Не удалось открыть предпросмотр. Скачайте файл и попробуйте другой проигрыватель.'],
+ ['This saved file is empty or unavailable.', 'Ce fichier enregistré est vide ou indisponible.', 'Este archivo guardado está vacío o no está disponible.', '保存したファイルが空か、利用できません。', '저장된 파일이 비어 있거나 사용할 수 없습니다.', '此保存文件为空或不可用。', 'Сохранённый файл пуст или недоступен.'],
+ ['This saved file is unavailable. Reopen BonzAI after your running work finishes.', 'Ce fichier enregistré est indisponible. Rouvrez BonzAI une fois les travaux en cours terminés.', 'Este archivo guardado no está disponible. Vuelve a abrir BonzAI cuando termine el trabajo en curso.', '保存したファイルを利用できません。実行中の作業が終わった後に BonzAI を開き直してください。', '저장된 파일을 사용할 수 없습니다. 진행 중인 작업이 끝나면 BonzAI를 다시 여세요.', '此保存文件不可用。请在当前任务完成后重新打开 BonzAI。', 'Сохранённый файл недоступен. Откройте BonzAI заново после завершения текущей работы.'],
+ ['Reopen BonzAI after your running work finishes to load documents.', 'Pour charger les documents, rouvrez BonzAI une fois les travaux en cours terminés.', 'Para cargar documentos, vuelve a abrir BonzAI cuando termine el trabajo en curso.', '文書を読み込むには、実行中の作業が終わった後に BonzAI を開き直してください。', '문서를 불러오려면 진행 중인 작업이 끝난 후 BonzAI를 다시 여세요.', '请在当前任务完成后重新打开 BonzAI，以加载文档。', 'Чтобы загрузить документы, откройте BonzAI заново после завершения текущей работы.'],
+ ['Saved results could not be loaded. Retry to reconnect to your local library.', 'Impossible de charger les résultats enregistrés. Réessayez pour retrouver votre bibliothèque locale.', 'No se pudieron cargar los resultados guardados. Reintenta para reconectar con tu biblioteca local.', '保存した結果を読み込めませんでした。ローカルライブラリに再接続するには再試行してください。', '저장된 결과를 불러오지 못했습니다. 로컬 라이브러리에 다시 연결하려면 재시도하세요.', '无法加载已保存的结果。请重试以重新连接本地库。', 'Не удалось загрузить сохранённые результаты. Повторите попытку подключения к локальной библиотеке.'],
+];
+export const smartWorkflowResultsMessages = Object.fromEntries(locales.map((locale, index) => [locale, Object.fromEntries(rows.map(([key, ...values]) => [key, values[index]]))]));

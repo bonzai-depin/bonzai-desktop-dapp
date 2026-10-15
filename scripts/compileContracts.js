@@ -81,15 +81,17 @@ function compileContract(fileName) {
   }
 }
 
-compileContract('BonzaiSkillRegistry.sol');
-compileContract('BonzaiSkillOwnership.sol');
-compileContract('BonzaiCompanions.sol');
-compileContract('BonzaiCollectibles.sol');
-compileContract('BonzaiProviderRegistry.sol');
-compileContract('BonzaiUnlock.sol');
-compileContract('CompanionToken.sol');
-compileContract('CompanionTokenFactory.sol');
-compileContract('BonzaiMintPool.sol');
-compileContract('BonzaiRoyaltySplitter.sol');
-compileContract('BonzaiUniswapHook.sol');
-compileContract('FineTuneTokenFactory.sol');
+const defaultContracts = [
+  'BonzaiSmartAgents.sol', 'BonzaiAgentTokenFactory.sol', 'BonzaiNvdaSwap.sol',
+  'BonzaiSkillRegistry.sol', 'BonzaiSkillOwnership.sol', 'BonzaiCompanions.sol',
+  'BonzaiCollectibles.sol', 'BonzaiCollectiblesFactory.sol', 'BonzaiProviderRegistry.sol', 'BonzaiUnlock.sol',
+  'CompanionToken.sol', 'CompanionTokenFactory.sol', 'BonzaiMintPool.sol',
+  'BonzaiRoyaltySplitter.sol', 'BonzaiUniswapHook.sol', 'FineTuneTokenFactory.sol',
+  'BonzaiJobEscrow.sol', 'BonzaiBasketRewards.sol', 'BonzaiStakingVault.sol', 'BonzaiRevenueRouter.sol',
+];
+// Optional source names allow deterministic scoped regeneration during parallel work.
+const requestedContracts = process.argv.slice(2);
+for (const fileName of requestedContracts.length ? requestedContracts : defaultContracts) {
+  if (!/^[A-Za-z0-9_.-]+\.sol$/.test(fileName)) throw new Error(`Invalid contract source: ${fileName}`);
+  compileContract(fileName);
+}

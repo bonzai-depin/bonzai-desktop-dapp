@@ -44,6 +44,7 @@ export async function getHookContract(withSigner = false) {
   if (!hookAddress || hookAddress === ethers.ZeroAddress) return null;
 
   if (withSigner) {
+    await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
     const browserProvider = await web3Service.getBrowserProvider();
     const signer = await browserProvider.getSigner();
     return new ethers.Contract(hookAddress, HOOK_ABI, signer);
@@ -143,7 +144,7 @@ export async function claimFees(logPrefix = 'UniswapV4') {
  * @returns {string} Uniswap swap URL
  */
 export function getUniswapTradeUrl(tokenAddress) {
-  return `https://app.uniswap.org/swap?chain=base&outputCurrency=${tokenAddress}`;
+  return `https://app.uniswap.org/swap?chain=${ECONOMY_NETWORK_KEY === 'ethereum' ? 'mainnet' : ECONOMY_NETWORK_KEY}&outputCurrency=${tokenAddress}`;
 }
 
 /**
@@ -152,7 +153,7 @@ export function getUniswapTradeUrl(tokenAddress) {
  * @returns {string} BaseScan URL
  */
 export function getBaseScanUrl(tokenAddress) {
-  return `https://basescan.org/token/${tokenAddress}`;
+  return `${CONFIG.networks[ECONOMY_NETWORK_KEY].explorer}/token/${tokenAddress}`;
 }
 
 /**
@@ -161,5 +162,5 @@ export function getBaseScanUrl(tokenAddress) {
  * @returns {string} DexScreener URL
  */
 export function getDexScreenerUrl(tokenAddress) {
-  return `https://dexscreener.com/base/${tokenAddress}`;
+  return `https://dexscreener.com/${ECONOMY_NETWORK_KEY}/${tokenAddress}`;
 }

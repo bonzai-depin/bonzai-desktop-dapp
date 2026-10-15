@@ -7,36 +7,14 @@
         Required Models
       </h3>
 
-      <!-- Missing Models Warning -->
-      <div v-if="missingModels.length > 0" class="bz-notice bz-notice--danger bz-notice--stacked">
-        <div class="bz-notice__body">
-          <p class="bz-notice__title">Download Required</p>
-        </div>
-        <ul class="model-list">
-          <li v-for="model in missingModels" :key="model.key" class="model-item">
-            <div class="model-info">
-              <span class="material-symbols-outlined" aria-hidden="true">{{ getModelIcon(model.type) }}</span>
-              <div>
-                <strong>{{ model.name }}</strong>
-                <span class="model-size bz-mono">{{ model.size }}</span>
-                <p>{{ model.description }}</p>
-              </div>
-            </div>
-            <button
-              class="bz-btn bz-btn--sm bz-btn--agent-cta fira-sans-condensed-black-italic"
-              @click="downloadModel(model)"
-              :disabled="downloadingModel === model.key"
-              :class="{ 'bz-btn--running': downloadingModel === model.key }"
-            >
-              <span v-if="downloadingModel === model.key" class="material-symbols-outlined rotating" aria-hidden="true">
-                progress_activity
-              </span>
-              <span v-else class="material-symbols-outlined" aria-hidden="true">download</span>
-              {{ downloadingModel === model.key ? `${downloadProgress}%` : 'Download' }}
-            </button>
-          </li>
-        </ul>
-      </div>
+      <DownloadRequirement
+        v-for="model in missingModels"
+        :key="model.key"
+        :items="[model]"
+        :active="downloadingModel === model.key"
+        :progress="downloadProgress"
+        @download="downloadModel(model)"
+      />
 
       <!-- Available Models -->
       <div class="available-models">
@@ -204,10 +182,8 @@
             progress_activity
           </span>
           <span v-else class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
-          {{ isExecuting ? executionStatus : 'Run Skill' }}
-          <span class="skill-price-pill bz-mono">
-            {{ skill.pricing?.runningFee || 99 }} BONZAI
-          </span>
+          {{ isExecuting ? executionStatus : actionLabel }}
+
         </button>
       </div>
     </div>
@@ -227,10 +203,10 @@
     <div v-if="executionResult && !isChatBased" class="execution-results">
       <slot name="results" :result="executionResult">
         <!-- Default results display -->
-        <div class="bz-notice bz-notice--success bz-notice--stacked">
+        <div class="bz-notice bz-notice--stacked" :class="executionResult.success === false ? 'bz-notice--danger' : 'bz-notice--info'">
           <h4 class="skill-panel__title fira-sans-condensed-black-italic">
             <span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
-            Skill Executed Successfully
+            {{ executionResult.success === false ? 'Needs attention' : executionResult.queued ? 'Task queued' : 'Workflow result' }}
           </h4>
           <pre class="skill-result-code">{{ JSON.stringify(executionResult, null, 2) }}</pre>
         </div>
@@ -241,11 +217,14 @@
 
 <script>
 import { ref, computed, watch, reactive, onMounted } from 'vue';
+import DownloadRequirement from '../DownloadRequirement.vue';
 import { getSkillModelRequirements, MODEL_REQUIREMENTS } from '../../skills/flagship.js';
 
 export default {
   name: 'SkillRunner',
+  components: { DownloadRequirement },
   props: {
+    actionLabel: { type: String, default: 'Run workflow' },
     skill: {
       type: Object,
       required: true,

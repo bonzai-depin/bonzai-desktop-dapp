@@ -51,7 +51,6 @@ import { useSkillStore } from '../stores/skillStore.js';
 import { companionService } from './companion.service.js';
 
 const {
-  mintCompanionBase,
   buildBareRegistration,
   finalizeCompanion,
   isBareCompanion,
@@ -1683,223 +1682,9 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
   const subcommand = args[0]?.toLowerCase();
 
   switch (subcommand) {
-    case 'bare': {
-      // !mint bare [gender]
-      // Parse gender: female, male, neutral (default)
-      const genderArg = args[1]?.toLowerCase();
-      const gender = genderArg === 'female' ? 1 : genderArg === 'male' ? 2 : 0;
-      const genderLabel = gender === 1 ? 'female' : gender === 2 ? 'male' : 'neutral';
-
-      try {
-        // Ensure user has a Privy wallet (bare mint doesn't require BonzAI Desktop)
-        const userId = webhookData.userId;
-        if (!userId) {
-          return { text: 'Sign in with Privy to mint a companion. Use email or social login.' };
-        }
-
-        // Build bare registration metadata
-        const registration = buildBareRegistration({ gender });
-
-        // Upload registration to IPFS via Pinata
-        let metadataURI;
-        try {
-          const { storageService } = await import('./storage.service.js');
-          const tx = await storageService.uploadJSON(registration, [
-            { name: 'Content-Type', value: 'application/json' },
-            { name: 'bonzai-type', value: 'companion-registration' },
-            { name: 'bonzai-status', value: 'pending_setup' },
-          ]);
-          metadataURI = tx.url;
-        } catch (uploadErr) {
-          console.error('[OpenClaw] IPFS upload failed:', uploadErr);
-          return { text: `Failed to upload companion metadata: ${uploadErr.message}` };
-        }
-
-        // Create agent wallet (Privy server wallet or local)
-        const companionId = `companion-${Date.now()}`;
-        let agentWallet;
-        try {
-          agentWallet = await walletProviderService.createAgentWallet(companionId);
-        } catch (walletErr) {
-          console.error('[OpenClaw] Agent wallet creation failed:', walletErr);
-          return { text: `Failed to create agent wallet: ${walletErr.message}` };
-        }
-
-        // Mint on Base via companion service
-        const result = await mintCompanionBase({
-          companionId,
-          metadataURI,
-          personalityHash: '0x' + '0'.repeat(64), // bytes32(0) — set during finalization
-          spendingHabits: {},
-          gender,
-          agentWallet: agentWallet.address,
-        });
-
-        return {
-          text: `Companion **#${result.tokenId}** minted on Base! Gender: ${genderLabel}. Visit [bonzai.sh](https://bonzai.sh) to personalize your companion.`,
-          companion: {
-            tokenId: result.tokenId,
-            network: 'base',
-            standard: 'ERC-8004',
-            status: 'pending_setup',
-            agentWallet: agentWallet.address,
-            txHash: result.txHash,
-          },
-        };
-      } catch (err) {
-        console.error('[OpenClaw] Bare mint failed:', err);
-        return { text: `Mint failed: ${err.message}` };
-      }
-    }
-
-    case 'companion': {
-      // !mint companion <name>
-      const name = args.slice(1).join(' ');
-      if (!name) {
-        return { text: 'Usage: `!bonzai mint companion <name>` — e.g. `!bonzai mint companion Sakura Tanaka`' };
-      }
-
-      try {
-        // Check if BonzAI Desktop is running (required for inference)
-        let healthOk = false;
-        try {
-          const resp = await fetch('http://localhost:3002/health');
-          const data = await resp.json();
-          healthOk = data.ok === true;
-        } catch { /* not running */ }
-
-        if (!healthOk) {
-          return {
-            text: `Complete minting requires BonzAI Desktop for AI generation. Start the app and try again, or use \`!bonzai mint bare\` for a placeholder mint.`,
-          };
-        }
-
-        // Split name into first/family
-        const nameParts = name.split(/\s+/);
-        const firstName = nameParts[0];
-        const familyName = nameParts.slice(1).join(' ') || '';
-
-        // Generate companion personality via LLM
-        const { generateSpendingProfile } = await import('../skills/flagship.js');
-
-        // Use the loaded LLM to generate personality
-        const personalityPrompt = `Create a unique AI companion character with this name: ${firstName} ${familyName || ''}. Return a JSON object with these fields: shortBio (1 sentence), personality (2-3 sentences describing personality), appearance (physical description for image generation), background (brief backstory), voiceStyle (voice description), firstMessage (greeting from the character), gender (0=neutral, 1=female, 2=male). Only return valid JSON, no markdown.`;
-
-        let personality = {};
-        try {
-          const llmResp = await window.electronAPI.sendPrompt({
-            messages: [
-              { role: 'system', content: 'You are a character designer. Return only valid JSON.' },
-              { role: 'user', content: personalityPrompt },
-            ],
-            max_tokens: 800,
-            temperature: 0.9,
-          });
-
-          const text = llmResp?.response || llmResp?.text || '';
-          // Extract JSON from response
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            personality = JSON.parse(jsonMatch[0]);
-          }
-        } catch (llmErr) {
-          console.warn('[OpenClaw] LLM personality generation failed, using defaults:', llmErr);
-          personality = {
-            shortBio: `A unique BonzAI companion named ${firstName}.`,
-            personality: 'Friendly, curious, and creative.',
-            appearance: 'Stylish and approachable.',
-            background: `${firstName} is an AI companion eager to explore the world.`,
-            voiceStyle: 'warm and expressive',
-            firstMessage: `Hello! I'm ${firstName}. Nice to meet you!`,
-            gender: 0,
-          };
-        }
-
-        const spendingHabits = generateSpendingProfile(personality);
-
-        // Generate portrait image
-        const { generateCompanionPicture } = await import('../skills/flagship.js');
-        const imageResult = await generateCompanionPicture({ ...personality, firstName, familyName });
-
-        // Upload image to IPFS via Pinata
-        let imageUri = '';
-        if (imageResult?.base64 || imageResult?.image) {
-          const { storageService } = await import('./storage.service.js');
-          const imageTx = await storageService.uploadBase64({
-            base64: imageResult.base64 || imageResult.image,
-            contentType: 'image/png',
-            tags: [{ name: 'bonzai-type', value: 'companion-portrait' }],
-          });
-          imageUri = imageTx.url;
-        }
-
-        // Build full registration metadata
-        const registration = {
-          type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
-          name: `${firstName} ${familyName}`.trim(),
-          description: personality.shortBio || `A BonzAI companion named ${firstName}.`,
-          image: imageUri,
-          external_url: 'https://bonzai.sh',
-          version: '1.0.0',
-          author: 'BonzAI',
-          license: 'MIT',
-          active: true,
-          bonzai: {
-            status: 'active',
-            firstName,
-            familyName,
-            shortBio: personality.shortBio || '',
-            personality: personality.personality || '',
-            appearance: personality.appearance || '',
-            background: personality.background || '',
-            voiceStyle: personality.voiceStyle || '',
-            firstMessage: personality.firstMessage || '',
-            spendingHabits,
-          },
-        };
-
-        // Upload registration to IPFS via Pinata
-        const { storageService } = await import('./storage.service.js');
-        const metaTx = await storageService.uploadJSON(registration, [
-          { name: 'Content-Type', value: 'application/json' },
-          { name: 'bonzai-type', value: 'companion-registration' },
-        ]);
-        const metadataURI = metaTx.url;
-
-        // Mint on Base
-        let personalityHash = '0x' + '0'.repeat(64);
-        if (personality.personality) {
-          const { ethers } = await import('ethers');
-          personalityHash = ethers.keccak256(ethers.toUtf8Bytes(personality.personality));
-        }
-
-        const result = await mintCompanionBase({
-          companionId: `companion-${Date.now()}`,
-          metadataURI,
-          personalityHash,
-          spendingHabits,
-          gender: personality.gender || 0,
-        });
-
-        return {
-          text: `Companion **'${firstName} ${familyName}'** (#${result.tokenId}) minted on Base with full personality, portrait, and voice!`,
-          companion: {
-            tokenId: result.tokenId,
-            name: `${firstName} ${familyName}`.trim(),
-            network: 'base',
-            standard: 'ERC-8004',
-            status: 'active',
-            agentWallet: result.agentWallet,
-            agentURI: metadataURI,
-            txHash: result.txHash,
-          },
-          imagePath: imageResult?.path || null,
-        };
-      } catch (err) {
-        console.error('[OpenClaw] Complete mint failed:', err);
-        return { text: `Complete mint failed: ${err.message}` };
-      }
-    }
+    case 'bare':
+    case 'companion':
+      return { text: 'Mint an agent slot through the scheduled drop, then personalize it in BonzAI. Social tokens can only be issued for minted agents. Chat commands cannot combine minting and token issuance.' };
 
     case 'status': {
       // !mint status — show owned companions
@@ -1925,7 +1710,7 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
 
         const balance = await contract.balanceOf(userAddress);
         if (balance === 0n) {
-          return { text: `You don't own any BonzAI Companions. Use \`!bonzai mint bare\` or \`!bonzai mint companion <name>\` to mint one.` };
+          return { text: `No owned agents were found in this collection. Agent slots are minted through the scheduled drop.` };
         }
 
         const companions = [];
@@ -2041,8 +1826,8 @@ async function handleMintCommand(channelId, args, webhookData = {}) {
       return {
         text: `**Mint Commands**
 
-\`!bonzai mint bare [gender]\` - Mint a bare companion (gender: female, male, neutral)
-\`!bonzai mint companion <name>\` - Mint a complete companion (requires BonzAI Desktop)
+\`!bonzai mint bare [gender]\` - View the slot minting requirements
+\`!bonzai mint companion <name>\` - View the slot minting requirements
 \`!bonzai mint status\` - Check owned companions
 \`!bonzai mint finalize <tokenId>\` - Finalize a bare companion (requires BonzAI Desktop)`,
       };
@@ -2310,8 +2095,8 @@ All commands use the \`!bonzai\` prefix (or \`/bonzai\` for Hermes).
 \`!bonzai generate vision\` - Image analysis (Qwen3-VL)
 
 **Minting**
-\`!bonzai mint bare [gender]\` - Mint a bare companion NFT
-\`!bonzai mint companion <name>\` - Mint a complete companion
+\`!bonzai mint bare [gender]\` - View the slot minting requirements
+\`!bonzai mint companion <name>\` - View the slot minting requirements
 \`!bonzai mint status\` - Check mint status and owned companions
 \`!bonzai mint finalize <tokenId>\` - Finalize a bare companion
 

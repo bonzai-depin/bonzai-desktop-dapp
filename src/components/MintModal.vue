@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="fade">
       <div v-if="visible" class="mint-modal-overlay" @click.self="handleClose">
-        <div class="mint-modal" role="dialog" aria-modal="true" aria-labelledby="mint-modal-title">
+        <div ref="mintDialog" class="mint-modal" role="dialog" aria-modal="true" aria-labelledby="mint-modal-title">
           <div class="mint-modal-header">
             <h2 id="mint-modal-title" class="mint-modal-title">
               <span class="material-symbols-outlined" aria-hidden="true">token</span>
@@ -13,6 +13,7 @@
                 {{ networkConfig.label }} &middot; {{ networkConfig.standard }}
               </span>
               <BzCloseButton
+                :disabled="isMinting"
                 size="md"
                 aria-label="Close mint dialog"
                 @click="handleClose"
@@ -20,14 +21,14 @@
             </div>
           </div>
 
-          <div class="mint-modal-body">
+          <div class="mint-modal-body" :class="{'is-review':stage === 'ready'}">
             <!-- Content Preview -->
-            <div class="content-preview" :class="{ 'content-preview--text': contentType?.startsWith('text/') }">
+            <div class="content-preview" :aria-busy="!previewReady && !previewError" :class="{ 'content-preview--text': contentType?.startsWith('text/') }">
               <div
                 v-if="contentType?.startsWith('image/')"
                 class="preview-image"
               >
-                <img :src="previewSrc" alt="Content preview" />
+                <img v-if="previewSrc" :src="previewSrc" alt="Content preview" @load="previewReady = true" @error="previewError = 'The selected image could not be displayed.'" />
               </div>
               <div v-else-if="contentType?.startsWith('audio/')" class="preview-audio">
                 <img :src="customBgSrc || audioBgSrc" class="audio-bg" :class="{ blurred: !customBgSrc }" alt="" />
@@ -35,12 +36,8 @@
                 <div class="audio-overlay">
                   <img v-if="!customBgSrc" :src="logoSrc" class="preview-logo" alt="BonzAI" />
                   <span class="preview-type">{{ generationType }}</span>
-                  <audio controls preload="metadata" :src="audioPreviewSrc"></audio>
+                  <audio v-if="audioPreviewSrc" controls preload="metadata" :src="audioPreviewSrc" @loadedmetadata="previewReady = true" @error="previewError = 'The selected audio could not be played.'"></audio>
                 </div>
-                <button class="shuffle-bg-btn" @click="generateBackground" :disabled="isGeneratingBg" title="Shuffle Background">
-                  <span v-if="isGeneratingBg" class="material-symbols-outlined rotating">progress_activity</span>
-                  <span v-else class="material-symbols-outlined">auto_fix_high</span>
-                </button>
               </div>
               <div v-else-if="contentType?.startsWith('video/')" class="preview-video">
                 <img :src="customBgSrc || videoPosterSrc" class="video-bg" :class="{ blurred: !customBgSrc }" alt="" />
@@ -48,17 +45,13 @@
                 <div class="video-overlay">
                   <img v-if="!customBgSrc" :src="logoSrc" class="preview-logo" alt="BonzAI" />
                   <video
-                    controls
+                    v-if="videoPreviewSrc" controls
                     preload="metadata"
                     :poster="customBgSrc || videoPosterSrc"
-                    :src="videoPreviewSrc"
+                    :src="videoPreviewSrc" @loadedmetadata="previewReady = true" @error="previewError = 'The selected video could not be played.'"
                   ></video>
                 </div>
                 <span class="preview-type">{{ generationType }}</span>
-                <button class="shuffle-bg-btn" @click="generateBackground" :disabled="isGeneratingBg" title="Shuffle Background">
-                  <span v-if="isGeneratingBg" class="material-symbols-outlined rotating">progress_activity</span>
-                  <span v-else class="material-symbols-outlined">auto_fix_high</span>
-                </button>
               </div>
               <div v-else-if="contentType?.startsWith('text/')" class="preview-text">
                 <div class="preview-text__head">
@@ -67,13 +60,8 @@
                 </div>
                 <p class="text-snippet">{{ textSnippet }}</p>
               </div>
-              <div v-else-if="contentType?.startsWith('model/')" class="preview-3d">
-                <iframe
-                  v-if="threeDPreviewUrl"
-                  :src="threeDPreviewUrl"
-                  sandbox="allow-scripts allow-same-origin"
-                  class="three-iframe"
-                ></iframe>
+              <div v-else-if="inferenceType === 'object' || contentType?.startsWith('model/')" class="preview-3d">
+                <Mint3DPreview v-if="visible" :code="generation.threeCode || content" @ready="previewReady = true" @error="previewError = $event.message" />
                 <span class="preview-type">{{ generationType }}</span>
               </div>
               <div v-else-if="contentType === 'application/json'" class="preview-text preview-text--code">
@@ -91,6 +79,14 @@
               </div>
             </div>
 
+            <p v-if="inferenceType === 'training'">This asset contains the model manifest and provenance, not the model weights.</p>
+            <p v-if="inferenceType === 'object' && stage === 'ready'">
+              Minting stores the GLB model, source and interactive viewer on IPFS.
+              The GLB preview includes geometry, materials and exported animations. Runtime effects and gameplay require the source in BonzAI.
+            </p>
+            <p class="mint-explanation">Mint publishes this file and its metadata to decentralized storage and creates an asset in your wallet. Uploads are public. Review the preview and details before continuing. The displayed Mint price is an estimate; your wallet shows the final amount and network fees.</p>
+            <div v-if="previewError || (licenseLoaded && !licenseStatus.allowed)" class="bz-notice bz-notice--warning" role="status">{{ previewError || licenseStatus.reason }}</div>
+            <details class="mint-source"><summary>Source and generation details</summary><dl><dt>Model</dt><dd>{{ generation.model || 'Unknown' }}</dd><dt>Format</dt><dd>{{ contentType }}</dd><dt>License</dt><dd>{{ licenseStatus.licenses.join(', ') || 'Not verified' }}</dd></dl><pre>{{ JSON.stringify(generation.parameters || {}, null, 2) }}</pre><p>{{ prompt }}</p></details>
             <!-- Editable Fields (before minting) -->
             <div v-if="stage === 'ready'" class="mint-fields">
               <!-- Wallet not connected -->
@@ -128,20 +124,20 @@
               </div>
 
               <div class="mint-field">
-                <label class="mint-label">
+                <label class="mint-label" for="mint-title">
                   Collectible Title
                 </label>
                 <input
-                  v-model="mintTitle"
+                  id="mint-title" v-model="mintTitle"
                   class="mint-input"
                   type="text"
                   maxlength="80"
                 />
               </div>
               <div class="mint-field">
-                <label class="mint-label">Collectible Description</label>
+                <label class="mint-label" for="mint-description">Collectible Description</label>
                 <textarea
-                  v-model="mintDescription"
+                  id="mint-description" v-model="mintDescription"
                   class="mint-input mint-input--textarea"
                   rows="2"
                   maxlength="500"
@@ -157,14 +153,14 @@
                   <span>
                     <strong>Discoverable in marketplace metadata</strong>
                     <small v-if="isNsfwGeneration">Disabled for NSFW/adult generations.</small>
-                    <small v-else>Allows collectors to find the mint and purchase it through NFT marketplaces such as OpenSea.</small>
+                    <small v-else>Marks this asset as discoverable. Mint does not create a sale listing.</small>
                   </span>
                 </label>
                 <label class="mint-policy__item">
                   <input v-model="trainingMaterial" type="checkbox" />
                   <span>
                     <strong>Allow as training material</strong>
-                    <small>Downstream fine-tune revenue can reference this generation and route attribution to data owners.</small>
+                    <small>Allow this generation to be referenced as training material. This does not guarantee revenue.</small>
                   </span>
                 </label>
               </div>
@@ -173,12 +169,15 @@
                   type="button"
                   class="bz-btn bz-btn--primary bz-btn--lg"
                   @click="startMint"
-                  :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields || !hasRenderableContent"
+                  :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields || !hasRenderableContent || !licenseStatus.allowed || !previewReady || !!previewError"
                 >
                   <span class="material-symbols-outlined">token</span>
                   <template v-if="!isWalletConnected">Connect wallet to mint</template>
                   <template v-else-if="isCheckingLevels">Checking access&hellip;</template>
                   <template v-else-if="!hasValidFields">Enter a title</template>
+                  <template v-else-if="!licenseLoaded">Checking license…</template>
+                  <template v-else-if="!licenseStatus.allowed">Mint unavailable</template>
+                  <template v-else-if="!previewReady">Loading preview…</template>
                   <template v-else>Mint collectible &middot; {{ mintFee }} {{ networkConfig.currency }}</template>
                 </button>
               </div>
@@ -207,12 +206,7 @@
                 <span :style="{ width: `${progressPercent}%` }"></span>
               </div>
               <p class="progress-message">{{ progressMessage }}</p>
-              <div class="mint-actions">
-                <button type="button" class="bz-btn bz-btn--destructive bz-btn--sm" @click="cancelMint">
-                  <span class="material-symbols-outlined">close</span>
-                  Cancel
-                </button>
-              </div>
+              <p>Keep this window open until the transaction is confirmed. You can reject a pending signature in your wallet.</p>
             </div>
 
             <!-- Success Result -->
@@ -228,6 +222,7 @@
                 Minted successfully
               </h3>
 
+              <p v-if="mintResult.localRecordWarning" role="status">{{ mintResult.localRecordWarning }}</p>
               <div class="result-details">
                 <div class="detail-row" v-if="mintResult.tokenId">
                   <span class="label">Token ID</span>
@@ -325,11 +320,11 @@
                 <span class="bz-notice__icon"><span class="material-symbols-outlined">error</span></span>
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">Mint failed</p>
-                  <p class="bz-notice__text">There was an error during the minting of your collectible. Please retry.</p>
+                  <p class="bz-notice__text">{{ errorMessage }}</p>
                 </div>
               </div>
               <div class="error-actions">
-                <button type="button" class="bz-btn bz-btn--primary" @click="startMint">
+                <button type="button" class="bz-btn bz-btn--primary" :disabled="confirmationPending" @click="startMint">
                   <span class="material-symbols-outlined">refresh</span>
                   Retry
                 </button>
@@ -363,10 +358,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
+import {useModalAccessibility} from "../composables/useModalAccessibility.js";
 import BzCloseButton from "./BzCloseButton.vue";
 import { mintStore } from "../stores/mintStore.js";
-import { mintContent, extractUserCode, buildInteractive3DViewer } from "../services/contentNFT.service.js";
+import { mintContent } from "../services/contentNFT.service.js";
 import { canMintContentType, checkAllLevels } from "../services/level.service.js";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
@@ -376,6 +372,8 @@ import audioBgSrc from "../assets/bonzai_music.webp";
 import videoPosterSrc from "../assets/bonzai_video.webp";
 import logoSrc from "../assets/bonzai_logo-full.png";
 
+import {mintLicenseStatus,mintMediaBytes} from '../services/mintValidation.js';
+const Mint3DPreview=defineAsyncComponent(()=>import('./Mint3DPreview.vue'));
 const props = defineProps({
   visible: { type: Boolean, default: false },
   inferenceType: { type: String, default: "" },
@@ -387,6 +385,8 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["close", "minted"]);
+const mintDialog=ref(null);
+useModalAccessibility(mintDialog,{onClose:()=>handleClose()});
 
 const networkConfig = mintStore.activeMintNetwork;
 const mintFee = computed(() => {
@@ -411,12 +411,13 @@ const gameTokenResult = ref(null);
 const gameTokenError = ref("");
 const gameTokenSymbol = ref("");
 const errorMessage = ref("");
+const confirmationPending = ref(false);
 
 // Editable fields
 const mintTitle = ref("");
 const mintDescription = ref("");
 const marketplaceDiscoverable = ref(true);
-const trainingMaterial = ref(true);
+const trainingMaterial = ref(false);
 
 const stages = [
   { key: "upload", label: "Upload", icon: "cloud_upload" },
@@ -491,24 +492,28 @@ const awaitingSignature = computed(() =>
     currentStage.value === 'mint' && progressMessage.value.includes('Confirm'),
 );
 
-const previewSrc = computed(() => {
-  if (!props.content) return "";
-  if (typeof props.content === "string") {
-    if (props.content.startsWith("data:")) return props.content;
-    // Assume base64 image
-    return `data:${props.contentType || "image/webp"};base64,${props.content}`;
-  }
-  return "";
-});
-
-const audioPreviewSrc = computed(() => {
-  if (!props.content || !props.contentType?.startsWith("audio/")) return "";
-  if (typeof props.content === "string") {
-    if (props.content.startsWith("data:")) return props.content;
-    return `data:${props.contentType};base64,${props.content}`;
-  }
-  return "";
-});
+const previewReady=ref(false);
+const previewError=ref('');
+const licenseCatalog=ref({});
+const licenseLoaded=ref(false);
+const licenseStatus=computed(()=>mintLicenseStatus(props.generation,licenseCatalog.value));
+let mediaBlobUrl=null;
+const previewSrc=ref('');
+const audioPreviewSrc=previewSrc;
+const videoPreviewSrc=previewSrc;
+watch(()=>[props.visible,props.content,props.contentType,props.inferenceId],async()=>{
+ if(mediaBlobUrl)URL.revokeObjectURL(mediaBlobUrl);
+ mediaBlobUrl=null;previewSrc.value='';previewError.value='';previewReady.value=false;
+ if(!props.visible)return;
+ try {
+  const bytes=mintMediaBytes(props.content,props.contentType);
+  if(/^(image|audio|video)\//.test(props.contentType)) {
+   mediaBlobUrl=URL.createObjectURL(new Blob([bytes],{type:props.contentType}));previewSrc.value=mediaBlobUrl;
+  }else if(props.inferenceType!=='object')previewReady.value=true;
+ }catch(error){previewError.value=error.message;}
+ const {MODEL_REQUIREMENTS}=await import('../skills/flagship.js');licenseCatalog.value=MODEL_REQUIREMENTS;licenseLoaded.value=true;
+},{immediate:true});
+onBeforeUnmount(()=>{if(mediaBlobUrl)URL.revokeObjectURL(mediaBlobUrl);});
 
 function stripThinkTags(text) {
   return String(text || "")
@@ -535,80 +540,13 @@ const structuredSnippet = computed(() => {
   }
 });
 
-const videoPreviewSrc = computed(() => {
-  if (!props.content || !props.contentType?.startsWith("video/")) return "";
-  if (typeof props.content === "string") {
-    if (props.content.startsWith("data:")) return props.content;
-    return `data:${props.contentType};base64,${props.content}`;
-  }
-  return "";
-});
-
-// 3D interactive preview via iframe blob URL
-let currentBlobUrl = null;
-const threeDPreviewUrl = computed(() => {
-  if (!props.content || !props.contentType?.startsWith("model/")) return null;
-  // Revoke old blob URL
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = null;
-  }
-  try {
-    const code = typeof props.content === "string" ? props.content : "";
-    const userCode = extractUserCode(code);
-    const html = buildInteractive3DViewer(userCode);
-    currentBlobUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-    return currentBlobUrl;
-  } catch (e) {
-    console.warn("[MintModal] 3D preview failed:", e);
-    return null;
-  }
-});
-
-onBeforeUnmount(() => {
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = null;
-  }
-});
-
-// Background generation for audio/video minting
 const isGeneratingBg = ref(false);
 const customBgSrc = ref(null);
 
-async function generateBackground() {
-  if (isGeneratingBg.value) return;
-  isGeneratingBg.value = true;
-  try {
-    const bgPrompt = `artistic abstract background for ${generationType.value}, ${props.prompt || 'digital art'}, vibrant colors, cinematic lighting, no text, no people`;
-    const port = window.BONZAI_SERVER_PORT || 65000;
-    const res = await fetch(`http://localhost:${port}/image/turbo`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: bgPrompt,
-        negative_prompt: "text, watermark, low quality, blurry, people, person, face, letters, words",
-        width: 512,
-        height: 512,
-        steps: 4,
-      }),
-    });
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-    const data = await res.json();
-    if (data.image) {
-      customBgSrc.value = `data:image/webp;base64,${data.image}`;
-    }
-  } catch (e) {
-    console.warn("[MintModal] Background generation failed:", e.message);
-  } finally {
-    isGeneratingBg.value = false;
-  }
-}
-
 // Reset state when modal opens
 watch(
-  () => props.visible,
-  async (v) => {
+  () => [props.visible, props.inferenceId],
+  async ([v]) => {
     if (v) {
       stage.value = "ready";
       isMinting.value = false;
@@ -617,10 +555,11 @@ watch(
       currentStage.value = "upload";
       mintResult.value = {};
       errorMessage.value = "";
+      confirmationPending.value = false;
       customBgSrc.value = null;
       isGeneratingBg.value = false;
       marketplaceDiscoverable.value = true;
-      trainingMaterial.value = true;
+      trainingMaterial.value = false;
 
       // Refresh balances + level status (await to ensure mint button reflects reality)
       if (isWalletConnected.value) {
@@ -637,7 +576,7 @@ watch(
 
       // Auto-generate title from prompt
       mintTitle.value =
-        (props.prompt || "").substring(0, 50) ||
+        (props.generation?.metadata?.title || props.prompt || "").substring(0, 80) ||
         `BonzAI ${generationType.value}`;
       gameTokenResult.value = null;
       gameTokenError.value = "";
@@ -645,10 +584,11 @@ watch(
         .replace(/[^a-z0-9]/gi, "")
         .slice(0, 8)
         .toUpperCase();
-      mintDescription.value = `AI-generated ${generationType.value} by BonzAI.`;
+      mintDescription.value = props.generation?.metadata?.description || `AI-generated ${generationType.value} by BonzAI.`;
       if (isNsfwGeneration.value) marketplaceDiscoverable.value = false;
     }
   },
+  { immediate: true },
 );
 
 watch(isNsfwGeneration, (blocked) => {
@@ -656,6 +596,7 @@ watch(isNsfwGeneration, (blocked) => {
 });
 
 async function startMint() {
+  if(isMinting.value || !hasValidFields.value || !hasRenderableContent.value || !licenseStatus.value.allowed || !previewReady.value || previewError.value)return;
   isMinting.value = true;
   stage.value = "minting";
   progressPercent.value = 5;
@@ -688,32 +629,28 @@ async function startMint() {
   if (result.success) {
     stage.value = "success";
     mintResult.value = result;
-    emit("minted", result);
+
   } else {
     stage.value = "error";
+    confirmationPending.value = result.confirmationPending === true;
     errorMessage.value = result.error || "Minting failed. Please try again.";
   }
 }
 
-function cancelMint() {
-  isMinting.value = false;
-  stage.value = "ready";
-  progressPercent.value = 0;
-  progressMessage.value = "";
-  currentStage.value = "upload";
-}
 
 function handleClose() {
   if (isMinting.value) {
-    cancelMint();
     return;
   }
+  if(stage.value === "success") emit("minted", mintResult.value);
   emit("close");
 }
 </script>
 
 <style scoped>
+.mint-source dl {display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px}.mint-source dd{margin:0;overflow-wrap:anywhere}.mint-source pre{white-space:pre-wrap}.mint-explanation{line-height:1.6;color:var(--bz-fg-mid)}
 .mint-modal-overlay {
+backdrop-filter:blur(10px);
   position: fixed;
   inset: 0;
   z-index: 10003;
@@ -724,6 +661,7 @@ function handleClose() {
   background: var(--bz-overlay);
 }
 
+.mint-modal, .mint-modal * {box-sizing:border-box;}
 .mint-modal {
   width: min(680px, 100%);
   max-height: min(90vh, 820px);
@@ -745,6 +683,7 @@ function handleClose() {
 }
 
 .mint-modal-title {
+  min-width:0;overflow-wrap:anywhere;
   display: flex;
   align-items: center;
   gap: var(--bz-space-2);
@@ -803,7 +742,7 @@ function handleClose() {
 }
 
 .preview-image {
-  display: flex;
+  min-height:220px;  display: flex;
   align-items: center;
   justify-content: center;
   max-height: 300px;
@@ -1005,6 +944,7 @@ function handleClose() {
 }
 
 .mint-fields {
+  min-width:0;
   display: flex;
   flex-direction: column;
   gap: var(--bz-space-3);
@@ -1052,7 +992,7 @@ function handleClose() {
 
 .mint-policy__item {
   display: grid;
-  grid-template-columns: 18px 1fr;
+  grid-template-columns: 36px minmax(0,1fr);
   gap: var(--bz-space-2);
   align-items: start;
   padding: var(--bz-space-3);
@@ -1063,13 +1003,18 @@ function handleClose() {
 }
 
 .mint-policy__item input {
-  margin-top: 2px;
+  appearance:none;position:relative;width:36px;height:20px;border:1px solid var(--bz-border);border-radius:20px;background:var(--bz-panel);cursor:pointer;
+  margin: 2px 0 0;
   accent-color: var(--bz-purple-400);
 }
 
+.mint-policy__item input::before {content:'';position:absolute;width:14px;height:14px;left:2px;top:2px;border-radius:50%;background:var(--bz-fg-mid);}
+.mint-policy__item input:checked {background:var(--bz-accent);}
+.mint-policy__item input:checked::before {left:18px;background:var(--bz-canvas);}
+.mint-policy__item input:focus-visible {outline:2px solid var(--bz-accent);outline-offset:2px;}
 .mint-policy__item strong,
 .mint-policy__item small {
-  display: block;
+  overflow-wrap:anywhere;  display: block;
 }
 
 .mint-policy__item strong {
@@ -1334,6 +1279,13 @@ function handleClose() {
   opacity: 0;
 }
 
+@media (min-width: 850px) {
+ .mint-modal {width:min(980px,100%)}
+ .mint-modal-body.is-review {display:grid;grid-template-columns:minmax(240px,340px) minmax(0,1fr);align-items:start;gap:20px 28px;}
+ .mint-modal-body.is-review > :not(.mint-fields) {grid-column:1;}
+ .mint-modal-body.is-review > .mint-fields {grid-column:2;grid-row:1 / span 8;}
+ .mint-modal-body.is-review .content-preview {width:100%;}
+}
 @media (max-width: 640px) {
   .mint-modal-overlay {
     align-items: stretch;

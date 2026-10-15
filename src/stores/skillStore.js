@@ -95,6 +95,7 @@ export const useSkillStore = defineStore('skill', () => {
   const idleCheckInterval = ref(null);
   const autonomousInterval = ref(null);
   const isGeneratingAutonomous = ref(false);
+  const foregroundRoleplayBusy = ref(false);
   const autonomousMessageCount = ref(0); // Track how many autonomous messages generated
 
   // Configurable autonomous mode settings (defaults, can be overridden by session settings)
@@ -803,7 +804,7 @@ export const useSkillStore = defineStore('skill', () => {
       return;
     }
     if (!isIdle.value) return;
-    if (isGeneratingAutonomous.value) return;
+    if (isGeneratingAutonomous.value || foregroundRoleplayBusy.value) return;
 
     if (autonomousMessageCount.value >= MAX_AUTONOMOUS_MESSAGES.value) {
       stopAutonomousMode();
@@ -837,8 +838,8 @@ export const useSkillStore = defineStore('skill', () => {
       const activityIndex = autonomousMessageCount.value % AUTONOMOUS_ACTIVITIES.length;
       const activity = AUTONOMOUS_ACTIVITIES[activityIndex];
 
-      // Force location change every 3-4 messages
-      const shouldChangeLocation = autonomousMessageCount.value > 0 && autonomousMessageCount.value % 3 === 0;
+      // Keep the location stable unless the story actually moves elsewhere.
+      const shouldChangeLocation = false;
 
       // Build a rich autonomous prompt that encourages story progression
       // This prompt is NOT added to the visible history
@@ -969,6 +970,7 @@ REQUIREMENTS:
         images: responseData.images || null, // Support for batch images
         audio: responseData.audio || null,
         video: responseData.video || null,
+
         timestamp: Date.now(),
         isAutonomous: true,
         autonomousActivity: activity.type,
@@ -1238,6 +1240,7 @@ REQUIREMENTS:
     missedMessages,
     autonomousSession,
     isGeneratingAutonomous,
+    foregroundRoleplayBusy,
 
     // Moltbook state
     moltbookState,

@@ -4,11 +4,9 @@
       <div
         v-if="commandPalette.state.open"
         class="bz-cmdk"
-        role="dialog"
-        aria-modal="true"
         @click.self="close"
       >
-        <div class="bz-cmdk__shell" @click.stop>
+        <div ref="dialogRef" class="bz-cmdk__shell" data-i18n-skip role="dialog" aria-modal="true" :aria-label="$t('rc.palette.title')" @click.stop>
           <!-- Search input (auto-focus) -->
           <div class="bz-cmdk__search">
             <span class="material-symbols-outlined bz-cmdk__icon">search</span>
@@ -17,11 +15,16 @@
               v-model="query"
               type="text"
               class="bz-cmdk__input"
-              placeholder="Jump to anything…"
+              :placeholder="$t('rc.palette.search')"
+              :aria-label="$t('rc.palette.search')"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="true"
+              :aria-controls="listId"
+              :aria-activedescendant="activeId ? `${listId}-${activeId}` : undefined"
               @keydown.down.prevent="move(1)"
               @keydown.up.prevent="move(-1)"
               @keydown.enter.prevent="runActive()"
-              @keydown.tab.prevent="move(1)"
             />
             <span class="bz-mono bz-meta bz-cmdk__count">
               {{ filtered.length }}
@@ -29,13 +32,17 @@
           </div>
 
           <!-- Results — grouped -->
-          <div class="bz-cmdk__results" ref="resultsEl">
+          <div class="bz-cmdk__results" ref="resultsEl" :id="listId" role="listbox" tabindex="-1" :aria-label="$t('rc.palette.title')">
             <template v-for="group in grouped" :key="group.name">
               <div class="bz-cmdk__group-head bz-eyebrow">{{ group.name }}</div>
               <button
                 v-for="cmd in group.items"
                 :key="cmd.id"
                 type="button"
+                role="option"
+                :id="`${listId}-${cmd.id}`"
+                :aria-selected="cmd.id === activeId"
+                tabindex="-1"
                 class="bz-cmdk__row"
                 :class="{ 'bz-cmdk__row--active': cmd.id === activeId }"
                 @click="run(cmd.id)"
@@ -49,9 +56,9 @@
             </template>
 
             <div v-if="filtered.length === 0" class="bz-cmdk__empty">
-              <p class="bz-h3">No matches.</p>
+              <p class="bz-h3">{{ $t('rc.palette.noMatches') }}</p>
               <p class="bz-meta">
-                Try a tab name, a model family, or a setting.
+                {{ $t('rc.palette.trySearch') }}
               </p>
             </div>
           </div>
@@ -59,10 +66,9 @@
           <!-- Footer hints -->
           <footer class="bz-cmdk__footer">
             <span class="bz-meta">
-              <span class="bz-mono">↑↓</span> navigate ·
-              <span class="bz-mono">⏎</span> run ·
-              <span class="bz-mono">esc</span> close
+              {{ $t('rc.palette.hint') }}
             </span>
+            <button type="button" class="bz-btn bz-btn--ghost" @click="close">{{ $t('common.close') }}</button>
           </footer>
         </div>
       </div>
@@ -71,8 +77,9 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, nextTick, watch, onMounted, onUnmounted, useId } from "vue";
 import { commandPalette } from "../services/commandPalette.service.js";
+import { useModalAccessibility } from '../composables/useModalAccessibility.js';
 
 // Two-way bind the search query to the service so external callers
 // can prefill it, and keep the modal as the single source of UI state.
@@ -82,6 +89,9 @@ const query = computed({
 });
 
 const inputEl = ref(null);
+const dialogRef = ref(null);
+const listId = useId();
+useModalAccessibility(dialogRef, { onClose: close, initialFocus: inputEl });
 const resultsEl = ref(null);
 const activeId = ref(null);
 

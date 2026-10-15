@@ -41,6 +41,7 @@ contract BonzaiEvaluationRegistry is Ownable, ReentrancyGuard, Pausable {
         string calldata metadataURI,
         uint16 score
     ) external nonReentrant whenNotPaused returns (bytes32 evaluationId) {
+        require(targetId != bytes32(0) && evidenceHash != bytes32(0), "Evidence and target required");
         if (score > 100) revert InvalidScore(score);
         if (bytes(metadataURI).length == 0) revert EmptyMetadataURI();
 

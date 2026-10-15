@@ -10,6 +10,8 @@
 import { connectorsForSkills } from "./skillManifests.js";
 
 export const SKILL_PACKS = {
+  government_grants: {id:"government_grants",name:"Grants and incentives",skills:["skill.local_grants","skill.local_browser","skill.team_communication"]},
+  paperasse_finance: { id: "paperasse_finance", name: "French finance operations", description: "Financial evidence and approval-gated invoicing for Paperasse teams.", skills: ["skill.finance_reconciliation", "skill.qonto_finance", "skill.qonto_invoicing", "skill.stripe_finance", "skill.stripe_invoicing", "skill.stripe_checkout", "skill.stripe_subscriptions"] },
   smb_back_office: {
     id: "smb_back_office",
     name: "SMB Back Office",
@@ -41,6 +43,10 @@ export const SKILL_PACKS = {
       "skill.field_coordination",
       "skill.docusign",
       "skill.stripe_subscriptions",
+      "skill.gmao_contract",
+      "skill.gmao_maintenance",
+      "skill.gmao_compliance",
+      "skill.gmao_finance",
     ],
   },
 

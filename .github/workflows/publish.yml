@@ -5,16 +5,24 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. 2.0.0)'
+        description: 'Existing release tag (e.g. v4.0.0-rc.1)'
         required: true
         type: string
+      publish:
+        description: 'Publish installers (false builds and validates only)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
   group: release-macos-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish_on_mac:
@@ -25,19 +33,26 @@ jobs:
       ARCH_KEY: arm64
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # TAG without leading v — works for both triggers:
-      # release: tag_name may be "v2.0.0" or "2.0.0", strip leading v
-      # workflow_dispatch: inputs.tag is always bare "2.0.0"
+      # Preserve the exact ref for checkout and release publication.
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish }}
       CI: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
-      - name: Resolve tag
+      - name: Resolve version
+        shell: bash
         run: |
-          # Strip leading 'v' if present so TAG is always bare (e.g. "2.0.0")
-          RAW="${{ env.RELEASE_TAG }}"
-          echo "TAG=${RAW#v}" >> "$GITHUB_ENV"
+          python - <<'PYCODE'
+          import json, os
+          version = json.load(open('package.json'))['version']
+          if os.environ.get('PUBLISH_RELEASE') == 'true' and os.environ['RELEASE_TAG'].removeprefix('v') != version:
+              raise SystemExit('Release tag must match package.json version')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'TAG={version}\n')
+          PYCODE
 
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v5
@@ -52,12 +67,8 @@ jobs:
 
       - name: Install Python deps
         run: |
-          pip install -r requirements.txt
-          pip install https://github.com/vBaiCai/python-pesq/archive/master.zip
-          # Install packages with --no-deps to avoid pulling in gradio/fastapi/sox
-          pip install -U qwen-tts --no-deps
-          pip install git+https://github.com/ace-step/ACE-Step-1.5.git --no-deps
-          # mlx-vlm for Apple Silicon vision — must use --no-deps to avoid transformers 5.x
+          python scripts/install-python-deps.py --skip-torch
+          # mlx-vlm for Apple Silicon vision; shared ML dependencies are owned above.
           pip install --no-deps mlx-vlm mlx-lm mlx mlx-metal
 
       # basicsr 1.4.2 (used by /video/enhance via realesrgan) imports
@@ -96,49 +107,15 @@ jobs:
           python src/server/pipeline_transport.py
           python scripts/smoke-shard-provider.py
 
-      - name: Build Python binary (macOS ARM64)
+      - name: Build Python runtime
+        shell: bash
         run: |
-          mkdir -p binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
-          pyinstaller \
-            --onefile \
-            --distpath binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }} \
-            --workpath $RUNNER_TEMP/pybuild \
-            --specpath $RUNNER_TEMP \
-            --collect-submodules=engineio \
-            --collect-submodules=socketio \
-            --collect-submodules=diffusers \
-            --collect-submodules=transformers \
-            --collect-submodules=huggingface_hub \
-            --collect-submodules=accelerate \
-            --collect-submodules=safetensors \
-            --collect-submodules=peft \
-            --collect-submodules=datasets \
-            --collect-submodules=qwen_tts \
-            --collect-submodules=qwen_vl_utils \
-            --collect-submodules=acestep \
-            --collect-submodules=mlx_vlm \
-            --collect-submodules=mlx_lm \
-            --collect-submodules=realesrgan \
-            --collect-submodules=basicsr \
-            --collect-data=basicsr \
-            --collect-submodules=imageio_ffmpeg \
-            --collect-data=imageio_ffmpeg \
-            --hidden-import=mlx \
-            --hidden-import=pytorch_lightning \
-            --hidden-import=torchaudio \
-            --hidden-import=torchaudio.functional \
-            --hidden-import=torchvision \
-            --hidden-import=torchvision.transforms \
-            --hidden-import=soundfile \
-            --hidden-import=compel \
-            --hidden-import=onnxruntime \
-            --hidden-import=psutil \
-            --hidden-import=PIL \
-            --hidden-import=PIL.Image \
-            --hidden-import=cv2 \
-            ${{ env.MAIN_PY_FILE }}
+          python -m PyInstaller --noconfirm --clean \
+            --distpath "binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" \
+            --workpath "$RUNNER_TEMP/pybuild" diffuser.spec
 
       - name: Decode & Import Certificates
+        if: github.event_name == 'release' || inputs.publish
         env:
           CERT_BASE64: ${{ secrets.MAC_APP_CERT_BASE64 }}
           CERT_PASS: ${{ secrets.MAC_APP_CERT_PASSWORD }}
@@ -151,12 +128,14 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PW" build.keychain
           security import app.p12 -k build.keychain -P "$CERT_PASS" -T /usr/bin/codesign
           security import installer.p12 -k build.keychain -P "$INSTALLER_CERT_PASS" -T /usr/bin/codesign
+          rm -f app.p12 installer.p12
           security set-keychain-settings -t 3600 -u build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PW" build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" build.keychain
 
-      - name: Sign Python runtime (onefile)
+      - name: Sign Python runtime
+        if: github.event_name == 'release' || inputs.publish
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -172,16 +151,27 @@ jobs:
             exit 1
           fi
 
-          # With --onefile mode, we have a single executable
-          BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser"
+          # Sign the complete onedir runtime before its launcher.
+          BINARY_PATH="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser"
 
-          echo "Signing onefile executable..."
+          find "binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser" -type f -print0 | while IFS= read -r -d '' binary; do
+            if file "$binary" | grep -q "Mach-O"; then
+              codesign --force --sign "$IDENTITY" --options runtime \
+                --entitlements ./entitlements.mac.plist --timestamp "$binary"
+            fi
+          done
+          echo "Signing Python launcher..."
           codesign --force --sign "$IDENTITY" \
             --options runtime \
             --entitlements ./entitlements.mac.plist \
             --timestamp \
             "$BINARY_PATH"
           codesign --verify --verbose "$BINARY_PATH"
+
+      - name: Smoke-test frozen inference runtime
+        shell: bash
+        run: |
+          binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -197,6 +187,7 @@ jobs:
           npm run build:rpc
 
       - name: Sign llama.cpp RPC binaries
+        if: github.event_name == 'release' || inputs.publish
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -216,6 +207,7 @@ jobs:
           done
 
       - name: Sign ffmpeg binaries
+        if: github.event_name == 'release' || inputs.publish
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -243,11 +235,11 @@ jobs:
           done
 
       - name: Build Vite bundles
+        shell: bash
         env:
-          VITE_PINATA_JWT: ${{ secrets.PINATA_JWT }}
+          BONZAI_VALIDATE_WEB3: ${{ vars.BONZAI_VALIDATE_WEB3 }}
           VITE_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
           VITE_ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
-          PRIVY_APP_SECRET: ${{ secrets.PRIVY_APP_SECRET }}
           VITE_BONZAI_ECONOMY_CHAIN_ID: ${{ secrets.BONZAI_ECONOMY_CHAIN_ID }}
           VITE_ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
           VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS: ${{ secrets.BONZAI_TOKEN_ROBINHOOD_ADDRESS }}
@@ -278,7 +270,9 @@ jobs:
           VITE_UNISWAP_V4_UNIVERSAL_ROUTER: ${{ secrets.UNISWAP_V4_UNIVERSAL_ROUTER }}
           VITE_UNISWAP_V4_QUOTER: ${{ secrets.UNISWAP_V4_QUOTER }}
           VITE_UNISWAP_V4_STATE_VIEW: ${{ secrets.UNISWAP_V4_STATE_VIEW }}
-        run: npm run web3:verify && npm run build:vite
+        run: |
+          if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
+          npm run build:vite
 
       - name: Package Electron app
         run: |
@@ -288,19 +282,20 @@ jobs:
             --out=out \
             --overwrite \
             --icon=src/assets/logo \
-            --ignore="^/(dist|bonzai|binaries|out|\.venv|venv|build)$"
+            --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$"
 
       - name: Copy Python runtime to app
         run: |
           APP_RESOURCES="out/BonzAI-darwin-arm64/BonzAI.app/Contents/Resources"
           mkdir -p "$APP_RESOURCES/server/python-runtime/macos-arm64"
-          # With --onefile, copy the single executable
-          cp binaries/macos-arm64/diffuser "$APP_RESOURCES/server/python-runtime/macos-arm64/"
+          # Copy the complete onedir runtime
+          cp -a binaries/macos-arm64/diffuser/. "$APP_RESOURCES/server/python-runtime/macos-arm64/"
           chmod +x "$APP_RESOURCES/server/python-runtime/macos-arm64/diffuser"
-          echo "Copied diffuser executable (onefile) to app bundle"
+          echo "Copied onedir runtime to app bundle"
           ls -la "$APP_RESOURCES/server/python-runtime/macos-arm64/"
 
       - name: Sign Electron app
+        if: github.event_name == 'release' || inputs.publish
         env:
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
@@ -328,7 +323,7 @@ jobs:
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
-              "$binary" 2>/dev/null || true
+              "$binary"
           done
 
           # Sign executables (Mach-O binaries without extensions)
@@ -352,7 +347,7 @@ jobs:
             codesign --force --sign "$IDENTITY" \
               --options runtime \
               --timestamp \
-              "$lib" 2>/dev/null || true
+              "$lib"
           done
 
           # Sign helper apps and other executables in frameworks
@@ -387,7 +382,7 @@ jobs:
               --options runtime \
               --entitlements ./entitlements.mac.plist \
               --timestamp \
-              "$nested_app" 2>/dev/null || true
+              "$nested_app"
           done
 
           # Sign the main app bundle last
@@ -402,7 +397,7 @@ jobs:
           echo "Verifying signature..."
           codesign --verify --verbose=4 "$APP_PATH"
           echo "Checking for unsigned components..."
-          codesign --verify --deep --strict "$APP_PATH" 2>&1 || echo "Deep verification completed (warnings above may be ignorable)"
+          codesign --verify --deep --strict "$APP_PATH"
 
       - name: Create DMG
         run: |
@@ -435,7 +430,7 @@ jobs:
 
           # Force detach the stuck volume
           for disk in /dev/disk*; do
-            hdiutil detach "$disk" -force 2>/dev/null || true
+            hdiutil detach "$disk" -force
           done
 
           # Find the temp read-write DMG that create-dmg left behind
@@ -459,6 +454,7 @@ jobs:
           fi
 
       - name: Notarize DMG
+        if: github.event_name == 'release' || inputs.publish
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -479,8 +475,8 @@ jobs:
           # Extract submission ID
           SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
 
-          # Check if notarization failed
-          if echo "$SUBMIT_OUTPUT" | grep -q "Invalid"; then
+          # Fail closed unless Apple explicitly accepted the submission.
+          if ! echo "$SUBMIT_OUTPUT" | grep -q "status: Accepted"; then
             echo "❌ Notarization failed. Fetching detailed log..."
             xcrun notarytool log "$SUBMISSION_ID" \
               --apple-id "$APPLE_ID" \
@@ -491,43 +487,30 @@ jobs:
 
           xcrun stapler staple "$DMG_PATH"
 
-      - name: Create Release & Upload DMG
-        run: |
-          TAG="${{ env.TAG }}"
-          DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
+      - name: Prepare checksummed release assets
+        shell: bash
+        run: python scripts/release-assets.py prepare out/make
 
-          # Create the GitHub release (or upload to existing)
-          # Tag is bare (e.g. "2.1.1"), title has the "v" prefix
-          gh release create "${TAG}" "$DMG_PATH" \
-            --title "BonzAI v${TAG}" \
-            --generate-notes \
-            || gh release upload "${TAG}" "$DMG_PATH" --clobber
-
-          echo "Released: BonzAI v${TAG}"
+      - name: Upload release assets
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
+        run: python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
 
       - name: Mirror to bonzai-releases
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
         env:
           MIRROR_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
-          if [ -z "$MIRROR_TOKEN" ]; then
-            echo "RELEASES_PAT not configured, skipping mirror"
-            exit 0
+          if [ -n "$MIRROR_TOKEN" ]; then
+            GH_TOKEN="$MIRROR_TOKEN" python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo bonzai-depin/bonzai-releases
           fi
-          export GH_TOKEN="$MIRROR_TOKEN"
 
-          TAG="${{ env.TAG }}"
-          DMG_PATH="out/make/BonzAI-${TAG}-arm64.dmg"
-
-          # Delete existing release with same tag if re-publishing
-          gh release delete "$TAG" \
-            --repo bonzai-depin/bonzai-releases \
-            --yes 2>/dev/null || true
-
-          # Create release with the DMG in the mirror repo
-          # Tag is bare (e.g. "2.1.1"), title has the "v" prefix
-          gh release create "$TAG" "$DMG_PATH" \
-            --repo bonzai-depin/bonzai-releases \
-            --title "BonzAI v${TAG}" \
-            --generate-notes
-
-          echo "Mirrored ${TAG} to bonzai-depin/bonzai-releases"
+      - name: Save validated build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bonzai-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}
+          path: out/make/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7

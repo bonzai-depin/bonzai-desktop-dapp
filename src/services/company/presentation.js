@@ -1,3 +1,7 @@
+import { agentAvatarSource } from "../../utils/agentAvatar.js";
+import { smartAgentCatalog } from "../smartAgentCatalog.js";
+import ariaAvatar from "../../assets/companions/aria.webp";
+import kaiAvatar from "../../assets/companions/kai.webp";
 import auroreAvatar from "../../assets/companions/aurore.webp";
 import maiAvatar from "../../assets/companions/mai.webp";
 import marcusAvatar from "../../assets/companions/marcus.webp";
@@ -17,7 +21,13 @@ const ROLE_TITLES = {
   CMO: "Marketing",
   CSO: "Sales",
   COO: "Operations",
-  GeneralCounsel: "General Counsel",
+  GeneralCounsel: "Legal and compliance",
+  DocumentController: "Document management",
+  PurchasingManager: "Purchasing manager",
+  ContractManager: "Contract manager",
+  MaintenancePlanner: "Maintenance planner",
+  FieldTechnician: "Field technician",
+  QHSE: "Safety and quality",
   RnDLead: "R&D Lead",
   BusinessDevelopment: "Business Development",
   ClientSuccess: "Client Success",
@@ -28,6 +38,8 @@ const ROLE_TITLES = {
 };
 
 const COMPANION_AVATARS = {
+  aria: ariaAvatar,
+  kai: kaiAvatar,
   aurore: auroreAvatar,
   mai: maiAvatar,
   marcus: marcusAvatar,
@@ -61,10 +73,16 @@ export function formatRoleTitle(roleKey) {
 
 export function companionAvatar(companion) {
   if (!companion) return null;
-  if (typeof companion === "object") {
-    return companion.image || companion.avatarUrl || COMPANION_AVATARS[companion.id] || null;
-  }
-  return COMPANION_AVATARS[String(companion).toLowerCase()] || null;
+  const saved = typeof companion === "object"
+    ? companion
+    : smartAgentCatalog.agents.find((agent) => agent.id === companion);
+  const id = String(saved?.id || companion).toLowerCase();
+  const bundledId = saved?.defaultImage?.match(/companions\/([^/]+)\.webp$/)?.[1];
+  const fallback = COMPANION_AVATARS[bundledId || id] || null;
+  // Saved Vite paths can change between builds; resolve bundled portraits afresh.
+  const image = saved?.image || saved?.avatarUrl;
+  if (fallback && typeof image === "string" && /(?:^|\/)assets\//.test(image) && !/^(?:https?:|data:|bonzai-blob:)/.test(image)) return fallback;
+  return agentAvatarSource(image) || fallback;
 }
 
 export function formatModelLabel(value) {

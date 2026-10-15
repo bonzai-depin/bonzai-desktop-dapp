@@ -24,20 +24,8 @@
             >
               <span class="material-symbols-outlined mr-2">wallet</span>
               <span class="btn-text">
-                {{ isConnecting ? "Connecting..." : "Connect Wallet" }}
+                {{ isConnecting ? "Connecting..." : "Connect" }}
               </span>
-            </button>
-
-            <span class="connect-divider">or</span>
-
-            <button
-              class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
-              @click="openPrivyWallet"
-              :disabled="isConnecting"
-              title="Sign in with email — no crypto wallet needed"
-            >
-              <span class="material-symbols-outlined mr-2">login</span>
-              <span class="btn-text">Sign In</span>
             </button>
 
             <!-- Cancel/Reset button when stuck connecting -->
@@ -160,14 +148,10 @@
           </a>
           <button
             class="bz-btn bz-btn--warning rewards-btn fira-sans-condensed-black-italic"
-            @click="showRewardsModal = true"
+            @click="openRewardsView"
             title="Rewards & Pool Revenue"
           >
             <span class="material-symbols-outlined mr-2">trophy</span>
-            <span
-              v-if="rewardsModalRef?.hasClaimableRewards"
-              class="rewards-badge-dot"
-            ></span>
             Rewards
           </button>
         </div>
@@ -353,53 +337,10 @@
       </Transition>
     </Teleport>
 
-    <!-- Rewards Modal -->
-    <RewardsModal
-      v-if="showRewardsModal"
-      ref="rewardsModalRef"
-      @close="showRewardsModal = false"
-    />
 
     <!-- ═══ Privy Login Modal ═══ -->
     <Teleport to="body">
-      <Transition name="fade">
-        <div
-          v-if="showPrivyLogin"
-          class="privy-modal-overlay"
-          @click.self="closePrivyLogin"
-        >
-          <div class="privy-modal">
-            <div class="privy-modal-header">
-              <div class="bz-modal-titleblock">
-                <p class="bz-eyebrow">Account</p>
-                <h2 class="bz-h1">Sign In</h2>
-              </div>
-              <BzCloseButton
-                size="md"
-                aria-label="Close sign-in"
-                @click="closePrivyLogin"
-              />
-            </div>
 
-            <div class="privy-modal-body">
-              <p class="privy-subtitle">Sign in with email — no crypto wallet needed. Your wallet opens in a secure window.</p>
-
-              <button
-                class="bz-btn bz-btn--success bz-btn--lg auth-action-btn fira-sans-condensed-black-italic"
-                @click="openPrivyWallet"
-              >
-                <span class="material-symbols-outlined mr-2">open_in_new</span>
-                Open Wallet
-              </button>
-
-              <div v-if="privyError" class="privy-error-card mt-4">
-                <span class="material-symbols-outlined" style="font-size: 16px">error</span>
-                <span>{{ privyError }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Transition>
     </Teleport>
   </div>
 </template>
@@ -423,7 +364,6 @@ import {
 } from "../services/auth.service.js";
 import { authVault } from "../services/authVault.service.js";
 import NetworkSettings from "./NetworkSettings.vue";
-import RewardsModal from "./RewardsModal.vue";
 import { mintStore } from "../stores/mintStore.js";
 import { modelPicker } from "../services/modelPicker.service.js";
 import BzCloseButton from "./BzCloseButton.vue";
@@ -445,7 +385,6 @@ const {
   levels,
   highestLevel,
   connect: doConnect,
-  connectWithPrivy: doConnectWithPrivy,
   disconnect: doDisconnect,
   cancelConnection: doCancelConnection,
   refresh: doRefresh,
@@ -466,8 +405,7 @@ const unlockStatus = ref("");
 const unlockStatusType = ref("info"); // 'info', 'warning', 'success', 'danger'
 
 // Rewards modal state
-const showRewardsModal = ref(false);
-const rewardsModalRef = ref(null);
+const openRewardsView = () => window.dispatchEvent(new CustomEvent("bonzai:set-mode", { detail: "rewards" }));
 
 // Network modal state
 const showNetworkModal = ref(false);
@@ -481,11 +419,7 @@ const isReauthing = ref(false);
 const isRefreshingToken = ref(false);
 
 // Privy login state
-const showPrivyLogin = ref(false);
-const privyEmail = ref("");
-const privyOtpCode = ref("");
-const privyStep = ref("email"); // 'email' | 'otp'
-const privyError = ref("");
+
 
 // Model state from shared store
 const currentModelName = computed(
@@ -753,38 +687,6 @@ const disconnect = async () => {
   await doDisconnect();
 };
 
-// ── Privy Login Flow (via wallet window) ────────────────────────────────
-
-const openPrivyWallet = async () => {
-  showPrivyLogin.value = false;
-  // Open the wallet window — user authenticates there, not in the desktop app
-  const result = await window.electronAPI?.wallet?.open?.({ email: '' });
-  if (!result?.ok) {
-    privyError.value = 'Failed to open wallet window';
-    return;
-  }
-  // Start listening for the wallet address from the wallet window
-  doConnectWithPrivy({});
-};
-
-const loginWithSocial = async (provider) => {
-  privyError.value = "";
-  const result = await doConnectWithPrivy({ method: provider });
-  if (result.success) {
-    showPrivyLogin.value = false;
-  } else if (result.error) {
-    privyError.value = result.error;
-  }
-};
-
-const closePrivyLogin = () => {
-  showPrivyLogin.value = false;
-  privyStep.value = "email";
-  privyEmail.value = "";
-  privyOtpCode.value = "";
-  privyError.value = "";
-};
-
 const refresh = async () => {
   isRefreshing.value = true;
   await doRefresh();
@@ -891,45 +793,14 @@ onMounted(async () => {
   window.addEventListener("auth:needs-reauth", handleNeedsReauth);
   window.addEventListener("auth:expired", handleNeedsReauth);
 
-  // Listen for connect request from other components (e.g. skill purchase)
-  window.addEventListener("bonzai:open-connect", () => {
-    showPrivyLogin.value = true;
-  });
-
-  // Handle Privy OAuth callback from deep link
-  if (window.electronAPI?.onPrivyOAuthCallback) {
-    window.electronAPI.onPrivyOAuthCallback(async (_event, url) => {
-      try {
-        const parsed = new URL(url);
-        const code = parsed.searchParams.get("code");
-        const state = parsed.searchParams.get("state");
-        const provider = parsed.searchParams.get("provider") || "google";
-        if (code && state) {
-          const result = await doConnectWithPrivy({ method: "oauth_callback", authorizationCode: code, returnedStateCode: state, provider });
-          if (result.success) {
-            showPrivyLogin.value = false;
-          } else {
-            privyError.value = result.error || "OAuth sign-in failed";
-          }
-        }
-      } catch (e) {
-        privyError.value = e.message || "OAuth callback failed";
-      }
-    });
-  }
-
   // Command palette / global keyboard surfaces dispatch these events
   // to flip our local modal state without needing a parent prop drill.
   const openNetwork = () => { showNetworkModal.value = true; };
-  const openRewards = () => { showRewardsModal.value = true; };
   window.addEventListener("bonzai:open-network", openNetwork);
-  window.addEventListener("bonzai:open-rewards", openRewards);
   // Stash on the component so the unmount handler can pull them back.
   _onOpenNetwork = openNetwork;
-  _onOpenRewards = openRewards;
 });
 let _onOpenNetwork = null;
-let _onOpenRewards = null;
 
 onUnmounted(() => {
   if (p2pStatusInterval) {
@@ -938,7 +809,6 @@ onUnmounted(() => {
   window.removeEventListener("auth:needs-reauth", handleNeedsReauth);
   window.removeEventListener("auth:expired", handleNeedsReauth);
   if (_onOpenNetwork) window.removeEventListener("bonzai:open-network", _onOpenNetwork);
-  if (_onOpenRewards) window.removeEventListener("bonzai:open-rewards", _onOpenRewards);
 });
 
 watch([isConnected, walletAddress], async ([connected, addr]) => {

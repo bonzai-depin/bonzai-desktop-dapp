@@ -17,10 +17,14 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { bootstrap } from '@libp2p/bootstrap';
 import { mdns } from '@libp2p/mdns';
 import { pipe } from 'it-pipe';
-import { fromString, toString } from 'uint8arrays';
+import { fromString } from 'uint8arrays';
+import { withPacedPeerRouting } from './pacedPeerRouting.js';
+import { multiaddr } from '@multiformats/multiaddr';
+import { peerIdFromString } from '@libp2p/peer-id';
 
 // Protocol identifiers
 export const PROTOCOLS = {
+  AGENT_JOB: '/bonzai/v1/agent-job',
   INFERENCE: '/bonzai/v1/inference',
   HEALTH: '/bonzai/v1/health',
   DISCOVERY: '/bonzai/v1/discovery',
@@ -87,10 +91,14 @@ class BonzaiP2PNode {
     // Build services
     const services = {
       identify: identify(),
-      dht: kadDHT({
-        clientMode: false, // Full DHT participation
+      dht: withPacedPeerRouting(kadDHT({
+        // GHSA-32mq-hpph-xfvr: the installed DHT server accepts unbounded records.
+        // Explicit client mode removes inbound DHT RPC handlers and prevents
+        // auto-promotion on public addresses. Outbound discovery still works.
+        // Keep this until the libp2p stack is upgraded and verified together.
+        clientMode: true,
         protocol: '/bonzai/kad/1.0.0',
-      }),
+      })),
     };
 
     // Enable relay server if provider opts in and has public connectivity
@@ -272,7 +280,10 @@ class BonzaiP2PNode {
     console.log('[libp2p] Dialing:', peerIdOrAddr);
 
     try {
-      const connection = await this.node.dial(peerIdOrAddr);
+      const target = typeof peerIdOrAddr === 'string'
+        ? (peerIdOrAddr.startsWith('/') ? multiaddr(peerIdOrAddr) : peerIdFromString(peerIdOrAddr))
+        : peerIdOrAddr;
+      const connection = await this.node.dial(target);
       console.log('[libp2p] Connected to:', connection.remotePeer.toString());
       return connection;
     } catch (err) {
@@ -290,15 +301,25 @@ class BonzaiP2PNode {
    * @param {Record<string, unknown>} request.params - Pipeline-specific parameters
    * @returns {Promise<{ok: boolean, result?: Record<string, unknown>, error?: string}>} Inference response
    */
-  async sendInferenceRequest(peerId, request) {
+  async sendAgentJob(peerId, request) {
+    return this.sendInferenceRequest(peerId, request, PROTOCOLS.AGENT_JOB);
+  }
+
+  async onAgentJob(handler) {
+    this.handlers.set(PROTOCOLS.AGENT_JOB, handler);
+    if (this.isStarted) await this._registerProtocolHandler(PROTOCOLS.AGENT_JOB, handler);
+  }
+
+  async sendInferenceRequest(peerId, request, protocol = PROTOCOLS.INFERENCE) {
     if (!this.isStarted) {
       throw new Error('Node not started');
     }
 
-    console.log('[libp2p] Sending inference request to:', peerId);
+    console.log('[libp2p] Sending request:', protocol, peerId);
 
     const connection = await this.dial(peerId);
-    const stream = await connection.newStream(PROTOCOLS.INFERENCE);
+    const stream = await connection.newStream(protocol);
+    const timeout = (protocol === PROTOCOLS.AGENT_JOB || request?.kind === 'bonzai-worker') ? setTimeout(() => stream.abort(new Error('Peer request timed out.')), 60000) : null;
 
     try {
       // Send request
@@ -310,20 +331,24 @@ class BonzaiP2PNode {
 
       // Read response
       let responseData = '';
+      const decoder = new TextDecoder();
       await pipe(
         stream.source,
-        async function* (source) {
+        async function (source) {
           for await (const chunk of source) {
-            responseData += toString(chunk.subarray());
+            responseData += decoder.decode(chunk.subarray(), { stream: true });
+            if (responseData.length > (protocol === PROTOCOLS.AGENT_JOB ? 65536 : 192 * 1024 * 1024)) throw new Error('Job response too large.');
           }
         }
       );
 
+      responseData += decoder.decode();
       const response = JSON.parse(responseData);
       console.log('[libp2p] Received response:', response.ok ? 'success' : response.error);
 
       return response;
     } finally {
+      if (timeout) clearTimeout(timeout);
       await stream.close();
     }
   }
@@ -368,6 +393,7 @@ class BonzaiP2PNode {
     const connection = await this.dial(peerId);
     const stream = await connection.newStream(PROTOCOLS.HEALTH);
 
+    const timer = setTimeout(() => stream.abort(new Error('Peer health timed out.')), 15000);
     try {
       // Send empty request
       await pipe(
@@ -377,17 +403,21 @@ class BonzaiP2PNode {
 
       // Read response
       let responseData = '';
+      const decoder = new TextDecoder();
       await pipe(
         stream.source,
-        async function* (source) {
+        async function (source) {
           for await (const chunk of source) {
-            responseData += toString(chunk.subarray());
+            responseData += decoder.decode(chunk.subarray(), { stream: true });
+            if (responseData.length > 1024 * 1024) throw new Error('Peer health response is too large.');
           }
         }
       );
 
+      responseData += decoder.decode();
       return JSON.parse(responseData);
     } finally {
+      clearTimeout(timer);
       await stream.close();
     }
   }
@@ -505,20 +535,24 @@ class BonzaiP2PNode {
     try { await this.node.unhandle(protocol); } catch {}
     this.node.handle(protocol, async ({ stream, connection }) => {
       const remotePeer = connection.remotePeer.toString();
+      const timeout = protocol === PROTOCOLS.AGENT_JOB ? setTimeout(() => stream.abort(new Error('Job transfer timed out.')), 30000) : null;
       console.log(`[libp2p] ${protocol} request from ${remotePeer}`);
 
       try {
         // Read request
         let requestData = '';
+        const decoder = new TextDecoder();
         await pipe(
           stream.source,
-          async function* (source) {
+          async function (source) {
             for await (const chunk of source) {
-              requestData += toString(chunk.subarray());
+              requestData += decoder.decode(chunk.subarray(), { stream: true });
+              if (requestData.length > (protocol === PROTOCOLS.AGENT_JOB ? 65536 : 16 * 1024 * 1024)) throw new Error('Job brief too large.');
             }
           }
         );
 
+        requestData += decoder.decode();
         const request = JSON.parse(requestData || '{}');
 
         // Handle request
@@ -544,6 +578,7 @@ class BonzaiP2PNode {
           stream.sink
         );
       } finally {
+        if (timeout) clearTimeout(timeout);
         await stream.close();
       }
     });

@@ -44,7 +44,11 @@ function _upsert(companyId, patch) {
 }
 
 export function recordRevenue(companyId, opts) {
-  const amt = Number(opts.amount);
+  return get().db.transaction(() => _recordRevenue(companyId, opts))();
+}
+
+function _recordRevenue(companyId, opts) {
+  const amt = _fromCents(_toCents(opts.amount));
   if (!Number.isFinite(amt) || amt <= 0) throw new Error("amount must be > 0");
   const cur = getState(companyId);
   if (opts.currency && opts.currency !== cur.currency) {
@@ -77,7 +81,11 @@ export function recordRevenue(companyId, opts) {
 }
 
 export function paySupplier(companyId, opts) {
-  const amt = Number(opts.amount);
+  return get().db.transaction(() => _paySupplier(companyId, opts))();
+}
+
+function _paySupplier(companyId, opts) {
+  const amt = _fromCents(_toCents(opts.amount));
   if (!Number.isFinite(amt) || amt <= 0) throw new Error("amount must be > 0");
   const cur = getState(companyId);
   if (opts.currency && opts.currency !== cur.currency) {

@@ -1,6 +1,6 @@
 /**
- * Wallet Provider Abstraction — routes agent wallet ops to Privy or OWS
- * based on auth provider, so downstream consumers don't need to know which backend is active.
+ * Smart-agent wallets live in the local OWS vault, independently of the
+ * owner's login method. Existing wallet mappings remain recoverable.
  */
 
 import { agentWalletService } from './agentWallet.service.js';
@@ -9,6 +9,8 @@ import { owsService } from './ows.service.js';
 import { OWSEthersSigner } from './owsSigner.adapter.js';
 import { owsMigrationService } from './owsMigration.service.js';
 import { CONFIG } from '../config/web3.config.js';
+import { walletCredentials, ensureOWSPassphrase } from './walletCredentials.service.js';
+import { restrictAgentJobSigner } from './agentJobSigner.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTH PROVIDER DETECTION
@@ -35,7 +37,8 @@ function isPrivyUser() {
 
 /**
  * Create an agent wallet for a companion.
- * Priority: Privy (if Privy user) → OWS (default)
+ * New wallets always use the local OWS vault. Owner email authentication
+ * does not imply that a Privy server-wallet service is available.
  *
  * @param {string} companionId
  * @param {Object} [opts] - Optional companion info for wallet naming
@@ -44,70 +47,67 @@ function isPrivyUser() {
  * @returns {Promise<{address: string, privateKey?: string, walletId?: string, provider: string}>}
  */
 async function createAgentWallet(companionId, opts = {}) {
-  if (isPrivyUser()) {
-    const result = await privyService.createServerWallet(companionId);
-
-    // Apply default spending policy
-    try {
-      const policy = privyService.buildAgentWalletPolicy();
-      await privyService.setWalletPolicy(companionId, policy);
-    } catch (err) {
-      console.warn('[WalletProvider] Failed to set default policy (non-fatal):', err.message);
-    }
-
-    return { address: result.address, walletId: result.walletId, provider: 'privy' };
+  if (!companionId) throw new Error('A smart-agent identity is required.');
+  const existing = await getAgentWalletCredentials(companionId);
+  if (existing) return existing;
+  if (await agentWalletService.hasAgentWallet(companionId)) {
+    await autoMigrateLegacyWallet(companionId);
+    const migrated = await getAgentWalletCredentials(companionId);
+    if (migrated) return migrated;
+    throw new Error('Recover the existing agent wallet before retrying the launch.');
   }
 
-  // OWS: primary provider for non-Privy users
   try {
-    const firstName = (opts.firstName || '').toLowerCase().replace(/[^a-z0-9]/g, '') || 'companion';
-    const lastName = (opts.lastName || '').toLowerCase().replace(/[^a-z0-9]/g, '') || companionId;
-    const walletName = `bonzai-companion-${firstName}-${lastName}`;
+    const { ethers } = await import('ethers');
+    // Stable identity survives renaming and prevents equal names sharing a key.
+    const walletName = `bonzai-agent-${ethers.id(String(companionId)).slice(2, 26)}`;
 
-    // Generate passphrase (32-char random)
-    const passphraseBytes = new Uint8Array(24);
-    globalThis.crypto.getRandomValues(passphraseBytes);
-    const passphrase = btoa(String.fromCharCode(...passphraseBytes))
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    // Persist and verify the passphrase before creating an encrypted OWS wallet.
+    const passphrase = await ensureOWSPassphrase(companionId);
 
-    const walletResult = await owsService.createWallet(walletName, passphrase);
+    // A launch can be retried after the vault write but before mapping persistence.
+    const retained = await owsService.getWallet(walletName);
+    const walletResult = retained?.address ? retained : await owsService.createWallet(walletName, passphrase);
     if (walletResult.error) {
       throw new Error(walletResult.error);
     }
+    if (!ethers.isAddress(walletResult.address || '')) throw new Error('OWS returned an invalid wallet address.');
 
-    // Store passphrase in Electron Store
-    await window.electronAPI?.store?.set(`ows-passphrase-${companionId}`, passphrase);
+    // Receive-only companions do not need spending policies or API tokens.
+    if (CONFIG.agentWallet.enabledOperations?.includes('pay')) {
+      let apiKeyResult;
+      try {
+        const policyResult = await owsService.createPolicy({
+          allowed_chains: [`eip155:${CONFIG.agentWallet.defaultChainId}`],
+          daily_limit_eth: '0.005',
+          expires_at: '2027-12-31T23:59:59Z',
+        });
 
-    // Create default spending policy
-    try {
-      const policyResult = await owsService.createPolicy({
-        allowed_chains: ['eip155:8453'],
-        daily_limit_eth: '0.005',
-        expires_at: '2027-12-31T23:59:59Z',
-      });
-
-      // Create API key
-      const policyIds = policyResult?.id ? [policyResult.id] : ['base-spending'];
-      const apiKeyResult = await owsService.createApiKey(
-        `${walletName}-agent`,
-        [walletName],
-        policyIds,
-        passphrase,
-        '2027-12-31T23:59:59Z'
-      );
-      if (apiKeyResult && !apiKeyResult.error) {
-        await window.electronAPI?.store?.set(`ows-api-key-${companionId}`, apiKeyResult.token);
+        // Create API key
+        const policyIds = policyResult?.id ? [policyResult.id] : ['base-spending'];
+        apiKeyResult = await owsService.createApiKey(
+          `${walletName}-agent`,
+          [walletName],
+          policyIds,
+          passphrase,
+          '2027-12-31T23:59:59Z'
+        );
+        if (apiKeyResult && !apiKeyResult.error) {
+          await walletCredentials.setOWS(companionId, 'apiKey', apiKeyResult.token);
+        }
+      } catch (policyErr) {
+        if (apiKeyResult?.id) await owsService.revokeApiKey(apiKeyResult.id).catch(() => {});
+        console.warn('[WalletProvider] Optional OWS spending capability was not provisioned');
       }
-    } catch (policyErr) {
-      console.warn('[WalletProvider] OWS policy/API key creation failed (non-fatal):', policyErr.message);
     }
 
     // Store wallet mapping
-    await window.electronAPI?.store?.set(`ows-wallet-${companionId}`, {
+    const mappingSaved = await window.electronAPI?.store?.set(`ows-wallet-${companionId}`, {
       walletName,
       address: walletResult.address,
       provider: 'ows',
     });
+    if (mappingSaved !== true) throw new Error('The OWS wallet mapping could not be saved');
 
     return { address: walletResult.address, provider: 'ows' };
   } catch (owsErr) {
@@ -123,8 +123,8 @@ async function autoMigrateLegacyWallet(companionId) {
     const hasLegacy = await agentWalletService.hasAgentWallet(companionId);
     if (!hasLegacy) return false; // No legacy wallet to migrate
 
-    await owsMigrationService.migrateCompanion(companionId);
-    return true;
+    const result = await owsMigrationService.migrateCompanion(companionId);
+    return result.success === true;
   } catch (err) {
     console.warn(`[WalletProvider] Auto-migration failed for ${companionId}:`, err.message);
     return false;
@@ -155,12 +155,42 @@ async function getAgentWalletAddress(companionId) {
 
 /** Primary integration point for x402Executor and purchaseExecutor. Priority: OWS then Privy. */
 async function getAgentWalletSigner(companionId, chainId = CONFIG.agentWallet.defaultChainId) {
+  if (!CONFIG.agentWallet.enabledOperations?.includes('pay')) {
+    throw new Error('Companion wallets are receive-only in this release.');
+  }
+  return resolveAgentSigner(companionId, chainId);
+}
+
+async function getAgentWorkerRequestSigner(companionId, { approved, message, chainId } = {}) {
+  if (approved !== true || typeof message !== 'string' || !/^BonzAI worker request v1\n0x[0-9a-f]{64}$/.test(message)) throw new Error('Approve this exact worker request first.');
+  const signer = await resolveAgentSigner(companionId, chainId);
+  return { getAddress: () => signer.getAddress(), signMessage: value => {
+    if (value !== message) throw new Error('Worker request changed after approval.');
+    return signer.signMessage(value);
+  } };
+}
+
+async function getAgentJobSigner(companionId, { approved, action, jobId, evidenceHash, currency } = {}) {
+  if (approved !== true || !['acceptJob', 'submitWork', 'withdrawTokenPayments'].includes(action)) throw new Error('Explicit approval is required for this smart-agent job action.');
+  const { ethers } = await import('ethers');
+  const escrowAddress = CONFIG.contributionEconomy?.jobEscrowAddress;
+  const chainId = CONFIG.contributionEconomy?.chainId;
+  if (!ethers.isAddress(escrowAddress || '') || !chainId) throw new Error('Smart-agent job settlement is not configured.');
+  const signer = await resolveAgentSigner(companionId, chainId);
+  const abi = new ethers.Interface(['function acceptJob(bytes32)', 'function submitWork(bytes32,bytes32)', 'function withdrawTokenPayments(address,address)']);
+  const args = action === 'acceptJob' ? [jobId] : action === 'submitWork' ? [jobId, evidenceHash] : [currency, await signer.getAddress()];
+  const data = abi.encodeFunctionData(action, args);
+  return restrictAgentJobSigner(signer, { escrowAddress, chainId, data });
+}
+
+async function resolveAgentSigner(companionId, chainId) {
   const owsMapping = await window.electronAPI?.store?.get(`ows-wallet-${companionId}`);
   if (owsMapping) {
-    const passphrase = await window.electronAPI?.store?.get(`ows-passphrase-${companionId}`)
-      || await window.electronAPI?.store?.get(`ows-api-key-${companionId}`);
+    const passphrase = await walletCredentials.getOWS(companionId, 'passphrase')
+      || await walletCredentials.getOWS(companionId, 'apiKey');
     if (passphrase) {
       const chainConfig = agentWalletService.getChainConfig(chainId);
+      if (!chainConfig?.rpc) throw new Error(`No RPC configured for chain ${chainId}.`);
       const provider = chainConfig
         ? new (await import('ethers')).ethers.JsonRpcProvider(chainConfig.rpc)
         : undefined;
@@ -284,6 +314,8 @@ export const walletProviderService = {
   hasAgentWallet,
   getAgentWalletAddress,
   getAgentWalletSigner,
+  getAgentJobSigner,
+  getAgentWorkerRequestSigner,
   getAgentWalletBalance,
   getAgentWalletCredentials,
 
