@@ -4,10 +4,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { assertWindowsGpuFiles } from './llama-build-targets.mjs';
 
 if (process.platform !== 'win32') throw new Error('Run this check on Windows');
 const source = path.resolve(process.argv[2] || 'bin/windows-x64');
+const python = path.join(process.env.pythonLocation || '', 'python.exe');
+if (!path.isAbsolute(python) || !fs.existsSync(python)) throw new Error('Set up Python before verifying the native runtime');
+const probe = fileURLToPath(new URL('./verify-gguf-cpu.py', import.meta.url));
 const files = fs.readdirSync(source).filter(name => /\.(exe|dll)$/i.test(name));
 assertWindowsGpuFiles(files);
 for (const name of files) {
@@ -35,7 +39,13 @@ try {
     const output = `${result.stdout || ''}\n${result.stderr || ''}`;
     process.stdout.write(output);
     if (result.error || result.status !== 0) throw new Error(`Native startup failed (GPU plugin ${withoutGpu ? 'absent' : 'present'}): ${result.error || result.status}`);
-    if (!/loaded CPU backend/i.test(output)) throw new Error('Packaged CPU backend failed to load');
+    // --list-devices omits CPUs, and its early exit can lose async backend logs.
+    // Inspect the native registry instead of treating missing log text as failure.
+    const registry = spawnSync(python, [probe, staging], {
+      cwd: staging, env, encoding: 'utf8', timeout: 30000,
+    });
+    process.stdout.write(`${registry.stdout || ''}\n${registry.stderr || ''}`);
+    if (registry.error || registry.status !== 0) throw new Error(`Packaged CPU backend verification failed: ${registry.error || registry.status}`);
     console.log(`Verified standalone runtime with GPU plugin ${withoutGpu ? 'absent (CPU fallback)' : 'present'}`);
   }
 } finally {

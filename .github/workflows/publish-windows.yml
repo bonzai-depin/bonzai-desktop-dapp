@@ -64,6 +64,35 @@ jobs:
         with:
           node-version: 24.14.0
 
+      # Validate native GPU packaging before the large Python dependency build.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\VulkanSDK-Installer.exe"
+          curl.exe --fail --location --retry 3 --output $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Vulkan SDK download failed' }
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'Valid') { throw 'Invalid Vulkan SDK installer signature' }
+          $setup = Start-Process -FilePath $installer -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Vulkan SDK installation failed: $($setup.ExitCode)" }
+          $sdk = "C:\VulkanSDK\$env:VULKAN_VERSION"
+          if (!(Test-Path "$sdk\Bin\glslc.exe")) { throw 'Vulkan shader compiler is missing' }
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Build llama.cpp RPC binaries
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          npm run build:rpc
+
+      - name: Verify native GPU package and CPU fallback
+        run: node scripts/verify-windows-gguf.mjs bin/windows-x64
+
       - name: Install Node dependencies
         env:
           # BonzAI builds its own standalone llama runtime below.
@@ -112,11 +141,6 @@ jobs:
           if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
           npm run build:vite
           node scripts/verify-renderer-materials.mjs
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
 
       # Install nightly CUDA-enabled PyTorch for full GPU performance on NVIDIA
       # GPUs. The PyInstaller binary falls back to CPU when CUDA is unavailable.
@@ -207,29 +231,6 @@ jobs:
         shell: bash
         run: |
           binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser.exe --bonzai-runtime-check
-
-      - name: Install Vulkan SDK
-        shell: pwsh
-        run: |
-          $installer = "$env:RUNNER_TEMP\VulkanSDK-Installer.exe"
-          curl.exe --fail --location --retry 3 --output $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
-          if ($LASTEXITCODE -ne 0) { throw 'Vulkan SDK download failed' }
-          $signature = Get-AuthenticodeSignature $installer
-          if ($signature.Status -ne 'Valid') { throw 'Invalid Vulkan SDK installer signature' }
-          $setup = Start-Process -FilePath $installer -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install' -Wait -PassThru
-          if ($setup.ExitCode -ne 0) { throw "Vulkan SDK installation failed: $($setup.ExitCode)" }
-          $sdk = "C:\VulkanSDK\$env:VULKAN_VERSION"
-          if (!(Test-Path "$sdk\Bin\glslc.exe")) { throw 'Vulkan shader compiler is missing' }
-          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-
-      - name: Build llama.cpp RPC binaries
-        run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          npm run build:rpc
-
-      - name: Verify native GPU package and CPU fallback
-        run: node scripts/verify-windows-gguf.mjs bin/windows-x64
 
       - name: Package Electron app
         shell: bash
