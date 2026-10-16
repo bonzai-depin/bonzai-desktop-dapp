@@ -1,0 +1,31 @@
+name: Host validated installers
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: 'Successful desktop build run ID to publish as an unsigned test build'
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: host-installers-${{ inputs.source_run }}
+  cancel-in-progress: false
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install boto3
+      - name: Upload and verify complete public installers
+        env:
+          SOURCE_RUN: ${{ inputs.source_run }}
+          GH_TOKEN: ${{ github.token }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT || secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || secrets.R2_PUBLIC_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python scripts/host-validated-installers.py

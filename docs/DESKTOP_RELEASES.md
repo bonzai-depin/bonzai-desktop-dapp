@@ -149,3 +149,14 @@ local directory and run `scripts/upload-local-models.py --directory <directory>
 SHA-256 before completion, then verify public HEAD size. Delete the temporary
 Actions artifact after use; never commit or share its signed links. Do not start
 upload preparation until the local transfer is ready to run.
+
+## Host validated test installers without rebuilding
+
+The manual **Host validated installers** workflow accepts a successful desktop build run ID.
+It checks the workflow outcome, rejects split payloads, verifies the build's saved SHA-256,
+and uploads complete installers to `releases/test-builds/<source-sha>/`. It downloads each
+public installer in full and verifies its checksum before publishing a per-run JSON manifest
+and links in the Actions summary. Existing objects with different contents are rejected.
+These are explicitly unsigned test builds (macOS is not notarized), not signed releases.
+This path allows tested artifacts to be hosted without rerunning compilation or requiring
+local copies of bucket credentials. Artifact retention still applies before promotion.
