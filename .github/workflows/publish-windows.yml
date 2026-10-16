@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   publish_on_windows:
-    runs-on: windows-latest
+    runs-on: windows-2025
     env:
       MAIN_PY_FILE: src/server/diffuser.py
       OS_KEY: windows
@@ -38,6 +38,9 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
       PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish }}
       CI: true
+      # Cross-vendor GGUF acceleration; never silently ship a CPU-only build.
+      BONZAI_LLAMA_BACKEND: vulkan
+      VULKAN_VERSION: 1.4.357.0
     steps:
       - uses: actions/checkout@v4
         with:
@@ -205,10 +208,28 @@ jobs:
         run: |
           binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser.exe --bonzai-runtime-check
 
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\VulkanSDK-Installer.exe"
+          curl.exe --fail --location --retry 3 --output $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Vulkan SDK download failed' }
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'Valid') { throw 'Invalid Vulkan SDK installer signature' }
+          $setup = Start-Process -FilePath $installer -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Vulkan SDK installation failed: $($setup.ExitCode)" }
+          $sdk = "C:\VulkanSDK\$env:VULKAN_VERSION"
+          if (!(Test-Path "$sdk\Bin\glslc.exe")) { throw 'Vulkan shader compiler is missing' }
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
       - name: Build llama.cpp RPC binaries
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           npm run build:rpc
+
+      - name: Verify native GPU package and CPU fallback
+        run: node scripts/verify-windows-gguf.mjs bin/windows-x64
 
       - name: Package Electron app
         shell: bash
@@ -220,6 +241,9 @@ jobs:
             --overwrite \
             --icon=src/assets/logo.ico \
             --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$|^/src/assets/materials/.*\.jpg$"
+
+      - name: Verify packaged native GPU runtime
+        run: node scripts/verify-windows-gguf.mjs out/BonzAI-win32-x64/resources/app/bin/windows-x64
 
       # main.js expects: resources/server/python-runtime/windows-x64/diffuser.exe + _internal/
       - name: Copy Python runtime to app
@@ -255,6 +279,23 @@ jobs:
 
           Write-Host "Installer created:"
           Get-ChildItem "$ROOT\out\make\" | Format-Table Name, Length
+
+      - name: Test installed application runtimes
+        shell: pwsh
+        run: |
+          $destination = "$env:RUNNER_TEMP\BonzAI-install-check"
+          $installer = Get-ChildItem out/make/*-setup.exe | Select-Object -First 1
+          if (!$installer) { throw 'Windows installer not found' }
+          $setup = Start-Process -FilePath $installer.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$destination" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Test installation failed: $($setup.ExitCode)" }
+          try {
+            node scripts/verify-windows-gguf.mjs "$destination/resources/app/bin/windows-x64"
+            if ($LASTEXITCODE -ne 0) { throw 'Installed GGUF runtime verification failed' }
+            & "$destination/resources/server/python-runtime/windows-x64/diffuser.exe" --bonzai-runtime-check
+            if ($LASTEXITCODE -ne 0) { throw 'Installed Python runtime verification failed' }
+          } finally {
+            Remove-Item -Recurse -Force $destination
+          }
 
       - name: Prepare checksummed release assets
         shell: bash

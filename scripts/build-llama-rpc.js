@@ -29,7 +29,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { rpcBuildTarget, selectGpuBackend } from "./llama-build-targets.mjs";
+import { rpcBuildTarget, selectGpuBackend, buildConfigurationMatches, assertWindowsGpuFiles } from "./llama-build-targets.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -106,7 +106,7 @@ function getCmakeFlags() {
     // BonzAI owns HTTPS downloads and serves inference over loopback/P2P.
     // Avoid a runtime dependency on the build host's OpenSSL installation.
     "-DLLAMA_OPENSSL=OFF",
-    "-DBUILD_SHARED_LIBS=OFF",  // Static linking — self-contained binaries
+    `-DBUILD_SHARED_LIBS=${PLATFORM === 'win32' ? 'ON' : 'OFF'}`,
   ];
 
   if (PLATFORM === "darwin") {
@@ -119,6 +119,12 @@ function getCmakeFlags() {
       flags.push("-DCMAKE_OSX_ARCHITECTURES=arm64");
     }
   } else if (PLATFORM === "linux" || PLATFORM === "win32") {
+    if (PLATFORM === 'win32') {
+      // Load GPU backends as plugins so a missing GPU driver cannot prevent
+      // startup or CPU fallback. Ship the complete DLL set beside the EXEs.
+      flags.push('-DGGML_BACKEND_DL=ON', '-DGGML_NATIVE=OFF',
+        '-DGGML_OPENMP=OFF', '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded');
+    }
     // Backend selection priority (whichever toolchain is installed wins):
     //   1. CUDA (NVIDIA, both Linux and Windows — most common discrete GPU path)
     //   2. HIP (AMD ROCm on Linux, also AMD HIP-SDK on Windows)
@@ -223,17 +229,23 @@ function writeSourceMarker(info) {
   );
 }
 
-function configure() {
+function configure(flags) {
   console.log("Configuring cmake...");
   fs.mkdirSync(CMAKE_BUILD_DIR, { recursive: true });
 
-  const flags = getCmakeFlags();
   const flagStr = flags.join(" ");
   console.log(`  cmake flags: ${flagStr}`);
 
   // AMDGPU_TARGETS is a CMake list containing semicolons. Passing it through
   // a shell splits the command and silently drops the source/build paths.
   execFileSync('cmake', [...flags, '-S', SRC_DIR, '-B', CMAKE_BUILD_DIR], { stdio: 'inherit' });
+  const cache = fs.readFileSync(path.join(CMAKE_BUILD_DIR, 'CMakeCache.txt'), 'utf8');
+  for (const flag of flags.filter(value => /^-DGGML_(VULKAN|CUDA|HIP|METAL|BACKEND_DL)=ON$/.test(value))) {
+    const key = flag.slice(2, flag.indexOf('='));
+    if (!new RegExp(`^${key}:BOOL=ON$`, 'm').test(cache)) {
+      throw new Error(`CMake did not enable requested capability ${key}`);
+    }
+  }
 }
 
 function compile(rpcTarget) {
@@ -281,6 +293,24 @@ function copyBinaries(rpcTarget) {
     }
   }
 
+  if (PLATFORM === 'win32') {
+    // Never leave stale GPU libraries from another configuration in a package.
+    for (const name of fs.readdirSync(BIN_DIR).filter(name => /\.dll$/i.test(name))) {
+      fs.unlinkSync(path.join(BIN_DIR, name));
+    }
+    for (const relative of ['bin', 'bin/Release']) {
+      const directory = path.join(CMAKE_BUILD_DIR, relative);
+      if (!fs.existsSync(directory)) continue;
+      for (const name of fs.readdirSync(directory).filter(name => /\.dll$/i.test(name))) {
+        fs.copyFileSync(path.join(directory, name), path.join(BIN_DIR, name));
+        console.log(`  ${name} → ${BIN_DIR}`);
+      }
+    }
+    if (process.env.BONZAI_LLAMA_BACKEND === 'vulkan') {
+      assertWindowsGpuFiles(fs.readdirSync(BIN_DIR));
+    }
+  }
+
   const converter = path.join(SRC_DIR, "convert_hf_to_gguf.py");
   if (!fs.existsSync(converter)) {
     console.error(`ERROR: llama.cpp converter not found at ${converter}`);
@@ -295,6 +325,9 @@ function copyBinaries(rpcTarget) {
 function verify() {
   console.log("Verifying binaries...");
   const ext = PLATFORM === "win32" ? ".exe" : "";
+  if (PLATFORM === 'win32' && process.env.BONZAI_LLAMA_BACKEND === 'vulkan') {
+    assertWindowsGpuFiles(fs.readdirSync(BIN_DIR));
+  }
 
   for (const name of [`rpc-server${ext}`, `llama-server${ext}`, `llama-quantize${ext}`]) {
     const binPath = path.join(BIN_DIR, name);
@@ -337,6 +370,7 @@ const args = process.argv.slice(2);
 const shouldClean = args.includes("--clean");
 const requestedRef = resolveRef(args);
 const requestedSha = resolveRemoteSha(requestedRef);
+const cmakeFlags = getCmakeFlags();
 
 console.log("╔══════════════════════════════════════════════════════════════╗");
 console.log("║  BonzAI — Build llama.cpp RPC binaries                     ║");
@@ -361,8 +395,10 @@ const prevMarker = readSourceMarker();
 const refMatches = prevMarker && prevMarker.ref === requestedRef;
 const shaMatches = requestedSha && prevMarker?.sha === requestedSha;
 const sourceMatches = requestedSha ? shaMatches : refMatches;
+const configurationMatches = buildConfigurationMatches(prevMarker, cmakeFlags);
 
-if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && fs.existsSync(quantizeBin) && fs.existsSync(converterScript) && !shouldClean && sourceMatches) {
+if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && fs.existsSync(quantizeBin) && fs.existsSync(converterScript) && !shouldClean && sourceMatches && configurationMatches) {
+  verify();
   console.log(`Binaries already built from ref '${requestedRef}' (${prevMarker.sha?.slice(0, 12)}).`);
   console.log("Use --clean to force a rebuild, or change --ref to bump the source.");
   console.log(`  ${rpcBin}`);
@@ -380,13 +416,14 @@ if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !sourceMatches) {
 }
 
 try {
+  if (fs.existsSync(BUILD_DIR)) clean();
   const sourceInfo = cloneSource(requestedRef);
   const rpcTarget = rpcBuildTarget(fs.readFileSync(path.join(SRC_DIR, 'tools/rpc/CMakeLists.txt'), 'utf8'));
-  configure();
+  configure(cmakeFlags);
   compile(rpcTarget);
   copyBinaries(rpcTarget);
-  writeSourceMarker(sourceInfo);
   verify();
+  writeSourceMarker({ ...sourceInfo, cmakeFlags });
 
   console.log();
   console.log("Build complete.");

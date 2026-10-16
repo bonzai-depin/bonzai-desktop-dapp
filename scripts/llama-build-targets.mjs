@@ -16,3 +16,17 @@ export function selectGpuBackend(requested, available) {
   }
   return backends.find(available) || 'cpu';
 }
+
+// A cached CPU build must never satisfy a request for a GPU release build.
+export function buildConfigurationMatches(marker, flags) {
+  return Array.isArray(marker?.cmakeFlags) &&
+    JSON.stringify(marker.cmakeFlags) === JSON.stringify(flags);
+}
+
+export function assertWindowsGpuFiles(files, backend = 'vulkan') {
+  const names = new Set(files.map(name => name.toLowerCase()));
+  for (const name of ['llama-server.exe', 'rpc-server.exe', 'llama-quantize.exe',
+    'llama.dll', 'ggml.dll', 'ggml-base.dll', 'ggml-cpu.dll', 'ggml-rpc.dll', `ggml-${backend}.dll`]) {
+    if (!names.has(name)) throw new Error(`Incomplete Windows GPU runtime: missing ${name}`);
+  }
+}
