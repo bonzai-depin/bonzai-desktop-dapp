@@ -1,0 +1,29 @@
+name: Prepare local model upload
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: JSON filenames, byte sizes and SHA-256 checksums (no local paths)
+        required: true
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install boto3
+      - name: Prepare object-scoped upload links
+        run: python scripts/prepare-model-upload.py
+        env:
+          MODEL_MANIFEST: ${{ inputs.manifest }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT || secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: temporary-model-upload-links
+          path: upload-plan.json
+          retention-days: 1
