@@ -20,6 +20,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS: "1"
+  LLAMA_CPP_REF: a30fb4924dcfec81c1b2c20634bd47fa4403061a
 
 concurrency:
   group: release-linux-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}

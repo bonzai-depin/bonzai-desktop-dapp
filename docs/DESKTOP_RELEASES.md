@@ -10,6 +10,12 @@ from missing frozen libraries. `scripts/pyinstaller-hooks/hook-torchvision.py`
 collects the dynamically loaded operators, including nightly `_C_stable` libraries.
 Native GPU generation still requires hardware validation.
 
+CI pins llama.cpp with `LLAMA_CPP_REF`. Its renamed `ggml-rpc-server` target is
+packaged as `rpc-server`, preserving the application's runtime paths. BonzAI
+provides the user interface and HTTPS downloads, so the embedded llama.cpp web
+UI and OpenSSL integration are disabled. macOS also avoids Homebrew libomp;
+the shipped native runtime must not require a developer's Homebrew installation.
+
 ## Validate without publishing
 
 Dispatch each release workflow with `tag` set to an existing branch, full 40-character commit SHA or tag

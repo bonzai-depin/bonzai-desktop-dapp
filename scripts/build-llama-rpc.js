@@ -24,11 +24,12 @@
  *   bin/{platform}-{arch}/.llama-source.json   (records ref + commit for staleness detection)
  */
 
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
+import { rpcBuildTarget } from "./llama-build-targets.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,12 +96,23 @@ function getCmakeFlags() {
     "-DCMAKE_BUILD_TYPE=Release",
     "-DLLAMA_BUILD_TESTS=OFF",
     "-DLLAMA_BUILD_EXAMPLES=OFF",
+    "-DLLAMA_BUILD_COMMON=ON",
+    "-DLLAMA_BUILD_TOOLS=ON",
+    "-DLLAMA_BUILD_SERVER=ON",
+    "-DLLAMA_BUILD_APP=OFF",
+    // BonzAI supplies the UI; do not download/build upstream's separate web app.
+    "-DLLAMA_BUILD_UI=OFF",
+    "-DLLAMA_USE_PREBUILT_UI=OFF",
+    // BonzAI owns HTTPS downloads and serves inference over loopback/P2P.
+    // Avoid a runtime dependency on the build host's OpenSSL installation.
+    "-DLLAMA_OPENSSL=OFF",
     "-DBUILD_SHARED_LIBS=OFF",  // Static linking — self-contained binaries
   ];
 
   if (PLATFORM === "darwin") {
     flags.push("-DGGML_METAL=ON");
     flags.push("-DGGML_BLAS=OFF");  // Accelerate BLAS conflicts with RPC — Metal handles everything
+    flags.push("-DGGML_OPENMP=OFF"); // Do not depend on Homebrew libomp on users' Macs.
     flags.push("-DGGML_NATIVE=OFF"); // Avoid CMake run-probes hanging on Apple Silicon; Metal is the inference backend.
     // Apple Silicon: use native arch
     if (ARCH === "arm64") {
@@ -166,13 +178,13 @@ function cloneSource(ref) {
   console.log(`Cloning llama.cpp from ${LLAMA_CPP_REPO} at ref '${ref}'...`);
   fs.mkdirSync(BUILD_DIR, { recursive: true });
 
-  // Shallow clone is much faster but git can't shallow-clone an arbitrary
-  // commit SHA without the remote enabling uploadpack.allowReachableSHA1InWant.
-  // For named refs (master, b8550, v1.2.3) --depth 1 works; for raw SHAs we
-  // fall back to a full clone + checkout.
+  // GitHub supports shallow fetching the pinned release commit. Avoid cloning
+  // years of history merely to make native builds reproducible.
   if (looksLikeSha(ref)) {
-    run(`git clone "${LLAMA_CPP_REPO}" "${SRC_DIR}"`);
-    run(`git -C "${SRC_DIR}" checkout ${ref}`);
+    run(`git init "${SRC_DIR}"`);
+    run(`git -C "${SRC_DIR}" remote add origin "${LLAMA_CPP_REPO}"`);
+    run(`git -C "${SRC_DIR}" fetch --depth 1 origin ${ref}`);
+    run(`git -C "${SRC_DIR}" checkout --detach FETCH_HEAD`);
   } else {
     run(`git clone --depth 1 --branch ${ref} "${LLAMA_CPP_REPO}" "${SRC_DIR}"`);
   }
@@ -224,32 +236,32 @@ function configure() {
   run(`cmake ${flagStr} -S "${SRC_DIR}" -B "${CMAKE_BUILD_DIR}"`);
 }
 
-function compile() {
+function compile(rpcTarget) {
   const cores = os.cpus().length;
   console.log(`Compiling rpc-server, llama-server, and llama-quantize (${cores} cores)...`);
 
   // Build only the targets we need
-  run(`cmake --build "${CMAKE_BUILD_DIR}" --target rpc-server --config Release -j ${cores}`);
+  run(`cmake --build "${CMAKE_BUILD_DIR}" --target ${rpcTarget} --config Release -j ${cores}`);
   run(`cmake --build "${CMAKE_BUILD_DIR}" --target llama-server --config Release -j ${cores}`);
   run(`cmake --build "${CMAKE_BUILD_DIR}" --target llama-quantize --config Release -j ${cores}`);
 }
 
-function copyBinaries() {
+function copyBinaries(rpcTarget) {
   console.log(`Copying binaries to ${BIN_DIR}`);
   fs.mkdirSync(BIN_DIR, { recursive: true });
 
   const ext = PLATFORM === "win32" ? ".exe" : "";
   // MSVC puts binaries in bin/Release/ (multi-config generator), GCC/Clang in bin/
   const binaries = [
-    { name: `rpc-server${ext}`, searchDirs: ["bin/Release", "bin", "tools/rpc/Release", "tools/rpc", "."] },
+    { name: `rpc-server${ext}`, sourceName: `${rpcTarget}${ext}`, searchDirs: ["bin/Release", "bin", "tools/rpc/Release", "tools/rpc", "."] },
     { name: `llama-server${ext}`, searchDirs: ["bin/Release", "bin", "tools/server/Release", "tools/server", "."] },
     { name: `llama-quantize${ext}`, searchDirs: ["bin/Release", "bin", "tools/quantize/Release", "tools/quantize", "."] },
   ];
 
-  for (const { name, searchDirs } of binaries) {
+  for (const { name, sourceName = name, searchDirs } of binaries) {
     let found = false;
     for (const dir of searchDirs) {
-      const src = path.join(CMAKE_BUILD_DIR, dir, name);
+      const src = path.join(CMAKE_BUILD_DIR, dir, sourceName);
       if (fs.existsSync(src)) {
         const dest = path.join(BIN_DIR, name);
         fs.copyFileSync(src, dest);
@@ -311,6 +323,10 @@ function verify() {
     process.exit(1);
   }
   console.log("  ✓ convert_hf_to_gguf.py");
+  // A nonempty executable can still fail on launch because of missing libraries.
+  execFileSync(path.join(BIN_DIR, `llama-server${ext}`), ['--version'], {
+    stdio: 'inherit', timeout: 30000,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -365,9 +381,10 @@ if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && !sourceMatches) {
 
 try {
   const sourceInfo = cloneSource(requestedRef);
+  const rpcTarget = rpcBuildTarget(fs.readFileSync(path.join(SRC_DIR, 'tools/rpc/CMakeLists.txt'), 'utf8'));
   configure();
-  compile();
-  copyBinaries();
+  compile(rpcTarget);
+  copyBinaries(rpcTarget);
   writeSourceMarker(sourceInfo);
   verify();
 
