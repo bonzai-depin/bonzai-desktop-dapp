@@ -20,6 +20,16 @@ def sha256(path):
     return h.hexdigest()
 
 
+def checkout_revision(logs):
+    # actions/checkout logs /usr/bin/git on Unix and a quoted git.exe on Windows.
+    revisions = re.findall(
+        r'\bgit(?:\.exe)?"? log -1 --format=%H[^\r\n]*\r?\n'
+        r'[^\r\n]*?\b([a-f0-9]{40})[ \t]*\r?(?:\n|$)', logs)
+    if not revisions or len(set(revisions)) != 1:
+        raise ValueError('Cannot establish a single checked-out build revision')
+    return revisions[0]
+
+
 def main():
     import boto3
     repo = os.environ['GITHUB_REPOSITORY']
@@ -40,10 +50,7 @@ def main():
         raise ValueError('Not a desktop build workflow')
     # workflow_dispatch may check out a ref different from the workflow revision.
     logs = subprocess.check_output(['gh', 'run', 'view', run_id, '--repo', repo, '--log'], text=True)
-    revisions = re.findall(r'git log -1 --format=%H[^\n]*\n[^\n]*?\b([a-f0-9]{40})\s*(?:\n|$)', logs)
-    if not revisions or len(set(revisions)) != 1:
-        raise ValueError('Cannot establish a single checked-out build revision')
-    sha = revisions[0]
+    sha = checkout_revision(logs)
     if not re.fullmatch(r'[a-f0-9]{40}', sha):
         raise ValueError('Invalid source revision')
     artifacts = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}/artifacts']))['artifacts']

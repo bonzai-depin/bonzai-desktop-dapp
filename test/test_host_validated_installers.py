@@ -44,4 +44,15 @@ class HostingTests(unittest.TestCase):
     def test_corrupt_artifact_is_not_published(self): self.exercise(corrupt=True)
     def test_split_installer_is_not_published(self): self.exercise(split=True)
 
+class CheckoutRevisionTests(unittest.TestCase):
+    def test_windows_and_unix_checkout_logs(self):
+        sha = '0b74703abf08574bb9ac130547f4008e9ac306cf'
+        for command in ('/usr/bin/git', '/opt/homebrew/bin/git', r'"C:\Program Files\Git\bin\git.exe"'):
+            with self.subTest(command=command):
+                logs = f'job\tcheckout\t2026-10-16Z [command]{command} log -1 --format=%H\r\njob\tcheckout\t2026-10-16Z {sha}\r\n'
+                self.assertEqual(hosting.checkout_revision(logs), sha)
+    def test_missing_or_conflicting_revisions_are_rejected(self):
+        for logs in ('', 'git log -1 --format=%H\n' + 'a'*40 + '\ngit log -1 --format=%H\n' + 'b'*40 + '\n'):
+            with self.assertRaises(ValueError): hosting.checkout_revision(logs)
+
 if __name__ == '__main__': unittest.main()
