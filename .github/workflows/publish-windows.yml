@@ -19,6 +19,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS: "1"
 
 concurrency:
   group: release-windows-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
@@ -107,6 +108,12 @@ jobs:
       # Use --onedir instead of --onefile: CUDA PyTorch exceeds the 4GB
       # uint32 limit for onefile CArchive. onedir produces an executable +
       # _internal/ folder with shared libraries — no size limit.
+      - name: Smoke-test source inference runtime
+        shell: bash
+        run: |
+          python test/test_torchvision_packaging.py
+          python src/server/runtime_check.py
+
       - name: Build Python runtime
         shell: bash
         run: |

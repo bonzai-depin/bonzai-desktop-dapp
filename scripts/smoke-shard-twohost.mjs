@@ -1,100 +1,81 @@
 #!/usr/bin/env node
-/**
- * Two-host privacy-pipeline smoke test.
- *
- * Spawns two Electron-less Node processes that each stand up the
- * shard bridge against a stubbed-out libp2p layer (no real peer dial),
- * and verifies an end-to-end frame round-trip. This catches:
- *
- *   - the consumer bridge correctly emits CTRL_BEGIN as the first
- *     frame on rpc-tunnel open
- *   - the provider bridge correctly reads CTRL_BEGIN, looks up the
- *     pending session, and opens UDS to the local Flask worker
- *   - frames forwarded both ways pass through unchanged
- *
- * Out of scope (needs real two-machine setup):
- *   - libp2p dial latency / NAT traversal
- *   - LAN bandwidth measurement
- *   - real provider holding a model loaded
- *
- * A real two-machine test remains out of scope for this smoke script.
- *
- * Usage:
- *   node scripts/smoke-shard-twohost.mjs
- */
-
+/** Verify Python ↔ Node framing over a real local socket, without model weights or peers. */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = process.cwd();
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const localPython = join(ROOT, 'bonzai', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python3');
+const python = process.env.BONZAI_PYTHON || (existsSync(localPython) ? localPython : 'python');
 
-// We reuse the in-process smoke (smoke-shard-uds.mjs) for the JS half
-// and the Python provider smoke for the other half. Running both
-// concurrently with shared environment variables exercises the
-// cross-process wire format end-to-end.
-
-async function main() {
-  const tmpRoot = mkdtempSync(join(tmpdir(), 'bonzai-shard-twohost-'));
-  console.log('[twohost] working dir:', tmpRoot);
-
-  // 1. Start the JS smoke server (acts as consumer-side bridge stub).
-  console.log('[twohost] starting JS smoke server...');
-  const jsServer = spawn(
-    'node',
-    [join(ROOT, 'scripts/smoke-shard-uds.mjs')],
-    {
-      cwd: ROOT,
-      env: { ...process.env, BONZAI_SHARD_SOCKET: join(tmpRoot, 'bridge.sock') },
-      stdio: ['ignore', 'pipe', 'inherit'],
-    },
-  );
-
-  let jsReady = false;
-  jsServer.stdout.on('data', (b) => {
-    const s = b.toString();
-    process.stdout.write(`[js] ${s}`);
-    if (s.includes('ready')) jsReady = true;
+function completion(child) {
+  return new Promise(resolve => {
+    child.once('error', error => resolve({ error }));
+    child.once('exit', (code, signal) => resolve({ code, signal }));
   });
-
-  // Give it a beat to listen on the UDS path.
-  await new Promise((r) => setTimeout(r, 500));
-
-  // 2. Run the Python provider smoke against the same bridge process.
-  // smoke-shard-provider.py uses its OWN Flask app + UDS worker socket,
-  // so the only shared bit is the codec + frame format. That's still a
-  // useful integration check — both halves were written separately and
-  // must agree byte-for-byte on the wire.
-  console.log('[twohost] running Python provider smoke...');
-  const pyResult = spawn(
-    join(ROOT, 'bonzai/bin/python3'),
-    [join(ROOT, 'scripts/smoke-shard-provider.py')],
-    {
-      cwd: ROOT,
-      env: { ...process.env },
-      stdio: 'inherit',
-    },
-  );
-
-  await new Promise((resolve) => pyResult.on('exit', resolve));
-  const pyCode = pyResult.exitCode ?? 1;
-
-  // 3. Stop the JS server.
-  jsServer.kill('SIGTERM');
-  await new Promise((r) => setTimeout(r, 300));
-
-  // 4. Cleanup
-  try { rmSync(tmpRoot, { recursive: true, force: true }); } catch {}
-
-  if (pyCode !== 0) {
-    console.error(`[twohost] Python smoke failed (exit ${pyCode})`);
-    process.exit(pyCode);
-  }
-  console.log('[twohost] OK — both halves passed');
 }
 
-main().catch((e) => {
-  console.error('[twohost] fatal:', e);
-  process.exit(1);
+async function main() {
+  // Keep AF_UNIX paths below macOS's 104-byte limit.
+  const temp = mkdtempSync(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'bz-shard-'));
+  const env = { ...process.env, BONZAI_SHARD_SOCKET: join(temp, 'bridge.sock') };
+  const bridge = spawn(process.execPath, [join(ROOT, 'scripts/smoke-shard-uds.mjs')], {
+    cwd: ROOT, env, stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const bridgeDone = completion(bridge);
+  let client;
+  let timeout;
+  try {
+    const ready = new Promise(resolve => {
+      let output = '';
+      bridge.stdout.on('data', chunk => {
+        process.stdout.write(chunk);
+        output += chunk.toString();
+        if (output.includes('[smoke] ready')) resolve();
+      });
+    });
+    const bridgeStopped = bridgeDone.then(result => {
+      throw result.error || new Error(`Node bridge exited unexpectedly: ${result.code ?? result.signal}`);
+    });
+    const deadline = new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error('Privacy bridge smoke timed out')), 45000);
+    });
+    await Promise.race([ready, bridgeStopped, deadline]);
+    client = spawn(python, ['-c', `
+import torch
+from src.server.pipeline_transport import open_session
+
+torch.manual_seed(7)
+session = open_session(peer_id='smoke-peer', session_id='smoke-session',
+                       model_id='z_image_turbo', block_range=(4, 28), hidden_dim=32)
+try:
+    session.sock.settimeout(10)
+    original = torch.randn(1, 16, 32, dtype=torch.float16) * 0.1
+    session.send_activation(original)
+    returned = session.recv_activation()
+    assert returned.shape == original.shape
+    error = (returned.float() - original.float()).square().mean().sqrt().item()
+    assert error < 0.005, error
+    print(f'Python/Node socket round-trip passed (RMSE={error:.6f})')
+finally:
+    session.close()
+`], { cwd: ROOT, env, stdio: 'inherit' });
+    const result = await Promise.race([completion(client), bridgeStopped, deadline]);
+    if (result.error) throw result.error;
+    if (result.code !== 0) throw new Error(`Python bridge smoke failed: ${result.code ?? result.signal}`);
+    console.log('[twohost] OK — Python/Node wire-format round-trip passed');
+  } finally {
+    clearTimeout(timeout);
+    if (client && client.exitCode === null) client.kill();
+    if (bridge.exitCode === null) bridge.kill();
+    await bridgeDone;
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+main().catch(error => {
+  console.error('[twohost]', error.message);
+  process.exitCode = 1;
 });

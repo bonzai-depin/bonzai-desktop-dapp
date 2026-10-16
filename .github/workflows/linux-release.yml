@@ -19,6 +19,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS: "1"
 
 concurrency:
   group: release-linux-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
@@ -131,6 +132,14 @@ jobs:
           print('basicsr/data/degradations.py not found; skipping')
           "
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Install Node dependencies
+        run: npm ci
+
       # Privacy-pipeline smoke tests — codec + provider blueprint. These run
       # against the just-installed deps (torch + lz4 + flask), independently
       # of model weights, so they catch wire-format / framing / runner-
@@ -140,10 +149,14 @@ jobs:
         run: |
           python src/server/pipeline_transport.py
           python scripts/smoke-shard-provider.py
-          # Two-host scaffold: JS bridge + Python provider in parallel.
-          # Catches CTRL_BEGIN / wire-format mismatches the single-
-          # process smokes miss.
-          node scripts/smoke-shard-twohost.mjs
+          # Exchange a tensor between Python and Node over a local socket.
+          BONZAI_PYTHON="$(python -c 'import sys; print(sys.executable)')" node scripts/smoke-shard-twohost.mjs
+
+      - name: Smoke-test source inference runtime
+        shell: bash
+        run: |
+          python test/test_torchvision_packaging.py
+          python src/server/runtime_check.py
 
       - name: Build Python runtime
         shell: bash
@@ -161,8 +174,8 @@ jobs:
           ls -lh "$BINARY"
 
       # PyInstaller has already bundled everything into the binary.
-      # Remove Python packages, CUDA libs, pip cache, and PyInstaller workdir
-      # to free ~10GB+ for Electron packaging.
+      # Remove build caches, retaining installed Python packages and GPU libraries
+      # for post-build validation.
       - name: Free Python disk space
         run: |
           pip cache purge 2>/dev/null || true
@@ -176,14 +189,6 @@ jobs:
         shell: bash
         run: |
           binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.14.0
-
-      - name: Install Node dependencies
-        run: npm ci
 
       - name: Build llama.cpp RPC binaries
         run: |

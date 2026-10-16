@@ -19,6 +19,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS: "1"
 
 concurrency:
   group: release-macos-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
@@ -106,6 +107,12 @@ jobs:
         run: |
           python src/server/pipeline_transport.py
           python scripts/smoke-shard-provider.py
+
+      - name: Smoke-test source inference runtime
+        shell: bash
+        run: |
+          python test/test_torchvision_packaging.py
+          python src/server/runtime_check.py
 
       - name: Build Python runtime
         shell: bash

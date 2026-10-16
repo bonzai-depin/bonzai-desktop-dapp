@@ -1,10 +1,12 @@
 """Weight-free frozen-runtime verification, shared by all release platforms."""
 import importlib
 import json
+import os
 import subprocess
 
 
 def main():
+    os.environ.setdefault("TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS", "1")
     modules = [
         'torch', 'torchvision', 'torchaudio', 'diffusers', 'transformers',
         'flask', 'flask_socketio', 'engineio.async_drivers.threading',
@@ -14,8 +16,16 @@ def main():
         'chatterbox.mtl_tts', 'rotary_embedding_torch', 'omegaconf',
     ]
     for module in modules:
+        print(f"[runtime-check] importing {module}", flush=True)
         importlib.import_module(module)
     import torch
+    import torchvision
+    # Exercise the native operator, not just Python imports. No GPU or weights needed.
+    kept = torchvision.ops.nms(
+        torch.tensor([[0., 0., 2., 2.], [0., 0., 2., 2.]]),
+        torch.tensor([0.9, 0.8]), 0.5,
+    )
+    assert kept.tolist() == [0], f"Unexpected torchvision NMS result: {kept}"
     import imageio_ffmpeg
     from diffusers import WanImageToVideoPipeline
     torch.testing.assert_close(torch.ones(2, 2) @ torch.ones(2, 2), torch.full((2, 2), 2.))

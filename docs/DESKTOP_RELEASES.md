@@ -4,7 +4,10 @@ The three workflows in `.github/workflows/` build macOS ARM64, Windows x64,
 and Linux x64 (separate CUDA and ROCm installers). They all use `diffuser.spec`
 to package an onedir Python runtime and run `--bonzai-runtime-check` against
 that executable before assembling the desktop application. This checks imports,
-a CPU tensor operation and bundled ffmpeg, without downloading model weights.
+CPU tensor and torchvision native operations, and bundled ffmpeg, without downloading model weights.
+The same check runs from source before packaging to distinguish dependency failures
+from missing frozen libraries. `scripts/pyinstaller-hooks/hook-torchvision.py`
+collects the dynamically loaded operators, including nightly `_C_stable` libraries.
 Native GPU generation still requires hardware validation.
 
 ## Validate without publishing
@@ -30,6 +33,10 @@ if deep signature verification or Apple acceptance fails.
 Uploads preserve other platforms' assets; no workflow deletes a release.
 Pinata credentials and the Privy application secret are not injected into
 release bundles. Users configure private credentials locally.
+
+The Linux privacy bridge check runs after Node dependencies are installed and uses
+the Python interpreter selected by Actions. It exchanges a tensor over a local
+Python/Node socket and fails if either process exits or the exchange times out.
 
 ## Asset size and integrity
 
