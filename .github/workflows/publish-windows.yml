@@ -85,10 +85,29 @@ jobs:
           "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
           "$sdk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
+      - name: Restore native GPU build
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            bin/windows-x64
+            src/server/scripts/convert_hf_to_gguf.py
+          key: windows-vulkan-v1-${{ env.LLAMA_CPP_REF }}-${{ env.VULKAN_VERSION }}-${{ hashFiles('scripts/build-llama-rpc.js', 'scripts/llama-build-targets.mjs') }}
+
       - name: Build llama.cpp RPC binaries
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           npm run build:rpc
+
+      # Cache compilation separately; every restored runtime still runs all checks.
+      - name: Cache native GPU build
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            bin/windows-x64
+            src/server/scripts/convert_hf_to_gguf.py
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Verify native GPU package and CPU fallback
         run: node scripts/verify-windows-gguf.mjs bin/windows-x64
