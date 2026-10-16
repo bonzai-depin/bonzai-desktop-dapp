@@ -105,6 +105,7 @@ jobs:
         run: |
           if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
           npm run build:vite
+          node scripts/verify-renderer-materials.mjs
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -215,7 +216,7 @@ jobs:
             --out=out \
             --overwrite \
             --icon=src/assets/logo.ico \
-            --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$"
+            --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$|^/src/assets/materials/.*\.jpg$"
 
       # main.js expects: resources/server/python-runtime/windows-x64/diffuser.exe + _internal/
       - name: Copy Python runtime to app

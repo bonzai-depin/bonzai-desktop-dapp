@@ -62,7 +62,9 @@ CUDA, ROCm, licenses or locales to meet that limit. Linux installers use xz
 compression directly. After frozen-runtime validation, the Linux runner removes
 its build-time Python packages and tests the standalone executable again. It
 moves that complete runtime into the app rather than making another GPU-library
-copy. Windows Inno Setup uses 1.9 GB payload slices.
+copy. The renderer build verifies every material map against the catalogue before
+excluding duplicate source JPGs from installers; compiled textures and source
+attribution remain included. Windows Inno Setup uses 1.9 GB payload slices.
 `scripts/release-assets.py prepare` splits any remaining oversized installer
 into bounded parts, verifies that reassembly preserves its SHA-256, and writes
 checksums plus reconstruction instructions. Download every part and verify the
