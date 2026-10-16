@@ -87,7 +87,8 @@ payloads: users must never reconstruct an installer.
 Complete installers are hosted on Cloudflare R2, without GitHub's per-file limit.
 Configure repository secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` and
 variables `R2_ENDPOINT` (S3 HTTPS endpoint), `R2_BUCKET`, and `R2_PUBLIC_URL`
-(public HTTPS bucket/custom domain). Scope credentials to the release bucket.
+(public HTTPS bucket/custom domain). The existing `R2_ACCESS_KEY` secret is also accepted; endpoint, bucket and public URL may be stored as secrets instead of variables. Scope credentials to the release bucket.
+Run **Verify release hosting** to test upload, public download, byte integrity and cleanup with a small temporary object.
 The uploader verifies public file length, publishes checksums and download
 manifests to GitHub, and adds direct installer links to the release notes.
 Build-only runs require no R2 credentials and retain complete installers in

@@ -37,10 +37,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Preserve the exact ref for checkout and release publication.
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
-      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
-      R2_BUCKET: ${{ vars.R2_BUCKET }}
-      R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT || secrets.R2_ENDPOINT }}
+      R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+      R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || secrets.R2_PUBLIC_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
       PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish }}
