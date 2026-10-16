@@ -18,7 +18,8 @@ if not endpoint.startswith('https://') or not public.startswith('https://'):
     raise SystemExit('Hosting endpoint and public URL must use HTTPS')
 key = f'releases/_checks/{uuid.uuid4()}.txt'
 url = public + '/' + urllib.parse.quote(key, safe='/')
-content = b'BonzAI release hosting verification. Temporary public test file.\n'
+# Exceed the AWS CLI multipart threshold to exercise real installer transfers.
+content = bytes(range(256)) * (9 * 1024 * 4)
 with tempfile.TemporaryDirectory() as temp:
     path = Path(temp) / 'hosting-check.txt'
     path.write_bytes(content)
@@ -29,7 +30,7 @@ with tempfile.TemporaryDirectory() as temp:
             received = response.read(len(content) + 1)
         if received != content:
             raise RuntimeError('Public download contents do not match uploaded bytes')
-        print('PASS: upload, public HTTPS download and SHA-256 integrity')
+        print('PASS: 9 MiB multipart upload, public HTTPS download and SHA-256 integrity')
         print('SHA-256: ' + hashlib.sha256(received).hexdigest())
     finally:
         subprocess.run(['aws', 's3', 'rm', target, '--endpoint-url', endpoint, '--only-show-errors'], check=True)

@@ -109,3 +109,24 @@ jobs and their frozen-runtime checks before distributing a release.
 Set repository variable `BONZAI_VALIDATE_WEB3=true` only for releases configured
 with the complete deployed economy contracts. This enables the strict offline
 Web3 preflight. Local inference builds do not require onchain addresses.
+
+## Restoring repository settings
+
+| Purpose | Secrets | Needed for |
+| --- | --- | --- |
+| Model access | `HF_TOKEN` | Gated/private Hugging Face downloads, never embedded in installers |
+| R2 storage | `R2_ACCESS_KEY_ID` (or `R2_ACCESS_KEY`), `R2_SECRET_ACCESS_KEY` | Uploading complete installers |
+| Mac signing | `MAC_APP_CERT_BASE64`, `MAC_APP_CERT_PASSWORD`, `KEYCHAIN_PASSWORD` | Developer ID Application signing |
+| Mac notarization | `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Apple notarization on published builds |
+| Release mirror | `RELEASES_PAT` | Optional cross-repository mirror |
+
+GitHub provides `GITHUB_TOKEN` automatically. A Developer ID Installer certificate
+is not needed for DMG releases. Windows signing is not configured in these workflows;
+restoring Apple credentials does not sign Windows executables.
+
+`PRIVY_APP_ID`, `ALCHEMY_API_KEY`, `ROBINHOOD_RPC_URL`, the `BONZAI_*` deployment
+addresses/chain/skill map and `UNISWAP_V4_*` deployment addresses configure the
+optional economy. Existing workflows read these from repository secrets for
+compatibility; addresses and app IDs are public configuration, not private keys.
+Never add a wallet private key, seed phrase or Privy app secret to the desktop build.
+Use `BONZAI_VALIDATE_WEB3=true` only after the complete deployment is configured.
