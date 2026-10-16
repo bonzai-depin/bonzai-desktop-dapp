@@ -304,6 +304,7 @@ jobs:
             /F"BonzAI-$TAG-windows-x64-setup" `
             "$ROOT\installer\windows\setup.iss"
 
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
           Write-Host "Installer created:"
           Get-ChildItem "$ROOT\out\make\" | Format-Table Name, Length
 

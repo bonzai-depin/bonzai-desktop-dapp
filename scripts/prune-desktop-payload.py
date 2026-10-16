@@ -14,7 +14,11 @@ def prune(app, platform, arch):
     # Only package-root development directories; never strip runtime src/dist/lib.
     packages = [p.parent for p in modules.rglob('package.json') if p.parent.parent == modules or p.parent.parent.name.startswith('@') or p.parent.parent.name == 'node_modules']
     for package in packages:
-        for name in ('test', 'tests', '__tests__', 'examples', 'example', 'coverage', '.github', '.git'):
+        names = ['test', 'tests', '__tests__', 'examples', 'example', 'coverage', '.github', '.git']
+        # React Native mobile build trees are not used by Electron WebRTC.
+        if package.name in ('react-native-webrtc', 'react-native'):
+            names += ['android', 'ios']
+        for name in names:
             target = package / name
             if target.is_dir() and not target.is_symlink():
                 removed += sum(p.stat().st_size for p in target.rglob('*') if p.is_file() and not p.is_symlink())

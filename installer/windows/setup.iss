@@ -31,6 +31,8 @@ SolidCompression=yes
 ; Distribute one directly installable EXE through R2. Never require sidecar files.
 DiskSpanning=no
 Compression=lzma2/ultra64
+LZMAUseSeparateProcess=yes
+LZMADictionarySize=262144
 SetupIconFile={#MyIconFile}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64compatible
