@@ -26,7 +26,7 @@ class TorchvisionPackagingTests(unittest.TestCase):
                 with patch('PyInstaller.utils.hooks.is_package', return_value=True), \
                         patch('PyInstaller.utils.hooks.get_all_package_paths', return_value=[str(package)]):
                     hook = runpy.run_path(str(ROOT / 'scripts/pyinstaller-hooks/hook-torchvision.py'))
-                collected = {str(Path(source).relative_to(package)): dest for source, dest in hook['binaries']}
+                collected = {Path(source).relative_to(package).as_posix(): dest for source, dest in hook['binaries']}
                 self.assertEqual(set(collected), set(files))
                 for name, destination in collected.items():
                     self.assertEqual(Path(destination), Path('torchvision') / Path(name).parent)

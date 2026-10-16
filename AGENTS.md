@@ -59,6 +59,13 @@ npm run web3:verify:offline
 
 The `lint` script checks TypeScript and TSX only. Do not claim repository-wide lint coverage from that command.
 
+For build and release fixes, GitHub Actions feedback is part of the coding loop:
+inspect failed-job logs, fix the cause, push and rerun validation, and continue
+until macOS, Windows, Linux CUDA and Linux ROCm pass for the same commit. Keep
+smoke tests enabled; a successful dispatch or local check is not a successful
+build. Use build-only runs unless publication is explicitly authorized. See
+[Desktop releases](docs/DESKTOP_RELEASES.md).
+
 ## Implementation rules
 
 1. Read exports, callers, shared utilities, and tests before changing behavior.

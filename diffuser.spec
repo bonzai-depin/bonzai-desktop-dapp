@@ -20,9 +20,11 @@ for package in packages:
     package_data += data
     package_binaries += binaries
     package_imports += imports
-# transformers checks dependency versions via distribution metadata.
+# Diffusers/Transformers check transitive dependency versions at import time.
+# Keep the complete platform-specific metadata graph (including requests),
+# rather than adding individual missing distributions after each frozen build.
 for distribution in ['torch', 'torchvision', 'torchaudio', 'transformers', 'diffusers', 'accelerate', 'peft']:
-    package_data += copy_metadata(distribution)
+    package_data += copy_metadata(distribution, recursive=True)
 local_imports = [p.stem for p in Path('src/server').glob('*.py') if p.stem != 'diffuser']
 
 a = Analysis(

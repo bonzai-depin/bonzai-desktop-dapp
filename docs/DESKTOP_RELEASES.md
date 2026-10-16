@@ -20,6 +20,12 @@ macOS validation builds are unsigned and are not notarized. Windows installers
 are currently unsigned. Linux packages require an appropriate GPU driver for
 acceleration; CPU fallback remains available.
 
+Treat Actions as the final validation loop. Record the full commit and run IDs,
+read each failed job's logs, correct the cause and dispatch the updated commit.
+Continue until all four platform/backend jobs pass for that same commit, including
+installer creation and artifact upload. Do not disable smoke tests to get a green
+run. Report build validation separately from signing, notarization and publication.
+
 ## Publish
 
 Create/publish a release whose tag (with an optional `v` prefix) matches
