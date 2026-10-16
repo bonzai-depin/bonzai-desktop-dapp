@@ -26,7 +26,8 @@ with tempfile.TemporaryDirectory() as temp:
     target = f's3://{bucket}/{key}'
     try:
         subprocess.run(['aws', 's3', 'cp', str(path), target, '--endpoint-url', endpoint, '--only-show-errors', '--content-type', 'text/plain', '--cache-control', 'no-store'], check=True)
-        with urllib.request.urlopen(url, timeout=60) as response:
+        request = urllib.request.Request(url, headers={'User-Agent': 'BonzAI-Release-Check/4.0'})
+        with urllib.request.urlopen(request, timeout=60) as response:
             received = response.read(len(content) + 1)
         if received != content:
             raise RuntimeError('Public download contents do not match uploaded bytes')

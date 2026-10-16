@@ -60,7 +60,7 @@ def upload(folder, tag, repo):
                         '--endpoint-url', endpoint, '--only-show-errors',
                         '--content-type', 'application/octet-stream',
                         '--content-disposition', f'attachment; filename="{path.name}"'], check=True)
-        request = urllib.request.Request(url, method='HEAD')
+        request = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'BonzAI-Release-Check/4.0'})
         with urllib.request.urlopen(request, timeout=60) as response:
             if int(response.headers.get('Content-Length', -1)) != path.stat().st_size:
                 raise ValueError(f'Public installer size check failed: {path.name}')
