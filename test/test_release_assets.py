@@ -17,27 +17,22 @@ class ReleaseAssetsTests(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertIn(release.digest(path), path.with_name(path.name + '.SHA256SUMS').read_text())
 
-    def test_large_installer_roundtrips_and_each_part_is_bounded(self):
+    def test_large_installer_is_preserved_without_reconstruction(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'BonzAI.deb'
             contents = bytes(range(256)) * 3
             path.write_bytes(contents)
             release.prepare(temp, limit=100)
-            parts = sorted(Path(temp).glob('*.part-*'))
-            self.assertEqual(b''.join(p.read_bytes() for p in parts), contents)
-            self.assertTrue(all(p.stat().st_size <= 100 for p in parts))
-            self.assertFalse(path.exists())
-            self.assertEqual(len(path.with_name(path.name + '.SHA256SUMS').read_text().splitlines()), len(parts)+1)
-
-    def test_inno_payload_slice_at_limit_keeps_its_installable_filename(self):
-        # Inno Setup emits exact-size .bin slices. They already fit the upload
-        # limit; renaming each to a single .part-000 would break setup discovery.
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / 'BonzAI-setup-1.bin'
-            path.write_bytes(b'x' * 64)
-            release.prepare(temp, limit=64)
-            self.assertTrue(path.exists())
+            self.assertEqual(path.read_bytes(), contents)
             self.assertEqual(list(Path(temp).glob('*.part-*')), [])
+            self.assertEqual(len(path.with_name(path.name + '.SHA256SUMS').read_text().splitlines()), 1)
+
+    def test_split_payload_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / 'BonzAI.exe').write_bytes(b'installer')
+            (Path(temp) / 'BonzAI-1.bin').write_bytes(b'payload')
+            with self.assertRaisesRegex(ValueError, 'Split installers'):
+                release.prepare(temp)
 
     def test_empty_build_fails_instead_of_publishing_nothing(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -442,7 +442,6 @@
                        SECTION 2: CAPTION / STYLE DESCRIPTION
                        ═══════════════════════════════════════════════════════════ -->
                   <div v-if="musicAdvanced" class="music-section music-section--palette">
-                    <input v-model="musicStyleSearch" type="search" class="bz-field-input" :aria-label="$t('rcWorkflows.searchStyles')" :placeholder="$t('rcWorkflows.searchStyles')" />
                     <!-- Dimension Selectors -->
                     <div class="dimension-selectors">
                       <!-- Genre -->
@@ -454,7 +453,7 @@
                       <div class="dimension-row">
                         <div class="dimension-tags">
                           <button type="button"
-                            v-for="g in filterMusicOptions(genreOptions)"
+                            v-for="g in genreOptions"
                             :key="g"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -477,7 +476,7 @@
                       <div class="dimension-row">
                         <div class="dimension-tags">
                           <button type="button"
-                            v-for="m in filterMusicOptions(moodOptions)"
+                            v-for="m in moodOptions"
                             :key="m"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -501,7 +500,7 @@
                       <div class="dimension-row">
                         <div class="dimension-tags">
                           <button type="button"
-                            v-for="i in filterMusicOptions(instrumentOptions)"
+                            v-for="i in instrumentOptions"
                             :key="i"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -526,7 +525,7 @@
                       <div class="dimension-row" v-if="!musicInstrumental">
                         <div class="dimension-tags">
                           <button type="button"
-                            v-for="v in filterMusicOptions(vocalOptions)"
+                            v-for="v in vocalOptions"
                             :key="v"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -548,7 +547,7 @@
                       <div class="dimension-row">
                         <div class="dimension-tags">
                           <button type="button"
-                            v-for="p in filterMusicOptions(productionOptions)"
+                            v-for="p in productionOptions"
                             :key="p"
                             class="tag skill-chip is-clickable"
                             :class="
@@ -1031,8 +1030,6 @@ export default {
     // ------------ basic state -------------
     const selectedModel = ref("multilingual");
     const musicAdvanced = ref(false);
-    const musicStyleSearch = ref("");
-    const filterMusicOptions = (options) => options.filter((option) => option.toLocaleLowerCase().includes(musicStyleSearch.value.trim().toLocaleLowerCase()));
     const mode = ref("tts"); // 'tts', 'clone', or 'music'
     const language = ref("en");
     const exaggerationPct = ref(50); // 0-100 -> maps to 0.0-1.0
@@ -3036,7 +3033,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
 
     return {
       selectedModel,
-      musicAdvanced, musicStyleSearch, filterMusicOptions,
+      musicAdvanced,
       mode,
       audioModeItems,
       voiceGenderItems,
@@ -4449,7 +4446,8 @@ ol.chat {
 .music-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
-  gap: var(--bz-space-4);
+  gap: var(--bz-space-5);
+  align-items: start;
   margin-top: var(--bz-space-4);
 }
 .music-section {
@@ -4459,7 +4457,7 @@ ol.chat {
   border-radius: var(--bz-r-sm);
   background: var(--bz-canvas);
 }
-.music-section--lyrics { grid-column: 1; }
+.music-section--lyrics { grid-column: 1; grid-row: 2; }
 .music-section--settings { grid-column: 2; grid-row: 2; }
 .music-section--palette,
 .music-section--direction,
@@ -4577,4 +4575,17 @@ input.music-toggle[type="checkbox"]:checked + label {
   .music-section--direction,
   .music-generate-bar { grid-column: 1; grid-row: auto; }
 }
+/* The composer follows the writing order: concept, lyrics, sound, settings. */
+.music-mode-controls { grid-column: 1 / -1; margin: 0; gap: 8px; }
+.music-mode-controls [aria-pressed="true"] { background: var(--bz-accent-soft); border-color: var(--bz-accent); color: var(--bz-fg); }
+.music-workspace .field { margin-bottom: 20px; }
+.music-workspace .audio-field-label { display: block; margin-bottom: 12px; }
+.music-workspace .params-grid { gap: 20px; }
+.music-workspace .dimension-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.music-workspace .dimension-tags .tag { height: auto !important; min-height: 34px !important; padding: 7px 12px !important; color: var(--bz-fg-mid) !important; }
+.music-workspace .lyrics-gen-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.music-workspace .lyrics-gen-row > input { flex: 1 1 200px; }
+.music-workspace .lyrics-gen-row > select { float: none !important; max-width: 100%; height: 42px !important; border: 1px solid var(--bz-border) !important; }
+.music-workspace .music-section { min-width: 0; padding: 24px; }
+@media (max-width: 850px) { .music-workspace { display: flex; flex-direction: column; } .music-workspace > * { width: 100%; box-sizing: border-box; } .music-workspace .music-section { padding: 16px; } }
 </style>

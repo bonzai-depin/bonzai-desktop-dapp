@@ -13,7 +13,8 @@
           </header>
 
           <div class="welcome-body">
-          <div class="welcome-copy">
+          <div class="welcome-art" aria-hidden="true"><img src="../assets/bonzai_brand_background.jpg" alt="" /><img class="welcome-logo" src="../assets/bonzai_logo-full.png" alt="" /></div>
+            <div class="welcome-copy">
             <p>{{ i18n.t('onboarding.intro') }}</p>
             <div class="welcome-mesh">
               <span class="material-symbols-outlined" aria-hidden="true">hub</span>
@@ -188,4 +189,15 @@ function start(mode) {
   .welcome-enter-active,
   .welcome-leave-active { transition: none; }
 }
+
+.welcome-header { align-items: flex-start; }
+.welcome-header > div { min-width: 0; }
+.welcome-header h1 { font-size: var(--bz-size-h1); overflow-wrap: anywhere; }
+.welcome-art { position: relative; height: 150px; overflow: hidden; background: var(--bz-canvas); }
+.welcome-art > img:first-child { width: 100%; height: 100%; object-fit: cover; object-position: center 45%; }
+.welcome-art .welcome-logo { position: absolute; left: 28px; bottom: 20px; width: 150px; height: auto; }
+.welcome-tool small { color: var(--bz-fg-mid); }
+.welcome-tools { padding-top: 0; }
+.welcome-version { color: var(--bz-fg-mid); margin-top: 8px !important; }
+@media (max-width: 720px) { .welcome-art { height: 105px; } .welcome-header { gap: 14px; } }
 </style>

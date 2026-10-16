@@ -4,7 +4,7 @@
     <header class="bz-train__header bz-train__hero">
       <div class="bz-train__hero-copy">
         <span class="bz-eyebrow">{{ mode === 'uncensor' ? 'Model behavior' : 'Training studio' }}</span>
-        <h1 class="bz-train__title fira-sans-condensed-black-italic">{{ modeTitle }}</h1>
+        <h1 class="bz-h1 bz-train__title"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">{{ mode === 'uncensor' ? 'lock_open' : 'model_training' }}</span>{{ modeTitle }}</h1>
         <p class="bz-train__subtitle">{{ modeSubtitle }}</p>
       </div>
       <div class="bz-train__hero-stats" aria-label="Training mode capabilities">
@@ -2618,7 +2618,7 @@ onBeforeUnmount(() => {
 .bz-train { padding: 32px; gap: 24px; }
 .bz-train > * { flex-shrink: 0; }
 .bz-train__hero { padding-bottom: 24px; margin: 0; }
-.bz-train__title { font-size: 44px; line-height: 1.15; margin-top: 8px; }
+.bz-train__title { display: flex; align-items: center; gap: 12px; font-size: var(--bz-size-h1); line-height: var(--bz-line-tight); margin-top: 8px; }
 .bz-train__subtitle { white-space: normal; line-height: 1.6; margin-top: 8px; }
 .bz-train__journey { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid var(--bz-border); }
 .bz-train__journey > div { display: flex; align-items: center; gap: 12px; padding: 0 12px 18px; color: var(--bz-fg-mid); border-bottom: 2px solid transparent; }

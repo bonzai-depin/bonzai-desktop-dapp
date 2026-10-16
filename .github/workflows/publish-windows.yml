@@ -36,6 +36,12 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      R2_BUCKET: ${{ vars.R2_BUCKET }}
+      R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
       PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish }}
       CI: true
       # Cross-vendor GGUF acceleration; never silently ship a CPU-only build.
@@ -262,6 +268,9 @@ jobs:
             --icon=src/assets/logo.ico \
             --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$|^/src/assets/materials/.*\.jpg$"
 
+      - name: Remove development-only package payload
+        run: python scripts/prune-desktop-payload.py "out/BonzAI-win32-x64/resources/app" win32 x64
+
       - name: Verify packaged native GPU runtime
         run: node scripts/verify-windows-gguf.mjs out/BonzAI-win32-x64/resources/app/bin/windows-x64
 
@@ -320,6 +329,11 @@ jobs:
       - name: Prepare checksummed release assets
         shell: bash
         run: python scripts/release-assets.py prepare out/make
+
+      - name: Configure complete-installer hosting
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
+        run: python -m pip install awscli
 
       - name: Upload release assets
         if: github.event_name == 'release' || inputs.publish

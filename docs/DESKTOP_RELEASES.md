@@ -74,15 +74,25 @@ its build-time Python packages and tests the standalone executable again. It
 moves that complete runtime into the app rather than making another GPU-library
 copy. The renderer build verifies every material map against the catalogue before
 excluding duplicate source JPGs from installers; compiled textures and source
-attribution remain included. Windows Inno Setup uses 1.9 GB payload slices.
+attribution remain included. Windows Inno Setup emits a single EXE with LZMA2 compression.
 Linux CI is pinned to Ubuntu 24.04. It removes unrelated preinstalled runtimes
 and download caches before freezing, then discards native compiler intermediates
 before installer staging to stay within the hosted runner's disk capacity.
-`scripts/release-assets.py prepare` splits any remaining oversized installer
-into bounded parts, verifies that reassembly preserves its SHA-256, and writes
-checksums plus reconstruction instructions. Download every part and verify the
-reconstructed installer before installing. The split files are transport parts,
-not independently installable packages. All checksums must travel with the files.
+`scripts/prune-desktop-payload.py` removes package-root test fixtures, source maps,
+and other platforms' FFmpeg executables from the staged app. Runtime code and
+native GPU libraries are retained. `scripts/release-assets.py prepare` preserves
+complete DMG / EXE / DEB installers and writes SHA-256 files. It rejects split
+payloads: users must never reconstruct an installer.
+
+Complete installers are hosted on Cloudflare R2, without GitHub's per-file limit.
+Configure repository secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` and
+variables `R2_ENDPOINT` (S3 HTTPS endpoint), `R2_BUCKET`, and `R2_PUBLIC_URL`
+(public HTTPS bucket/custom domain). Scope credentials to the release bucket.
+The uploader verifies public file length, publishes checksums and download
+manifests to GitHub, and adds direct installer links to the release notes.
+Build-only runs require no R2 credentials and retain complete installers in
+Actions artifacts. Download the artifact ZIP and extract the installer normally;
+there are no `.part` files or installer sidecars.
 
 Commands:
 

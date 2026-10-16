@@ -3,7 +3,7 @@
     <header class="harness-hero">
       <div>
         <p class="bz-eyebrow">{{ t("harness.eyebrow") }}</p>
-        <h1 class="bz-h1">{{ t("harness.title") }}</h1>
+        <h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">terminal</span> {{ t("harness.title") }}</h1>
         <p class="harness-hero__copy">{{ t("harness.intro") }}</p>
       </div>
       <button class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic" :disabled="refreshing || !desktopAvailable" @click="refreshAll">

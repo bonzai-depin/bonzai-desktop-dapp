@@ -2,14 +2,14 @@
   <div class="rewards-view" :aria-label="i18n.t('nav.rewards')">
     <div class="rewards-content">
       <header class="rewards-topline">
-        <p class="bz-eyebrow">{{ i18n.t('nav.rewards') }} <span>/</span> BONZAI membership</p>
+        <h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">workspace_premium</span> {{ i18n.t('nav.rewards') }}</h1>
         <span class="rewards-network"><span class="material-symbols-outlined" aria-hidden="true">language</span>{{ network.name }}</span>
       </header>
 
       <section class="rewards-hero" aria-labelledby="rewards-title">
         <div class="rewards-story">
           <div class="rewards-emblem" aria-hidden="true"><img src="../assets/logo.png" alt="" /><span>Powered by $BONZAI</span></div>
-          <h1 id="rewards-title">An AI economy.<br /><span>A share for you.</span></h1>
+          <h2 id="rewards-title">An AI economy.<br /><span>A share for you.</span></h2>
           <p class="rewards-lead">Smart agents at work. Ideas becoming assets. Stake BONZAI to share in the protocol fees this economy generates.</p>
           <div class="rewards-promise">
             <div><span class="material-symbols-outlined" aria-hidden="true">layers</span><strong>One membership</strong><span>Six cumulative levels</span></div>
@@ -215,8 +215,8 @@ onBeforeUnmount(() => { requestId++; clearInterval(clock); });
 .rewards-hero { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(330px, .8fr); gap: clamp(24px, 5vw, 80px); padding: var(--bz-space-8) 0; align-items: center; }
 .rewards-emblem { display: flex; align-items: center; gap: 10px; color: var(--bz-fg-mid); font-size: var(--bz-size-caption); margin-bottom: var(--bz-space-6); }
 .rewards-emblem img { width: 32px; height: 32px; object-fit: contain; }
-.rewards-story h1 { font: 900 italic clamp(36px, 4vw, 54px)/1.06 var(--bz-font-metric); letter-spacing: -.025em; }
-.rewards-story h1 > span { color: var(--bz-purple-100); }
+.rewards-story h2 { font: 900 italic clamp(36px, 4vw, 54px)/1.06 var(--bz-font-metric); letter-spacing: -.025em; }
+.rewards-story h2 > span { color: var(--bz-purple-100); }
 .rewards-story .rewards-lead { color: var(--bz-fg-mid); font-size: clamp(16px, 1.6vw, 19px); line-height: 1.65; max-width: 520px; margin-top: var(--bz-space-5); }
 .rewards-promise { display: flex; flex-wrap: wrap; gap: var(--bz-space-6); margin: var(--bz-space-7) 0; }
 .rewards-promise > div { display: grid; grid-template-columns: 24px 1fr; gap: 5px 10px; }
@@ -316,15 +316,15 @@ onBeforeUnmount(() => { requestId++; clearInterval(clock); });
 .rewards-legacy > summary { cursor: pointer; color: var(--bz-fg-mid); margin-bottom: 16px; font-size: 13px; }
 .rewards-view button:focus-visible, .rewards-view a:focus-visible, .rewards-view summary:focus-visible { outline: 2px solid var(--bz-purple-100); outline-offset: 4px; }
 @media (max-width: 1150px) { .level-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .rewards-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); } .rewards-flow-title { grid-column: 1/-1; } .rewards-flow article:first-of-type { padding-left: 0; border-left: 0; } }
-@media (max-width: 850px) { .rewards-hero { grid-template-columns: 1fr; gap: 28px; } .membership-panel { width: 100%; } .rewards-section-heading { flex-wrap: wrap; align-items: center; } .rewards-promise { margin: 24px 0; } .rewards-story h1 { font-size: 40px; } }
-@media (max-width: 550px) { .rewards-content { padding: 20px 16px; } .rewards-topline { align-items: flex-start; flex-direction: column; gap: 10px; } .rewards-hero { padding-top: 28px; } .rewards-story h1 { font-size: 36px; } .level-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rewards-flow { grid-template-columns: 1fr; gap: 20px; } .rewards-flow article { border-left: 0; border-top: 1px solid var(--bz-border); padding: 18px 0 0; } .basket-currency { grid-template-columns: 32px minmax(0, 1fr); gap: 12px; } .currency-icon { width: 32px; height: 32px; font-size: 19px; } .currency-value, .basket-currency > button { grid-column: 2; text-align: left; justify-self: start; max-width: 100%; } .basket-amount { font-size: 23px; } .basket-welcome { flex-wrap: wrap; padding: 20px; gap: 12px; } .basket-welcome > div { flex-basis: calc(100% - 50px); } .basket-welcome > button { margin-left: 46px; } .membership-heading { gap: 8px; } .membership-heading h2 { font-size: 15px; } }
+@media (max-width: 850px) { .rewards-hero { grid-template-columns: 1fr; gap: 28px; } .membership-panel { width: 100%; } .rewards-section-heading { flex-wrap: wrap; align-items: center; } .rewards-promise { margin: 24px 0; } .rewards-story h2 { font-size: 40px; } }
+@media (max-width: 550px) { .rewards-content { padding: 20px 16px; } .rewards-topline { align-items: flex-start; flex-direction: column; gap: 10px; } .rewards-hero { padding-top: 28px; } .rewards-story h2 { font-size: 36px; } .level-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rewards-flow { grid-template-columns: 1fr; gap: 20px; } .rewards-flow article { border-left: 0; border-top: 1px solid var(--bz-border); padding: 18px 0 0; } .basket-currency { grid-template-columns: 32px minmax(0, 1fr); gap: 12px; } .currency-icon { width: 32px; height: 32px; font-size: 19px; } .currency-value, .basket-currency > button { grid-column: 2; text-align: left; justify-self: start; max-width: 100%; } .basket-amount { font-size: 23px; } .basket-welcome { flex-wrap: wrap; padding: 20px; gap: 12px; } .basket-welcome > div { flex-basis: calc(100% - 50px); } .basket-welcome > button { margin-left: 46px; } .membership-heading { gap: 8px; } .membership-heading h2 { font-size: 15px; } }
 @media (prefers-reduced-motion: reduce) { .rewards-view { scroll-behavior: auto; } }
 @media (max-width: 700px) { .level-explanation { flex-wrap: wrap; } .level-explanation p { flex: 1; min-width: 180px; } .level-explanation > a { margin-left: 36px; } }
 
 .rewards-content { max-width: none; padding: clamp(20px, 2.5vw, 36px); }
 .rewards-hero { padding: 36px 0; gap: clamp(24px, 4vw, 56px); align-items: start; }
 .rewards-story { padding-top: 16px; }
-.rewards-story h1 { font-size: clamp(34px, 3.4vw, 48px); line-height: 1.12; letter-spacing: normal; }
+.rewards-story h2 { font-size: clamp(34px, 3.4vw, 48px); line-height: 1.12; letter-spacing: normal; }
 .membership-panel { padding: 28px; }
 @media(max-width:550px) { .membership-panel { padding:20px; } .rewards-content { padding:20px 16px; } }
 </style>

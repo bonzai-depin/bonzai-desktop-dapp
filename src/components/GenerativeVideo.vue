@@ -513,8 +513,8 @@ export default {
     const reusedSampling = ref({});
     const videoModelItems = [
       { value: "fast", label: "Turbo", icon: "bolt" },
-      { value: "sota", label: "SOTA", icon: "movie" },
       { value: "quality", label: "Quality", icon: "auto_awesome" },
+      { value: "sota", label: "Max", icon: "movie" },
     ];
     const videoModeItems = [
       { value: "t2v", label: "From Prompt", icon: "text_fields" },
@@ -1821,7 +1821,7 @@ export default {
         createdAt: inference.createdAt,
         extra: {
           mode: mode.value === "i2v" ? "Image to video" : "Text to video",
-          engine: ({ fast: "Turbo", sota: "SOTA", quality: "Quality" })[videoModel.value],
+          engine: ({ fast: "Turbo", sota: "Max", quality: "Quality" })[videoModel.value],
           quality: data.quality || inference.quality || quality.value,
           duration: durationValue ? `${durationValue}s` : "",
           fps: frameRate ? `${frameRate} fps` : "",

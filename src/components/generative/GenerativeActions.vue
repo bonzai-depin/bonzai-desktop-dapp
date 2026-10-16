@@ -47,7 +47,7 @@ function actionClass(a) {
 }
 
 function isIconOnly(a) {
-  return props.iconOnly || a.iconOnly || ["copy", "restore", "delete", "inspect"].includes(a.id);
+  return props.iconOnly || a.iconOnly || ["download", "save", "copy", "restore", "delete", "inspect"].includes(a.id);
 }
 </script>
 
@@ -60,7 +60,7 @@ function isIconOnly(a) {
 
 .bz-gen-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
   min-width: 0;

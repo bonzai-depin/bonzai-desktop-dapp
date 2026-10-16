@@ -1,3 +1,4 @@
+import { closeHttpServer, installShutdown } from './main/shutdown.js';
 import { wavDuration, meditationExportTiming, meditationCaptionCues, meditationVideoArgs } from './main/media/meditationExport.js';
 import { createCompanyOAuth } from './main/connectors/companyOAuth.js';
 import { COMPANY_OAUTH_PROVIDERS } from './shared/companyOAuth.js';
@@ -80,6 +81,8 @@ import { RobinhoodMcpManager } from "./main/robinhood-mcp.js";
 // LLM runtime is llama-server subprocess (see services/llamaServer.manager.js).
 // Per-conversation chat history is held here since the subprocess is stateless
 // from call to call. Callers send single-turn inputs; we maintain history.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+
 let chatHistory = []; // { role: "system" | "user" | "assistant", content: string }[]
 
 // React to subprocess exits. We only clear renderer state on UNEXPECTED
@@ -601,11 +604,14 @@ const killPythonSubprocess = () => {
     if (!subpy || !subpy.pid) return resolve();
     const pid = subpy.pid;
 
-    psTree(pid, () => {
+    psTree(pid, (_error, children = []) => {
       if (process.platform === "win32") {
         child_process.exec(`taskkill /PID ${pid} /T /F`, () => resolve());
       } else {
         try {
+          for (const child of children.reverse()) {
+            try { process.kill(Number(child.PID), "SIGKILL"); } catch {}
+          }
           process.kill(pid, "SIGKILL");
         } catch {}
         resolve();
@@ -2219,20 +2225,6 @@ ipcMain.handle("service-time:truncate-ledger", async (_event, beforeTs) => {
     console.warn("[service-time] truncate failed:", err.message);
     return { kept: 0, removed: 0, error: err.message };
   }
-});
-
-// Kill rpc-server on app quit
-app.on("before-quit", () => {
-  if (gmaoMonitorTimer) clearInterval(gmaoMonitorTimer);
-  gmaoMonitorTimer = null;
-  if (rpcServerProcess && !rpcServerProcess.killed) {
-    rpcServerProcess.kill("SIGTERM");
-  }
-  try { llamaServer.stopModel({ force: true }); } catch {}
-  // Close the SQLite handle so WAL is checkpointed cleanly before exit.
-  try {
-    import("./main/db/connection.js").then((m) => m.close());
-  } catch {}
 });
 
 // Consumer-mode: update the local llama-server's -rpc peer list. Safe to
@@ -4626,7 +4618,7 @@ const createWindow = async () => {
   // Clear reference when window is closed (important for macOS dock click handling)
   mainWindow.on("closed", () => {
     mainWindow = null;
-    if (process.platform !== 'darwin') app.quit();
+    app.quit();
   });
 
   if (VITE_DEV_SERVER_URL) {
@@ -5258,27 +5250,38 @@ ipcMain.handle("synth-export", async (_event, { name }) => {
   }
 });
 
-// Kill the Python server before the app exits (prevents orphaned processes on port 65000)
-app.on("before-quit", async (e) => {
+// Closing the desktop window ends this app session on every OS. Minimize keeps work running.
+installShutdown(app, async () => {
   pythonStopVersion++;
   isIntentionalShutdown = true;
   clearTimeout(serverRestartTimer);
   serverRestartTimer = null;
   pythonRun?.controller.abort();
-  if (subpy && subpy.pid) {
-    e.preventDefault();
-    console.log("[before-quit] Killing Python server before exit...");
-    await killPythonSubprocess();
-    app.quit();
-  }
+  clearInterval(gmaoMonitorTimer);
+  gmaoMonitorTimer = null;
+  for (const pending of pendingWebhookRequests.values()) pending.reject(new Error('BonzAI is closing.'));
+  pendingWebhookRequests.clear();
+  const server = openclawServer;
+  openclawServer = null;
+  const results = await Promise.allSettled([
+    closeHttpServer(server),
+    killPythonSubprocess(),
+    llamaServer.stopModel({ force: true }),
+    _pool?.shutdown(),
+    stopP2PNode(),
+    robinhoodMcp.stop(),
+    new Promise(resolve => {
+      const child = rpcServerProcess;
+      if (!child || child.exitCode !== null) return resolve();
+      child.once('exit', resolve);
+      try { child.kill('SIGKILL'); } catch { resolve(); }
+    }),
+  ]);
+  results.forEach(result => { if (result.status === 'rejected') console.warn('[shutdown]', result.reason?.message); });
+  const database = await import('./main/db/connection.js');
+  database.close();
 });
-
-// Quit on all windows closed (non-mac)
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+app.on("window-all-closed", () => app.quit());
 
 app.on("activate", () => {
   if (subpy == null) {
@@ -7024,6 +7027,7 @@ function forwardToRenderer(data) {
 }
 
 function startOpenClawAPIServer() {
+  if (openclawServer || isIntentionalShutdown) return;
   openclawServer = http.createServer(async (req, res) => {
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -7502,6 +7506,7 @@ function startOpenClawAPIServer() {
   openclawServer.keepAliveTimeout = 0; // No keep-alive timeout
   openclawServer.headersTimeout = 0; // No headers timeout
 
+  openclawServer.on("error", error => console.error("[Harness API]", error.message));
   openclawServer.listen(OPENCLAW_API_PORT, "127.0.0.1", () => {
     console.log(`[Harness API] Local-only server running on http://127.0.0.1:${OPENCLAW_API_PORT}`);
     console.log(`[OpenClaw API] Timeouts disabled for long-running generation requests`);

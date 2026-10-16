@@ -17,70 +17,70 @@ def digest(path):
 
 
 def prepare(folder, limit=LIMIT):
+    """Keep installers intact. Hosting limits must never become user chores."""
     folder = Path(folder)
-    inputs = sorted(p for p in folder.iterdir() if p.suffix in {'.deb', '.dmg', '.exe', '.bin', '.zip'})
+    inputs = sorted(p for p in folder.iterdir() if p.suffix in {'.deb', '.dmg', '.exe'})
     if not inputs:
-        raise ValueError('No release installers found')
+        raise ValueError('No complete release installers found')
+    if list(folder.glob('*.bin')) or list(folder.glob('*.part-*')):
+        raise ValueError('Split installers are not distributable; rebuild as a single installer')
     for path in inputs:
         checksum = digest(path)
-        assets = [path]
-        if path.stat().st_size > limit:
-            assets = []
-            with path.open('rb') as source:
-                index = 0
-                while source.tell() < path.stat().st_size:
-                    part = path.with_name(f'{path.name}.part-{index:03d}')
-                    remaining = limit
-                    with part.open('wb') as dest:
-                        while remaining:
-                            block = source.read(min(8 * 1024 * 1024, remaining))
-                            if not block:
-                                break
-                            dest.write(block)
-                            remaining -= len(block)
-                    assets.append(part)
-                    index += 1
-            # Verify the stream before removing the original oversized installer.
-            combined = hashlib.sha256()
-            for part in assets:
-                with part.open('rb') as stream:
-                    for block in iter(lambda: stream.read(8 * 1024 * 1024), b''):
-                        combined.update(block)
-            if combined.hexdigest() != checksum:
-                raise ValueError(f'Split verification failed: {path.name}')
-            names = ' '.join(p.name for p in assets)
-            instructions = path.with_name(path.name + '.README.txt')
-            instructions.write_text(
-                f'Download every part into one directory. Original SHA256: {checksum}\n\n'
-                f'macOS/Linux: cat {names} > "{path.name}"\n'
-                f'Check: shasum -a 256 "{path.name}" (Linux: sha256sum)\n\n'
-                f'Windows Command Prompt: copy /b {"+".join(p.name for p in assets)} "{path.name}"\n'
-                f'Check in PowerShell: Get-FileHash "{path.name}" -Algorithm SHA256\n\n'
-                'Compare the checksum above before opening/installing the reconstructed file.\n', encoding='utf-8')
-            assets.append(instructions)
-            path.unlink()
-        manifest = path.with_name(path.name + '.SHA256SUMS')
-        manifest.write_text(''.join(f'{digest(p)}  {p.name}\n' for p in assets), encoding='utf-8')
-        print(f'Prepared {path.name}: {len(assets)} assets; SHA256 {checksum}')
-    oversized = [p.name for p in folder.iterdir() if p.is_file() and p.stat().st_size >= 2**31]
-    if oversized:
-        raise ValueError(f'Assets exceed GitHub limit: {oversized}')
+        path.with_name(path.name + '.SHA256SUMS').write_text(f'{checksum}  {path.name}\n', encoding='utf-8')
+        print(f'Prepared complete installer {path.name}: {path.stat().st_size:,} bytes; SHA256 {checksum}')
 
 
 def upload(folder, tag, repo):
+    import os
+    import json
+    import urllib.parse
+    import urllib.request
+    required = ['R2_ENDPOINT', 'R2_BUCKET', 'R2_PUBLIC_URL', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']
+    if any(not os.environ.get(key) for key in required):
+        raise ValueError('Configure R2 installer hosting before publishing: ' + ', '.join(required))
+    endpoint, bucket, public = (os.environ[key] for key in required[:3])
+    if not endpoint.startswith('https://') or not public.startswith('https://'):
+        raise ValueError('Release hosting requires HTTPS')
     base = ['gh', 'release']
     if subprocess.run(base + ['view', tag, '--repo', repo], stdout=subprocess.DEVNULL).returncode:
         # Concurrent platform jobs may both attempt creation; recheck on conflict.
         result = subprocess.run(base + ['create', tag, '--repo', repo, '--title', f'BonzAI {tag}', '--notes', 'BonzAI desktop installers.'])
         if result.returncode:
             subprocess.run(base + ['view', tag, '--repo', repo], check=True)
-    files = sorted(p for p in Path(folder).iterdir() if p.is_file())
+    folder = Path(folder)
+    files = sorted(p for p in folder.iterdir() if p.suffix in {'.dmg', '.exe', '.deb'})
     if not files:
-        raise ValueError('No release assets to upload')
+        raise ValueError('No complete installers to upload')
+    links = []
     for path in files:
-        if path.stat().st_size >= 2**31:
-            raise ValueError(f'Asset too large: {path.name}')
-        subprocess.run(base + ['upload', tag, str(path), '--repo', repo, '--clobber'], check=True)
+        key = f'releases/{tag}/{path.name}'
+        url = public.rstrip('/') + '/' + urllib.parse.quote(key, safe='/')
+        # Multipart transfer supports complete GPU installers larger than GitHub allows.
+        subprocess.run(['aws', 's3', 'cp', str(path), f's3://{bucket}/{key}',
+                        '--endpoint-url', endpoint, '--only-show-errors',
+                        '--content-type', 'application/octet-stream',
+                        '--content-disposition', f'attachment; filename="{path.name}"'], check=True)
+        request = urllib.request.Request(url, method='HEAD')
+        with urllib.request.urlopen(request, timeout=60) as response:
+            if int(response.headers.get('Content-Length', -1)) != path.stat().st_size:
+                raise ValueError(f'Public installer size check failed: {path.name}')
+        links.append({'name': path.name, 'url': url, 'size': path.stat().st_size, 'sha256': digest(path)})
+        subprocess.run(base + ['upload', tag, str(path.with_name(path.name + '.SHA256SUMS')), '--repo', repo, '--clobber'], check=True)
+    manifest = folder / (files[0].name + '.download.json')
+    manifest.write_text(json.dumps(links, indent=2) + '\n', encoding='utf-8')
+    subprocess.run(base + ['upload', tag, str(manifest), '--repo', repo, '--clobber'], check=True)
+    # Rebuild links from all platform manifests, so later jobs preserve earlier downloads.
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp:
+        subprocess.run(base + ['download', tag, '--repo', repo, '--pattern', '*.download.json', '--dir', temp], check=True)
+        all_links = {item['name']: item for file in Path(temp).glob('*.download.json') for item in json.loads(file.read_text())}
+        current = json.loads(subprocess.check_output(base + ['view', tag, '--repo', repo, '--json', 'body'], text=True))['body'] or ''
+        marker = '<!-- bonzai-installers -->'
+        notes = current.split(marker)[0].rstrip() + '\n\n' + marker + '\n## Install BonzAI\n\nDownload one installer for your system, open it, and follow the installation steps.\n\n'
+        notes += '\n'.join(f"- [{item['name']}]({item['url']})" for item in sorted(all_links.values(), key=lambda item: item['name'])) + '\n'
+        notes_file = Path(temp) / 'notes.md'
+        notes_file.write_text(notes, encoding='utf-8')
+        subprocess.run(base + ['edit', tag, '--repo', repo, '--notes-file', str(notes_file)], check=True)
 
 
 if __name__ == '__main__':

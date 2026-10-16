@@ -2,7 +2,7 @@
   <div class="ownership bz-economy">
     <div class="ownership__workspace">
       <header class="ownership__header">
-        <div><p class="bz-eyebrow">Your part of BonzAI</p><h1 class="bz-h1">Ownership</h1><p class="ownership__intro">Original work. Lasting provenance. A stake in what comes next.</p></div>
+        <div><p class="bz-eyebrow">Your part of BonzAI</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">fingerprint</span> Ownership</h1><p class="ownership__intro">Original work. Lasting provenance. A stake in what comes next.</p></div>
         <div class="ownership__header-actions"><span class="ownership__network"><span class="material-symbols-outlined" aria-hidden="true">hub</span>{{ network.name }}</span><button class="bz-iconbtn" aria-label="Refresh ownership" :disabled="loading" @click="refreshDashboard"><span class="material-symbols-outlined" :class="{ rotating: loading }" aria-hidden="true">refresh</span></button></div>
       </header>
 

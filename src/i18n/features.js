@@ -33,7 +33,7 @@ const phrases = {
   textCopy: phrase('Chat, write, reason, and use local tools.', '聊天、写作、推理并使用本地工具。', '채팅, 글쓰기, 추론 및 로컬 도구 사용.', 'チャット、文章作成、推論、ローカルツール。', 'Chatea, escribe, razona y usa herramientas locales.', 'Discutez, rédigez, raisonnez et utilisez des outils locaux.', 'Общайтесь, пишите, рассуждайте и используйте локальные инструменты.'),
   imageTitle: phrase('Images', '图像', '이미지', '画像', 'Imágenes', 'Images', 'Изображения'),
   imageCopy: phrase('Generate, edit, animate, and reuse visuals.', '生成、编辑、制作动画并复用视觉内容。', '이미지 생성, 편집, 애니메이션 및 재사용.', '画像の生成、編集、アニメーション、再利用。', 'Genera, edita, anima y reutiliza imágenes.', 'Générez, modifiez, animez et réutilisez des visuels.', 'Создавайте, редактируйте, анимируйте и повторно используйте изображения.'),
-  audioTitle: phrase('Speech + music', '语音与音乐', '음성 + 음악', '音声＋音楽', 'Voz y música', 'Voix et musique', 'Речь и музыка'),
+  audioTitle: phrase('Audio', '音频', '오디오', '音声', 'Audio', 'Audio', 'Аудио'),
   audioCopy: phrase('Create text-to-speech, voices, songs, and sound.', '创建文字转语音、声音、歌曲与音效。', 'TTS, 음성, 노래 및 사운드 생성.', '読み上げ音声、ボイス、楽曲、サウンドを作成。', 'Crea voz a partir de texto, voces, canciones y sonido.', 'Créez de la synthèse vocale, des voix, des chansons et du son.', 'Создавайте речь из текста, голоса, песни и звук.'),
   videoTitle: phrase('Video', '视频', '비디오', '動画', 'Vídeo', 'Vidéo', 'Видео'),
   videoCopy: phrase('Generate video with motion and synchronized audio.', '生成带运动与同步音频的视频。', '모션과 동기화된 오디오가 포함된 비디오 생성.', '動きと同期音声を含む動画を生成。', 'Genera vídeo con movimiento y audio sincronizado.', 'Générez des vidéos avec mouvement et audio synchronisé.', 'Создавайте видео с движением и синхронным звуком.'),

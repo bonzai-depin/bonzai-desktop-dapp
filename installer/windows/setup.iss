@@ -27,11 +27,10 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir={#MyOutputDir}
-Compression=lzma2
 SolidCompression=yes
-; Keep setup payload slices below GitHub's per-asset limit.
-DiskSpanning=yes
-DiskSliceSize=1900000000
+; Distribute one directly installable EXE through R2. Never require sidecar files.
+DiskSpanning=no
+Compression=lzma2/ultra64
 SetupIconFile={#MyIconFile}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64compatible

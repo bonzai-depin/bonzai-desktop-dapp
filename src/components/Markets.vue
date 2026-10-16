@@ -2,7 +2,7 @@
   <div class="markets bz-tab-shell">
     <div class="markets__workspace">
       <header class="markets__header">
-        <div><p class="bz-eyebrow">The BonzAI economy</p><h1 class="bz-h1">Token markets</h1><p class="markets__intro">Discover the assets behind smart agents, models and games.</p></div>
+        <div><p class="bz-eyebrow">The BonzAI economy</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">candlestick_chart</span>Token markets</h1><p class="markets__intro">Discover the assets behind smart agents, models and games.</p></div>
         <div class="markets__header-actions"><span class="markets__network"><span class="material-symbols-outlined" aria-hidden="true">hub</span>{{ network.name }}</span><button class="bz-iconbtn" type="button" :aria-label="i18n.t('common.refresh')" :title="i18n.t('common.refresh')" :disabled="loading" @click="refresh"><span class="material-symbols-outlined" :class="{ 'is-refreshing': loading }" aria-hidden="true">refresh</span></button></div>
       </header>
 
@@ -155,7 +155,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); clearTimeout(copyT
 .markets :is(button, input, select, a, summary):focus-visible { outline: 2px solid var(--bz-accent); outline-offset: 3px; }
 .markets__header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 28px; }
 .markets__header .bz-eyebrow { margin-bottom: 8px; }
-.markets__header .bz-h1 { font-size: 36px; }
+.markets__header .bz-h1 { font-size: var(--bz-size-h1); display: flex; align-items: center; gap: 12px; }
 .markets__intro { color: var(--bz-fg-mid); padding-top: 8px; line-height: 1.5; }
 .markets__header-actions, .markets__network, .markets__tools, .markets__pagination { display: flex; align-items: center; gap: 10px; }
 .markets__network { border: 1px solid var(--bz-border); border-radius: 99px; padding: 8px 12px; font-size: 12px; white-space: nowrap; color: var(--bz-fg-mid); }

@@ -143,6 +143,14 @@ export class RobinhoodMcpManager {
     return this.client.callTool({ name, arguments: args });
   }
 
+  async stop() {
+    // App shutdown closes transports without forgetting the saved connection.
+    this.closeCallbackServer();
+    try { await this.transport?.close(); } catch {}
+    this.client = null;
+    this.transport = null;
+  }
+
   async disconnect() {
     try { await this.transport?.terminateSession(); } catch {}
     try { await this.transport?.close(); } catch {}
