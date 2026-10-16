@@ -29,7 +29,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { rpcBuildTarget } from "./llama-build-targets.mjs";
+import { rpcBuildTarget, selectGpuBackend } from "./llama-build-targets.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -130,15 +130,13 @@ function getCmakeFlags() {
       try { execSync(cmd, { stdio: "ignore" }); return true; }
       catch { return false; }
     };
-    const hasCuda    = probe("nvcc --version");
-    const hasHip     = !hasCuda && probe("hipcc --version");
-    // glslc ships with the Vulkan SDK; if it's present, GGML_VULKAN can build.
-    const hasVulkan  = !hasCuda && !hasHip && probe("glslc --version");
+    const commands = { cuda: 'nvcc --version', hip: 'hipcc --version', vulkan: 'glslc --version' };
+    const backend = selectGpuBackend(process.env.BONZAI_LLAMA_BACKEND, name => probe(commands[name]));
 
-    if (hasCuda) {
+    if (backend === 'cuda') {
       flags.push("-DGGML_CUDA=ON");
       console.log("  CUDA detected — enabling GPU acceleration (NVIDIA)");
-    } else if (hasHip) {
+    } else if (backend === 'hip') {
       flags.push("-DGGML_HIP=ON");
       // RDNA2/3 GPUs use gfx1030/gfx1100/gfx1101/gfx1102. Override via
       // AMDGPU_TARGETS env if your card is older (e.g. gfx900 for Vega).
@@ -147,7 +145,7 @@ function getCmakeFlags() {
       flags.push("-DCMAKE_C_COMPILER=hipcc");
       flags.push("-DCMAKE_CXX_COMPILER=hipcc");
       console.log(`  HIP detected — enabling GPU acceleration (AMD ROCm, targets=${amdgpu})`);
-    } else if (hasVulkan) {
+    } else if (backend === 'vulkan') {
       flags.push("-DGGML_VULKAN=ON");
       console.log("  Vulkan SDK detected — enabling cross-vendor GPU fallback");
     } else {
@@ -233,7 +231,9 @@ function configure() {
   const flagStr = flags.join(" ");
   console.log(`  cmake flags: ${flagStr}`);
 
-  run(`cmake ${flagStr} -S "${SRC_DIR}" -B "${CMAKE_BUILD_DIR}"`);
+  // AMDGPU_TARGETS is a CMake list containing semicolons. Passing it through
+  // a shell splits the command and silently drops the source/build paths.
+  execFileSync('cmake', [...flags, '-S', SRC_DIR, '-B', CMAKE_BUILD_DIR], { stdio: 'inherit' });
 }
 
 function compile(rpcTarget) {

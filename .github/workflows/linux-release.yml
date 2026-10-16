@@ -49,6 +49,9 @@ jobs:
       OS_KEY: linux
       ARCH_KEY: x64
       GPU_BACKEND: ${{ matrix.gpu_backend }}
+      # Python uses CUDA/ROCm. The native GGUF runtime uses a portable GPU
+      # backend instead of depending on the runner's transient Python HIP SDK.
+      BONZAI_LLAMA_BACKEND: vulkan
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
@@ -87,7 +90,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg fakeroot libsndfile1
+          sudo apt-get install -y dpkg fakeroot libsndfile1 libvulkan-dev glslc spirv-headers
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -305,6 +308,7 @@ jobs:
             --options.homepage "https://bonzai.sh" \
             --options.icon src/assets/logo.png \
             --options.categories "Utility;Science;ArtificialIntelligence" \
+            --options.depends libvulkan1 \
             --options.compression xz \
             --options.section misc
 

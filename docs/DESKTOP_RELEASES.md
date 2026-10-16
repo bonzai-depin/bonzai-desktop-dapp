@@ -15,6 +15,11 @@ packaged as `rpc-server`, preserving the application's runtime paths. BonzAI
 provides the user interface and HTTPS downloads, so the embedded llama.cpp web
 UI and OpenSSL integration are disabled. macOS also avoids Homebrew libomp;
 the shipped native runtime must not require a developer's Homebrew installation.
+Linux GGUF inference uses Vulkan for NVIDIA, AMD and Intel GPUs (and retains CPU
+fallback); its CUDA/ROCm installer variants select the Python multimodal backend.
+CI requires the Vulkan toolchain explicitly rather than silently emitting a
+CPU-only GGUF runtime when a GPU compiler is missing. Local builds retain
+automatic CUDA/HIP/Vulkan selection, overridable with `BONZAI_LLAMA_BACKEND`.
 
 ## Validate without publishing
 
