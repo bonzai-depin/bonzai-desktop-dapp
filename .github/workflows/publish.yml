@@ -56,6 +56,57 @@ jobs:
               env.write(f'TAG={version}\n')
           PYCODE
 
+      # Validate the interface before downloading/freezing the large inference stack.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build Vite bundles
+        shell: bash
+        env:
+          # The renderer dependency graph exceeds Node's default 2 GB heap.
+          NODE_OPTIONS: --max-old-space-size=6144
+          BONZAI_VALIDATE_WEB3: ${{ vars.BONZAI_VALIDATE_WEB3 }}
+          VITE_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
+          VITE_ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
+          VITE_BONZAI_ECONOMY_CHAIN_ID: ${{ secrets.BONZAI_ECONOMY_CHAIN_ID }}
+          VITE_ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
+          VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS: ${{ secrets.BONZAI_TOKEN_ROBINHOOD_ADDRESS }}
+          VITE_BONZAI_UNLOCK_ADDRESS: ${{ secrets.BONZAI_UNLOCK_ADDRESS }}
+          VITE_BONZAI_SKILL_REGISTRY_ADDRESS: ${{ secrets.BONZAI_SKILL_REGISTRY_ADDRESS }}
+          VITE_BONZAI_SKILL_OWNERSHIP_ADDRESS: ${{ secrets.BONZAI_SKILL_OWNERSHIP_ADDRESS }}
+          VITE_BONZAI_COLLECTIBLES_ADDRESS: ${{ secrets.BONZAI_COLLECTIBLES_ADDRESS }}
+          VITE_BONZAI_COLLECTIBLES_FACTORY_ADDRESS: ${{ secrets.BONZAI_COLLECTIBLES_FACTORY_ADDRESS }}
+          VITE_BONZAI_MINT_POOL_ADDRESS: ${{ secrets.BONZAI_MINT_POOL_ADDRESS }}
+          VITE_BONZAI_ROYALTY_SPLITTER_ADDRESS: ${{ secrets.BONZAI_ROYALTY_SPLITTER_ADDRESS }}
+          VITE_BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS: ${{ secrets.BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS }}
+          VITE_BONZAI_COMPANIONS_ADDRESS: ${{ secrets.BONZAI_COMPANIONS_ADDRESS }}
+          VITE_BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS: ${{ secrets.BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS }}
+          VITE_BONZAI_PROVIDER_REGISTRY_ADDRESS: ${{ secrets.BONZAI_PROVIDER_REGISTRY_ADDRESS }}
+          VITE_BONZAI_SERVICE_TIME_ADDRESS: ${{ secrets.BONZAI_SERVICE_TIME_ADDRESS }}
+          VITE_BONZAI_STAKING_VAULT_ADDRESS: ${{ secrets.BONZAI_STAKING_VAULT_ADDRESS }}
+          VITE_BONZAI_REVENUE_ROUTER_ADDRESS: ${{ secrets.BONZAI_REVENUE_ROUTER_ADDRESS }}
+          VITE_BONZAI_CONTRIBUTION_REGISTRY_ADDRESS: ${{ secrets.BONZAI_CONTRIBUTION_REGISTRY_ADDRESS }}
+          VITE_BONZAI_DATASET_REGISTRY_ADDRESS: ${{ secrets.BONZAI_DATASET_REGISTRY_ADDRESS }}
+          VITE_BONZAI_MODEL_REGISTRY_ADDRESS: ${{ secrets.BONZAI_MODEL_REGISTRY_ADDRESS }}
+          VITE_BONZAI_EVALUATION_REGISTRY_ADDRESS: ${{ secrets.BONZAI_EVALUATION_REGISTRY_ADDRESS }}
+          VITE_BONZAI_CONTRIBUTION_SCORE_ORACLE_ADDRESS: ${{ secrets.BONZAI_CONTRIBUTION_SCORE_ORACLE_ADDRESS }}
+          VITE_BONZAI_JOB_ESCROW_ADDRESS: ${{ secrets.BONZAI_JOB_ESCROW_ADDRESS }}
+          VITE_BONZAI_UNISWAP_HOOK_ADDRESS: ${{ secrets.BONZAI_UNISWAP_HOOK_ADDRESS }}
+          VITE_BONZAI_SKILL_ID_MAP_JSON: ${{ secrets.BONZAI_SKILL_ID_MAP_JSON }}
+          VITE_UNISWAP_V4_POOL_MANAGER: ${{ secrets.UNISWAP_V4_POOL_MANAGER }}
+          VITE_UNISWAP_V4_POSITION_MANAGER: ${{ secrets.UNISWAP_V4_POSITION_MANAGER }}
+          VITE_UNISWAP_V4_UNIVERSAL_ROUTER: ${{ secrets.UNISWAP_V4_UNIVERSAL_ROUTER }}
+          VITE_UNISWAP_V4_QUOTER: ${{ secrets.UNISWAP_V4_QUOTER }}
+          VITE_UNISWAP_V4_STATE_VIEW: ${{ secrets.UNISWAP_V4_STATE_VIEW }}
+        run: |
+          if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
+          npm run build:vite
+
       - name: Set up Python (macOS ARM64)
         uses: actions/setup-python@v5
         with:
@@ -181,14 +232,6 @@ jobs:
         run: |
           binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.14.0
-
-      - name: Install Node dependencies
-        run: npm ci
-
       - name: Build llama.cpp RPC binaries
         run: |
           brew install cmake
@@ -241,46 +284,6 @@ jobs:
               fi
             done
           done
-
-      - name: Build Vite bundles
-        shell: bash
-        env:
-          BONZAI_VALIDATE_WEB3: ${{ vars.BONZAI_VALIDATE_WEB3 }}
-          VITE_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
-          VITE_ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
-          VITE_BONZAI_ECONOMY_CHAIN_ID: ${{ secrets.BONZAI_ECONOMY_CHAIN_ID }}
-          VITE_ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
-          VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS: ${{ secrets.BONZAI_TOKEN_ROBINHOOD_ADDRESS }}
-          VITE_BONZAI_UNLOCK_ADDRESS: ${{ secrets.BONZAI_UNLOCK_ADDRESS }}
-          VITE_BONZAI_SKILL_REGISTRY_ADDRESS: ${{ secrets.BONZAI_SKILL_REGISTRY_ADDRESS }}
-          VITE_BONZAI_SKILL_OWNERSHIP_ADDRESS: ${{ secrets.BONZAI_SKILL_OWNERSHIP_ADDRESS }}
-          VITE_BONZAI_COLLECTIBLES_ADDRESS: ${{ secrets.BONZAI_COLLECTIBLES_ADDRESS }}
-          VITE_BONZAI_COLLECTIBLES_FACTORY_ADDRESS: ${{ secrets.BONZAI_COLLECTIBLES_FACTORY_ADDRESS }}
-          VITE_BONZAI_MINT_POOL_ADDRESS: ${{ secrets.BONZAI_MINT_POOL_ADDRESS }}
-          VITE_BONZAI_ROYALTY_SPLITTER_ADDRESS: ${{ secrets.BONZAI_ROYALTY_SPLITTER_ADDRESS }}
-          VITE_BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS: ${{ secrets.BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS }}
-          VITE_BONZAI_COMPANIONS_ADDRESS: ${{ secrets.BONZAI_COMPANIONS_ADDRESS }}
-          VITE_BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS: ${{ secrets.BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS }}
-          VITE_BONZAI_PROVIDER_REGISTRY_ADDRESS: ${{ secrets.BONZAI_PROVIDER_REGISTRY_ADDRESS }}
-          VITE_BONZAI_SERVICE_TIME_ADDRESS: ${{ secrets.BONZAI_SERVICE_TIME_ADDRESS }}
-          VITE_BONZAI_STAKING_VAULT_ADDRESS: ${{ secrets.BONZAI_STAKING_VAULT_ADDRESS }}
-          VITE_BONZAI_REVENUE_ROUTER_ADDRESS: ${{ secrets.BONZAI_REVENUE_ROUTER_ADDRESS }}
-          VITE_BONZAI_CONTRIBUTION_REGISTRY_ADDRESS: ${{ secrets.BONZAI_CONTRIBUTION_REGISTRY_ADDRESS }}
-          VITE_BONZAI_DATASET_REGISTRY_ADDRESS: ${{ secrets.BONZAI_DATASET_REGISTRY_ADDRESS }}
-          VITE_BONZAI_MODEL_REGISTRY_ADDRESS: ${{ secrets.BONZAI_MODEL_REGISTRY_ADDRESS }}
-          VITE_BONZAI_EVALUATION_REGISTRY_ADDRESS: ${{ secrets.BONZAI_EVALUATION_REGISTRY_ADDRESS }}
-          VITE_BONZAI_CONTRIBUTION_SCORE_ORACLE_ADDRESS: ${{ secrets.BONZAI_CONTRIBUTION_SCORE_ORACLE_ADDRESS }}
-          VITE_BONZAI_JOB_ESCROW_ADDRESS: ${{ secrets.BONZAI_JOB_ESCROW_ADDRESS }}
-          VITE_BONZAI_UNISWAP_HOOK_ADDRESS: ${{ secrets.BONZAI_UNISWAP_HOOK_ADDRESS }}
-          VITE_BONZAI_SKILL_ID_MAP_JSON: ${{ secrets.BONZAI_SKILL_ID_MAP_JSON }}
-          VITE_UNISWAP_V4_POOL_MANAGER: ${{ secrets.UNISWAP_V4_POOL_MANAGER }}
-          VITE_UNISWAP_V4_POSITION_MANAGER: ${{ secrets.UNISWAP_V4_POSITION_MANAGER }}
-          VITE_UNISWAP_V4_UNIVERSAL_ROUTER: ${{ secrets.UNISWAP_V4_UNIVERSAL_ROUTER }}
-          VITE_UNISWAP_V4_QUOTER: ${{ secrets.UNISWAP_V4_QUOTER }}
-          VITE_UNISWAP_V4_STATE_VIEW: ${{ secrets.UNISWAP_V4_STATE_VIEW }}
-        run: |
-          if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
-          npm run build:vite
 
       - name: Package Electron app
         run: |
