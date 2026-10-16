@@ -1,3 +1,6 @@
+import ast
+import os
+import re
 import base64
 import hashlib
 import io
@@ -18,6 +21,26 @@ class Response(io.BytesIO):
         self.headers = headers or {}
 
 class LocalUploadTest(unittest.TestCase):
+    def test_upload_allowlist_accepts_gguf_and_legacy_safetensors_only(self):
+        tree = ast.parse((SCRIPT.parent / 'prepare-model-upload.py').read_text())
+        validation = []
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 's3' for t in node.targets):
+                break
+            if not isinstance(node, (ast.Import, ast.ImportFrom, ast.Expr)):
+                validation.append(node)
+        code = compile(ast.Module(body=validation, type_ignores=[]), 'validation', 'exec')
+        for name, allowed in [('wan2.2_high_q5.gguf', True), ('sdxl-lora.safetensors', True),
+                              ('wan-lora-animation-high-safetensors', True),
+                              ('../model.gguf', False), ('model.exe', False),
+                              ('model.safetensors.exe', False), ('MODEL.gguf', False)]:
+            manifest = json.dumps([dict(name=name, bytes=128, sha256='a'*64)])
+            with patch.dict(os.environ, MODEL_MANIFEST=manifest):
+                if allowed:
+                    exec(code, dict(os=os, json=json, re=re))
+                else:
+                    with self.assertRaises(ValueError): exec(code, dict(os=os, json=json, re=re))
+
     def test_parallel_parts_match_source_and_verified_files_resume_without_reupload(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -8,7 +8,7 @@ items = json.loads(os.environ['MODEL_MANIFEST'])
 if not isinstance(items, list) or not 0 < len(items) <= 100:
     raise ValueError('Expected 1–100 model files')
 for item in items:
-    if not re.fullmatch(r'[a-z0-9_.-]+', item['name']) or 'safetensors' not in item['name']:
+    if not re.fullmatch(r'[a-z0-9_.-]+', item['name']) or not item['name'].endswith(('.gguf', '.safetensors', '-safetensors')):
         raise ValueError('Invalid model filename')
     if not re.fullmatch(r'[a-f0-9]{64}', item['sha256']) or not 0 < item['bytes'] < 100 * 1024**3:
         raise ValueError('Invalid model size or checksum')
