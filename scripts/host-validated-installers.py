@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 
@@ -26,11 +27,23 @@ def main():
     if not run_id.isdigit():
         raise ValueError('Source run must be numeric')
     run = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}']))
+    deadline = time.monotonic() + 3 * 3600
+    while run.get('status') in ('queued', 'in_progress', 'waiting', 'requested', 'pending'):
+        if time.monotonic() > deadline:
+            raise TimeoutError('Source build did not finish within three hours')
+        print('Waiting for source build ' + run_id, flush=True)
+        time.sleep(60)
+        run = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}']))
     if run['conclusion'] != 'success' or run['event'] not in ('workflow_dispatch', 'release'):
         raise ValueError('Only successful manually dispatched/release builds may be hosted')
     if run['name'] not in ('Release (macOS)', 'Release (Linux)', 'Release (Windows)'):
         raise ValueError('Not a desktop build workflow')
-    sha = run['head_sha']
+    # workflow_dispatch may check out a ref different from the workflow revision.
+    logs = subprocess.check_output(['gh', 'run', 'view', run_id, '--repo', repo, '--log'], text=True)
+    revisions = re.findall(r'git log -1 --format=%H[^\n]*\n[^\n]*?\b([a-f0-9]{40})\s*(?:\n|$)', logs)
+    if not revisions or len(set(revisions)) != 1:
+        raise ValueError('Cannot establish a single checked-out build revision')
+    sha = revisions[0]
     if not re.fullmatch(r'[a-f0-9]{40}', sha):
         raise ValueError('Invalid source revision')
     artifacts = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}/artifacts']))['artifacts']

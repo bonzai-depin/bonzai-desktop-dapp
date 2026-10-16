@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run:
-        description: 'Successful desktop build run ID to publish as an unsigned test build'
+        description: 'Desktop build run ID (waits for success before publishing an unsigned test build)'
         required: true
         type: string
 permissions:
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   host:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - run: python -m pip install boto3

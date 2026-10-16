@@ -20,7 +20,7 @@ class HostingTests(unittest.TestCase):
         client = Mock()
         client.head_object.return_value = {'ContentLength': len(content), 'Metadata': {'sha256': digest}}
         run = {'conclusion': conclusion, 'event': 'workflow_dispatch', 'name': 'Release (macOS)', 'head_sha': 'a'*40}
-        responses = [json.dumps(run).encode(), json.dumps({'artifacts': [{'name': 'bonzai-macos-arm64', 'expired': False}]}).encode()]
+        responses = [json.dumps(run).encode(), 'git log -1 --format=%H\n' + 'a'*40 + '\n', json.dumps({'artifacts': [{'name': 'bonzai-macos-arm64', 'expired': False}]}).encode()]
         def download(command, **kwargs):
             folder = Path(command[-1])
             (folder/'BonzAI.dmg').write_bytes(content)
