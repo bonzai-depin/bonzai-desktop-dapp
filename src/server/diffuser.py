@@ -180,7 +180,7 @@ def normalize_model_filename(filename: str) -> str:
 SDXL_BASE_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 SDXL_REFINER_REPO = "stabilityai/stable-diffusion-xl-refiner-1.0"
 SDXL_LORA_NAME = "sdxl-lora.safetensors"
-SDXL_LORA_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/sdxl-lora.safetensors"
+SDXL_LORA_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/sdxl-lora.safetensors"
 
 # FLUX Klein: retained 4B repository identity and current 9B GGUF Turbo assets
 FLUX_KLEIN_REPO = "black-forest-labs/FLUX.2-klein-4b"
@@ -224,12 +224,12 @@ WAN_REPO = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
 # Designed for: 4 steps, CFG 1.0, Sampler/Scheduler Euler/Simple or
 # UniPC_BH2/Simple. No separate LoRA loading needed.
 #
-# Files live in MODEL_DIR; will be served from the R2 CDN once uploaded.
+# Files live in MODEL_DIR and are mirrored under the R2 models/ prefix.
 WAN_GGUF_REPO = "dasiwa/local"
-WAN_GGUF_HIGH = "wan2.2_high_Q5.gguf"
-WAN_GGUF_LOW = "wan2.2_low_Q5.gguf"
-WAN_GGUF_HIGH_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/wan2.2_high_Q5.gguf"
-WAN_GGUF_LOW_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/wan2.2_low_Q5.gguf"
+WAN_GGUF_HIGH = "wan2.2_high_q5.gguf"
+WAN_GGUF_LOW = "wan2.2_low_q5.gguf"
+WAN_GGUF_HIGH_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/wan2.2_high_q5.gguf"
+WAN_GGUF_LOW_URL = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/wan2.2_low_q5.gguf"
 WAN_GGUF_HIGH_QUANTSTACK_URL = WAN_GGUF_HIGH_URL
 WAN_GGUF_LOW_QUANTSTACK_URL = WAN_GGUF_LOW_URL
 WAN_VAE = "wan2.1_vae.safetensors"

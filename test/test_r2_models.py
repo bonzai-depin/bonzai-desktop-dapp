@@ -44,6 +44,12 @@ class ModelMirrorTest(unittest.TestCase):
             env['MODEL_DIR'] = Path(folder)
             wan = env['_plan_for']('video_quality')['single_files']
             self.assertTrue({a[0] for a in WAN_ADAPTERS}.issubset({f['name'] for f in wan}))
+            for name in ('wan2.2_high_q5.gguf', 'wan2.2_low_q5.gguf'):
+                self.assertIn(model_file(name), wan)
+            self.assertEqual(env['WAN_GGUF_HIGH'], 'wan2.2_high_q5.gguf')
+            self.assertEqual(env['WAN_GGUF_LOW'], 'wan2.2_low_q5.gguf')
+            sdxl = env['_plan_for']('image_standard')['single_files']
+            self.assertEqual(sdxl, [model_file('sdxl-lora.safetensors')])
             klein = env['_plan_for']('image_turbo')['single_files']
             self.assertEqual(len(klein), 3)
             # Leave GGUF as fallback; do not activate the previously removed extra adapter.

@@ -28,6 +28,8 @@ MODEL_FILES = {'ema_vae_fp16.safetensors': {'sha256': '20678548f420d98d26f11442d
                                            'size': 5207808496},
  'mysticxxx_mmh3-v4.safetensors': {'sha256': 'fc3e856d14c6c19557c888f48662d591e4794e281233ec0d987be5003068afba',
                                    'size': 155095800},
+ 'sdxl-lora.safetensors': {'sha256': '183157e5d5e5aa264c4ed6e3cdc7e0c7fe2f0047134cd2be47b35f5fe508db67',
+                           'size': 6938040866},
  'seedvr2_ema_3b_fp16.safetensors': {'sha256': '2fd0e03a3dad24e07086750360727ca437de4ecd456f769856e960ae93e2b304',
                                      'size': 6783018808},
  'wan-lora-animation-high-safetensors': {'sha256': 'eac4f4341008abb00434d08fed1d4fda4a144bc94cd26b4819f629f930a75181',
@@ -41,7 +43,11 @@ MODEL_FILES = {'ema_vae_fp16.safetensors': {'sha256': '20678548f420d98d26f11442d
  'wan-lora-high.safetensors': {'sha256': 'd9931756c202bd8d4946c0d163c1269231a6352b51bb4235f6a19894c9ad8c68',
                                'size': 306807976},
  'wan-lora-low.safetensors': {'sha256': '066ee4bfafb685c85f08174c8283cd11bc6d36f4845347f20d633ab44581601f',
-                              'size': 306807976}}
+                              'size': 306807976},
+ 'wan2.2_high_q5.gguf': {'sha256': '08d265fdec21a8a7a1dffb4d32b9429b914aea85a6b5f35f522f2aa33e02839f',
+                         'size': 10799418688},
+ 'wan2.2_low_q5.gguf': {'sha256': '6477c318c0baefd72f3e84378ce39d00e8d789959fc626e98c57a63ce6ee1a7d',
+                        'size': 10799418688}}
 
 def model_file(name):
     name = name.lower()
