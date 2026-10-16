@@ -65,6 +65,9 @@ moves that complete runtime into the app rather than making another GPU-library
 copy. The renderer build verifies every material map against the catalogue before
 excluding duplicate source JPGs from installers; compiled textures and source
 attribution remain included. Windows Inno Setup uses 1.9 GB payload slices.
+Linux CI is pinned to Ubuntu 24.04. It removes unrelated preinstalled runtimes
+and download caches before freezing, then discards native compiler intermediates
+before installer staging to stay within the hosted runner's disk capacity.
 `scripts/release-assets.py prepare` splits any remaining oversized installer
 into bounded parts, verifies that reassembly preserves its SHA-256, and writes
 checksums plus reconstruction instructions. Download every part and verify the

@@ -29,7 +29,7 @@ concurrency:
 jobs:
   publish_on_linux:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # GPU backend matrix: each target produces a distinct .deb. Users
       # download the variant matching their hardware. fail-fast off so a
@@ -61,9 +61,11 @@ jobs:
       # Free ~30GB by removing pre-installed tools we don't need.
       # CUDA PyTorch + PyInstaller + Electron need significant disk space.
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523
         with:
-          tool-cache: false
+          # Reinstall only our selected Node/Python versions below. Unrelated
+          # hosted runtimes otherwise exhaust the disk during ROCm freezing.
+          preinstalled-runtimes: true
           android: true
           dotnet: true
           haskell: true
@@ -78,7 +80,7 @@ jobs:
       - name: Resolve version
         shell: bash
         run: |
-          python - <<'PYCODE'
+          /usr/bin/python3 - <<'PYCODE'
           import json, os
           version = json.load(open('package.json'))['version']
           if os.environ.get('PUBLISH_RELEASE') == 'true' and os.environ['RELEASE_TAG'].removeprefix('v') != version:
@@ -209,6 +211,12 @@ jobs:
           python test/test_torchvision_packaging.py
           python src/server/runtime_check.py
 
+      - name: Reclaim download caches before freezing
+        run: |
+          pip cache purge
+          npm cache clean --force
+          df -h /
+
       - name: Build Python runtime
         shell: bash
         run: |
@@ -265,6 +273,13 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y cmake
           npm run build:rpc
+
+      - name: Reclaim native compiler intermediates
+        run: |
+          # build:rpc has copied and launched the finished binary. Object files,
+          # generated shaders and the temporary checkout are no longer needed.
+          node --input-type=module -e 'import fs from "node:fs"; import os from "node:os"; import path from "node:path"; fs.rmSync(path.join(os.tmpdir(), "bonzai-llama-rpc-build"), { recursive: true, force: true });'
+          df -h /
 
       - name: Package Electron app
         run: |
