@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+from r2_models import model_file
 import re
 import shutil
 import stat
@@ -35,7 +36,7 @@ for _file in SEEDVR2_FILES:
     _file["url"] = (
         f"https://codeload.github.com/numz/ComfyUI-SeedVR2_VideoUpscaler/zip/{SEEDVR2_REVISION}"
         if _file["name"] == SEEDVR2_ARCHIVE else
-        f"https://huggingface.co/numz/SeedVR2_comfyUI/resolve/{SEEDVR2_MODEL_REVISION}/{_file['name']}"
+        model_file(_file["name"])["url"]
     )
 
 

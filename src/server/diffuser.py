@@ -1947,7 +1947,7 @@ def _expected_size(name: str, url: Optional[str] = None) -> int:
     if known_size > 0:
         return known_size
     if url:
-        headers = {}
+        headers = {"User-Agent": "BonzAI-Model-Download/4.0"}
         if url.startswith("https://huggingface.co/") and _hf_token():
             headers["Authorization"] = f"Bearer {_hf_token()}"
         try:
@@ -1963,7 +1963,10 @@ def _expected_size(name: str, url: Optional[str] = None) -> int:
 
 
 def _sf(name, url):
+    from r2_models import MODEL_FILES, model_file
     normalized_name = normalize_model_filename(name)
+    if normalized_name in MODEL_FILES:
+        return model_file(normalized_name)
     return {"name": normalized_name, "url": url, "size": _expected_size(normalized_name, url)}
 
 
@@ -1980,10 +1983,17 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
     """
     pipeline = pipeline.strip().lower()
 
+    # Individual mirrors are downloadable without activating an adapter.
+    if pipeline.startswith("model:"):
+        from r2_models import model_file
+        return {"repos_to_fetch": [], "single_files": [model_file(pipeline[6:])]}
+
     # Image pipelines
     if pipeline in ("flux_klein_9b_gguf", "image_turbo", "flux_klein"):
         return {"repos_to_fetch": [FLUX_KLEIN_9B_REPO],
-                "single_files": [_sf(FLUX_KLEIN_9B_GGUF_NAME, FLUX_KLEIN_9B_GGUF_URL)]}
+                "single_files": [_sf(FLUX_KLEIN_9B_GGUF_NAME, FLUX_KLEIN_9B_GGUF_URL),
+                                 _sf(FLUX_KLEIN_9B_LORA_NAME, ""),
+                                 _sf(FLUX_KLEIN_9B_LORA_EXTRA_NAME, "")]}
     if pipeline in ("image_standard", "sdxl"):
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": [_sf(SDXL_LORA_NAME, SDXL_LORA_URL)]}
     if pipeline in ("image_quality", "image_advanced", "z_image_turbo"):
@@ -2031,6 +2041,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             ],
         }
     if pipeline in ("video_quality", "wan_i2v"):
+        from wan_adapters import WAN_ADAPTERS
         # Wan2.2 I2V 14B with pre-merged GGUF transformers. The full
         # WAN_REPO download is still required for VAE, text_encoder,
         # tokenizer, scheduler, image_processor, and config.
@@ -2039,10 +2050,11 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
             "single_files": [
                 _sf(WAN_GGUF_HIGH, WAN_GGUF_HIGH_URL),
                 _sf(WAN_GGUF_LOW, WAN_GGUF_LOW_URL),
+                *[_sf(adapter[0], "") for adapter in WAN_ADAPTERS],
             ],
         }
     if pipeline in ("video_sota", "minimax_h3"):
-        transformer = ({"name": MINIMAX_H3_HYBRID_NAME, "url": ""}
+        transformer = (_sf(MINIMAX_H3_HYBRID_NAME, "")
                        if (MODEL_DIR / MINIMAX_H3_HYBRID_NAME).is_file()
                        else _sf(MINIMAX_H3_TRANSFORMER_NAME, MINIMAX_H3_TRANSFORMER_URL))
         return {
@@ -2052,6 +2064,7 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
                 _sf(MINIMAX_H3_TEXT_ENCODER_NAME, MINIMAX_H3_TEXT_ENCODER_URL),
                 _sf(MINIMAX_H3_VIDEO_VAE_NAME, MINIMAX_H3_VIDEO_VAE_URL),
                 _sf(MINIMAX_H3_AUDIO_VAE_NAME, MINIMAX_H3_AUDIO_VAE_URL),
+                _sf(MINIMAX_H3_LORA_NAME, ""),
             ],
         }
 
@@ -2371,7 +2384,7 @@ def _download_single_file(pl: PipelineDownload, tid: str, name: str, url: str, s
     normalized_name = normalize_model_filename(name)
     lock = _gguf_lock(normalized_name)
     with lock:
-        headers = {}
+        headers = {"User-Agent": "BonzAI-Model-Download/4.0"}
         if url.startswith("https://huggingface.co/") and _hf_token():
             headers["Authorization"] = f"Bearer {_hf_token()}"
         dest = MODEL_DIR / normalized_name

@@ -2,6 +2,7 @@
 """Upload local models using CI-issued links, without accessing R2 credentials."""
 import argparse, base64, hashlib, json, time, urllib.request, urllib.error
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from xml.etree import ElementTree as ET
 
 parser = argparse.ArgumentParser()
@@ -12,7 +13,7 @@ rows = json.loads((args.directory / 'inventory.json').read_text())
 sources = {r['name']: r for r in rows}
 plan = json.loads((args.directory / 'upload-plan.json').read_text())
 status_path = args.directory / 'status.json'
-status = {}
+status = json.loads(status_path.read_text()) if status_path.exists() else {}
 
 def request(url, method, data=None, headers=None):
     headers = dict(headers or {}, **{'User-Agent': 'BonzAI-Model-Upload/4.0'})
@@ -30,6 +31,8 @@ def save():
 
 for row in plan:
     name = row['name']
+    if status.get(name, {}).get('state') == 'verified':
+        continue
     source = args.model_dir / sources[name]['source_name']
     if source.stat().st_size != row['bytes']:
         raise RuntimeError('Local file changed: ' + name)
@@ -40,16 +43,30 @@ for row in plan:
         root = ET.Element('CompleteMultipartUpload')
         digest = hashlib.sha256()
         try:
-            with source.open('rb') as f:
-                for n, url in enumerate(row['parts'], 1):
-                    data = f.read(row['chunk'])
-                    digest.update(data)
-                    headers, _ = request(url, 'PUT', data, {'Content-MD5': base64.b64encode(hashlib.md5(data).digest()).decode()})
+            def upload_part(item):
+                n, url = item
+                with source.open('rb') as stream:
+                    stream.seek((n - 1) * row['chunk'])
+                    data = stream.read(row['chunk'])
+                headers, _ = request(url, 'PUT', data, {'Content-MD5': base64.b64encode(hashlib.md5(data).digest()).decode()})
+                return n, headers['ETag'], len(data)
+            # At most three 128 MiB buffers; no model tensors are loaded.
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = []
+                items = iter(enumerate(row['parts'], 1))
+                for _ in range(min(3, len(row['parts']))):
+                    futures.append(executor.submit(upload_part, next(items)))
+                while futures:
+                    n, etag, size = futures.pop(0).result()
                     part = ET.SubElement(root, 'Part')
                     ET.SubElement(part, 'PartNumber').text = str(n)
-                    ET.SubElement(part, 'ETag').text = headers['ETag']
-                    status[name]['sent'] += len(data)
+                    ET.SubElement(part, 'ETag').text = etag
+                    status[name]['sent'] += size
                     save()
+                    item = next(items, None)
+                    if item: futures.append(executor.submit(upload_part, item))
+            with source.open('rb') as stream:
+                digest = hashlib.file_digest(stream, 'sha256')
             if digest.hexdigest() != row['sha256']:
                 raise RuntimeError('Local checksum changed: ' + name)
             _, body = request(row['complete'], 'POST', ET.tostring(root), {'Content-Type': 'application/xml'})

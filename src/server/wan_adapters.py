@@ -1,5 +1,4 @@
 """Local Wan high/low-noise adapter stack. Never fuse into GGUF weights."""
-from safetensors.torch import load_file
 
 WAN_ADAPTERS = (
     ("wan-lora-high.safetensors", "general_high", False, "general", 0.25),
@@ -11,6 +10,7 @@ WAN_ADAPTERS = (
 )
 
 def load_wan_adapters(pipe, model_dir, options, logger, *, only_low_noise=None):
+    from safetensors.torch import load_file
     applied = []
     for filename, name, low_noise, group, strength in WAN_ADAPTERS:
         if only_low_noise is not None and low_noise != only_low_noise:

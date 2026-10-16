@@ -130,3 +130,22 @@ optional economy. Existing workflows read these from repository secrets for
 compatibility; addresses and app IDs are public configuration, not private keys.
 Never add a wallet private key, seed phrase or Privy app secret to the desktop build.
 Use `BONZAI_VALIDATE_WEB3=true` only after the complete deployment is configured.
+
+## Standalone model hosting
+
+Standalone weights are served from the same public bucket under `models/`.
+`src/server/r2_models.py` records lowercase names, exact sizes and SHA-256 hashes.
+The regular download preflight includes the configured Wan/Klein adapters and H3
+adapter; inactive archived adapters are not enabled. A `model:<filename>` download
+plan downloads an individual catalog entry without activating it.
+
+For local uploads, `Prepare local model upload` accepts a JSON manifest containing
+names, sizes and SHA-256 hashes. It issues six-hour, object-scoped multipart links
+in a private Actions artifact; bucket credentials remain in Actions. Existing
+objects with different hashes are rejected. Download the artifact to an ignored
+local directory and run `scripts/upload-local-models.py --directory <directory>
+--model-dir <model-folder>` alongside its `inventory.json` (including the original
+`source_name`). Transfers verify each part with Content-MD5 and the complete local
+SHA-256 before completion, then verify public HEAD size. Delete the temporary
+Actions artifact after use; never commit or share its signed links. Do not start
+upload preparation until the local transfer is ready to run.
