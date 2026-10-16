@@ -29,6 +29,16 @@ class ReleaseAssetsTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(len(path.with_name(path.name + '.SHA256SUMS').read_text().splitlines()), len(parts)+1)
 
+    def test_inno_payload_slice_at_limit_keeps_its_installable_filename(self):
+        # Inno Setup emits exact-size .bin slices. They already fit the upload
+        # limit; renaming each to a single .part-000 would break setup discovery.
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'BonzAI-setup-1.bin'
+            path.write_bytes(b'x' * 64)
+            release.prepare(temp, limit=64)
+            self.assertTrue(path.exists())
+            self.assertEqual(list(Path(temp).glob('*.part-*')), [])
+
     def test_empty_build_fails_instead_of_publishing_nothing(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(ValueError):

@@ -24,7 +24,7 @@ def prepare(folder, limit=LIMIT):
     for path in inputs:
         checksum = digest(path)
         assets = [path]
-        if path.stat().st_size >= limit:
+        if path.stat().st_size > limit:
             assets = []
             with path.open('rb') as source:
                 index = 0
