@@ -191,6 +191,26 @@ jobs:
         run: |
           binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
 
+      # The validated frozen runtime contains its own complete Python/GPU stack.
+      # Discard only the hosted runner's build-time copy before staging installers.
+      - name: Reclaim build-time Python packages
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import os, shutil, sysconfig
+          from pathlib import Path
+          python_root = Path(os.environ['pythonLocation']).resolve()
+          for key in ('purelib', 'platlib'):
+              directory = Path(sysconfig.get_path(key)).resolve()
+              if not directory.is_relative_to(python_root) or directory.name != 'site-packages':
+                  raise SystemExit(f'Refusing to remove packages outside the hosted Python: {directory}')
+              if directory.exists():
+                  shutil.rmtree(directory)
+          PYCODE
+          # Prove the shipped runtime does not rely on the removed build environment.
+          binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
+          df -h /
+
       - name: Build llama.cpp RPC binaries
         run: |
           sudo apt-get update && sudo apt-get install -y cmake
@@ -247,18 +267,18 @@ jobs:
             --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$"
 
       # main.js expects: resources/server/python-runtime/linux-x64/diffuser + _internal/
-      - name: Copy Python runtime to app
+      - name: Move validated Python runtime into app
         run: |
           APP_RESOURCES="out/BonzAI-linux-x64/resources"
           DEST="$APP_RESOURCES/server/python-runtime/linux-x64"
-          mkdir -p "$DEST"
-          # Preserve symlinks and the complete onedir runtime
-          cp -a binaries/linux-x64/diffuser/. "$DEST/"
+          mkdir -p "$(dirname "$DEST")"
+          # Same filesystem: move the complete tree instead of duplicating GPU libraries.
+          mv binaries/linux-x64/diffuser "$DEST"
           chmod +x "$DEST/diffuser"
-          echo "Python runtime copied:"
+          echo "Python runtime embedded:"
           ls -lh "$DEST/diffuser"
 
-      # Raw binaries are now duplicated inside out/BonzAI-linux-x64/resources/ — remove originals
+      # The runtime has moved into the app; discard empty build directories.
       - name: Remove duplicate binaries
         run: |
           rm -rf binaries/
@@ -285,6 +305,7 @@ jobs:
             --options.homepage "https://bonzai.sh" \
             --options.icon src/assets/logo.png \
             --options.categories "Utility;Science;ArtificialIntelligence" \
+            --options.compression xz \
             --options.section misc
 
           # Rename — backend-suffixed so cuda + rocm releases coexist.
@@ -298,16 +319,8 @@ jobs:
           DEB_SIZE=$(stat --format='%s' "$DEB_PATH")
           echo "DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
 
-          # If still over 2GB, repack with xz compression (dpkg-deb -Zxz)
-          if [ "$DEB_SIZE" -gt 2000000000 ]; then
-            echo "DEB exceeds 2GB, repacking with xz compression..."
-            REPACK_DIR=$(mktemp -d)
-            dpkg-deb -R "$DEB_PATH" "$REPACK_DIR"
-            dpkg-deb -Zxz -z9 -Sextreme -b "$REPACK_DIR" "$DEB_PATH"
-            rm -rf "$REPACK_DIR"
-            DEB_SIZE=$(stat --format='%s' "$DEB_PATH")
-            echo "Repacked DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
-          fi
+          # Already xz-compressed. Split oversized assets below; do not unpack
+          # another multi-GB runtime just to recompress it a second time.
 
       - name: Disk report
         if: always()

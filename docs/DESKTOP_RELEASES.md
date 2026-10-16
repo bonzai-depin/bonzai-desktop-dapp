@@ -54,7 +54,10 @@ Python/Node socket and fails if either process exits or the exchange times out.
 
 GitHub limits each release asset to less than 2 GiB. Do not delete PyTorch,
 CUDA, ROCm, licenses or locales to meet that limit. Linux installers use xz
-compression when required. Windows Inno Setup uses 1.9 GB payload slices.
+compression directly. After frozen-runtime validation, the Linux runner removes
+its build-time Python packages and tests the standalone executable again. It
+moves that complete runtime into the app rather than making another GPU-library
+copy. Windows Inno Setup uses 1.9 GB payload slices.
 `scripts/release-assets.py prepare` splits any remaining oversized installer
 into bounded parts, verifies that reassembly preserves its SHA-256, and writes
 checksums plus reconstruction instructions. Download every part and verify the
