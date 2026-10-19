@@ -154,14 +154,14 @@ SHA-256 before completion, then verify public HEAD size. Delete the temporary
 Actions artifact after use; never commit or share its signed links. Do not start
 upload preparation until the local transfer is ready to run.
 
-## Host validated test installers without rebuilding
+## Host validated installers without rebuilding
 
 The manual **Host validated installers** workflow accepts a successful desktop build run ID.
 It checks the workflow outcome, rejects split payloads, verifies the build's saved SHA-256,
-and uploads complete installers to `releases/test-builds/<source-sha>/`. It downloads each
+and uploads complete installers to `releases/`. It downloads each
 public installer in full and verifies its checksum before publishing a per-run JSON manifest
-and links in the Actions summary. Existing objects with different contents are rejected.
-These are explicitly unsigned test builds (macOS is not notarized), not signed releases.
+under `releases/manifests/<source-sha>/` and links in the Actions summary. Existing objects with different contents are rejected.
+These installers are unsigned (macOS is not notarized); hosting does not change their signing status.
 This path allows tested artifacts to be hosted without rerunning compilation or requiring
 local copies of bucket credentials. Artifact retention still applies before promotion.
 
@@ -169,7 +169,7 @@ local copies of bucket credentials. Artifact retention still applies before prom
 
 After all four native installer jobs pass for one source commit, use **Host
 validated installers** for each of the three build runs. This verifies the full
-public downloads and writes immutable manifests under `releases/test-builds/`.
+public downloads and writes immutable manifests under `releases/manifests/<source-sha>/`.
 
 **Publish validated unsigned RC** accepts the full source commit, its matching
 `vX.Y.Z-rc.N` tag and the three successful build run IDs. It verifies checkout

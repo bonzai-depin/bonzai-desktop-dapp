@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Promote successful CI installer artifacts to immutable R2 test-build paths."""
+"""Promote successful CI installer artifacts to the public R2 releases directory."""
 import hashlib
 import json
 import os
@@ -76,7 +76,7 @@ def main():
                 recorded = path.with_name(path.name + '.SHA256SUMS').read_text().strip()
                 if recorded != f'{digest}  {path.name}':
                     raise ValueError('Build checksum mismatch: ' + path.name)
-                key = f'releases/test-builds/{sha}/{path.name}'
+                key = f'releases/{path.name}'
                 params = {'Bucket': bucket, 'Key': key}
                 try:
                     existing = s3.head_object(**params)
@@ -103,12 +103,12 @@ def main():
                     raise ValueError('Public download integrity failure: ' + path.name)
                 s3.put_object(Bucket=bucket, Key=key + '.SHA256SUMS', Body=(recorded + '\n').encode(), ContentType='text/plain')
                 rows.append({'name': path.name, 'url': url, 'bytes': size, 'sha256': digest, 'source_run': run_id, 'source_sha': sha,
-                             'signing': 'unsigned test build; macOS not notarized'})
+                             'signing': 'unsigned; macOS not notarized'})
                 print('Verified public installer: ' + url, flush=True)
     manifest = json.dumps(rows, indent=2) + '\n'
-    s3.put_object(Bucket=bucket, Key=f'releases/test-builds/{sha}/run-{run_id}.json', Body=manifest.encode(), ContentType='application/json')
+    s3.put_object(Bucket=bucket, Key=f'releases/manifests/{sha}/run-{run_id}.json', Body=manifest.encode(), ContentType='application/json')
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-        summary.write('## Verified test installers\n\nUnsigned test builds; macOS is not notarized.\n\n')
+        summary.write('## Verified release installers\n\nUnsigned installers; macOS is not notarized.\n\n')
         for row in rows:
             summary.write(f"- [{row['name']}]({row['url']}) — {row['bytes']:,} bytes; SHA-256 `{row['sha256']}`\n")
 

@@ -17,7 +17,7 @@ spec.loader.exec_module(hosting)
 
 
 def validate_manifest(rows, sha, run_id, public, expected_count, version):
-    prefix = public.rstrip('/') + f'/releases/test-builds/{sha}/'
+    prefix = public.rstrip('/') + '/releases/'
     if not isinstance(rows, list) or len(rows) != expected_count:
         raise ValueError('Unexpected installer count')
     for row in rows:
@@ -64,7 +64,7 @@ def main():
         logs = subprocess.check_output(['gh', 'run', 'view', run_id, '--repo', repo, '--log'], text=True)
         if hosting.checkout_revision(logs) != sha:
             raise ValueError('Native builds do not share the release revision')
-        request = urllib.request.Request(public + f'/releases/test-builds/{sha}/run-{run_id}.json',
+        request = urllib.request.Request(public + f'/releases/manifests/{sha}/run-{run_id}.json',
                                          headers={'User-Agent': 'BonzAI-RC-Publisher'})
         with urllib.request.urlopen(request, timeout=60) as response:
             manifest = validate_manifest(json.load(response), sha, run_id, public, count, version)
