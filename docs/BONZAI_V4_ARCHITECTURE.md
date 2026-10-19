@@ -238,4 +238,6 @@ The updated lockfile reports **15 production package entries (all high)**, down 
 
 Local validation includes contract conservation/claims, a real encrypted loopback peer exchange, streamed completion/cancellation and binary HTTP transfers, optional SDK imports, Electron SQLite with real WAV-to-MP4 conversion, and all three Vite bundles. Native build and installation acceptance must be recorded separately; the maintainer's earlier DMG acceptance does not certify these dependency changes.
 
+The broader UI regression pass also found and fixed a video readiness crash when the local AI server is offline. The shell now passes its route, keyboard and constrained-layout checks with the planner deliberately unavailable. Training capability and token-route recovery fixtures use the configured explorer. The complete UI suite is not green: remaining tests still target old agent navigation labels, reward modal behavior, release metadata and roster/wallet fixtures; these are separate from the passing focused protocol and runtime checks.
+
 Validation note: the broader company suite passes 74 tests and reports one pre-existing Solarized accent-text contrast failure in unchanged theme CSS. The focused payment/recovery browser checks pass at desktop and constrained widths. This theme finding is separate from dependency compatibility.

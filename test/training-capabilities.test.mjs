@@ -18,6 +18,8 @@ const setup = (axios = {}, overrides = {}) => {
     axios,
     useBonzaiWeb3: () => ({ walletAddress: vue.ref('') }),
     fineTuneTokenService: { isConfigured: vue.ref(false) },
+    CONFIG: { networks: { test: { explorer: 'https://explorer.example' } } },
+    ECONOMY_NETWORK_KEY: 'test',
     bonzaiRevenueRouterService: {}, i18n: { t: key => key }, ...overrides,
   });
   const factory = new Function(...bindings, compiled);

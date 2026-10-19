@@ -30,7 +30,7 @@ was not supplied.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `approvedCapture` | 1 | Approved target treasury capture; 0 reproduces the current contract implementation |
+| `approvedCapture` | 1 | Current 70/20/10 allocation; 0 compares the former policy |
 | `firstLaunch`, `activation` | 75%, 40% | Download → first launch → useful result |
 | `retention` | 65% | Prior active users retained into the next month |
 | `workflowConversion`, `workflowSpend` | 3%, $25 | Active users buying remote workflows and monthly spending per payer |

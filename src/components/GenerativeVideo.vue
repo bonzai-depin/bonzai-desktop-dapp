@@ -828,7 +828,7 @@ export default {
       missingRepos: [],
       repoDetails: [],
       missingGguf: false,
-      ggufName: null,
+      ggufNames: [],
       notes: [],
       authRequired: false,
       authRepos: [],
@@ -1260,7 +1260,7 @@ export default {
       readiness.missingRepos = [];
       readiness.repoDetails = [];
       readiness.missingGguf = false;
-      readiness.ggufName = null;
+      readiness.ggufNames = [];
       readiness.notes = [];
       readiness.authRequired = false;
       readiness.authRepos = [];
