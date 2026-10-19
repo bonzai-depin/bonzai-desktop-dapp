@@ -36,7 +36,7 @@ describe('BonzAI v4 economic audit regressions', function () {
       expect(await token.balanceOf(await f.factory.getAddress())).to.equal(0);
       expect(await token.allowance(await f.factory.getAddress(),await f.permit2.getAddress())).to.equal(0);
       expect((await f.permit2.allowance(await f.factory.getAddress(),await token.getAddress(),await f.positionManager.getAddress())).amount).to.equal(0);
-      expect(await f.positionManager.ownerOf(event.args.positionId)).to.equal('0x000000000000000000000000000000000000dEaD');
+      expect(await f.positionManager.ownerOf(event.args.positionId)).to.equal(await f.factory.liquidityVault());
       await expect(f.factory.recoverERC20(await token.getAddress())).to.be.revertedWith('No tokens to recover');
     });
   }

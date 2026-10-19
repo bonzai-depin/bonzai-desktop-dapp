@@ -9,8 +9,8 @@
  *   5.  BonzaiRoyaltySplitter   — 1/3 creator pending pool, 1/3 treasury, 1/3 pools
  *   6.  BonzaiCompanions        — ERC-721 + ERC-8004 (50/50 treasury/MintPool)
  *   7.  BonzaiUniswapHook       — V4 afterSwap (1% fee, new splits, CREATE2 mined)
- *   8.  CompanionTokenFactory   — Companion ERC-20 + V4 LP, LP NFT burned
- *   9.  FineTuneTokenFactory    — Fine-tune ERC-20 + V4 LP, LP NFT burned
+ *   8.  CompanionTokenFactory   — Companion ERC-20 + V4 LP, vault configured in the v4 economy stage
+ *   9.  FineTuneTokenFactory    — Fine-tune ERC-20 + V4 LP, vault configured in the v4 economy stage
  *  10.  BonzaiSkillRegistry     — ETH-only skill marketplace (80% co-owners / 20% treasury)
  *  11.  BonzaiSkillOwnership    — Companion co-ownership + revenue distribution
  *  12.  BonzaiProviderRegistry  — P2P provider directory (no staking, no per-token price)
@@ -210,20 +210,18 @@ async function main() {
   const hook = { address: process.env.HOOK_ADDRESS || '0x0000000000000000000000000000000000000000' };
   console.log(`  → ${hook.address} (set HOOK_ADDRESS env)`);
 
-  // ─── 8. CompanionTokenFactory (4-arg constructor; companion contract via setter) ─
+  // ─── 8. CompanionTokenFactory (3-arg constructor; companion contract via setter) ─
   const companionTokenFactory = await deploy(wallet, 'CompanionTokenFactory', [
     DEPLOY_CONFIG.poolManager,
     DEPLOY_CONFIG.positionManager,
     DEPLOY_CONFIG.permit2,
-    hook.address,
   ]);
 
-  // ─── 9. FineTuneTokenFactory (4-arg constructor; content factory via setter) ─
+  // ─── 9. FineTuneTokenFactory (3-arg constructor; content factory via setter) ─
   const fineTuneTokenFactory = await deploy(wallet, 'FineTuneTokenFactory', [
     DEPLOY_CONFIG.poolManager,
     DEPLOY_CONFIG.positionManager,
     DEPLOY_CONFIG.permit2,
-    hook.address,
   ]);
 
   // ─── 10. BonzaiSkillOwnership + 11. BonzaiSkillRegistry ───────────────

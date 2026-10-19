@@ -109,6 +109,10 @@
             <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">neurology</span>
             <span class="bz-sidebar__item-label">{{ i18n.t('nav.memory') }}</span>
           </button>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'benchmark' }" title="Performance benchmark" aria-label="Performance benchmark" @click="modelMode = 'benchmark'" :aria-pressed="modelMode === 'benchmark'">
+            <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">speed</span>
+            <span class="bz-sidebar__item-label">Benchmark</span>
+          </button>
           <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'harness' }" :title="i18n.t('nav.harness')" :aria-label="i18n.t('nav.harness')" @click="modelMode = 'harness'" :aria-pressed="modelMode === 'harness'">
             <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">device_hub</span>
             <span class="bz-sidebar__item-label">{{ i18n.t('nav.harness') }}</span>
@@ -126,12 +130,12 @@
             <button class="bz-sidebar__theme-arrow" @click="cycleTheme(-1)" :title="i18n.t('theme.previous')" :aria-label="i18n.t('theme.previous')">
               <span class="material-symbols-outlined">chevron_left</span>
             </button>
-            <div class="bz-sidebar__theme-display">
+            <button class="bz-sidebar__theme-display" :aria-label="$ui('Browse themes')" @click="showThemeGallery = true">
               <div class="bz-sidebar__theme-swatch">
                 <span v-for="c in currentTheme.swatch" :key="c" class="bz-sidebar__theme-dot" :style="{ background: c }"></span>
               </div>
               <span class="bz-sidebar__theme-name">{{ currentTheme.name }}</span>
-            </div>
+            </button>
             <button class="bz-sidebar__theme-arrow" @click="cycleTheme(1)" :title="i18n.t('theme.next')" :aria-label="i18n.t('theme.next')">
               <span class="material-symbols-outlined">chevron_right</span>
             </button>
@@ -176,7 +180,7 @@
       <Generative3D v-if="modelMode == 'game'" key="game" />
       <GenerativeTraining v-if="modelMode == 'tune'" key="tune" mode="tune" />
       <GenerativeTraining v-if="modelMode == 'uncensor'" key="uncensor" mode="uncensor" />
-      <GenerativeTraining v-if="modelMode == 'datasets'" key="datasets" mode="tune" />
+      <GenerativeTraining v-if="modelMode == 'datasets'" key="datasets" mode="tune" initial-tab="datasets" />
       <GenerativeTraining v-if="modelMode == 'finetune'" key="finetune" mode="tune" />
       <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" mode="tune" />
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
@@ -188,6 +192,7 @@
       <KeepAlive>
         <Company v-if="modelMode == 'company'" key="company" :activity-target="teamActivityTarget" />
       </KeepAlive>
+      <PerformanceBenchmark v-if="modelMode === 'benchmark'" key="benchmark" />
       <HarnessView v-if="modelMode == 'harness'" key="harness" />
       <ModelLicenses v-if="modelMode == 'licenses'" key="licenses" />
       </div>
@@ -291,9 +296,11 @@
       </div>
     </Transition>
   </Teleport>
+  <ThemeGallery v-if="showThemeGallery" @close="showThemeGallery = false" />
 </template>
 
 <script>
+import ThemeGallery from "./components/ThemeGallery.vue";
 
 import { startPublicSessions, stopPublicSessions } from "./services/chat/publicRuntime.js";
 import { defineAsyncComponent, ref, reactive, provide, computed, onMounted, onUnmounted, watch } from "vue";
@@ -301,6 +308,7 @@ import GenerativeText from "./components/GenerativeText.vue";
 import GenerativeImage from "./components/GenerativeImage.vue";
 import GenerativeVideo from "./components/GenerativeVideo.vue";
 import GenerativeAudio from "./components/GenerativeAudio.vue";
+import PerformanceBenchmark from "./components/PerformanceBenchmark.vue";
 import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
 import ContributionOwnershipDashboard from "./components/ContributionOwnershipDashboard.vue";
@@ -347,9 +355,9 @@ const MemoryGraph = defineAsyncComponent(() => import("./components/MemoryGraph.
 
 export default {
   name: "App",
-  components: { ApplicationActivityBar, BzDatePicker,
+  components: { ThemeGallery, ApplicationActivityBar, BzDatePicker,
     GenerativeText, GenerativeImage, GenerativeVideo, GenerativeAudio,
-    Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView,
+    PerformanceBenchmark, Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView,
     ContributionOwnershipDashboard, Markets, MemoryGraph, ModelLicenses, AgentJobBoard, LanguageSelector,
     BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
     GenerationInspector, RewardsView, NetworkSettings, MeshPresence,
@@ -416,7 +424,7 @@ export default {
     const trainItems = computed(() => [
       { id: "tune", label: i18n.t('nav.tune'), icon: "tune" }, { id: "uncensor", label: i18n.t('nav.uncensor'), icon: "lock_open" },
     ]);
-    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "rewards", "memory", "licenses"]);
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "rewards", "memory", "licenses", "benchmark"]);
     const handleEarnAction = (id) => {
       if (id === "rewards") modelMode.value = "rewards";
       if (id === "economy") modelMode.value = "economy";
@@ -594,6 +602,7 @@ const companyModelSummary = computed(() => {
     const sidebarModelName = computed(() => companyModelSummary.value || currentModelName.value || null);
     const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
 
+    const showThemeGallery = ref(false);
     const currentTheme = computed(() => themeService.active());
     const themes = themeService.list();
 
@@ -833,7 +842,7 @@ const companyModelSummary = computed(() => {
       totalBalance, formatBalance, displayedHighestLevelKey,
       upDisplayName, upAvatarUrl, isRefreshing,
       currentModelName, sidebarModelName, alwaysLoaded, openBrowseModels,
-      currentTheme, cycleTheme,
+      currentTheme, cycleTheme, showThemeGallery,
       p2pMode, p2pStatus, p2pModeIcon, p2pModeLabel,
       isReauthing, isRefreshingToken, needsReauth, tokenExpiringSoon,
       tokenExpiresIn, pendingOps, vaultStatus, authStatusClass, authStatusText,
@@ -850,6 +859,7 @@ const companyModelSummary = computed(() => {
 @import "./assets/fonts/fonts.css";
 @import "./assets/tokens.css";
 @import "./assets/themes.css";
+@import "./assets/page-layout.css";
 @import "./assets/buttons.css";
 @import "./assets/notices.css";
 @import "./assets/fields.css";
@@ -1347,6 +1357,11 @@ html, body {
 }
 
 .bz-sidebar__theme-display {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
   flex: 1;
   display: flex;
   flex-direction: column;

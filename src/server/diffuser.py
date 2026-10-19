@@ -558,9 +558,11 @@ def _encode_audio_to_latents(audio_data: bytes, pipe, target_duration: float, de
 # =============================================================================
 
 app = Flask(__name__)
+from performance_capture import install_performance_capture
+install_performance_capture(app, runtime=lambda: {"torch": str(torch.__version__), "cuda": torch.version.cuda, "hip": torch.version.hip})
 from inference_serialization import install_inference_serialization
 from inference_memory import release_idle_caches
-install_inference_serialization(app, lambda path: release_idle_caches(globals(), path))
+_run_device_background = install_inference_serialization(app, lambda path: release_idle_caches(globals(), path))
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
 CORS(app, supports_credentials=True, resources={
     r"/*": {
@@ -4813,6 +4815,7 @@ def ltx2_gguf_video():
     """
     data = request.get_json(force=True) or {}
 
+    benchmark_repo = str(repo_local_dir(LTX2_REPO)) if data.get("_benchmark") is True else LTX2_REPO
     mode = (data.get("mode") or "i2v").strip().lower()  # "t2v" or "i2v"
     prompt = (data.get("prompt") or "").strip()
     negative_prompt = (data.get("negative_prompt") or "").strip() or "worst quality, inconsistent motion, blurry, jittery, distorted"
@@ -4942,7 +4945,7 @@ def ltx2_gguf_video():
 
         transformer = LTX2VideoTransformer3DModel.from_single_file(
             str(gguf_path),
-            config=LTX2_REPO,
+            config=benchmark_repo,
             subfolder="transformer",
             quantization_config=quantization_config,
             torch_dtype=model_dtype,
@@ -4952,7 +4955,7 @@ def ltx2_gguf_video():
         if mode == "t2v":
             # Text-to-Video pipeline
             pipe = LTX2Pipeline.from_pretrained(
-                LTX2_REPO,
+                benchmark_repo,
                 transformer=transformer,
                 torch_dtype=model_dtype,
                 low_cpu_mem_usage=False,
@@ -4960,7 +4963,7 @@ def ltx2_gguf_video():
         else:
             # Image-to-Video pipeline
             pipe = LTX2ImageToVideoPipeline.from_pretrained(
-                LTX2_REPO,
+                benchmark_repo,
                 transformer=transformer,
                 torch_dtype=model_dtype,
                 low_cpu_mem_usage=False,
@@ -4987,7 +4990,7 @@ def ltx2_gguf_video():
                 if any(p.device.type == "meta" for p in component.parameters()):
                     logger.info(f"[LTX-2 GGUF] Reloading {attr_name} to fix meta tensors")
                     reloaded = type(component).from_pretrained(
-                        LTX2_REPO, subfolder=attr_name, torch_dtype=model_dtype, low_cpu_mem_usage=False,
+                        benchmark_repo, subfolder=attr_name, torch_dtype=model_dtype, low_cpu_mem_usage=False,
                     )
                     setattr(pipe, attr_name, reloaded)
 
@@ -5788,6 +5791,7 @@ def wan_i2v_video():
     """
     data = request.get_json(force=True) or {}
 
+    benchmark_repo = str(repo_local_dir(WAN_REPO)) if data.get("_benchmark") is True else WAN_REPO
     prompt = (data.get("prompt") or "").strip()
     negative_prompt = (data.get("negative_prompt") or "").strip() or \
         "Bright tones, overexposed, static, blurry details, subtitles, style, artwork, painting, picture, still, gray overall, worst quality, low quality, JPEG artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn face, deformed, disfigured, malformed limbs, fused fingers, still image, messy background, three legs, many people in background, walking backwards"
@@ -5893,19 +5897,19 @@ def wan_i2v_video():
         logger.info(f"[Wan2.2] Q5_K_M GGUF shards ready: high={high_path.name} low={low_path.name}")
 
         from wan_residency import WanExpert, WanResidency
-        high_config = WanTransformer3DModel.load_config(WAN_REPO, subfolder="transformer")
-        low_config = WanTransformer3DModel.load_config(WAN_REPO, subfolder="transformer_2")
+        high_config = WanTransformer3DModel.load_config(benchmark_repo, subfolder="transformer")
+        low_config = WanTransformer3DModel.load_config(benchmark_repo, subfolder="transformer_2")
         from diffusers.configuration_utils import FrozenDict
         transformer = WanExpert(FrozenDict(high_config), model_dtype)
         transformer_2 = WanExpert(FrozenDict(low_config), model_dtype)
 
         # This VAE checkpoint is distributed in fp32 and is not quantized.
         vae = AutoencoderKLWan.from_pretrained(
-            WAN_REPO, subfolder="vae", torch_dtype=torch.float32,
+            benchmark_repo, subfolder="vae", torch_dtype=torch.float32,
         )
 
         pipe = WanImageToVideoPipeline.from_pretrained(
-            WAN_REPO,
+            benchmark_repo,
             vae=vae,
             transformer=transformer,
             transformer_2=transformer_2,
@@ -5925,7 +5929,7 @@ def wan_i2v_video():
 
         residency = WanResidency(pipe, transformer, transformer_2,
                                  (high_path, low_path), MODEL_DIR, data, device,
-                                 model_dtype, logger, WAN_REPO)
+                                 model_dtype, logger, benchmark_repo)
         # Encoders run once; expert weights and their LoRAs load only on use.
         if device.type != "cpu":
             apply_group_offloading(pipe.text_encoder, onload_device=device, offload_device="cpu", offload_type="leaf_level")
@@ -6430,7 +6434,7 @@ TIMESFM_CONTEXT_LEN = 2048
 TIMESFM_HORIZON_PER_CALL = 128
 
 
-def _get_timesfm():
+def _get_timesfm(local_only=False):
     """Lazy-load TimesFM 2.0 into the cache. Returns the TimesFm instance."""
     if _TIMESFM_CACHE["model"] is not None:
         return _TIMESFM_CACHE["model"]
@@ -6454,7 +6458,8 @@ def _get_timesfm():
             use_positional_embedding=False,
             context_len=TIMESFM_CONTEXT_LEN,
         ),
-        checkpoint=timesfm.TimesFmCheckpoint(huggingface_repo_id=TIMESFM_REPO),
+        checkpoint=timesfm.TimesFmCheckpoint(path=str(repo_local_dir(TIMESFM_REPO) / "torch_model.ckpt"))
+        if local_only else timesfm.TimesFmCheckpoint(huggingface_repo_id=TIMESFM_REPO),
     )
     _TIMESFM_CACHE["model"] = tfm
     logger.info("[TimesFM] Ready")
@@ -6581,7 +6586,7 @@ def forecast_timeseries():
     freq = int(data.get("freq", 1))  # 0 hourly, 1 daily, 2 weekly
 
     try:
-        tfm = _get_timesfm()
+        tfm = _get_timesfm(local_only=data.get("_benchmark") is True)
     except Exception as e:
         logger.exception("[TimesFM] Failed to load model")
         return jsonify({"error": str(e)}), 500
@@ -6659,9 +6664,68 @@ def list_training_datasets():
     return jsonify(_json_sanitize({"datasets": datasets})), 200
 
 
+def _tokenize_training_text(tokenizer, texts, max_length):
+    encoded = tokenizer(texts, truncation=True, max_length=max_length, padding="max_length")
+    # EOS can equal PAD. Mask padding by attention, never by token identity.
+    encoded["labels"] = [
+        [token if attended else -100 for token, attended in zip(ids, mask)]
+        for ids, mask in zip(encoded["input_ids"], encoded["attention_mask"])
+    ]
+    if not any(sum(mask) >= 2 for mask in encoded["attention_mask"]):
+        raise ValueError("Training examples need at least two tokens")
+    return encoded
+
+
+def _validated_training_files(files):
+    """Validate the complete upload before creating any files on disk."""
+    if not isinstance(files, list) or not 1 <= len(files) <= 128:
+        raise ValueError("Provide between 1 and 128 dataset files")
+    reserved = {"metadata.json", "bonzai_training_provenance.json", "provenance.md"}
+    seen, decoded, total = set(), [], 0
+    for item in files:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid dataset file")
+        name = item.get("filename")
+        if (not isinstance(name, str) or not name or len(name) > 240
+                or name in (".", "..") or any(c in name for c in '/\\:')
+                or any(ord(c) < 32 for c in name) or name.endswith((".", " "))):
+            raise ValueError("Dataset files must use plain filenames without paths")
+        key = name.casefold()
+        if key in reserved or key in seen:
+            raise ValueError("Duplicate or reserved dataset filename")
+        # Windows device names are invalid even with an extension.
+        if key.split(".")[0] in {"con", "prn", "aux", "nul", *[f"com{i}" for i in range(1, 10)], *[f"lpt{i}" for i in range(1, 10)]}:
+            raise ValueError("Reserved device filename")
+        encoded = item.get("content_base64")
+        if not isinstance(encoded, str) or len(encoded) > 24 * 1024 * 1024:
+            raise ValueError("Dataset file exceeds the upload limit")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except Exception as exc:
+            raise ValueError("Invalid base64 dataset content") from exc
+        total += len(content)
+        if not content or total > 64 * 1024 * 1024:
+            raise ValueError("Dataset upload must contain nonempty files totaling at most 64 MiB")
+        seen.add(key)
+        decoded.append((name, content))
+    return decoded
+
+
+def _training_record_path(kind, identifier):
+    if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identifier):
+        raise ValueError("Invalid training record identifier")
+    root = (MODEL_DIR / kind).resolve()
+    target = root / identifier
+    if target.is_symlink() or target.resolve().parent != root:
+        raise ValueError("Training record must remain inside its storage directory")
+    return target
+
+
 @app.route("/training/datasets", methods=["POST"])
 def create_training_dataset():
     """Create a new training dataset from uploaded files."""
+    if request.content_length and request.content_length > 90 * 1024 * 1024:
+        return jsonify({"error": "Dataset upload exceeds 90 MiB"}), 413
     data = request.get_json(silent=True) or {}
     
     name = (data.get("name") or "").strip()
@@ -6678,19 +6742,23 @@ def create_training_dataset():
     if not files:
         return jsonify({"error": "No files provided"}), 400
     
+    try:
+        validated_files = _validated_training_files(files)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     dataset_id = hashlib.md5(f"{name}_{time.time()}".encode()).hexdigest()[:16]
-    dataset_dir = MODEL_DIR / "datasets" / dataset_id
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-    
+    dataset_dir = _training_record_path("datasets", dataset_id)
+    dataset_dir.mkdir(parents=True, exist_ok=False)
     saved_files = []
-    for f in files:
-        filename = f.get("filename", f"file_{len(saved_files)}")
-        content = base64.b64decode(f.get("content_base64", ""))
-        file_path = dataset_dir / filename
-        with open(file_path, "wb") as out:
-            out.write(content)
-        saved_files.append(filename)
-    
+    try:
+        for filename, content in validated_files:
+            with open(dataset_dir / filename, "xb") as out:
+                out.write(content)
+            saved_files.append(filename)
+    except Exception:
+        shutil.rmtree(dataset_dir)
+        raise
+
     metadata = {
         "id": dataset_id,
         "name": name,
@@ -6722,7 +6790,10 @@ def create_training_dataset():
 @app.route("/training/datasets/<dataset_id>", methods=["DELETE"])
 def delete_training_dataset(dataset_id):
     """Delete a training dataset."""
-    dataset_dir = MODEL_DIR / "datasets" / dataset_id
+    try:
+        dataset_dir = _training_record_path("datasets", dataset_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
     
@@ -6754,13 +6825,21 @@ def start_llm_finetuning():
     lora_r = int(data.get("lora_r", 16))
     lora_alpha = int(data.get("lora_alpha", 32))
     use_4bit = bool(data.get("use_4bit", True))
+    artifact_type = data.get("artifact_type", "lora")
+    if artifact_type not in ("lora", "checkpoint"):
+        return jsonify({"error": "Choose lora or checkpoint output"}), 400
+    if artifact_type == "checkpoint" and use_4bit:
+        return jsonify({"error": "Standalone checkpoint export requires non-quantized training; disable 4-bit training"}), 400
     max_seq_length = int(data.get("max_seq_length", 2048))
     uncensor = bool(data.get("uncensor", False))
     
     if not dataset_id:
         return jsonify({"error": "Missing 'dataset_id'"}), 400
     
-    dataset_dir = MODEL_DIR / "datasets" / dataset_id
+    try:
+        dataset_dir = _training_record_path("datasets", dataset_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
     
@@ -6938,13 +7017,8 @@ def start_llm_finetuning():
             
             # Tokenize
             def tokenize_fn(examples):
-                return tokenizer(
-                    examples["text"],
-                    truncation=True,
-                    max_length=max_seq_length,
-                    padding="max_length",
-                )
-            
+                return _tokenize_training_text(tokenizer, examples["text"], max_seq_length)
+
             dataset = Dataset.from_dict({"text": texts})
             tokenized = dataset.map(tokenize_fn, batched=True, remove_columns=["text"])
             
@@ -6974,7 +7048,6 @@ def start_llm_finetuning():
             elif device.type == "mps":
                 training_args_kwargs["fp16"] = False
                 training_args_kwargs["bf16"] = False
-                training_args_kwargs["use_mps_device"] = True
             else:
                 training_args_kwargs["fp16"] = False
                 training_args_kwargs["bf16"] = False
@@ -7002,7 +7075,7 @@ def start_llm_finetuning():
                 model=model,
                 args=training_args,
                 train_dataset=tokenized,
-                tokenizer=tokenizer,
+                processing_class=tokenizer,
                 callbacks=[ProgressCallback()],
             )
             
@@ -7012,13 +7085,24 @@ def start_llm_finetuning():
             emit_progress("saving", epochs, epochs, pct=95)
             
             # Save LoRA weights
-            model.save_pretrained(str(output_dir / "lora"))
-            tokenizer.save_pretrained(str(output_dir / "tokenizer"))
+            if not math.isfinite(float(result.training_loss)):
+                raise RuntimeError("Training produced non-finite loss; artifact was not exported")
+            if artifact_type == "checkpoint":
+                model = model.merge_and_unload(safe_merge=True)
+                model.save_pretrained(str(output_dir / "checkpoint"), safe_serialization=True, max_shard_size="2GB")
+                tokenizer.save_pretrained(str(output_dir / "checkpoint"))
+            else:
+                model.save_pretrained(str(output_dir / "lora"), safe_serialization=True)
+                tokenizer.save_pretrained(str(output_dir / "lora"))
             
             # Save metadata
             train_meta = {
                 "id": training_id,
-                "type": "llm_lora",
+                "type": "llm_checkpoint" if artifact_type == "checkpoint" else "llm_lora",
+                "content_type": "text",
+                "artifact_type": artifact_type,
+                "training_method": "lora",
+                "checkpoint_method": "merged_lora" if artifact_type == "checkpoint" else None,
                 "base_model": base_model,
                 "dataset_id": dataset_id,
                 "epochs": epochs,
@@ -7077,7 +7161,7 @@ def start_llm_finetuning():
         finally:
             DeviceManager.free_memory()
     
-    threading.Thread(target=_train_worker, daemon=True).start()
+    threading.Thread(target=lambda: _run_device_background(_train_worker, "/training/start"), daemon=True).start()
     
     return jsonify(_json_sanitize({
         "ok": True,
@@ -7117,7 +7201,10 @@ def start_sdxl_lora_training():
     if not instance_prompt:
         return jsonify({"error": "Missing 'instance_prompt' (e.g., 'a photo of sks person')"}), 400
     
-    dataset_dir = MODEL_DIR / "datasets" / dataset_id
+    try:
+        dataset_dir = _training_record_path("datasets", dataset_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
     
@@ -7252,6 +7339,7 @@ def start_sdxl_lora_training():
             for name, param in unet.named_parameters():
                 if "lora" in name.lower():
                     param.requires_grad = True
+                    param.data = param.data.float()
                     lora_params.append(param)
             
             logger.info(f"[SDXL LoRA] Trainable parameters: {sum(p.numel() for p in lora_params)}")
@@ -7298,13 +7386,14 @@ def start_sdxl_lora_training():
             ])
             
             latents_list = []
-            vae_dtype = torch.float32 if device.type == "mps" else dtype
+            vae_dtype = torch.float32
+            vae.to(dtype=vae_dtype)
             for img in images:
                 img_tensor = transform(img).unsqueeze(0).to(device, dtype=vae_dtype)
                 with torch.no_grad():
                     latent = vae.encode(img_tensor).latent_dist.sample()
                     latent = latent * vae.config.scaling_factor
-                latents_list.append(latent.to(dtype))
+                latents_list.append(latent.to(device="cpu", dtype=dtype))
             
             # Optimizer
             if actual_use_8bit:
@@ -7318,9 +7407,10 @@ def start_sdxl_lora_training():
                 optimizer = torch.optim.AdamW(lora_params, lr=learning_rate)
             
             # Scheduler
-            noise_scheduler = pipe.scheduler
+            from diffusers import DDPMScheduler
+            noise_scheduler = DDPMScheduler.from_config(pipe.scheduler.config)
             
-            total_steps = epochs * len(latents_list)
+            total_steps = epochs * math.ceil(len(latents_list) / batch_size)
             from diffusers.optimization import get_scheduler
             lr_scheduler = get_scheduler(
                 "cosine",
@@ -7338,14 +7428,17 @@ def start_sdxl_lora_training():
             for epoch in range(epochs):
                 epoch_loss = 0.0
                 
-                for i, latent in enumerate(latents_list):
+                order = torch.randperm(len(latents_list)).tolist()
+                for offset in range(0, len(order), batch_size):
+                    latent = torch.cat([latents_list[i] for i in order[offset:offset + batch_size]]).to(device)
+                    count = latent.shape[0]
                     # Sample noise
                     noise = torch.randn_like(latent)
                     
                     # Sample timestep
                     timesteps = torch.randint(
                         0, noise_scheduler.config.num_train_timesteps,
-                        (1,), device=device
+                        (count,), device=device
                     ).long()
                     
                     # Add noise
@@ -7353,22 +7446,31 @@ def start_sdxl_lora_training():
                     
                     # Predict noise
                     added_cond_kwargs = {
-                        "text_embeds": pooled_embeds.repeat(1, 1),
+                        "text_embeds": pooled_embeds.repeat(count, 1),
                         "time_ids": torch.tensor(
                             [[resolution, resolution, 0, 0, resolution, resolution]],
                             device=device, dtype=dtype
-                        ),
+                        ).repeat(count, 1),
                     }
                     
                     noise_pred = unet(
                         noisy_latent,
                         timesteps,
-                        encoder_hidden_states=prompt_embeds,
+                        encoder_hidden_states=prompt_embeds.repeat(count, 1, 1),
                         added_cond_kwargs=added_cond_kwargs,
                     ).sample
                     
                     # Loss
-                    loss = torch.nn.functional.mse_loss(noise_pred.float(), noise.float())
+                    prediction_type = noise_scheduler.config.prediction_type
+                    if prediction_type == "epsilon":
+                        target = noise
+                    elif prediction_type == "v_prediction":
+                        target = noise_scheduler.get_velocity(latent, noise, timesteps)
+                    else:
+                        raise ValueError(f"Unsupported training prediction type: {prediction_type}")
+                    loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float())
+                    if not torch.isfinite(loss):
+                        raise RuntimeError("Image training produced non-finite loss")
                     
                     optimizer.zero_grad()
                     loss.backward()
@@ -7376,7 +7478,7 @@ def start_sdxl_lora_training():
                     optimizer.step()
                     lr_scheduler.step()
                     
-                    epoch_loss += loss.item()
+                    epoch_loss += loss.item() * count
                     global_step += 1
                 
                 avg_loss = epoch_loss / len(latents_list)
@@ -7400,13 +7502,21 @@ def start_sdxl_lora_training():
             output_dir = MODEL_DIR / "trained" / training_id
             output_dir.mkdir(parents=True, exist_ok=True)
             
-            # Save using PEFT's method
-            unet.save_pretrained(str(output_dir / "lora"))
+            # Export portable Diffusers adapter weights, not the entire UNet.
+            from peft.utils import get_peft_model_state_dict
+            from diffusers.utils import convert_state_dict_to_diffusers
+            StableDiffusionXLPipeline.save_lora_weights(
+                str(output_dir / "lora"),
+                unet_lora_layers=convert_state_dict_to_diffusers(get_peft_model_state_dict(unet)),
+                safe_serialization=True,
+            )
             
             # Save metadata
             train_meta = {
                 "id": training_id,
                 "type": "sdxl_lora",
+                "content_type": "image",
+                "artifact_type": "lora",
                 "base_model": base_model,
                 "dataset_id": dataset_id,
                 "instance_prompt": instance_prompt,
@@ -7466,7 +7576,7 @@ def start_sdxl_lora_training():
         finally:
             DeviceManager.free_memory()
     
-    threading.Thread(target=_train_worker, daemon=True).start()
+    threading.Thread(target=lambda: _run_device_background(_train_worker, "/training/start"), daemon=True).start()
     
     return jsonify(_json_sanitize({
         "ok": True,
@@ -7508,7 +7618,10 @@ def start_audio_lora_training():
     if not dataset_id:
         return jsonify({"error": "Missing 'dataset_id'"}), 400
 
-    dataset_dir = MODEL_DIR / "datasets" / dataset_id
+    try:
+        dataset_dir = _training_record_path("datasets", dataset_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
 
@@ -7587,7 +7700,7 @@ def start_audio_lora_training():
                 "error": str(e),
             }), namespace="/training")
 
-    threading.Thread(target=_train_worker, daemon=True).start()
+    threading.Thread(target=lambda: _run_device_background(_train_worker, "/training/start"), daemon=True).start()
 
     return jsonify(_json_sanitize({
         "ok": True,
@@ -7630,7 +7743,10 @@ def start_video_lora_training():
     if not dataset_id:
         return jsonify({"error": "Missing 'dataset_id'"}), 400
 
-    dataset_dir = MODEL_DIR / "datasets" / dataset_id
+    try:
+        dataset_dir = _training_record_path("datasets", dataset_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not dataset_dir.exists():
         return jsonify({"error": "Dataset not found"}), 404
 
@@ -7725,7 +7841,7 @@ def start_video_lora_training():
                 "error": str(e),
             }), namespace="/training")
 
-    threading.Thread(target=_train_worker, daemon=True).start()
+    threading.Thread(target=lambda: _run_device_background(_train_worker, "/training/start"), daemon=True).start()
 
     return jsonify(_json_sanitize({
         "ok": True,
@@ -8020,7 +8136,7 @@ def start_abliteration():
                 os.remove(f16_path)
             DeviceManager.free_memory()
 
-    threading.Thread(target=_abliterate_worker, daemon=True).start()
+    threading.Thread(target=lambda: _run_device_background(_abliterate_worker, "/abliteration/start"), daemon=True).start()
 
     return jsonify(_json_sanitize({
         "ok": True,
@@ -8060,7 +8176,10 @@ def list_trained_models():
 @app.route("/training/models/<model_id>", methods=["DELETE"])
 def delete_trained_model(model_id):
     """Delete a trained model."""
-    model_dir = MODEL_DIR / "trained" / model_id
+    try:
+        model_dir = _training_record_path("trained", model_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not model_dir.exists():
         return jsonify({"error": "Model not found"}), 404
     
@@ -8071,7 +8190,10 @@ def delete_trained_model(model_id):
 @app.route("/training/models/<model_id>/provenance", methods=["GET"])
 def get_trained_model_provenance(model_id):
     """Return record-level BonzAI provenance for a trained model when available."""
-    model_dir = MODEL_DIR / "trained" / model_id
+    try:
+        model_dir = _training_record_path("trained", model_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not model_dir.exists():
         return jsonify({"error": "Model not found"}), 404
 
@@ -8088,7 +8210,10 @@ def get_trained_model_provenance(model_id):
 @app.route("/training/models/<model_id>/economy", methods=["POST"])
 def update_trained_model_economy(model_id):
     """Persist mint/token/registry state beside a trained model."""
-    model_dir = MODEL_DIR / "trained" / model_id
+    try:
+        model_dir = _training_record_path("trained", model_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not model_dir.exists():
         return jsonify({"error": "Model not found"}), 404
 
@@ -8195,7 +8320,33 @@ def validate_trained_model(model_id):
                 errors.append(f"Could not read {path.name}: {exc}")
     else:
         adapter_files = {Path(item["path"]).name for item in artifacts}
-        if not ({"adapter_model.safetensors", "pytorch_lora_weights.safetensors"} & adapter_files):
+        if metadata.get("artifact_type") == "checkpoint":
+            checkpoint = model_dir / "checkpoint"
+            config_file = checkpoint / "config.json"
+            checkpoint_config = _read_json_file(config_file, {}) if not config_file.is_symlink() else {}
+            if not checkpoint_config.get("model_type"):
+                errors.append("Standalone checkpoint is missing its model configuration")
+            weight_paths = [model_dir / item["path"] for item in artifacts
+                            if item["path"].startswith("checkpoint/") and item["path"].endswith(".safetensors")]
+            if not weight_paths:
+                errors.append("Standalone checkpoint has no safetensors weights")
+            try:
+                from safetensors import safe_open
+                keys_by_file = {}
+                for weights in weight_paths:
+                    with safe_open(str(weights), framework="pt", device="cpu") as handle:
+                        keys_by_file[weights.name] = set(handle.keys())
+                index_file = checkpoint / "model.safetensors.index.json"
+                if index_file.exists() and not index_file.is_symlink():
+                    index = _read_json_file(index_file, {}).get("weight_map", {})
+                    if not index or any(key not in keys_by_file.get(shard, set()) for key, shard in index.items()):
+                        errors.append("Standalone checkpoint shard index is incomplete")
+                elif "model.safetensors" not in keys_by_file:
+                    errors.append("Sharded checkpoint is missing its index")
+            except Exception as exc:
+                errors.append(f"Could not validate checkpoint weights: {type(exc).__name__}")
+            warnings.append("Artifact integrity is not an inference or quality evaluation")
+        elif not ({"adapter_model.safetensors", "pytorch_lora_weights.safetensors"} & adapter_files):
             errors.append("No runnable GGUF or adapter weights were found")
 
     metrics = metadata.get("quality_metrics") or {}
@@ -8237,7 +8388,10 @@ def validate_trained_model(model_id):
 @app.route("/training/models/<model_id>/export", methods=["POST"])
 def export_trained_model(model_id):
     """Export a trained model to a specified path."""
-    model_dir = MODEL_DIR / "trained" / model_id
+    try:
+        model_dir = _training_record_path("trained", model_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not model_dir.exists():
         return jsonify({"error": "Model not found"}), 404
     
@@ -8329,6 +8483,7 @@ def _vision_bridge(image_b64, prompt, max_tokens):
             "image_base64": base64.b64encode(normalized.getvalue()).decode("ascii"),
             "prompt": prompt,
             "max_tokens": max_tokens,
+            "_benchmark": (request.get_json(silent=True) or {}).get("_benchmark") is True,
         },
         timeout=900,
     )
@@ -8411,6 +8566,12 @@ def config():
     }))
 
 
+from benchmark_environment import install_benchmark_environment
+install_benchmark_environment(app, plan=_cached_plan_for, ready=_is_pipeline_complete,
+    repo_dir=repo_local_dir, model_dir=MODEL_DIR, activity=genbus.snapshot, device=DeviceManager.get_device,
+    extras=lambda key: [(Z_LOCAL_CHECKPOINT_NAME, False)] if key == 'image_quality' else [])
+
+
 @app.route("/health")
 def health():
     return jsonify(_json_sanitize({
@@ -8442,6 +8603,7 @@ def memory_clear():
         data = request.get_json(silent=True) or {}
         preserve_tts = data.get("preserve_tts", False)
 
+        release_idle_caches(globals(), "/memory/clear")
         unloaded = []
         preserved = []
 

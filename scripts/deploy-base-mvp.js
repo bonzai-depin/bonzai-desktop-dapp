@@ -481,7 +481,7 @@ async function main() {
     }
   }
 
-  // 2f. CompanionTokenFactory — needs V4 infrastructure + hook
+  // 2f. CompanionTokenFactory — needs V4 infrastructure; vault wiring follows in the v4 economy stage
   const companionFactory = await deployContract(
     signer, 'CompanionTokenFactory',
     companionFactoryCompiled.CompanionTokenFactory,
@@ -489,12 +489,11 @@ async function main() {
       DEPLOY_CONFIG.poolManager,
       DEPLOY_CONFIG.positionManager,
       DEPLOY_CONFIG.permit2,
-      deployedAddresses.BonzaiUniswapHook,
     ],
     'CompanionTokenFactory (ERC-20 + V4 LP)',
   );
 
-  // 2g. FineTuneTokenFactory — needs V4 infrastructure + hook
+  // 2g. FineTuneTokenFactory — needs V4 infrastructure; vault wiring follows in the v4 economy stage
   const fineTuneFactory = await deployContract(
     signer, 'FineTuneTokenFactory',
     fineTuneFactoryCompiled.FineTuneTokenFactory,
@@ -502,7 +501,6 @@ async function main() {
       DEPLOY_CONFIG.poolManager,
       DEPLOY_CONFIG.positionManager,
       DEPLOY_CONFIG.permit2,
-      deployedAddresses.BonzaiUniswapHook,
     ],
     'FineTuneTokenFactory (ERC-20 + V4 LP)',
   );

@@ -1,8 +1,8 @@
 <template>
   <div class="rewards-view" :aria-label="i18n.t('nav.rewards')">
-    <div class="rewards-content">
-      <header class="rewards-topline">
-        <h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">workspace_premium</span> {{ i18n.t('nav.rewards') }}</h1>
+    <div class="rewards-content bz-page-content">
+      <header class="rewards-topline bz-page-header">
+        <div><p class="bz-eyebrow">BonzAI membership</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">workspace_premium</span> {{ i18n.t('nav.rewards') }}</h1></div>
         <span class="rewards-network"><span class="material-symbols-outlined" aria-hidden="true">language</span>{{ network.name }}</span>
       </header>
 

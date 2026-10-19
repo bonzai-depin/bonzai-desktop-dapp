@@ -16,7 +16,7 @@ async function loadService(filename, walletService) {
   source = source.replace(/^import \{ (getSigner, getProvider, switchNetwork) \} from .*;$/m, 'const { $1 } = globalThis.__rewardWallet;');
   source = source.replace(/^import \{ (agentWalletService|owsService|OWSEthersSigner) \} from .*;$/gm, 'const $1 = {};');
   source = source.replace(/^import \{ canMintContentType, checkAllLevels \} from .*;$/m, 'const canMintContentType = () => ({ canMint: true }); const checkAllLevels = async () => {};');
-  source = source.replace(/import \{\s+getPoolInfo as _getPoolInfo,[\s\S]*?\} from '.\/uniswapV4.utils.js';/, 'const _getPoolInfo = () => {}; const _getUnclaimedFees = () => {}; const _claimFees = () => {}; const getUniswapTradeUrl = () => {}; const getBaseScanUrl = () => {}; const getDexScreenerUrl = () => {};');
+  source = source.replace(/import \{\s+getPoolInfo as _getPoolInfo,[\s\S]*?\} from '.\/uniswapV4.utils.js';/, 'const _getPoolInfo = () => {}; const getUniswapTradeUrl = () => {}; const getBaseScanUrl = () => {}; const getDexScreenerUrl = () => {};');
   source = source.replace(/from ['"]([^'"]+)['"]/g, (_, specifier) => `from '${specifier.startsWith('.') ? new URL(specifier, url).href : import.meta.resolve(specifier)}'`);
   return import(`data:text/javascript;base64,${Buffer.from(source + `\n//# sourceURL=${filename}`).toString('base64')}`);
 }
@@ -33,6 +33,7 @@ const modelTokenA = '0x0000000000000000000000000000000000000030';
 const modelTokenB = '0x0000000000000000000000000000000000000040';
 let modelPublished = true;
 let launchRequest = null;
+let creatorRecipients = [];
 const stakingVault = '0x0000000000000000000000000000000000000002';
 const contractCalls = [];
 const calls = [];
@@ -64,6 +65,12 @@ const iface = new ethers.Interface([
   'function minEthLiquidity() view returns(uint256)',
   'function launchValidatedToken(address contentCollection,uint256 contentTokenId,string name,string symbol,string metadataURI,string description,string imageURI,string modelKind,bytes32 validationHash,address creator) payable returns(address token,bytes32 poolId)',
   'function creator() view returns(address)',
+  'function liquidityVault() view returns(address)',
+  'function liquidityPosition(address) view returns(uint256)',
+  'function factory() view returns(address)',
+  'function positions(uint256) view returns(address currency0,address currency1,address beneficiary,address agentCollection,uint256 agentId,bool registered)',
+  'function setCreatorRecipients(uint256 id,address[] wallets,uint16[] shares)',
+  'function getCreatorRecipients(uint256) view returns(tuple(address wallet,uint16 bps)[])',
   'function getPoolConfig(bytes32 poolId) view returns(address beneficiary,address companionOwner,uint8 poolType,uint8 mintPoolIndex,bool active)',
   'function routeIdFor(address publisher,bytes32 sourceAssetId) pure returns(bytes32)',
   'function registerRoute(bytes32 assetId,string metadataURI,address[] wallets,uint16[] baseBps,uint16[] contributionScores,string[] roles) returns(bytes32)',
@@ -77,6 +84,10 @@ const provider = { getBlockNumber: async () => blockNumber, call: async ({ data,
   if (fn.name === 'getToken') return iface.encodeFunctionResult(fn, [!modelPublished ? ethers.ZeroAddress : args[0].toLowerCase() === collectionA ? modelTokenA : modelTokenB]);
   if (fn.name === 'hasToken') return iface.encodeFunctionResult(fn, [modelPublished]);
   if (fn.name === 'minEthLiquidity') return iface.encodeFunctionResult(fn, [ethers.parseEther('0.01')]);
+  if (fn.name === 'liquidityVault' || fn.name === 'factory') return iface.encodeFunctionResult(fn, [wallet]);
+  if (fn.name === 'liquidityPosition') return iface.encodeFunctionResult(fn, [1n]);
+  if (fn.name === 'positions' && fn.inputs[0].type === 'uint256') return iface.encodeFunctionResult(fn,[ethers.ZeroAddress,modelTokenA,wallet,ethers.ZeroAddress,0n,true]);
+  if (fn.name === 'getCreatorRecipients') return iface.encodeFunctionResult(fn, [creatorRecipients]);
   if (fn.name === 'creator') return iface.encodeFunctionResult(fn, [wallet]);
   if (fn.name === 'getPoolConfig') return iface.encodeFunctionResult(fn, [wallet, ethers.ZeroAddress, 1n, 5n, true]);
   if (fn.name === 'routeIdFor') return iface.encodeFunctionResult(fn, [ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address', 'bytes32'], args))]);
@@ -231,6 +242,7 @@ test('model publication encodes the original NFT collection and publisher metada
     assert.equal(launchRequest.value, ethers.parseEther('0.01'));
   } finally {
     modelPublished = true;
+    creatorRecipients = [];
     mockWeb3.switchNetwork = originalSwitch;
     mockWeb3.getBrowserProvider = originalBrowser;
   }
@@ -275,13 +287,20 @@ test('model fee routes remain under the original token creator after an NFT tran
     assert.equal(request, null);
     publisher = wallet;
     await assert.rejects(bonzaiRevenueRouterService.registerModelRevenueRoute(model), /simulated route signing/);
-    const args = iface.decodeFunctionData('registerRoute', request.data);
-    assert.equal(args.assetId, poolId);
+    const args = iface.decodeFunctionData('setCreatorRecipients', request.data);
+    assert.equal(args.id, 1n);
     assert.deepEqual([...args.wallets], [wallet]);
-    const namespace = contractCalls.findLast(call => call.name === 'routeIdFor');
-    assert.equal(namespace.args.publisher, wallet);
-    assert.equal(namespace.args.sourceAssetId, poolId);
+    assert.deepEqual([...args.shares], [10000n]);
+    request = null;
+    creatorRecipients = [[wallet, 10000n]];
+    const recovered = await bonzaiRevenueRouterService.registerModelRevenueRoute(model);
+    assert.equal(recovered.alreadyConfigured, true);
+    assert.equal(request, null, 'a confirmed assignment must not ask for another transaction');
+    creatorRecipients = [[collectionA, 10000n]];
+    await assert.rejects(bonzaiRevenueRouterService.registerModelRevenueRoute(model), /different plan/);
+    assert.equal(request, null);
   } finally {
+    creatorRecipients = [];
     mockWeb3.switchNetwork = originalSwitch;
     mockWeb3.getBrowserProvider = originalBrowser;
   }

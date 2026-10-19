@@ -3,7 +3,9 @@ import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { getSigner, getProvider, switchNetwork } from "./web3.service.js";
 
 const ABI = [
-  "function issue(address collectible,uint256 collectibleTokenId,string name,string symbol,string metadataURI) returns (address)",
+  "function minEthLiquidity() view returns(uint256)",
+  "function liquidityVault() view returns(address)",
+  "function issue(address collectible,uint256 collectibleTokenId,string name,string symbol,string metadataURI) payable returns (address)",
   "function tokenForCollectible(bytes32) view returns (address)",
   "function getAllTokens() view returns (address[])",
   "event GameTokenIssued(address indexed token,address indexed creator,address indexed collectible,uint256 collectibleTokenId,string name,string symbol,string metadataURI)",
@@ -37,17 +39,24 @@ export async function issueGameToken({
   symbol,
   metadataURI,
   projectManifest,
+  liquidityEth,
 }) {
   if (!ethers.isAddress(collectible)) throw new Error("Invalid game collectible address");
   if (projectManifest?.schema !== "bonzai.game-project" || projectManifest?.kind !== "game") {
     throw new Error("A valid BonzAI game manifest is required");
   }
+  const liquidity = ethers.parseEther(String(liquidityEth || "0"));
+  if (liquidity <= 0n) throw new Error("Review and enter the ETH amount for permanently locked game liquidity.");
   await switchNetwork(ECONOMY_NETWORK_KEY);
   const signer = await getSigner();
   const registryAddress = CONFIG.gameRegistry.contractAddress;
   if (!ethers.isAddress(registryAddress)) {
     throw new Error("Game registry is not deployed on the active economy chain");
   }
+  const factory = new ethers.Contract(requireFactory(), ABI, signer);
+  if (await factory.liquidityVault() === ethers.ZeroAddress) throw new Error("Game liquidity vault is not configured");
+  const minimum = await factory.minEthLiquidity();
+  if (liquidity < minimum) throw new Error(`Minimum game liquidity is ${ethers.formatEther(minimum)} ETH`);
   const registry = new ethers.Contract(registryAddress, REGISTRY_ABI, signer);
   const registered = await registry.isRegisteredGame(collectible, collectibleTokenId);
   if (!registered) {
@@ -62,13 +71,13 @@ export async function issueGameToken({
     );
     await registration.wait();
   }
-  const factory = new ethers.Contract(requireFactory(), ABI, signer);
   const transaction = await factory.issue(
     collectible,
     collectibleTokenId,
     String(name || "").trim(),
     String(symbol || "").trim().toUpperCase(),
     metadataURI,
+    { value: liquidity },
   );
   const receipt = await transaction.wait();
   const event = receipt.logs

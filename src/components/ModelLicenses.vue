@@ -1,6 +1,6 @@
 <template>
-  <div class="bz-license" data-i18n-skip>
-    <header class="bz-license__hero">
+  <div class="bz-license bz-page-content" data-i18n-skip>
+    <header class="bz-license__hero bz-page-header">
       <div>
         <p class="bz-eyebrow">{{ $t('nav.help') }}</p>
         <h1 class="bz-h1 bz-license__title"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">verified_user</span> {{ $t('views.licenses.title') }}</h1>

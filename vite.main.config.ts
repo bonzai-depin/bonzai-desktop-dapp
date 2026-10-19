@@ -1,3 +1,4 @@
+import './scripts/load-protocol-config.mjs';
 import { defineConfig, loadEnv } from 'vite';
 import { resolve } from 'path';
 import { builtinModules } from 'module';

@@ -17,13 +17,15 @@ The new collection implements a scheduled **direct mint**, not SeaDrop. OpenSea 
 7. Personalize locally in BonzAI. Publish only approved portrait/identity metadata, then have the current NFT owner call `personalize`. This contract records metadata; it does not run GenAI or upload files. The agent wallet receiving the 4% allocation must be reviewed before issuance.
 8. The current NFT owner may call `issueToken` once, with a fresh minimum NVDA output and a deadline no more than 30 minutes away. This atomically spends the slot reserve, deploys its token and provisions its pool. Token identity, image reference and agent wallet are locked after issuance.
 
+Before issuing, configure the factory’s liquidity vault with the treasury and reward basket, then admit the factory with `basketRewards.setLiquidityFactory(factory, true)`.
+
 ## Accounting and liquidity
 
 - Exactly 1 ETH per unissued slot stays in the collection. The reserve follows NFT ownership and has no administrator withdrawal path. It remains reserved indefinitely if the owner never issues a token.
 - The remaining 1 ETH is withdrawable only to the immutable proceeds recipient. Existing protocol distribution is not implicitly reproduced: use a reviewed proceeds recipient/splitter if distribution is required.
 - Issuance sends the full reserve to the fixed-route adapter. The adapter submits an exact-input 1 ETH purchase and enforces the owner's minimum received NVDA. The purchase route can charge its own swap fee.
 - The social token has a fixed initial supply of one billion, with 18 decimals and no further minting authority. 4% goes to the personalized agent wallet. 96% is budgeted for liquidity against the purchased NVDA. No target dollar market cap is imposed.
-- The social-token pool has a zero LP fee, zero hook address, and a full-range position sent directly to `0x000000000000000000000000000000000000dEaD`. There is no BonzAI trading-fee hook or recoverable LP owner. Underlying Uniswap protocol governance is separate from the LP fee setting.
+- The social-token pool has a 1% LP fee and zero hook address. Its full-range position is held permanently by the factory’s immutable liquidity vault. See [locked-liquidity accounting](LOCKED_LIQUIDITY.md) for fee collection, the 40/40/10/10 split and reward admission.
 - Finite-range/wei rounding can leave dust; leftover launch tokens and purchased NVDA are sent to the same dead address. They are not given to the creator or an administrator. Thus 96% is the liquidity allocation budget, not a guarantee that every base unit enters the position.
 - The starting price comes from the token/NVDA quantities, respecting currency-address ordering and raw units. Failed conversion, slippage, initialization, position creation or ownership validation reverts the entire issuance and restores the slot reserve.
 - Permanent LP custody prevents the creator withdrawing that position; it does not prevent sales of circulating tokens or remove NVDA issuer/transfer restrictions and market risks.
@@ -41,7 +43,7 @@ npx hardhat --config hardhat.config.cjs test test/AgentProvisioning.test.js
 node scripts/compileContracts.js BonzaiSmartAgents.sol BonzaiAgentTokenFactory.sol BonzaiNvdaSwap.sol
 ```
 
-Coverage includes reserve isolation, three lifetime mints, the last collection slot, current-owner permissions, callback protection, metadata gating, one-time issuance, zero-fee hookless pool encoding, LP custody, rounding dust, slippage/deadlines, and atomic failure recovery.
+Coverage includes reserve isolation, three lifetime mints, the last collection slot, current-owner permissions, callback protection, metadata gating, one-time issuance, 1% hookless pool encoding, LP custody, rounding dust, slippage/deadlines, and atomic failure recovery.
 
 ## Renderer eligibility and recovery
 

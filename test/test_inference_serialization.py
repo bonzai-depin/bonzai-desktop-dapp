@@ -2,6 +2,7 @@ import sys
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
 from pathlib import Path
 from flask import Flask
@@ -67,6 +68,81 @@ class InferenceSerializationTests(unittest.TestCase):
         release.set()
         first.join(2); second.join(2)
         self.assertEqual(order, ["image", "image done", "audio"])
+
+    def test_benchmark_does_not_queue_behind_or_cancel_user_work(self):
+        app = Flask(__name__)
+        install_inference_serialization(app)
+        entered, release = threading.Event(), threading.Event()
+        @app.post('/image/turbo')
+        def image():
+            entered.set()
+            release.wait(3)
+            return {}
+        def work():
+            with app.test_client() as client:
+                client.post('/image/turbo')
+        worker = threading.Thread(target=work)
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        try:
+            with app.test_client() as client:
+                self.assertEqual(client.post('/image/turbo',json={'_benchmark':True}).status_code,409)
+            self.assertTrue(worker.is_alive())
+        finally:
+            release.set()
+            worker.join(2)
+
+    def test_background_training_holds_device_until_finished_and_releases_on_failure(self):
+        app = Flask(__name__)
+        run_background = install_inference_serialization(app)
+        entered, release = threading.Event(), threading.Event()
+        @app.post('/image/turbo')
+        def image():
+            return {}
+        def train():
+            entered.set()
+            release.wait(3)
+        worker = threading.Thread(target=lambda: run_background(train, '/training/start'))
+        worker.start()
+        self.assertTrue(entered.wait(1))
+        try:
+            with app.test_client() as client:
+                self.assertEqual(client.post('/image/turbo', json={'_benchmark': True}).status_code, 409)
+        finally:
+            release.set()
+            worker.join(2)
+        with self.assertRaises(ValueError):
+            run_background(lambda: (_ for _ in ()).throw(ValueError('training failed')), '/training/start')
+        with app.test_client() as client:
+            self.assertEqual(client.post('/image/turbo', json={'_benchmark': True}).status_code, 200)
+
+    def test_native_handoff_can_clear_caches_before_media_acquires_python_lock(self):
+        app = Flask(__name__)
+        install_inference_serialization(app)
+        events = []
+        @app.post('/memory/clear')
+        def clear():
+            events.append('clear')
+            return {}
+        @app.post('/image/turbo')
+        def image():
+            events.append('image')
+            return {}
+        @contextmanager
+        def broker(**kwargs):
+            # Electron asks Python to clear caches during handoff. The pending
+            # image must not already own the Python mutex or this deadlocks.
+            with app.test_client() as client:
+                self.assertEqual(client.post('/memory/clear').status_code, 200)
+            events.append('lease')
+            try:
+                yield
+            finally:
+                events.append('release')
+        with patch('inference_serialization.device_lease', broker):
+            with app.test_client() as client:
+                self.assertEqual(client.post('/image/turbo').status_code, 200)
+        self.assertEqual(events, ['clear', 'lease', 'image', 'release'])
 
     def test_failed_inference_releases_device_for_next_request(self):
         app = Flask(__name__)

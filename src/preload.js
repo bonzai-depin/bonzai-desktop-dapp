@@ -45,6 +45,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
   stopServer: () => ipcRenderer.invoke("stop-server"),
   restartServer: () => ipcRenderer.invoke("restart-server"),
   systemInformation: () => ipcRenderer.invoke("system-information"),
+  performanceBenchmark: {
+    run: options => ipcRenderer.invoke('benchmark:run', options),
+    onProgress: callback => {
+      const listener = (_event, value) => callback(value);
+      ipcRenderer.on('benchmark:progress', listener);
+      return () => ipcRenderer.removeListener('benchmark:progress', listener);
+    },
+    begin3d: (mode, model) => ipcRenderer.invoke('benchmark:begin3d', { mode, model }),
+    finish3d: (id, trace) => ipcRenderer.invoke('benchmark:finish3d', { id, trace }),
+    list: () => ipcRenderer.invoke('benchmark:list'),
+    report: id => ipcRenderer.invoke('benchmark:report', id),
+    stop: () => ipcRenderer.invoke('benchmark:stop'),
+    snapshot: id => ipcRenderer.invoke('benchmark:snapshot', id),
+    export: id => ipcRenderer.invoke('benchmark:export', id),
+    archive: (id, receipt) => ipcRenderer.invoke('benchmark:archive', { id, receipt }),
+  },
   checkModel: (modelname) => ipcRenderer.invoke("model-check", modelname),
   downloadModel: (url, filename) =>
     ipcRenderer.invoke("model-download", url, filename),

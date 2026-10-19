@@ -1,7 +1,9 @@
 """Serialize device inference and unloading across Flask request threads."""
 import threading
 import time
-from flask import request, g
+from urllib.error import HTTPError
+from flask import request, g, jsonify
+from inference_coordinator import device_lease
 
 _PATHS = {
     "/image/standard", "/image/quality", "/image/advanced", "/image/turbo",
@@ -21,7 +23,22 @@ def install_inference_serialization(app, on_acquired=None):
     def acquire_device():
         if request.method == "POST" and request.path in _PATHS:
             g.bonzai_request_started = time.perf_counter()
-            lock.acquire()
+            body = request.get_json(silent=True)
+            benchmark = isinstance(body, dict) and body.get('_benchmark') is True
+            if request.path != "/memory/clear":
+                lease = device_lease(benchmark=benchmark)
+                try:
+                    lease.__enter__()
+                except HTTPError as error:
+                    if error.code == 409:
+                        return jsonify({'error': 'Local inference is busy'}), 409
+                    raise
+                g.bonzai_external_lease = lease
+            if benchmark:
+                if not lock.acquire(blocking=False):
+                    return jsonify({'error': 'Local inference is busy'}), 409
+            else:
+                lock.acquire()
             g.bonzai_device_lock = True
             g.bonzai_execution_started = time.perf_counter()
             if on_acquired is not None and request.path != "/memory/clear":
@@ -53,3 +70,15 @@ def install_inference_serialization(app, on_acquired=None):
     def release_device(_error):
         if g.pop("bonzai_device_lock", False):
             lock.release()
+        lease = g.pop("bonzai_external_lease", None)
+        if lease is not None:
+            lease.__exit__(None, None, None)
+
+    def run_background(task, path):
+        """Hold the device for the worker lifetime, not its HTTP 202 response."""
+        with device_lease(background=True), lock:
+            if on_acquired is not None:
+                on_acquired(path)
+            return task()
+
+    return run_background

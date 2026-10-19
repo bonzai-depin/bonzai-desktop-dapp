@@ -19,9 +19,9 @@
     </nav>
     </div>
 
-    <header v-if="active !== 'studio'" class="company-channel-head">
+    <header v-if="active !== 'studio'" class="company-channel-head bz-page-header">
       <div class="company-channel-head__copy">
-        <span class="company-channel-head__symbol material-symbols-outlined" aria-hidden="true">{{ currentChannel.icon }}</span>
+        <span class="company-channel-head__symbol bz-title-icon material-symbols-outlined" aria-hidden="true">{{ currentChannel.icon }}</span>
         <div>
           <h1 class="fira-sans-condensed-black-italic">{{ $ui(currentChannel.label) }}</h1>
         </div>

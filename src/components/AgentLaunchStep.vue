@@ -18,7 +18,7 @@
         <small v-if="ready && !token">{{ $ui('Identity published. You can update it before launching the token.') }}</small>
         <small v-if="token">{{ $ui('Identity is locked after token issuance.') }}</small>
       </div></li>
-      <li><span class="agent-next__number">3</span><div><h3>{{ $ui('Launch token + pool') }}</h3><p>{{ symbol ? '$' + symbol : $ui('Agent token') }} / NVDA · {{ network }}</p><p>{{ $ui('Uses the reserved 1 ETH. 96% of supply in the pool, 0% trading fees, LP sent to the burn address.') }}</p>
+      <li><span class="agent-next__number">3</span><div><h3>{{ $ui('Launch token + pool') }}</h3><p>{{ symbol ? '$' + symbol : $ui('Agent token') }} / NVDA · {{ network }}</p><p>{{ $ui('Uses the reserved 1 ETH. 96% of supply in permanently locked liquidity. Trading fee: 1%, split 40% agent wallet / 40% NFT owner / 10% treasury / 10% rewards.') }}</p>
         <button v-if="pending" class="bz-btn bz-btn--secondary" :disabled="busy || launching" @click="check(agent)">{{ $ui('Check issuance') }}</button>
         <button v-else-if="!token" class="bz-btn bz-btn--primary" :disabled="busy || !owned || !ready || launching" @click="launch(agent)">{{ launching ? $ui('Waiting for confirmation…') : $ui('Launch token + pool') }}</button>
         <p v-else class="agent-next__success">{{ $ui('Token and pool launched') }}</p>

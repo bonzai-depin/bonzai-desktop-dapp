@@ -1,8 +1,8 @@
 <template>
   <div class="ownership bz-economy">
-    <div class="ownership__workspace">
-      <header class="ownership__header">
-        <div><p class="bz-eyebrow">Your part of BonzAI</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">fingerprint</span> Ownership</h1><p class="ownership__intro">Original work. Lasting provenance. A stake in what comes next.</p></div>
+    <div class="ownership__workspace bz-page-content">
+      <header class="ownership__header bz-page-header">
+        <div><p class="bz-eyebrow">Your part of BonzAI</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">fingerprint</span> Ownership</h1></div>
         <div class="ownership__header-actions"><span class="ownership__network"><span class="material-symbols-outlined" aria-hidden="true">hub</span>{{ network.name }}</span><button class="bz-iconbtn" aria-label="Refresh ownership" :disabled="loading" @click="refreshDashboard"><span class="material-symbols-outlined" :class="{ rotating: loading }" aria-hidden="true">refresh</span></button></div>
       </header>
 
@@ -12,7 +12,7 @@
 
       <div class="ownership__layout">
         <main class="ownership__library" :aria-busy="loading">
-          <div class="ownership__library-head"><div><p class="bz-eyebrow">Made by you</p><h2>Your library</h2></div><button class="bz-btn bz-btn--primary bz-btn--sm" @click="navigate('image')"><span class="material-symbols-outlined" aria-hidden="true">add</span>Create</button></div>
+          <div class="ownership__library-head"><div><p class="bz-eyebrow">Made by you</p><h2>Your library</h2></div><button class="bz-btn bz-btn--primary bz-btn--sm" @click="navigate(category === 'dataset' ? 'datasets' : 'image')"><span class="material-symbols-outlined" aria-hidden="true">add</span>{{ category === 'dataset' ? 'Create Dataset' : 'Create' }}</button></div>
           <div class="ownership__tabs" role="tablist" aria-label="Asset categories"><button v-for="item in categories" :id="`ownership-tab-${item.id}`" :key="item.id" role="tab" :aria-selected="category === item.id" aria-controls="ownership-results" :tabindex="category === item.id ? 0 : -1" @click="category = item.id" @keydown="tabKey($event, item.id)">{{ item.label }}<span class="bz-metric">{{ item.id === 'all' ? assets.length : assets.filter(asset => asset.kind === item.id).length }}</span></button></div>
           <div class="ownership__toolbar"><label class="ownership__search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input v-model="query" type="search" aria-label="Search your assets" placeholder="Search your work, tokens or contributors" /></label><select v-model="filter" aria-label="Filter publishing status"><option value="all">All statuses</option><option value="minted">Mint recorded</option><option value="training">Training-ready</option><option value="blocked">Restricted</option></select><select v-model="sort" aria-label="Sort assets"><option value="recent">Recent first</option><option value="name">Name A–Z</option></select></div>
           <div v-if="errors.length" class="ownership__notice" role="alert"><span class="material-symbols-outlined" aria-hidden="true">info</span><div><p v-for="error in errors" :key="error">{{ error }}</p><button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="loading" @click="refreshDashboard">Retry</button></div></div>

@@ -176,10 +176,11 @@ async function deployCompanionTokenFactory() {
   const factory = await CompanionTokenFactory.deploy(
     await poolManager.getAddress(),
     await positionManager.getAddress(),
-    await permit2.getAddress(),
-    await feeHook.getAddress(),
+    await permit2.getAddress()
   );
 
+  const vaultRewards=await (await ethers.getContractFactory("MockVaultRewards")).deploy();
+  await factory.configureLiquidityVault(owner.address,await vaultRewards.getAddress());
   await factory.setCompanionContract(await mockCompanions.getAddress());
 
   return { factory, poolManager, positionManager, permit2, feeHook, mockCompanions, owner, user1, agentWallet, companionOwner };
@@ -218,10 +219,11 @@ async function deployFineTuneTokenFactory() {
   const factory = await FineTuneTokenFactory.deploy(
     await poolManager.getAddress(),
     await positionManager.getAddress(),
-    await permit2.getAddress(),
-    await feeHook.getAddress(),
+    await permit2.getAddress()
   );
 
+  const vaultRewards = await (await ethers.getContractFactory("MockVaultRewards")).deploy();
+  await factory.configureLiquidityVault(owner.address,await vaultRewards.getAddress());
   await factory.setContentContract(await collectiblesFactory.getAddress());
 
   return { factory, poolManager, positionManager, permit2, feeHook, mockContent, contentCollection, collectiblesFactory, contentImplementation, owner, user1, creator };

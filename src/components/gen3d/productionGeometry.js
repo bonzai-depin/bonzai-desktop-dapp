@@ -1,18 +1,22 @@
 import * as THREE from 'three';
 
 const pairs = (points, label) => {
-  if (!Array.isArray(points) || points.length < 3 || points.some(p => !Array.isArray(p) || p.length !== 2 || !p.every(Number.isFinite))) {
-    throw new Error(`${label} needs at least three finite [x, y] points`);
+  const valid = p => Array.isArray(p)
+    ? p.length === 2 && p.every(Number.isFinite)
+    : p?.isVector2 === true && Number.isFinite(p.x) && Number.isFinite(p.y);
+  if (!Array.isArray(points) || points.length < 3 || !points.every(valid)) {
+    throw new Error(`${label} needs at least three finite [x, y] pairs or THREE.Vector2 points`);
   }
-  return points.map(([x, y]) => new THREE.Vector2(x, y));
+  return points.map(p => Array.isArray(p) ? new THREE.Vector2(...p) : new THREE.Vector2(p.x, p.y));
 };
 
 // Real cross-sections, openings and edge highlights with a small, portable API.
 // These are ordinary BufferGeometries, so the editor and GLB need no custom shader.
 export function latheProfile(points, segments = 64) {
   const profile = pairs(points, 'Lathe profile');
-  if (profile.some(p => p.x < 0)) throw new Error('Lathe radii cannot be negative');
-  return new THREE.LatheGeometry(profile, Math.max(16, Math.min(128, Math.round(segments))));
+  if (profile.some(p => p.x < 0)) throw new Error('Lathe radii cannot be negative: points are [radius, height] cross-sections, not an XY polygon outline. Use H.bevelPanel for a polygonal panel.');
+  if (!Number.isFinite(segments)) throw new Error('Lathe segments must be finite');
+  return new THREE.LatheGeometry(profile, Math.max(3, Math.min(128, Math.round(segments))));
 }
 
 export function bevelPanel(contour, {depth = .1, bevel = .01, holes = [], segments = 3} = {}) {

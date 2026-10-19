@@ -113,3 +113,28 @@ inference, benchmarks or builds have validated those changes yet.
 The hybrid H3 checkpoint runs without external adapters. The GGUF fallback uses only the legacy `h3_lora.safetensors` preset at strength 0.5. The experimental `h3_extra.safetensors` adapter is no longer loaded, even if present locally. Response `loras` metadata records external adapters actually applied.
 
 H3 currently exposes 5, 10 and 15 second presets, rounded to its frame grid (the backend caps at 345 frames / 14.375 seconds). Its official output range is 4–15 seconds; 2/3/30/60 second presets are available only in other video modes. Longer H3 films require a separate multi-clip assembly workflow.
+
+## Desktop device coordination
+
+Electron's `localInferenceCoordinator.js` owns the shared device queue. Chat,
+streaming/proxied replies, workflow model loading and workflow completions use
+that queue. Python media and background training acquire an authenticated
+loopback socket lease before taking Flask's local inference mutex. Standalone
+Python retains its local serialization when no desktop broker is configured.
+
+Queued interactive requests precede queued workflow/background requests; aging
+prevents indefinite background starvation. An active request finishes before
+handoff. Workflow model switches evict the old instance, and cross-family
+handoffs unload idle native models or clear Python caches. Chat launch settings
+survive temporary suspension. Switching families therefore incurs reload cost.
+
+The lease lasts until Python closes its socket, including process exit. It has
+no expiry that could allow a second model to start during a slow generation.
+Benchmark media probes return busy rather than queue behind user work. Failed
+handoff preparation prevents the next inference from starting. This coordinates
+BonzAI workloads; it does not bound one model's peak allocation or other apps.
+
+Lightweight validation: `node --test test/local-inference-coordinator.test.mjs`
+and `python -m unittest discover -s test -p test_inference_serialization.py`.
+These tests use no inference models. Full roleplay memory profiling remains a
+separate hardware validation step.

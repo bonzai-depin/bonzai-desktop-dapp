@@ -50,9 +50,11 @@ test('fresh generation survives overlapping envelopes, malformed plans and unsuc
      rebuilds:window.calls.filter(p=>p.includes('Measured issues:')).length,
      visible:!!vm.threeViewer.scene.getObjectByName('GeneratedObject'),
      record:record?{success:record.success,prompt:record.prompt,plan:record.assemblyContract,report:record.assemblyReport,diagnostics:record.assemblyPlanningDiagnostics,verified:record.visionVerified,kind:record.assetKind}:null,
-     persisted:!!persisted?.code};
+     persisted:!!persisted?.code, trace:record?.generationTrace, finalTrace:window.saved.last3dGenerationTrace};
    },name);
    assert.equal(result.loading,false);assert.ok(result.visible,JSON.stringify(result));assert.equal(result.record?.success,true,JSON.stringify(result));assert.equal(result.record.prompt,'Glazed enclosure '+name);assert.ok(result.persisted);
+   assert.ok(result.trace?.spans.length);assert.equal(result.trace.tokensPerSecond,null);assert.equal(result.finalTrace.status,'completed');
+   assert.ok(result.finalTrace.spans.some(span=>span.stage==='Save result'&&span.status==='completed'));
    if(name==='malformed'){assert.equal(result.plans,2);assert.ok(!result.record.plan);assert.equal(result.record.diagnostics.length,2);}
    if(name==='overlap'){assert.equal(result.plans,1);assert.equal(result.rebuilds,0);assert.deepEqual(result.record.report.errors,[]);}
    if(['rebuild','review_failure'].includes(name)){assert.equal(result.rebuilds,1);assert.ok(result.record.report.errors.length);assert.equal(result.record.verified,false);}

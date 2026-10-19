@@ -119,3 +119,7 @@ workspace-checkout-ledger.json*
 .chart-data-*
 .codex-presentation-build/
 .codex-finalizer/
+
+# Machine-specific public protocol overrides and private operator credentials
+config/protocol.local.env
+config/protocol.secrets.env

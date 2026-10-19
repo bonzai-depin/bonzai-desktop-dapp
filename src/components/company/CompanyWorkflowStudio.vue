@@ -1,8 +1,8 @@
 <template>
   <section class="workflow-studio" :aria-busy="loading">
-      <header class="workflow-studio__brief">
+      <header class="workflow-studio__brief bz-page-header">
         <div class="workflow-studio__identity">
-          <span class="workflow-studio__mark material-symbols-outlined" aria-hidden="true">{{ presentation.icon || 'auto_awesome' }}</span>
+          <span class="workflow-studio__mark bz-title-icon material-symbols-outlined" aria-hidden="true">{{ presentation.icon || 'auto_awesome' }}</span>
           <div>
             <h1 class="bz-h1 fira-sans-condensed-black-italic">{{ presentation.catalogTitle || skill?.name || charter.businessContext?.businessType || charter.name }}</h1>
             <p v-if="outcomeDescription">{{ outcomeDescription }}</p>

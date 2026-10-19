@@ -4,6 +4,7 @@
  */
 const STRING_FIELDS = [
   'lastName', 'style', 'firstMessage', 'defaultImage',
+  'originalPortraitImage', 'originalDefaultPortraitImage',
   'voiceSample', 'voiceInstruct', 'voicePreview',
   'network', 'standard', 'agentWalletProvider', 'creator', 'owner',
   'ownerWallet', 'ownerAddress', 'universalProfile',

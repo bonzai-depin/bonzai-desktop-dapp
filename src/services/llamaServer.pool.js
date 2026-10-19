@@ -1,21 +1,13 @@
+import { localInference } from './localInferenceCoordinator.js';
+import { beginPerformanceSample } from './performanceCapture.js';
+import { completionMetrics } from './completionMetrics.js';
 /**
  * BonzAI — multi-instance llama-server pool
  *
- * Spawns and manages multiple `llama-server` subprocesses concurrently,
- * one per model. Used by the Company feature when execution.llm.mode is
- * "parallel" — different roles get their own model instance so they
- * truly run in parallel instead of serializing at the single shared
- * server.
- *
- * Memory budget enforcement: each spawned instance reports its
- * approximate footprint (model weights + KV cache); the pool refuses to
- * spawn another instance when total footprint would exceed
- * `memoryBudgetGB`. LRU eviction reclaims an idle instance when
- * possible; if the requested model fits after eviction, it spawns.
- *
- * The pool is independent of `llamaServer.manager.js`. The "main" model
- * the user loaded via Chat tab keeps using the legacy single-instance
- * manager; the pool runs alongside for company-driven workloads.
+ * Workflow models share the desktop device coordinator with roleplay/chat
+ * and Python media inference. Only one request owns the device at a time;
+ * switching model keys evicts the previous idle instance. The configured
+ * budget still limits the size of an individual worker model.
  *
  * Each instance speaks the OpenAI-compatible HTTP API on its own port.
  * `chat({ modelKey, prompt, ... })` resolves the right port and posts.
@@ -52,6 +44,7 @@ let _totalBytes = 0;
 
 let _budgetBytes = 22 * 1024 ** 3; // default 22 GB
 let _lastResourcesPath = null;
+let coordinator = localInference;
 
 /**
  * @typedef {Object} Instance
@@ -72,7 +65,8 @@ let _lastResourcesPath = null;
 /**
  * Configure the pool. Currently just memory budget + resources path.
  */
-export function configure({ memoryBudgetGB, resourcesPath } = {}) {
+export function configure({ memoryBudgetGB, resourcesPath, inferenceCoordinator } = {}) {
+  if (inferenceCoordinator) coordinator = inferenceCoordinator;
   if (Number.isFinite(memoryBudgetGB)) _budgetBytes = memoryBudgetGB * 1024 ** 3;
   if (resourcesPath !== undefined) _lastResourcesPath = resourcesPath;
 }
@@ -94,7 +88,7 @@ export function configure({ memoryBudgetGB, resourcesPath } = {}) {
  *   mtp           : true to enable in-GGUF MTP draft heads
  *   noWarmup      : optional --no-warmup
  */
-export async function acquire(spec) {
+async function acquireBody(spec) {
   if (!spec?.modelKey) throw new Error("acquire: modelKey required");
   if (!spec?.modelPath) throw new Error("acquire: modelPath required");
 
@@ -103,6 +97,12 @@ export async function acquire(spec) {
     if (existing.ready) await existing.ready;
     existing.lastUsed = Date.now();
     return existing.port;
+  }
+
+  for (const inst of [..._instances.values()]) {
+    await _kill(inst);
+    _instances.delete(inst.modelKey);
+    _totalBytes = Math.max(0, _totalBytes - inst.sizeBytes);
   }
 
   // Memory budget check + eviction loop
@@ -139,7 +139,7 @@ export function release(modelKey) {
  * @param {object} body  OpenAI-compatible request body
  * @returns {Promise<string>}  the assistant message string
  */
-export async function chat({ modelKey, prompt, messages, temperature, maxTokens, stop, seed, enableThinking, responseFormat }) {
+async function chatUnmeasured({ modelKey, prompt, messages, temperature, maxTokens, stop, seed, enableThinking, responseFormat }) {
   const reg = _lookupModelPath(modelKey);
   const port = await acquire({
     modelKey,
@@ -179,7 +179,7 @@ export async function chat({ modelKey, prompt, messages, temperature, maxTokens,
       throw new Error(`pool[${modelKey}] /v1/chat/completions ${res.status}: ${text.slice(0, 200)}`);
     }
     const json = await res.json();
-    return json.choices?.[0]?.message?.content ?? "";
+    return json;
   } finally {
     release(modelKey);
   }
@@ -240,7 +240,7 @@ async function _spawn(spec, sizeBytes) {
   }
   const port = await _pickFreePort();
   const binary = _resolveBinary();
-  const isMtpSpecDecode = spec.specType === "draft-mtp" || spec.mtp === true;
+  const isMtpSpecDecode = spec.specType !== 'none' && (spec.specType === "draft-mtp" || spec.mtp === true);
   const parallelSlots = isMtpSpecDecode ? 1 : (spec.parallelSlots ?? 1);
 
   const args = [
@@ -258,6 +258,8 @@ async function _spawn(spec, sizeBytes) {
   if (spec.chatTemplate) args.push("--chat-template", spec.chatTemplate);
   if (isMtpSpecDecode) {
     args.push("--spec-type", "draft-mtp", "--spec-draft-n-max", String(spec.specDraftNMax ?? 2));
+  } else if (spec.specType === 'none') {
+    args.push('--spec-type', 'none');
   }
   if (spec.noWarmup) args.push("--no-warmup");
 
@@ -334,15 +336,17 @@ async function _evictLRU(skipKey) {
 }
 
 async function _kill(inst) {
-  try { inst.proc.kill("SIGTERM"); } catch {}
-  await new Promise((resolve) => {
-    let done = false;
-    const t = setTimeout(() => {
-      if (done) return;
-      try { inst.proc.kill("SIGKILL"); } catch {}
-      done = true; resolve();
-    }, 5000);
-    inst.proc.once("exit", () => { if (!done) { done = true; clearTimeout(t); resolve(); } });
+  if (inst.proc.exitCode !== null || inst.proc.signalCode) return;
+  await new Promise((resolve, reject) => {
+    // A handoff may begin only after the OS confirms the old process exited.
+    const hardDeadline = setTimeout(() => reject(new Error('Workflow model did not exit; device handoff cancelled')), 15000);
+    const killTimer = setTimeout(() => { try { inst.proc.kill('SIGKILL'); } catch {} }, 5000);
+    inst.proc.once('exit', () => {
+      clearTimeout(killTimer); clearTimeout(hardDeadline); resolve();
+    });
+    try { inst.proc.kill('SIGTERM'); } catch (error) {
+      clearTimeout(killTimer); clearTimeout(hardDeadline); reject(error);
+    }
   });
 }
 
@@ -415,4 +419,21 @@ function _estimateBytes(spec) {
   } catch {
     return 4 * 1024 ** 3; // 4 GB default
   }
+}
+
+async function coordinatedChat(options) {
+  const finish = beginPerformanceSample('llm/pool', options, options.modelKey);
+  try {
+    const result = await chatUnmeasured(options);
+    finish(result.choices?.length ? 'completed' : 'failed', completionMetrics({ usage: result.usage, timings: result.timings }));
+    return result.choices?.[0]?.message?.content ?? '';
+  } catch (error) { finish('failed'); throw error; }
+}
+
+export function chat(options) {
+  return coordinator.run('workflow', () => coordinatedChat(options));
+}
+
+export function acquire(spec) {
+  return coordinator.run('workflow', () => acquireBody(spec));
 }

@@ -9,6 +9,8 @@ async function fixture(){
  const permits=await deploy('MockPermit2'),positions=await deploy('MockAgentPositionManager',await permits.getAddress()),pools=await deploy('MockPoolManager');
  const agents=await deploy('BonzaiSmartAgents',treasury.address,'ipfs://slot');
  const factory=await deploy('BonzaiAgentTokenFactory',await agents.getAddress(),await nvda.getAddress(),await swapper.getAddress(),await pools.getAddress(),await positions.getAddress(),await permits.getAddress());
+ const rewards=await (await ethers.getContractFactory("MockVaultRewards")).deploy();
+ await factory.configureLiquidityVault(treasury.address,await rewards.getAddress());
  await agents.setLauncher(await factory.getAddress());
  const start=(await time.latest())+10;await agents.scheduleDrop(start,start+3600);await time.increaseTo(start);
  const mint=async(q=1)=>agents.connect(buyer).mintSlots(q,{value:ETH(String(q*2))});
@@ -66,13 +68,13 @@ describe('Smart-agent reserved NVDA launch',function(){
   await expect(f.issue(1,f.other)).to.be.revertedWith('Already issued');
   await expect(f.personalize(1,f.other)).to.be.revertedWith('Identity locked after issuance');
  });
- it('uses all purchased NVDA and 96% supply in a sorted, zero-fee, hookless pool with burned LP',async()=>{
+ it('uses all purchased NVDA and 96% supply in a sorted, 1% hookless pool with permanently vaulted LP',async()=>{
   const f=await loadFixture(fixture);await f.mint();await f.personalize();await f.issue();
   const address=await f.agents.socialToken(1),token=await ethers.getContractAt('CompanionToken',address);
   expect(await token.balanceOf(f.wallet.address)).to.equal(ETH('40000000'));
   expect(await token.balanceOf(await f.positions.getAddress())).to.equal(ETH('960000000'));
   expect(await f.nvda.balanceOf(await f.positions.getAddress())).to.equal(25_000_000);
-  expect(await f.positions.ownerOf(1)).to.equal('0x000000000000000000000000000000000000dEaD');
+  expect(await f.positions.ownerOf(1)).to.equal(await f.factory.liquidityVault());
   expect(BigInt(await f.positions.currency0())).to.be.lessThan(BigInt(await f.positions.currency1()));
   expect(await token.allowance(await f.factory.getAddress(),await f.permits.getAddress())).to.equal(0);
   expect(await f.nvda.allowance(await f.factory.getAddress(),await f.permits.getAddress())).to.equal(0);

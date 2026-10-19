@@ -31,3 +31,13 @@ test('reference reconstruction and repeated refinements do not redesign specifie
   assert.doesNotMatch(prompt,/Vary at least two/);
   assert.equal(creativeDirectionPrompt(null),'');
 });
+
+test('first-generation style guidance cannot redesign previously planned structural joints',()=>{
+ const first=creativeDirectionPrompt(createCreativeDirection({brief:'A lantern',seed:17}));
+ assert.doesNotMatch(first,/Vary at least two|State the chosen design differences/);
+ assert.match(first,/shared joint dimensions remain binding/);
+ assert.match(first,/Do not redesign an existing assembly plan/);
+ const repeat=creativeDirectionPrompt(createCreativeDirection({brief:'A lantern',seed:17,history:[{prompt:'A lantern',blueprint:'Old geometry'}]}));
+ assert.match(repeat,/Previous interpretations/);
+ assert.match(repeat,/shared joint dimensions remain binding/);
+});

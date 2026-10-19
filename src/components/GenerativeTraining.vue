@@ -1,19 +1,32 @@
 <template>
-  <div class="bz-train" :class="`bz-train--${mode}`">
+  <div class="bz-train bz-page-content" :class="`bz-train--${mode}`">
     <!-- Header -->
-    <header class="bz-train__header bz-train__hero">
+    <header class="bz-train__header bz-train__hero bz-page-header">
       <div class="bz-train__hero-copy">
         <span class="bz-eyebrow">{{ mode === 'uncensor' ? 'Model behavior' : 'Training studio' }}</span>
         <h1 class="bz-h1 bz-train__title"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">{{ mode === 'uncensor' ? 'lock_open' : 'model_training' }}</span>{{ modeTitle }}</h1>
-        <p class="bz-train__subtitle">{{ modeSubtitle }}</p>
       </div>
       <div class="bz-train__hero-stats" aria-label="Training mode capabilities">
-        <span>{{ mode === 'uncensor' ? 'Abliteration' : 'LoRA' }}</span>
+        <span>{{ mode === 'uncensor' ? 'Abliteration' : (tuneConfig.artifact_type === 'checkpoint' ? 'Checkpoint' : 'LoRA') }}</span>
         <span>Local</span>
       </div>
     </header>
 
-    <nav class="bz-train__journey" aria-label="Workflow progress">
+    <section v-if="mode === 'tune'" class="training-purpose" aria-label="What should your model learn?">
+      <button :disabled="training.active" :aria-pressed="trainingPurpose==='personal'" @click="trainingPurpose='personal'"><span class="material-symbols-outlined" aria-hidden="true">person_edit</span><div><h2>Create Like You</h2><p>Teach models your creative style, preferences and ways of making content from your own examples.</p></div></button>
+      <button :disabled="training.active" :aria-pressed="trainingPurpose==='company'" @click="trainingPurpose='company'"><span class="material-symbols-outlined" aria-hidden="true">domain</span><div><h2>Work Like Your Company</h2><p>Teach your methods: winning customers, handling requests, managing accounts and delivering products.</p></div></button>
+    </section>
+    <div v-if="mode === 'tune'" class="training-entry">
+      <p>{{ trainingPurpose === 'personal' ? 'Your examples become a reusable customization of a base model. Review its creations before using it on your behalf.' : 'Build a reusable model customization from your procedures and examples of good decisions. Keep changing facts in company memory and tools; review results before taking action.' }}</p>
+      <nav aria-label="Training workspace"><button class="bz-btn" :aria-pressed="trainingTab==='model'" @click="trainingTab='model'">Customize model</button><button class="bz-btn" :aria-pressed="trainingTab==='datasets'" @click="trainingTab='datasets'">Create &amp; Use Datasets</button></nav>
+    </div>
+    <section v-if="mode === 'tune'" class="training-artifacts" aria-label="Training outputs">
+      <article><h3>Checkpoint</h3><p>A standalone post-trained model with its learned weights included. It does not need a separate LoRA at inference.</p><small>Text training can export a standalone checkpoint by merging the learned LoRA into the base model. This requires non-quantized training.</small></article>
+      <article><h3>LoRA Adapter</h3><p>A lightweight customization loaded on top of its compatible base model. Keep the base model and adapter together to reproduce your results.</p><small>Current fine-tuning output · text datasets supported in this screen.</small></article>
+
+    </section>
+    <TrainingDatasetStudio v-if="mode === 'tune'" v-show="trainingTab==='datasets'" :purpose="trainingPurpose" :disabled="training.active" @use="useTrainingDataset" />
+    <nav v-show="mode !== 'tune' || trainingTab==='model'" class="bz-train__journey" aria-label="Workflow progress">
       <div v-for="(step, index) in journeySteps" :key="step" :class="{ 'is-current': journeyStage === index, 'is-complete': journeyStage > index }">
         <span class="bz-metric">{{ journeyStage > index ? '✓' : '0' + (index + 1) }}</span>
         <strong>{{ step }}</strong>
@@ -24,7 +37,7 @@
     <!-- ============================================================ -->
     <!-- TUNE MODE                                                    -->
     <!-- ============================================================ -->
-    <div class="bz-train__workspace">
+    <div v-show="mode !== 'tune' || trainingTab==='model'" class="bz-train__workspace">
     <div v-if="mode === 'tune'" class="bz-train__body">
 
       <section class="bz-train__section">
@@ -48,6 +61,7 @@
         <p v-if="!llmModels.length && !trainingInfoLoading" class="bz-train__helper">Supported models will appear here when the local training service is available.</p>
       </section>
 
+      <div class="training-dataset-invite"><div><strong>{{ jsonlRows.length ? 'Your examples are ready' : 'Start with content you already have' }}</strong><p>{{ jsonlRows.length ? jsonlFileName + ' · ' + jsonlRows.length + ' examples' : 'Collect creative examples, procedures, and requests with ideal responses. Build and save a dataset here before training.' }}</p></div><button class="bz-btn" :disabled="training.active" @click="trainingTab='datasets'">{{ jsonlRows.length ? 'Browse datasets' : 'Create a dataset' }}</button></div>
       <!-- Step 2: Import Dataset -->
       <section class="bz-train__section" :class="{ 'is-pending': !canImportDataset }">
         <h3 class="bz-train__section-title">
@@ -65,7 +79,7 @@
           <template v-if="jsonlRows.length === 0">
             <span class="material-symbols-outlined bz-train__dropzone-icon">upload_file</span>
             <p class="bz-train__dropzone-label">Drop a <strong>JSONL</strong> dataset or <strong>BonzAI contribution pack</strong></p>
-            <p class="bz-train__dropzone-hint">BonzAI+ packs keep provenance, permissions, quality, and revenue metadata attached.</p>
+            <p class="bz-train__dropzone-hint">Already have a dataset? Import JSONL, text, Markdown or a BonzAI contribution pack. Your content stays on this device.</p>
             <input
               type="file"
               accept=".jsonl,.json,.txt,.md,.bonzai-contribution-pack"
@@ -216,6 +230,14 @@
         <p class="bz-train__helper">Start with the defaults, then adjust for your dataset and available memory.</p>
         <!-- Shared LoRA config -->
         <div class="bz-train__config-grid">
+          <div class="bz-train__config-group">
+            <label class="bz-train__label" for="training-output">Output</label>
+            <select id="training-output" v-model="tuneConfig.artifact_type" :disabled="training.active" class="bz-train__select">
+              <option value="lora">LoRA · Requires the base model</option>
+              <option value="checkpoint">Checkpoint · Merged standalone model</option>
+            </select>
+            <small v-if="tuneConfig.artifact_type === 'checkpoint'">Includes base weights. Uses more memory and disk space; 4-bit training is disabled.</small>
+          </div>
           <div class="bz-train__config-group">
             <label class="bz-train__label" for="training-rank">LoRA Rank</label>
             <select id="training-rank" :disabled="training.active" v-model.number="tuneConfig.lora_rank" class="bz-train__select">
@@ -445,15 +467,16 @@
 
     <aside class="bz-train__review" aria-label="Run summary">
       <div class="bz-train__review-icon"><span class="material-symbols-outlined" aria-hidden="true">{{ mode === 'tune' ? 'tune' : 'lock_open' }}</span></div>
-      <p class="bz-eyebrow">{{ mode === 'tune' ? 'Your next adapter' : 'Your next model' }}</p>
+      <p class="bz-eyebrow">{{ mode === 'tune' ? 'Your customized model' : 'Your next model' }}</p>
       <h2>{{ selectedModelName || 'Make it your own.' }}</h2>
-      <p class="bz-train__helper">{{ mode === 'tune' ? 'Teach a model your style, vocabulary and domain with examples from your own data.' : 'Modify refusal behavior, then inspect the quality report before using the result.' }}</p>
+      <p class="bz-train__helper">{{ mode === 'tune' ? (trainingPurpose === 'personal' ? 'Learn your creative style and preferred results from your examples.' : 'Learn your company’s terminology and working methods from reviewed examples.') : 'Modify refusal behavior, then inspect the quality report before using the result.' }}</p>
       <dl>
         <div><dt>Runs on</dt><dd>{{ trainingInfo?.device || 'This device' }}</dd></div>
         <template v-if="mode === 'tune'">
           <div><dt>Dataset</dt><dd>{{ jsonlRows.length ? jsonlRows.length + ' examples' : 'Not imported' }}</dd></div>
           <div><dt>Training passes</dt><dd class="bz-metric">{{ tuneConfig.epochs }}</dd></div>
-          <div><dt>Output</dt><dd>LoRA adapter</dd></div>
+          <div><dt>Goal</dt><dd>{{ trainingPurpose === 'personal' ? 'Creative style' : 'Company methods' }}</dd></div>
+          <div><dt>Output</dt><dd>LoRA adapter · requires its base model</dd></div>
         </template>
         <template v-else>
           <div><dt>Method</dt><dd>{{ ablitMethods.find(method => method.value === ablitConfig.method)?.label }}</dd></div>
@@ -483,21 +506,23 @@
     <!-- ============================================================ -->
     <section class="bz-train__section bz-train__models-section">
       <div class="bz-train__section-header">
-        <h3 class="bz-train__section-title">Trained Models</h3>
+        <h3 class="bz-train__section-title">{{ mode === 'uncensor' ? 'Your Uncensored Models' : 'Your Training Artifacts' }}</h3>
         <button class="bz-iconbtn" @click="loadTrainedModels" :disabled="modelsLoading" title="Refresh model library" aria-label="Refresh model library">
           <span class="material-symbols-outlined">refresh</span>
         </button>
       </div>
+      <p class="bz-train__helper">Create → review and export → validate files → Mint → issue a token. Publishing and token launch are optional, explicit actions; local creation does not require a wallet.</p>
+      <p class="bz-train__helper">Tokenize your training work and connect it to the configured market and revenue tools. Issuing a token does not itself generate revenue or grant rights to the underlying base model or dataset.</p>
       <p v-if="modelsError" class="bz-train__helper" role="alert">{{ modelsError }}</p>
       <p v-if="modelsLoading" class="bz-train__helper" role="status">Loading your model library…</p>
-      <div v-if="!modelsLoading && !modelsError && trainedModels.length === 0" class="bz-train__empty">
+      <div v-if="!modelsLoading && !modelsError && visibleTrainedModels.length === 0" class="bz-train__empty">
         <span class="material-symbols-outlined" style="font-size:32px;color:var(--bz-fg-faint)">inventory_2</span>
-        <p>Your trained models will appear here, ready to export and use.</p>
+        <p>Your completed training artifacts will appear here, ready to review, export and optionally tokenize.</p>
       </div>
-      <div v-if="trainedModels.length" class="bz-train__model-list">
-        <div v-for="m in trainedModels" :key="m.id" class="bz-train__model-card">
+      <div v-if="visibleTrainedModels.length" class="bz-train__model-list">
+        <div v-for="m in visibleTrainedModels" :key="m.id" class="bz-train__model-card">
           <div class="bz-train__model-card-top">
-            <span class="skill-chip" :class="modelTypeChip(m.type)">{{ modelTypeLabel(m.type) }}</span>
+            <span class="skill-chip" :class="modelTypeChip(m.type)">{{ trainingArtifact(m).contentLabel }}</span><span class="skill-chip">{{ trainingArtifact(m).formatLabel }}</span>
             <span class="bz-train__model-date bz-mono">{{ formatDate(m.created_at) }}</span>
           </div>
           <div class="bz-train__model-card-body">
@@ -542,7 +567,7 @@
               :disabled="!fineTuneTokenConfigured"
               @click="prepareTokenLaunch(m)"
             >
-              <span class="material-symbols-outlined" style="font-size:14px">rocket_launch</span> Token
+              <span class="material-symbols-outlined" style="font-size:14px">rocket_launch</span> Issue token
             </button>
             <button
               v-if="m.nft?.tokenId && !m.modelRegistry?.modelId"
@@ -557,12 +582,12 @@
             <button
               v-if="m.fineTuneToken?.tokenAddress && m.fineTuneToken?.poolId && !m.revenueRoute?.assetId"
               class="bz-btn bz-btn--ghost bz-btn--sm"
-              :disabled="!bonzaiRevenueRouterService.isConfigured() || revenueRoutePublish.loading"
-              :title="bonzaiRevenueRouterService.isConfigured() ? 'Register contributor fees as the original model token creator' : 'Revenue router is not configured'"
+              :disabled="!bonzaiRevenueRouterService.isModelFeeConfigured() || revenueRoutePublish.loading"
+              :title="bonzaiRevenueRouterService.isModelFeeConfigured() ? 'Permanently assign the creator’s 80% of future trading fees using the contributor plan' : 'Model liquidity factory is not configured'"
               @click="publishModelRevenueRoute(m)"
             >
               <span class="material-symbols-outlined" style="font-size:14px">account_balance</span>
-              {{ revenueRoutePublish.activeModelId === m.id && revenueRoutePublish.loading ? 'Routing...' : 'Route' }}
+              {{ revenueRoutePublish.activeModelId === m.id && revenueRoutePublish.loading ? 'Saving...' : 'Set fee recipients' }}
             </button>
             <button
               v-if="m.model_provenance || m.provenance_schema"
@@ -644,7 +669,9 @@
 
 <script setup>
 import HubPublish from './HubPublish.vue'
+import TrainingDatasetStudio from './training/TrainingDatasetStudio.vue'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { trainingArtifact } from '../services/trainingArtifact.js'
 import axios from 'axios'
 import { io } from 'socket.io-client'
 import MintModal from './MintModal.vue'
@@ -674,8 +701,20 @@ const props = defineProps({
 })
 
 
+const trainingPurpose = ref('personal')
+const trainingTab = ref(props.initialTab === 'datasets' ? 'datasets' : 'model')
+function useTrainingDataset(dataset) {
+  if (training.active || !supportedTextRows(dataset.rows)) return
+  clearJsonl()
+  jsonlRows.value = JSON.parse(JSON.stringify(dataset.rows))
+  jsonlColumns.value = [...new Set(dataset.rows.flatMap(row => Object.keys(row)))]
+  jsonlFileName.value = dataset.name
+  trainingPurpose.value = dataset.purpose || 'personal'
+  trainingTab.value = 'model'
+  training.error = ''
+}
 const hubModelId = ref('')
-const modeTitle = computed(() => props.mode === 'uncensor' ? 'Uncensor' : 'Tune')
+const modeTitle = computed(() => props.mode === 'uncensor' ? 'Uncensor' : 'Customize Your Model')
 const modeSubtitle = computed(() => props.mode === 'uncensor'
   ? 'Remove refusal behavior and verify the result.'
   : 'Train local adapters from your data.'
@@ -713,6 +752,7 @@ function targetAvailable(target) {
 function selectTarget(target) { if (!training.active && targetAvailable(target)) selectedTarget.value = target }
 
 const tuneConfig = reactive({
+  artifact_type: 'lora',
   base_model: '',
   lora_rank: 16,
   learning_rate: '2e-4',
@@ -763,6 +803,7 @@ const ablPipeline = reactive({
 
 /* ── Trained models ────────────────────────────────────────────── */
 const trainedModels = ref([])
+const visibleTrainedModels = computed(() => trainedModels.value.filter(model => (trainingArtifact(model).operation === 'abliteration') === (props.mode === 'uncensor')))
 const modelsLoading = ref(false)
 const modelsError = ref('')
 const showMintModal = ref(false)
@@ -1067,6 +1108,7 @@ async function startTuneTraining() {
     const datasetName = `tune-${Date.now()}`
     const trainingConfig = {
       target: selectedTarget.value,
+      purpose: trainingPurpose.value,
       ...tuneConfig,
       learning_rate: parseFloat(tuneConfig.learning_rate),
     }
@@ -1110,7 +1152,7 @@ async function startTuneTraining() {
       dataset_id: datasetId,
       ...tuneConfig,
       lora_r: tuneConfig.lora_rank,
-      use_4bit: Boolean(trainingInfo.value?.capabilities?.['4bit_quantization'] && tuneConfig.use_4bit),
+      use_4bit: Boolean(tuneConfig.artifact_type !== 'checkpoint' && trainingInfo.value?.capabilities?.['4bit_quantization'] && tuneConfig.use_4bit),
       learning_rate: parseFloat(tuneConfig.learning_rate),
       training_provenance: trainingProvenance,
     }
@@ -1361,7 +1403,7 @@ async function launchModelToken(model) {
     // Token issuance is already final. A later route failure must not present
     // the launch as failed or invite a duplicate financial transaction.
     tokenLaunch.activeModelId = ''
-    if (bonzaiRevenueRouterService.isConfigured() && result.poolId) {
+    if (bonzaiRevenueRouterService.isModelFeeConfigured() && result.poolId) {
       try {
         const route = await bonzaiRevenueRouterService.registerModelRevenueRoute(
           { ...model, fineTuneToken: { poolId: result.poolId, tokenAddress: result.tokenAddress } },
@@ -1371,6 +1413,7 @@ async function launchModelToken(model) {
         updateModelEconomy(model.id, {
           revenueRoute: {
             assetId: route.assetId,
+            vaultAddress: route.vaultAddress, positionId: route.positionId, kind: route.kind,
             txHash: route.txHash,
             participants: route.participants,
             registeredAt: new Date().toISOString(),
@@ -1498,9 +1541,9 @@ async function publishModelRevenueRoute(model) {
     revenueRoutePublish.error = 'Mint this trained model before registering a revenue route.'
     return
   }
-  if (!bonzaiRevenueRouterService.isConfigured()) {
+  if (!bonzaiRevenueRouterService.isModelFeeConfigured()) {
     revenueRoutePublish.activeModelId = model.id
-    revenueRoutePublish.error = 'Revenue router is not configured.'
+    revenueRoutePublish.error = 'Model liquidity factory is not configured.'
     return
   }
 
@@ -1514,6 +1557,7 @@ async function publishModelRevenueRoute(model) {
     updateModelEconomy(model.id, {
       revenueRoute: {
         assetId: result.assetId,
+        vaultAddress: result.vaultAddress, positionId: result.positionId, kind: result.kind,
         txHash: result.txHash,
         participants: result.participants,
         registeredAt: new Date().toISOString(),
@@ -1582,17 +1626,18 @@ function stageLabel(stage) {
 }
 
 function modelTypeLabel(type) {
-  if (type?.includes('llm')) return 'Text'
+  if (type?.includes('ablit')) return 'Abliteration'
+  if (type?.includes('lora')) return 'LoRA Adapter'
+  if (type === 'checkpoint') return 'Checkpoint'
   if (type?.includes('sdxl') || type?.includes('image')) return 'Image'
   if (type?.includes('audio')) return 'Audio'
   if (type?.includes('video')) return 'Video'
-  if (type?.includes('ablit')) return 'Ablit'
   return type || 'Model'
 }
 
 function modelTypeChip(type) {
   const label = modelTypeLabel(type)
-  const map = { Text: 'skill-chip--brand', Image: 'skill-chip--info', Audio: 'skill-chip--warning', Video: 'skill-chip--success', Ablit: 'skill-chip--danger' }
+  const map = { 'LoRA Adapter': 'skill-chip--brand', Image: 'skill-chip--info', Audio: 'skill-chip--warning', Video: 'skill-chip--success', Abliteration: 'skill-chip--danger' }
   return map[label] || 'skill-chip--muted'
 }
 
@@ -2676,4 +2721,12 @@ onBeforeUnmount(() => {
 .bz-train__methods small { font-size: 12px; line-height: 1.5; }
 .bz-train__pending > .material-symbols-outlined { justify-self: center; }
 .bz-train__review h2 { font-weight: 900; }
+</style>
+
+<style scoped>
+.training-purpose,.training-entry,.dataset-studio{flex-shrink:0}.training-purpose{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}.training-purpose>button{display:flex;gap:16px;text-align:left;padding:24px;background:var(--bz-panel);border:1px solid var(--bz-border);border-radius:var(--bz-r-lg);color:var(--bz-fg);cursor:pointer;font:inherit}.training-purpose>button[aria-pressed=true]{border-color:var(--bz-accent);background:var(--bz-accent-soft)}.training-purpose .material-symbols-outlined{color:var(--bz-accent)}.training-purpose h2{font:900 italic 26px/1.2 var(--bz-font-metric);margin:0 0 8px}.training-purpose p,.training-entry p,.training-dataset-invite p{color:var(--bz-fg-mid);font-size:14px;line-height:1.6;margin:0}.training-entry{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:28px}.training-entry>p{max-width:75ch}.training-entry nav{display:flex;gap:8px;flex-shrink:0}.training-entry button[aria-pressed=true]{border-color:var(--bz-accent);color:var(--bz-accent)}.training-dataset-invite{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 0;border-block:1px solid var(--bz-border)}.training-dataset-invite strong{display:block;margin-bottom:6px}.training-dataset-invite button{flex-shrink:0}@media(max-width:1000px){.training-entry{align-items:flex-start;flex-direction:column}}@media(max-width:600px){.training-purpose{grid-template-columns:1fr}.training-purpose>button{padding:18px}.training-entry nav{flex-wrap:wrap;flex-shrink:1}.training-dataset-invite{align-items:flex-start;flex-direction:column}}
+</style>
+
+<style scoped>
+.training-artifacts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;flex-shrink:0;padding-block:20px;border-block:1px solid var(--bz-border);margin-bottom:20px}.training-artifacts article{min-width:0}.training-artifacts h3{font:900 italic 24px/1.2 var(--bz-font-metric);margin:0 0 10px}.training-artifacts p{font-size:14px;line-height:1.6;color:var(--bz-fg-mid);margin:0 0 10px}.training-artifacts small{color:var(--bz-fg-mid);line-height:1.5;display:block}@media(max-width:800px){.training-artifacts{grid-template-columns:1fr}}
 </style>

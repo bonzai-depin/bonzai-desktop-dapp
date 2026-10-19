@@ -1,3 +1,4 @@
+import {getLiquidityVault,transactLiquidityFees} from './liquidityVault.service.js';
 /**
  * BonzAI Fine-Tune Token Service
  *
@@ -5,10 +6,10 @@
  *
  * Features:
  * - Launch burnable ERC-20 tokens for minted fine-tune model NFTs
- * - Automatic Uniswap V4 pool creation with hook-based fees
- * - LP position NFT locked at DEAD address (unruggable - permanent liquidity)
+ * - Automatic hookless Uniswap V4 pool creation with a 1% trading fee
+ * - LP position NFT held permanently by the immutable fee vault
  * - Tokens are burnable (deflationary)
- * - 1% swap fee split: 80% creator, 10% treasury, 10% MintPool(LVL6)
+ * - 1% swap fee split: 80% creator, 10% treasury, 10% basket rewards
  * - Query token, pool, and fee info
  */
 
@@ -19,8 +20,6 @@ import { web3Service } from './web3.service.js';
 import { canMintContentType, checkAllLevels } from './level.service.js';
 import {
   getPoolInfo as _getPoolInfo,
-  getUnclaimedFees as _getUnclaimedFees,
-  claimFees as _claimFees,
   getUniswapTradeUrl,
   getBaseScanUrl,
   getDexScreenerUrl,
@@ -297,8 +296,8 @@ async function getTokenInfo(tokenAddress) {
 // Delegate to shared uniswapV4 utils with service-specific log prefix
 const LOG_PREFIX = 'FineTuneToken';
 const getPoolInfo = (poolId) => _getPoolInfo(poolId, LOG_PREFIX);
-const getUnclaimedFees = (addr) => _getUnclaimedFees(addr, LOG_PREFIX);
-const claimFees = () => _claimFees(LOG_PREFIX);
+const getUnclaimedFees = (addr, token) => getLiquidityVault(token, 'fine_tuned', addr);
+const claimFees = (token, currency) => transactLiquidityFees({token, kind:'fine_tuned', action:'claim', currency});
 
 /**
  * Get minimum ETH required for liquidity

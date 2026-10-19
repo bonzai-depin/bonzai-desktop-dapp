@@ -19,6 +19,25 @@ import { reactive, readonly } from "vue";
    written to `data-theme`; the file `themes.css` defines the
    matching selector. */
 const THEMES = [
+  {"id": "tokyo", "name": "Tokyo Night", "blurb": "Dark · Tokyo Night", "swatch": ["#1a1b26", "#7aa2f7", "#bb9af7"], "appearance": "dark"},
+  {"id": "catppuccin", "name": "Catppuccin Mocha", "blurb": "Dark · Catppuccin Mocha", "swatch": ["#1e1e2e", "#cba6f7", "#a6e3a1"], "appearance": "dark"},
+  {"id": "gruvbox", "name": "Gruvbox", "blurb": "Dark · Gruvbox", "swatch": ["#282828", "#fabd2f", "#b8bb26"], "appearance": "dark"},
+  {"id": "nord", "name": "Nord", "blurb": "Dark · Nord", "swatch": ["#2e3440", "#88c0d0", "#a3be8c"], "appearance": "dark"},
+  {"id": "dracula", "name": "Dracula", "blurb": "Dark · Dracula", "swatch": ["#282a36", "#bd93f9", "#ff79c6"], "appearance": "dark"},
+  {"id": "rose-pine", "name": "Rosé Pine", "blurb": "Dark · Rosé Pine", "swatch": ["#191724", "#ebbcba", "#9ccfd8"], "appearance": "dark"},
+  {"id": "everforest", "name": "Everforest", "blurb": "Dark · Everforest", "swatch": ["#272e29", "#a7c080", "#dbbc7f"], "appearance": "dark"},
+  {"id": "kanagawa", "name": "Kanagawa", "blurb": "Dark · Kanagawa", "swatch": ["#1f1f28", "#7e9cd8", "#98bb6c"], "appearance": "dark"},
+  {"id": "solarized", "name": "Solarized Dark", "blurb": "Dark · Solarized Dark", "swatch": ["#002b36", "#2aa198", "#d7ad52"], "appearance": "dark"},
+  {"id": "monokai", "name": "Monokai", "blurb": "Dark · Monokai", "swatch": ["#272822", "#a6e22e", "#f92672"], "appearance": "dark"},
+  {"id": "sakura", "name": "Petal Silk", "blurb": "Light · Petal Silk", "swatch": ["#fbf1f4", "#a63269", "#586d46"], "appearance": "light"},
+  {"id": "matcha", "name": "Tea Garden", "blurb": "Light · Tea Garden", "swatch": ["#f3f4e8", "#486934", "#9a5236"], "appearance": "light"},
+  {"id": "washi", "name": "Rice Paper", "blurb": "Light · Rice Paper", "swatch": ["#f7f3e8", "#8c462f", "#496957"], "appearance": "light"},
+  {"id": "solarized-day", "name": "Solarized Light", "blurb": "Light · Solarized Light", "swatch": ["#fdf6e3", "#076e76", "#8a5c14"], "appearance": "light"},
+  {"id": "latte", "name": "Catppuccin Latte", "blurb": "Light · Catppuccin Latte", "swatch": ["#eff1f5", "#7331bd", "#236a89"], "appearance": "light"},
+  {"id": "amber", "name": "Lantern Glow", "blurb": "Dark · Lantern Glow", "swatch": ["#17130d", "#efb454", "#a6ba73"], "appearance": "dark"},
+  {"id": "cobalt", "name": "Deep Current", "blurb": "Dark · Deep Current", "swatch": ["#12233c", "#ffcc66", "#68c5da"], "appearance": "dark"},
+  {"id": "ink", "name": "Gilded Ink", "blurb": "Dark · Gilded Ink", "swatch": ["#111315", "#d9bd77", "#8db1ac"], "appearance": "dark"},
+
   {
     id: "default",
     name: "BonzAI Noir",

@@ -7,6 +7,8 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+interface IBasketLiquidityFactory { function liquidityVault() external view returns(address); }
+interface IBasketLiquidityVault { function factory() external view returns(address); }
 interface IBasketStakeHistory {
     function rewardStakeSeconds(address wallet, uint8 level, uint256 start, uint256 end) external view returns (uint256);
     function totalRewardStakeSeconds(uint8 level, uint256 start, uint256 end) external view returns (uint256);
@@ -30,6 +32,8 @@ contract BonzaiBasketRewards is Ownable, ReentrancyGuard {
     uint256 public immutable epochDuration;
     uint256 public constant MAX_CLAIM_EPOCHS = 32;
     mapping(address => bool) public rewardCurrencyEnabled;
+    mapping(address => bool) public liquidityFactoryEnabled;
+    event LiquidityFactoryUpdated(address indexed factory,bool enabled);
     mapping(address => bool) private knownCurrency;
     address[] private currencies;
     mapping(address => mapping(uint256 => uint256[6])) private rewards;
@@ -72,6 +76,18 @@ contract BonzaiBasketRewards is Ownable, ReentrancyGuard {
         require(token != address(0) && token.code.length > 0, "Agent token not issued");
         // A governance-disabled currency cannot be silently re-enabled.
         if (!knownCurrency[token]) _enableCurrency(token, true);
+    }
+
+    /// Governance admits audited factories; their immutable vaults may register only launch currencies.
+    function setLiquidityFactory(address factory,bool enabled) external onlyOwner {
+        require(factory.code.length>0,"Invalid factory");liquidityFactoryEnabled[factory]=enabled;
+        emit LiquidityFactoryUpdated(factory,enabled);
+    }
+    function registerLiquidityCurrency(address currency) external {
+        address factory=IBasketLiquidityVault(msg.sender).factory();
+        require(liquidityFactoryEnabled[factory] && IBasketLiquidityFactory(factory).liquidityVault()==msg.sender,"Untrusted liquidity vault");
+        require(currency==address(0) || currency.code.length>0,"Invalid currency");
+        if(!knownCurrency[currency]) _enableCurrency(currency,true);
     }
 
     function _enableCurrency(address currency, bool enabled) private {

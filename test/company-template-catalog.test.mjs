@@ -44,11 +44,11 @@ test('unclassified imported templates stay visible in the custom category', () =
 test('catalog localization cannot change the workflow, selected team or operational instructions', () => {
   const original = structuredClone(workflows[0]);
   const french = templatePresentation(workflows[0], 'fr');
-  assert.equal(french.catalogTitle, 'Maintenance CVC');
+  assert.equal(french.catalogTitle, 'Gestion de maintenance assistée par ordinateur (GMAO)');
   assert.equal(french.templateId, 'hvac_residential');
   assert.deepEqual(french.goals, original.goals); assert.deepEqual(french.connectors, original.connectors);
   assert.deepEqual(workflows[0], original);
-  assert.equal(templatePresentation(workflows[0], 'en').catalogTitle, 'HVAC maintenance');
+  assert.equal(templatePresentation(workflows[0], 'en').catalogTitle, 'Computerized Maintenance Management System');
 });
 test('professional setup requirements and starter work are translated into French', () => {
   for (const template of Object.values(PAPERASSE_TEMPLATES)) {

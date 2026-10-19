@@ -2,10 +2,10 @@
   <div class="background"></div>
 
   <div class="bz-tab-shell">
-    <div class="models__deployment-install">
+    <div class="models__deployment-install bz-page-content">
       <div class="columns">
         <div class="column is-12">
-          <header class="bz-screen-header">
+          <header class="bz-screen-header bz-page-header">
             <div class="bz-screen-titleblock">
               <p class="bz-eyebrow">{{ $t('create.eyebrow') }}</p>
                 <h1 class="bz-h1 fira-sans-condensed-black-italic">
@@ -76,35 +76,19 @@
                   {{ stream.subtitle }}
                 </p>
               </div>
-              <span class="three-progress-card__pct fira-sans-condensed-black-italic">
-                {{ streamProgress }}%
-              </span>
+              <span class="three-progress-card__pct">{{ formatGenerationTime(generationElapsed) }}</span>
             </div>
-            <BonzaiPulse variant="bar" :percent="streamProgress" />
+            <BonzaiPulse variant="strip" />
             <div class="three-progress-card__meta">
               <span>
-                  {{ stream.tokenCount }} / {{ stream.maxTokens }} tokens
+                  {{ stream.tokenCount ? 'Receiving response…' : 'Preparing this stage…' }}
               </span>
-              <span
-                  :title="stream.tokenCount === 0
-                    ? 'Computing attention over the system prompt before generation starts'
-                    : 'True generation rate (excludes prefill)'"
-                >
-                  <template v-if="stream.tokenCount === 0">
-                    warming up…
-                  </template>
-                  <template v-else>
-                    {{ stream.tokensPerSec || '–' }} tok/s
-                  </template>
-              </span>
-              <span>
-                  {{ Math.round(stream.elapsedMs / 1000) }}s
-              </span>
+              <span>{{ formatGenerationTime(stream.elapsedMs) }} in this stage</span>
               <span
                   v-if="stream.prefillMs > 200"
-                  title="Time the model spent computing attention over the prompt before the first token streamed back"
+                  title="Time to the first response, including queueing and prompt processing"
                 >
-                  prefill {{ (stream.prefillMs / 1000).toFixed(1) }}s
+                  first response {{ (stream.prefillMs / 1000).toFixed(1) }}s
               </span>
             </div>
 
@@ -395,6 +379,7 @@
             >
               <ThreeViewer
                 ref="threeViewer"
+                :inference-pending="llmActiveCalls > 0"
                 :edit-mode="workspaceTab==='build' && !isPlaytesting"
                 :enablePhysics="enablePhysics"
                 :initial-time-of-day="currentTime"
@@ -512,6 +497,7 @@
                       <span v-if="item.tokensPerSecond" class="answer__tps">
                         @ {{ item.tokensPerSecond }} tok/s
                       </span>
+                      <span v-if="item.elapsedMs != null" class="answer__tps"> · {{ formatGenerationTime(item.elapsedMs) }}</span>
                     </span>
                     <span class="history-meta fira-sans-condensed-black-italic">
                       {{ formatHistoryDate(item.timestamp || item.createdAt) }}
@@ -543,7 +529,7 @@
                   </div>
 
                   <p v-if="item.qualityStatus" class="mb-2" role="status">
-                    {{ item.qualityStatus === 'reviewed' ? 'Visual review passed' : item.qualityStatus === 'needs-refinement' ? 'Draft · review suggestions' : 'Draft · not visually reviewed' }}
+                    {{ ['reviewed','ai-reviewed'].includes(item.qualityStatus) ? 'AI review · check details' : item.qualityStatus === 'needs-refinement' ? 'Draft · review suggestions' : 'Draft · not visually reviewed' }}
                   </p>
                   <details v-if="item.assemblyReport?.errors?.length || item.fidelityReview?.defects?.length || item.fidelityReview?.passes?.some(pass => pass.verdict === 'correction-failed')" class="mb-3">
                     <summary>{{ 'Review details' }}</summary>
@@ -693,7 +679,7 @@ import MintModal from "./MintModal.vue";
 import ExampleLibrary from "./gen3d/ExampleLibrary.vue";
 import { parse as parseJavaScript } from 'acorn';
 import { requestAssemblyPlan, repairAssembly, assemblyInstructions, inspectAssembly } from './gen3d/assemblyContract.js';
-import { aggregateViewReviews, resizeReviewImage, visualReviewPrompt, parseVisualReview, passesVisualReview, reviewSceneQuality } from "./gen3d/visualQuality.js";
+import { aggregateViewReviews, resizeReviewImage, visualReviewPrompt, parseVisualReview, reviewSceneQuality } from "./gen3d/visualQuality.js";
 import { renderWithRecovery, awaitSceneConstruction } from "./gen3d/runtimeRecovery.js";
 import { exportCodeGLB, GLB_MIME } from "./gen3d/glbExport.js";
 import BonzaiPulse from "./BonzaiPulse.vue";
@@ -742,6 +728,8 @@ import {
 import { sceneDesignSignature } from './gen3d/designSignature.js';
 import { createCreativeDirection, creativeDirectionPrompt } from './gen3d/creativeDirection.js';
 import { validateSceneBody, sceneContract, buildScenePrompt, buildSceneRevision, selectThreeReferences, buildSceneRepair, applySceneEdits } from './gen3d/generationContract.js';
+import { createGenerationTrace } from './gen3d/generationTrace.js';
+import { formatGenerationTime } from '../shared/generationTiming.js';
 const skillFiles = import.meta.glob('../skills/threejs/*/CHEATSHEET.md', { as: 'raw', eager: true });
 
 // Server URL for downloads
@@ -1486,7 +1474,7 @@ export default {
       subtitle: "",       // optional secondary line
       tokenCount: 0,
       maxTokens: 1,
-      tokensPerSec: 0,    // TRUE generation rate (excludes prefill) — what the user wants to read
+      startedAt: 0,
       elapsedMs: 0,
       prefillMs: 0,       // time-to-first-token; large for big prompts
       preview: "",        // last N chars of the streamed output
@@ -1500,26 +1488,10 @@ export default {
      * a generation is running.
      */
     const LOADER_TIPS = [
-      "Calibrating polygons…",
-      "Compiling shaders…",
-      "Tessellating surfaces…",
-      "Baking lightmaps…",
-      "Aligning normals…",
-      "Casting global illumination…",
-      "Spawning particle systems…",
-      "Sourcing artisanal pixels…",
-      "Negotiating with the GPU…",
-      "Defragmenting the matrix…",
-      "Whispering to the polygons…",
-      "Rendering the first triangle…",
-      "Tuning the bloom shader…",
-      "Folding the mesh in half…",
-      "Pre-warming the raytracer…",
-      "Inflating ambient occlusion…",
-      "Calibrating the skybox…",
-      "Polishing the bevels…",
-      "Quantum-aligning vertices…",
-      "Reticulating splines…",
+      "The current stage is shown above; elapsed time includes repairs.",
+      "Construction is checked before the result is saved.",
+      "Shape and materials can be reviewed from several angles.",
+      "You can reopen saved scenes and refine individual parts.",
     ];
     let _tipTimer = null;
     function _rotateTip() {
@@ -1567,10 +1539,11 @@ export default {
     function _resetStream(phase, maxTokens, subtitle = "") {
       stream.active = true;
       stream.phase = phase;
+      stream.startedAt = performance.now();
+      if(activeGenerationTrace)reportOperation({id:activeGenerationTrace.snapshot().id,stage:phase});
       stream.subtitle = subtitle;
       stream.tokenCount = 0;
       stream.maxTokens = Math.max(1, maxTokens);
-      stream.tokensPerSec = 0;
       stream.elapsedMs = 0;
       stream.prefillMs = 0;
       stream.preview = "";
@@ -1581,16 +1554,6 @@ export default {
       stream.active = false;
       _stopTipRotator();
     }
-
-    /**
-     * Estimated progress 0–99% (we never claim 100 until the phase ends —
-     * the actual token budget is rarely hit exactly).
-     */
-    const streamProgress = computed(() => {
-      if (!stream.active) return 0;
-      const pct = Math.floor((stream.tokenCount / stream.maxTokens) * 100);
-      return Math.min(99, Math.max(0, pct));
-    });
 
     // Auto-scroll the live preview to keep the latest tokens visible.
     const streamPreviewEl = ref(null);
@@ -1757,6 +1720,39 @@ export default {
     const currentWeather = ref(localStorage.getItem("bonzai-3d-weather") || "sunny");
     const lightIntensity = ref(1.0);
     const loadedModelFilename = ref(null);
+    let activeGenerationTrace = null;
+    let benchmarkSample = null;
+    let generationTimer = null;
+    const generationElapsed = ref(0);
+    const llmActiveCalls = ref(0);
+    const measureGeneration = async (stage, action, metadata = {}) => {
+      const end = activeGenerationTrace?.start(stage, metadata);
+      try { const result = await action(); end?.(); return result; }
+      catch (error) { end?.({status:'failed',error:error.message}); throw error; }
+    };
+    const beginGenerationTrace = (id) => {
+      benchmarkSample = Promise.resolve(window.electronAPI?.performanceBenchmark?.begin3d(effectiveCreationMode.value, codeModel.value.filename)).catch(() => null);
+      activeGenerationTrace = createGenerationTrace({id,mode:effectiveCreationMode.value,model:codeModel.value.filename});
+      generationElapsed.value = 0;
+      clearInterval(generationTimer);
+      generationTimer = setInterval(() => {
+        generationElapsed.value = activeGenerationTrace?.snapshot().elapsedMs || 0;
+        if(stream.active)stream.elapsedMs=performance.now()-stream.startedAt;
+      },1000);
+    };
+    const finishGenerationTrace = async (status) => {
+      clearInterval(generationTimer); generationTimer = null;
+      const trace = activeGenerationTrace?.snapshot(status);
+      generationElapsed.value = trace?.elapsedMs || 0;
+      activeGenerationTrace = null;
+      // Separate from history so this includes the history write itself.
+      if(trace)try { await window.electronAPI?.store?.set('last3dGenerationTrace',trace); }
+      catch(error) { console.warn('[3D] Timing trace could not be saved:',error.message); }
+      if(trace)try {
+        const sampleId = await benchmarkSample; benchmarkSample = null;
+        if (sampleId) await window.electronAPI?.performanceBenchmark?.finish3d(sampleId, trace);
+      } catch(error) { console.warn('[3D] Benchmark sample could not be saved:',error.message); }
+    };
     const form = reactive({ prompt: "" });
     const lastGeneratedCode = ref('');
     const lastGeneratedBrief = ref('');
@@ -2593,20 +2589,27 @@ This is a PLAYABLE GAME, not a diorama. Build the complete world under root, the
 - Register enemies, collectibles and goal zones with game.actor() and game.trigger().
 - Implement interaction, damage, collection, scoring and enemy behavior through actor update functions and game events.
 - Include an explicit win condition and fail state. Start with game.start().
+- Required objectives are ANDed: include BOTH collection and exit objectives when all items must be collected before exiting. For a locked exit, use a custom objective with event:'unlocked-exit' and a once:false trigger whose onEnter emits that event ONLY after collection is complete. A reach objective completes on any entry, even an early visit; do not use it for a locked exit.
 - Use GAME input actions only. Do not add DOM listeners, requestAnimationFrame, HTML or a second render loop.
 - Keep the game immediately playable with WASD/arrows, Shift and E/Space.
 - The visual bar remains identical to a hero scene: authored materials, atmospheric depth, animation, lighting and post effects.
 
 Core API:
 const game = GAME.create({title, genre?, state?, objectives:[{id,type:'collect|score|defeat|reach|survive|custom',label,target,tag?,trigger?}]});
-game.player(object,{speed?,sprintMultiplier?,cameraOffset?,update?});
+game.player(object,{speed?,health?,sprintMultiplier?,cameraOffset:new THREE.Vector3(0,3.2,5.5),update?}); // the host owns the camera; game.camera does not exist
+game.solid(id,mesh,{levelId?}); // Register individual walls/obstacles for the built-in grounded XZ controller. Never register a whole hollow room: preserve door openings. Jumping/slopes use P or a custom player update.
 game.level(id,object,{entry?}); game.goToLevel(id);
-game.actor(id,object,{tags?,health?,radius?,score?,update?});
+game.actor(id,object,{tags?,health?,radius?,score?,update:({dt,time,state,input,actor,game})=>{}}); // update receives ONE context object, never a numeric dt argument
 game.trigger(id,object,{radius?,once?,onEnter?});
 game.collect(id,amount?,tag?); game.damage(id,amount,source?); game.score(amount,reason?);
 game.on(event,handler); game.emit(event,detail?); game.checkpoint(id); game.restore(id);
 game.agent({companionId,damage?}); game.stopAgent();
-game.input.down(action); game.input.pressed(action); game.start();
+game.input.down(action); game.input.pressed(action); // actions: forward, backward, left, right, sprint, action, pause
+// A reach objective needs trigger:'registered-trigger-id'; a custom objective needs event:'event-name'.
+// Pickups need a trigger whose onEnter calls game.collect(actorId,1,tag). Registering an actor alone does not collect it.
+// Damage events contain {actor,amount,source}; game.damage already updates health. Do not decrement health a second time in an event handler.
+game.start();
+game.win(message?); game.lose(message?); game.restart(); // restart resets actors, collection, one-shot triggers, objectives and initial level
 ` : "";
       const reconstructionContract = isReferenceGeneration.value ? `
 
@@ -2674,12 +2677,12 @@ OUTPUT RAW JAVASCRIPT:`;
      * invoked on every chunk; the 3D pipeline uses it to feed the
      * game-style loading screen with a live preview + tok/s readout.
      */
-    const callLLM = async (prompt, options = {}, onProgress) => {
+    const callLLMRaw = async (prompt, options = {}, onProgress) => {
       const canStream =
         typeof window?.electronAPI?.chatStream === "function" &&
         typeof window?.electronAPI?.onChatToken === "function";
 
-      const extraOpts = { isolated: true };
+      const extraOpts = { isolated: true, returnMetadata: true };
       if (window.electronAPI.completionBudget) {
         const budget = await window.electronAPI.completionBudget(prompt, options.maxTokens || 2048);
         if (options.maxTokens >= 8192 && budget.maxTokens < 4096) throw new Error(`Only ${budget.maxTokens} output tokens fit in the loaded ${budget.context}-token context. Try a shorter scene description or a smaller model.`);
@@ -2695,25 +2698,25 @@ OUTPUT RAW JAVASCRIPT:`;
         // Legacy non-streaming path (left in place so callers without
         // streaming support still work).
         if (!window.electronAPI?.chat) throw new Error("Chat API not available");
-        const response = await Promise.race([
-          window.electronAPI.chat(prompt, { ...extraOpts, returnMetadata: true }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3600000)),
-        ]);
+        let timeout;
+        let response;
+        try {
+          response = await Promise.race([
+            window.electronAPI.chat(prompt, { ...extraOpts, returnMetadata: true }),
+            new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Timeout")), 3600000); }),
+          ]);
+        } finally { clearTimeout(timeout); }
         if (!response) throw new Error("Empty response from LLM");
         if (typeof response === "object" && response.text !== undefined) return response;
-        return { text: String(response), tokenCount: 0, elapsedMs: 0 };
+        return { text: String(response), tokenCount: null, elapsedMs: null };
       }
 
       // Streaming path
       let fullText = "";
       let tokenCount = 0;
       const startedAt = performance.now();
-      // Time-to-first-token marks the prefill boundary. Everything before
-      // it = attention compute over the prompt; after = pure generation.
-      // Splitting them is the only honest way to display tok/s — if a
-      // 30B model takes 60s to chew through 10K tokens of system prompt
-      // and then generates 5K tokens at 10 tok/s, the naïve "total /
-      // elapsed" rate reads as 4.5 tok/s which is misleading.
+      // Live IPC chunks estimate activity only. Authoritative usage/timings arrive
+      // at completion; first response also includes queueing, not only prefill.
       let firstTokenAt = 0;
 
       const unsubscribe = window.electronAPI.onChatToken((chunk) => {
@@ -2738,12 +2741,17 @@ OUTPUT RAW JAVASCRIPT:`;
         }
       });
 
+      let metrics = null;
       try {
         const result = await window.electronAPI.chatStream(prompt, extraOpts);
         // chatStream returns the assistant text — prefer it over our
         // accumulated buffer in case the IPC ordering ever drops a chunk.
         if (typeof result === "string" && result.length >= fullText.length) {
           fullText = result;
+        }
+        if (result && typeof result === 'object') {
+          metrics = result;
+          if (typeof result.text === 'string') fullText = result.text;
         }
       } finally {
         unsubscribe();
@@ -2752,11 +2760,29 @@ OUTPUT RAW JAVASCRIPT:`;
       const finishedAt = performance.now();
       return {
         text: fullText,
-        tokenCount,
+        tokenCount: metrics?.tokenCount ?? null,
         elapsedMs: finishedAt - startedAt,
-        prefillMs: firstTokenAt > 0 ? firstTokenAt - startedAt : 0,
-        genMs: firstTokenAt > 0 ? finishedAt - firstTokenAt : 0,
+        firstTokenMs: metrics?.firstTokenMs ?? (firstTokenAt > 0 ? firstTokenAt - startedAt : null),
+        prefillMs: metrics?.prefillMs ?? null,
+        genMs: metrics?.genMs ?? null,
+        usage: metrics?.usage ?? null,
+        timings: metrics?.timings ?? null,
+        finishReason: metrics?.finishReason ?? null,
+        draftedTokens: metrics?.draftedTokens ?? null,
+        acceptedDraftTokens: metrics?.acceptedDraftTokens ?? null,
+        acceptanceRatio: metrics?.acceptanceRatio ?? null,
       };
+    };
+    const callLLM = async (prompt, options = {}, onProgress) => {
+      const end = activeGenerationTrace?.start(stream.phase || 'Inference', {kind:'llm',promptChars:prompt.length,requestedMaxTokens:options.maxTokens,temperature:options.temperature});
+      llmActiveCalls.value++;
+      try {
+        const result = await callLLMRaw(prompt,options,onProgress);
+        const {text,...metrics} = result;
+        end?.({...metrics,status:'completed'});
+        return result;
+      } catch(error) { end?.({status:'failed',error:error.message}); throw error; }
+      finally { llmActiveCalls.value--; }
     };
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3530,6 +3556,11 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         return {...aggregateViewReviews(reviews),construction:frame.construction};
       };
       const quality = await reviewSceneQuality({code:userCode,snapshot:await captureReview('Preview'),review,
+        // The installed 0.8B judge falsely accepted broken construction in the
+        // benchmark. Keep its suggestions, but do not spend another generation
+        // rewriting geometry or certify quality on this unqualified assessment.
+        // Measured assembly/runtime recovery remains independent and active.
+        maxCorrections:0,
         onStage:(stage,attempt)=>{
           lastStatus.value=stage==='review'?'Reviewing visual quality…':`Improving construction (${attempt}/2)…`;
           _resetStream(stage==='review'?'Visual Review':'Improving Construction',4096,
@@ -3544,6 +3575,10 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
           return applySceneEdits(candidate,stripThinkBlocks(corrected.text));
         },
         render:async(candidate)=>{
+          if(mode==='game') {
+            const check=validateGeneratedGameCode(candidate);
+            if(!check.ok)throw new Error(check.reason);
+          }
           await viewer.applyModuleCode(normalizeLLMCode(candidate),'replace',{kind:mode});
           assertAssembly(viewer,initialAssemblyErrors);
           restoreViewerEnvironmentControls();
@@ -3551,7 +3586,8 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         },
       });
       const {reviewFrames=[],construction,...hero}=quality.snapshot || {};
-      return {...quality,snapshot:hero.dataUrl?hero:null,screenshots:hero.dataUrl?[hero,...reviewFrames]:[]};
+      return {...quality,status:quality.status==='reviewed'?'ai-reviewed':quality.status,
+        review:{...quality.review,assurance:'advisory'},snapshot:hero.dataUrl?hero:null,screenshots:hero.dataUrl?[hero,...reviewFrames]:[]};
     };
 
     const formatHistoryDate = (value) => {
@@ -3685,6 +3721,8 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         extra: {
           ...(item.mode ? { mode: item.mode } : {}),
           ...(item.tokensPerSecond ? { tokensPerSecond: `${item.tokensPerSecond} tok/s` } : {}),
+          ...(item.generationTrace ? { 'Generation stages': item.generationTrace.spans.map(span =>
+            `${span.stage}: ${formatGenerationTime(span.elapsedMs)}${span.status==='failed'?' (failed)':''}`).join('\n') } : {}),
           ...(item.blueprint ? { blueprint: item.blueprint } : {}),
           ...(item.fidelityReview?.score != null
             ? { fidelity: `${Math.round(Number(item.fidelityReview.score) * 100)}%` }
@@ -3909,7 +3947,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     // ═══════════════════════════════════════════════════════════════════════
     // MODEL LOADING
     // ═══════════════════════════════════════════════════════════════════════
-    const loadModelForGeneration = async (targetModel = codeModel.value) => {
+    const loadModelForGenerationRaw = async (targetModel = codeModel.value) => {
       if (loadedModelFilename.value === targetModel.filename) {
         const runtime = await window.electronAPI.llamaRuntimeStatus?.();
         if (runtime?.running && runtime.modelName === targetModel.filename) return;
@@ -3943,6 +3981,9 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         throw new Error(`Model loading failed: ${error.message}`);
       }
     };
+
+    const loadModelForGeneration = (targetModel = codeModel.value) => measureGeneration('Model readiness',
+      () => loadModelForGenerationRaw(targetModel), {model:targetModel.filename});
 
           const defaultCode = `export default async function generate(params) {
   const { THREE, helpers: H, setObjectInfo, addUpdateCallback,
@@ -4401,7 +4442,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       });
     };
 
-    const improveAssembly = async (viewer,code,brief) => {
+    const improveAssemblyRaw = async (viewer,code,brief) => {
       lastStatus.value='Checking assembly…';
       return repairAssembly({code,
         validate:candidate=>{parseJavaScript(normalizeLLMCode(candidate),{ecmaVersion:'latest',sourceType:'module'});},
@@ -4411,17 +4452,26 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
           return applySceneEdits(candidate,stripThinkBlocks(response.text));
         },
         inspect:()=>inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value),
+        patch:async report=>{
+          _resetStream('Repairing Assembly',2048,'Correcting specific component and material mismatches.');
+          const response=await callLLM(buildSceneRepair({mode:creationMode.value,code,brief,
+            error:report.errors.join('; ')+'\nMeasured part bounds (root-local): '+JSON.stringify(report.parts)+'\n'+assemblyInstructions(lastAssemblyContract.value)}),
+            {maxTokens:2048,temperature:.15,thoughtTokens:0,enableThinking:false});
+          return applySceneEdits(code,stripThinkBlocks(response.text));
+        },
         render:async candidate=>{await viewer.applyModuleCode(normalizeLLMCode(candidate),'replace',{kind:creationMode.value});restoreViewerEnvironmentControls();},
         rebuild:async report=>{
           lastStatus.value='Improving assembly…';
           _resetStream('Improving Assembly',8192,'Correcting named parts and material roles.');
           await window.electronAPI.resetChat();
-          const response=await callLLM(buildScenePrompt({mode:creationMode.value,brief,plan:JSON.stringify(lastAssemblyContract.value)})+'\n'+assemblyInstructions(lastAssemblyContract.value)+'\nMeasured issues: '+report.errors.join('; ')+'\nPrevious drawable source:\n'+code+'\nReturn a complete corrected JavaScript body.',
+          const response=await callLLM(buildScenePrompt({mode:creationMode.value,brief,plan:JSON.stringify(lastAssemblyContract.value)})+'\n'+assemblyInstructions(lastAssemblyContract.value,{includePlan:false})+'\nMeasured issues: '+report.errors.join('; ')+'\nPrevious drawable source:\n'+code+'\nReturn a complete corrected JavaScript body.',
             {maxTokens:8192,temperature:.3,thoughtTokens:0,enableThinking:false},({tokenCount,elapsedMs})=>{stream.tokenCount=tokenCount;stream.elapsedMs=elapsedMs;});
           return stripThinkBlocks(response.text).replace(/^```(?:javascript|js)?\s*/,'').replace(/\s*```$/,'');
         }
       });
     };
+
+    const improveAssembly = (viewer,code,brief) => measureGeneration('Assembly inspection and repair', () => improveAssemblyRaw(viewer,code,brief));
 
     const onSubmit = async () => {
       if (!form.prompt.trim() && !(isReferenceGeneration.value && referenceImage.value)) return;
@@ -4439,6 +4489,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       isLoading.value = true;
       const generationStarted = performance.now();
       const activityId = `3d:${crypto.randomUUID()}`;
+      beginGenerationTrace(activityId);
       reportOperation({id:activityId,title:"Generating 3D",mode:"game",status:"running",stage:"Preparing",location:"3D"});
       lastStatus.value = "Preparing...";
       lastAssemblyContract.value = null;assemblyPlanningDiagnostics.value=[];
@@ -4476,10 +4527,8 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         if (isReferenceGeneration.value) {
           lastStatus.value = "Reading reference...";
           _resetStream("Reading Reference", 1, "Mapping silhouette, materials and visible construction.");
-          referenceAnalysis = await analyzeReferenceFor3D(
-            submittedReference.dataUrl,
-            submittedPrompt,
-          );
+          referenceAnalysis = await measureGeneration('Reference analysis', () => analyzeReferenceFor3D(
+            submittedReference.dataUrl, submittedPrompt));
           if (/suitability\s*[:\-]\s*reject\b/i.test(referenceAnalysis)) {
             throw new Error(
               "This image is not suitable for reliable 3D reconstruction. Use one isolated subject with less occlusion.",
@@ -4512,7 +4561,6 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
             const visible = _stripThinkForPreview(text);
             stream.tokenCount = tokenCount;
             stream.elapsedMs = elapsedMs;
-            stream.tokensPerSec = elapsedMs > 0 ? +(tokenCount / (elapsedMs / 1000)).toFixed(1) : 0;
             stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
           },
         );
@@ -4529,7 +4577,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         lastStatus.value = isReferenceGeneration.value
           ? "Building reconstruction..."
           : "Building scene...";
-        const codePrompt = buildObjectPrompt(blueprint, submittedPrompt, variation) + "\n" + assemblyInstructions(lastAssemblyContract.value);
+        const codePrompt = buildObjectPrompt(blueprint, submittedPrompt, variation) + "\n" + assemblyInstructions(lastAssemblyContract.value,{includePlan:false});
         const codeMaxTokens = isReferenceGeneration.value ? 8192 : 16384;
         _resetStream(
           isReferenceGeneration.value ? "Building Reconstruction" : "Building Scene",
@@ -4549,33 +4597,14 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
             stream.tokenCount = tokenCount;
             stream.elapsedMs = elapsedMs;
             stream.prefillMs = prefillMs;
-            // Real generation rate excludes prefill so the readout
-            // doesn't get dragged down by the system prompt.
-            stream.tokensPerSec = genMs > 0 ? +(tokenCount / (genMs / 1000)).toFixed(1) : 0;
             stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
           },
         );
-        const codeTokS = codeResult.elapsedMs > 0
-          ? ((codeResult.tokenCount / codeResult.elapsedMs) * 1000).toFixed(1)
-          : null;
-        console.log("Raw LLM output:", codeResult.text);
-        console.log(`Code gen: ${codeResult.tokenCount} tokens in ${(codeResult.elapsedMs / 1000).toFixed(1)}s (${codeTokS || '?'} tok/s), prefill: ${((codeResult.prefillMs || 0) / 1000).toFixed(1)}s`);
-        // Codegen truncation telemetry. The wrapper template already
-        // provides `scene.add(root); return root;` — user code never
-        // emits a `return` statement, so the only honest signal of
-        // truncation is the final character. Clean ends finish on
-        // `;`, `}`, or `)`. Mid-token truncation leaves an alphabetic
-        // letter, comma, or open paren as the final char.
-        const codeTail = codeResult.text.trim().slice(-80);
-        const lastChar = codeTail.slice(-1);
-        const looksTruncated = !/[;)}\]]/.test(lastChar);
-        if (looksTruncated) {
-          console.warn(
-            `[3D] Codegen ended mid-statement at ${codeResult.tokenCount}/${codeMaxTokens} tokens ` +
-            `(tail: "${codeTail.slice(-40)}"). Either the model hit its slot context cap (verify ` +
-            `"-np 1" in the llama-server startup args, then restart Electron) or it emitted an ` +
-            `EOG token early.`
-          );
+        const codeTokS = codeResult.tokenCount != null && codeResult.genMs > 0
+          ? ((codeResult.tokenCount / codeResult.genMs) * 1000).toFixed(1) : null;
+        console.log(`Code generation: ${codeResult.tokenCount ?? 'unknown'} tokens, ${formatGenerationTime(codeResult.elapsedMs)}, decode ${codeTokS ?? 'unknown'} tok/s`);
+        if (codeResult.finishReason === 'length') {
+          console.warn('[3D] The runtime reported an output/context limit; validating the partial code before recovery.');
         }
 
         let code = normalizeLLMCode(codeResult.text);
@@ -4614,7 +4643,6 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
               const visible = _stripThinkForPreview(text);
               stream.tokenCount = tokenCount;
               stream.elapsedMs = elapsedMs;
-              stream.tokensPerSec = elapsedMs > 0 ? +(tokenCount / (elapsedMs / 1000)).toFixed(1) : 0;
               stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
             },
           );
@@ -4657,13 +4685,10 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
         // Render
         lastStatus.value = "Rendering...";
         _resetStream("Rendering", 1, "Compiling shaders and casting first light.");
-        // Rendering doesn't stream tokens — we just want the loading
-        // screen to flip into "Rendering" while the GPU does its job.
-        // Set a fake "almost done" progress so the bar reads right.
-        stream.tokenCount = 1;
-        stream.maxTokens = 1;
+        // Rendering has no model token progress; display its stage duration.
+        stream.tokenCount = 0;
         try {
-          await viewer.applyModuleCode(code, "replace", {kind: creationMode.value});
+          await measureGeneration('Render', () => viewer.applyModuleCode(code, "replace", {kind: creationMode.value}));
         } catch (renderError) {
           if (!isReferenceGeneration.value) {
             const recovered = await recoverGeneratedScene(viewer, userCode, submittedPrompt);
@@ -4713,19 +4738,14 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
         lastGeneratedCode.value = userCode;
         lastGeneratedBrief.value = submittedPrompt;
 
-        // Combined tok/s from both phases
-        const totalTokens = (blueprintResult.tokenCount || 0) + codeResult.tokenCount;
-        const totalMs = (blueprintResult.elapsedMs || 0) + codeResult.elapsedMs;
-        const tokensPerSecond = totalMs > 0 ? ((totalTokens / totalMs) * 1000).toFixed(1) : null;
-
         lastStatus.value = "Draft rendered. Checking visual quality…";
         let snapshot = null;
         let screenshots = [];
         let fidelityReview = null;
         let qualityStatus = "unreviewed";
-        if (!usedReferenceFallback && creationMode.value !== "game") {
-          const quality = await reviewRenderedConstruction(viewer,userCode,submittedPrompt,creationMode.value,
-            isReferenceGeneration.value ? submittedReference : null);
+        if (!usedReferenceFallback) {
+          const quality = await measureGeneration('Visual review', () => reviewRenderedConstruction(viewer,userCode,submittedPrompt,creationMode.value,
+            isReferenceGeneration.value ? submittedReference : null));
           userCode = quality.code;
           code = normalizeLLMCode(userCode);
           lastGeneratedCode.value = userCode;
@@ -4738,12 +4758,15 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
           snapshot=await captureViewerSnapshot("Preview");screenshots=snapshot?[snapshot]:[];
         }
         const assemblyReport=inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value);
+        const measured = activeGenerationTrace?.snapshot('saving');
+        const tokensPerSecond = measured?.tokensPerSecond?.toFixed(1) || null;
         if(assemblyReport.errors.length)qualityStatus='needs-refinement';
-        lastStatus.value = qualityStatus === "reviewed" ? "Visual review passed"
+        lastStatus.value = qualityStatus === "ai-reviewed" ? "Draft saved — AI review available"
           : qualityStatus === "needs-refinement" ? "Draft saved — review suggestions available"
           : "Draft saved — visual review unavailable";
-        const savedRecord = await addObjectInference(submittedPrompt, code, {
+        const savedRecord = await measureGeneration('Save result', () => addObjectInference(submittedPrompt, code, {
           elapsedMs: Math.round(performance.now() - generationStarted),
+          generationTrace: measured,
           success: true,
           mode: effectiveCreationMode.value,
           assetKind: isReferenceGeneration.value ? "object" : creationMode.value,
@@ -4758,12 +4781,12 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
           usedReferenceFallback,
           fidelityReview,
           qualityStatus,
-          visionVerified: !assemblyReport.errors.length && passesVisualReview(fidelityReview),
+          visionVerified: false,
           tokensPerSecond,
           model: currentModel.value.modelname,
           screenshots,
           thumbnail: snapshot?.dataUrl || "",
-        });
+        }));
         reportOperation({id:activityId,status:"completed",stage:"Ready"});
         console.log("[3D] Inference saved to history:", savedRecord?.id);
         if (creationMode.value === "level") {
@@ -4779,6 +4802,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
           forgeLevelId.value = level.id;
           projectStatus.value = `${level.title} added as level ${gameProject.value.levelOrder.length}.`;
         }
+        await finishGenerationTrace('completed');
         form.prompt = "";
         if (isReferenceGeneration.value) referenceImage.value = null;
       } catch (e) {
@@ -4787,6 +4811,8 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
         lastStatus.value = "❌ Failed: " + e.message;
         try {
           await addObjectInference(submittedPrompt, (e.generatedCode || lastAttemptedCode) ? normalizeLLMCode(e.generatedCode || lastAttemptedCode) : "", {
+            elapsedMs: Math.round(performance.now() - generationStarted),
+            generationTrace: activeGenerationTrace?.snapshot('failed'),
             success: false,
             mode: effectiveCreationMode.value,
             referenceImage: submittedReference,
@@ -4798,6 +4824,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
           console.warn("[3D] Failed to save generation error:", historyError);
         }
       } finally {
+        if(activeGenerationTrace)await finishGenerationTrace('failed');
         _endStream();
         isLoading.value = false;
       }
@@ -4812,6 +4839,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       const generationStarted = performance.now();
       const activityId = `3d:${crypto.randomUUID()}`;
       reportOperation({id:activityId,title:"Refining 3D",mode:"game",status:"running",stage:"Refining",location:"3D"});
+      beginGenerationTrace(activityId);
       const previous = {code:lastGeneratedCode.value,brief:lastGeneratedBrief.value,plan:lastAssemblyContract.value};
       lastStatus.value = "Refining...";
       try {
@@ -4842,13 +4870,10 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
             stream.tokenCount = tokenCount;
             stream.elapsedMs = elapsedMs;
             stream.prefillMs = prefillMs;
-            // Real generation rate excludes prefill so the readout
-            // doesn't get dragged down by the system prompt.
-            stream.tokensPerSec = genMs > 0 ? +(tokenCount / (genMs / 1000)).toFixed(1) : 0;
             stream.preview = visible.length > 600 ? "…" + visible.slice(-600) : visible;
           },
         );
-        const tokensPerSecond = result.elapsedMs > 0 ? ((result.tokenCount / result.elapsedMs) * 1000).toFixed(1) : null;
+        const tokensPerSecond = result.tokenCount != null && result.genMs > 0 ? ((result.tokenCount / result.genMs) * 1000).toFixed(1) : null;
         console.log(`Refine: ${result.tokenCount} tokens in ${(result.elapsedMs / 1000).toFixed(1)}s (${tokensPerSecond || '?'} tok/s)`);
 
         let code = normalizeLLMCode(result.text);
@@ -4870,15 +4895,14 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
         lastGeneratedCode.value = refinedUserCode;
         restoreViewerEnvironmentControls();
         const revisedBrief = `${lastGeneratedBrief.value}\nRequested revision: ${refinePrompt.value}`.trim();
-        const quality = creationMode.value !== 'game'
-          ? await reviewRenderedConstruction(viewer,refinedUserCode,revisedBrief,creationMode.value)
-          : {code:refinedUserCode,status:'unreviewed',review:null,passes:[],snapshot:await captureViewerSnapshot('Preview')};
+        const quality = await measureGeneration('Visual review', () => reviewRenderedConstruction(viewer,refinedUserCode,revisedBrief,creationMode.value));
         code=normalizeLLMCode(quality.code);lastGeneratedCode.value=quality.code;lastGeneratedBrief.value=revisedBrief;
         const assemblyReport=inspectAssembly(viewer.scene.getObjectByName('GeneratedObject'),lastAssemblyContract.value);
         const snapshot=quality.snapshot;
-        lastStatus.value=assemblyReport.errors.length?'Draft saved — review suggestions available':quality.status==='reviewed'?'Visual review passed':quality.status==='needs-refinement'?'Draft saved — review suggestions available':'Draft saved — visual review unavailable';
+        lastStatus.value=assemblyReport.errors.length?'Draft saved — review suggestions available':quality.status==='ai-reviewed'?'Draft saved — AI review available':quality.status==='needs-refinement'?'Draft saved — review suggestions available':'Draft saved — visual review unavailable';
         const record=await addObjectInference(revisedBrief, code, {
           elapsedMs: Math.round(performance.now() - generationStarted),
+          generationTrace: activeGenerationTrace?.snapshot('saving'),
           success: true,
           mode: effectiveCreationMode.value,
           assetKind: creationMode.value,
@@ -4887,8 +4911,8 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
           assemblyReport,
           assemblyPlanningDiagnostics:assemblyPlanningDiagnostics.value,
           fidelityReview: quality.review ? {...quality.review,passes:quality.passes} : null,
-          visionVerified: !assemblyReport.errors.length && passesVisualReview(quality.review),
-          tokensPerSecond,
+          visionVerified: false,
+          tokensPerSecond: activeGenerationTrace?.snapshot().tokensPerSecond?.toFixed(1) || null,
           model: currentModel.value.modelname,
           screenshots: quality.screenshots || (snapshot ? [snapshot] : []),
           thumbnail: snapshot?.dataUrl || "",
@@ -4898,6 +4922,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
           forgeLevelId.value=level.id;
         }
         reportOperation({id:activityId,status:'completed',stage:'Ready'});
+        await finishGenerationTrace('completed');
         refinePrompt.value = '';
       } catch (e) {
         lastAssemblyContract.value=previous.plan;lastGeneratedCode.value=previous.code;lastGeneratedBrief.value=previous.brief;
@@ -4907,6 +4932,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
         console.error("Refine error:", e);
         lastStatus.value = "Refine failed: " + e.message;
       } finally {
+        if(activeGenerationTrace)await finishGenerationTrace('failed');
         _endStream();
         isLoading.value = false;
       }
@@ -4941,6 +4967,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
     });
 
     onBeforeUnmount(() => {
+      clearInterval(generationTimer);
       editDisposed=true;
       editCancelled=true;
       if(editingBusy.value) window.electronAPI?.abortChatStream?.();
@@ -4976,7 +5003,6 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       lastStatus,
       // Game-style streaming loader
       stream,
-      streamProgress,
       streamPreviewEl,
       showExamples,
       objectInferences,
@@ -5104,6 +5130,9 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       copyPrompt,
       historyThumbnail,
       formatHistoryDate,
+      formatGenerationTime,
+      generationElapsed,
+      llmActiveCalls,
       clearScene,
       handleSuccess,
       handleError,
@@ -8017,4 +8046,23 @@ ol.chat .history-item:not(:first-child) hr {
 .viewer-container.is-build .build-status {display:none}
 .build-gameplay summary {cursor:pointer;color:var(--bz-fg-mid);font-size:13px;padding:6px 0}.build-gameplay[open] summary {margin-bottom:8px}.level-entry{display:grid;gap:16px}.level-entry .build-workflow__levels button{display:grid;gap:8px;min-width:120px;padding:8px;border:1px solid var(--bz-border);border-radius:8px;color:var(--bz-fg);background:var(--bz-bg)}
 @media(max-width:700px){.build-director__levels{flex-wrap:wrap}.viewer-container.is-build .viewer-wrapper{height:380px}.build-director__order{flex-wrap:wrap}}
+</style>
+
+<style scoped>
+/* Let the settings establish the row height; the prompt fills its peer panel. */
+.three-controls-layout > * { max-height: none; overflow: visible; }
+.three-controls-layout > .columns { display:flex; margin:0; }
+.three-controls-layout > .columns > .column { display:flex; flex-direction:column; padding:0; }
+.three-controls-layout .models__activity--payouts { flex:1; display:flex; flex-direction:column; }
+.three-controls-layout :deep(.bz-gen-input) { flex:1; min-height:160px; }
+.three-controls-layout :deep(.bz-gen-input__shell) { flex:1; }
+.three-controls-layout :deep(textarea) { flex:1; max-height:none; height:auto !important; min-height:80px !important; }
+@media (max-width: 900px) {
+  .three-controls-layout { max-height:none; overflow:visible; }
+}
+</style>
+
+<style scoped>
+.three-controls-layout .models__activity--payouts > .columns { display:flex; flex:1; margin:0; }
+.three-controls-layout .models__activity--payouts > .columns > .column { display:flex; flex-direction:column; flex:1; }
 </style>

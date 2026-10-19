@@ -15,6 +15,14 @@ class ModelMirrorTest(unittest.TestCase):
             self.assertGreater(item['size'], 0)
             self.assertRegex(item['sha256'], r'^[a-f0-9]{64}$')
 
+    def test_legacy_alias_downloads_identical_published_blob(self):
+        legacy = model_file('mysticxxx_mmh3-v4.safetensors')
+        current = model_file('h3_extra.safetensors')
+        self.assertEqual(legacy['url'], current['url'])
+        self.assertEqual(legacy['sha256'], current['sha256'])
+        self.assertEqual(legacy['size'], current['size'])
+        self.assertEqual(legacy['name'], 'mysticxxx_mmh3-v4.safetensors')
+
     def test_unknown_names_cannot_become_arbitrary_downloads(self):
         for name in ['../secrets', 'https://other.test/weights', 'missing.safetensors']:
             with self.assertRaises(ValueError): model_file(name)

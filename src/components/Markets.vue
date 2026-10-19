@@ -1,8 +1,8 @@
 <template>
   <div class="markets bz-tab-shell">
-    <div class="markets__workspace">
-      <header class="markets__header">
-        <div><p class="bz-eyebrow">The BonzAI economy</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">candlestick_chart</span>Token markets</h1><p class="markets__intro">Discover the assets behind smart agents, models and games.</p></div>
+    <div class="markets__workspace bz-page-content">
+      <header class="markets__header bz-page-header">
+        <div><p class="bz-eyebrow">The BonzAI economy</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">candlestick_chart</span>Token markets</h1></div>
         <div class="markets__header-actions"><span class="markets__network"><span class="material-symbols-outlined" aria-hidden="true">hub</span>{{ network.name }}</span><button class="bz-iconbtn" type="button" :aria-label="i18n.t('common.refresh')" :title="i18n.t('common.refresh')" :disabled="loading" @click="refresh"><span class="material-symbols-outlined" :class="{ 'is-refreshing': loading }" aria-hidden="true">refresh</span></button></div>
       </header>
 
@@ -74,6 +74,7 @@
         </aside>
 
         <div class="markets__asset-details"><div><p class="bz-eyebrow">Onchain identity</p><h3>Know the asset.</h3><p>{{ selected.description || assetPurpose(selected.kind) }}</p><p v-if="selected.metadataUnavailable || selected.profileUnavailable" class="markets__notice">Some token details could not be loaded. Refresh to try again.</p></div><dl><div><dt>Token contract</dt><dd><a :href="explorerToken(selected.address)" target="_blank" rel="noopener noreferrer" class="bz-mono">{{ shortAddress(selected.address) }}<span class="material-symbols-outlined" aria-hidden="true">open_in_new</span></a><button class="bz-iconbtn" :aria-label="copied ? 'Token address copied' : 'Copy token address'" @click="copyAddress"><span class="material-symbols-outlined" aria-hidden="true">{{ copied ? 'check' : 'content_copy' }}</span></button></dd></div><div><dt>Issued through</dt><dd>{{ kindLabel(selected.kind) }} factory</dd></div><div v-if="selected.creator || selected.agentWallet"><dt>{{ selected.creator ? 'Creator' : 'Agent wallet' }}</dt><dd class="bz-mono"><a :href="`${network.explorer}/address/${selected.creator || selected.agentWallet}`" target="_blank" rel="noopener noreferrer">{{ shortAddress(selected.creator || selected.agentWallet) }}<span class="material-symbols-outlined" aria-hidden="true">open_in_new</span></a></dd></div><div><dt>Pool</dt><dd><a v-if="analyticsUrl" :href="analyticsUrl" target="_blank" rel="noopener noreferrer">{{ shortAddress(selected.market.pairAddress) }}<span class="material-symbols-outlined" aria-hidden="true">open_in_new</span></a><span v-else>Not indexed</span></dd></div></dl></div>
+        <LiquidityFees :key="selected.address" :token="selected.address" :kind="selected.kind" />
       </section>
 
       <footer class="markets__data-footer"><div><span class="material-symbols-outlined" aria-hidden="true">database</span><span>Onchain listings · DEX Screener prices<span v-if="updatedAt"> · Refreshed {{ updatedTime }}</span></span></div><details><summary>Listing sources <span class="bz-metric">{{ sources.filter(source => source.status === 'ready').length }}/{{ sources.length || 3 }}</span></summary><ul><li v-for="source in sources" :key="source.id"><span>{{ source.label }}</span><span :class="{ 'is-error': source.status === 'error' }">{{ source.status === 'ready' ? `${source.count} issued` : source.status === 'error' ? 'Read failed · retry refresh' : 'Not configured' }}</span></li></ul></details></footer>
@@ -88,6 +89,7 @@ import { loadMarketSnapshot } from '../services/markets.service.js'
 import { filterMarketAssets, isMarketAddress, marketAnalyticsUrl, marketNumber, marketTotals, marketTradeUrl, marketWatchlistKey } from '../services/marketData.js'
 import { useI18n } from '../i18n/index.js'
 import MarketPriceChart from './markets/MarketPriceChart.vue'
+import LiquidityFees from './markets/LiquidityFees.vue'
 const i18n = useI18n()
 const network = CONFIG.networks[ECONOMY_NETWORK_KEY]
 const filters = [{ id: 'all', label: 'All assets' }, { id: 'companion', label: 'Smart agents' }, { id: 'game', label: 'Games' }, { id: 'fine_tuned', label: 'Fine-tuned' }, { id: 'abliterated', label: 'Uncensored' }]
@@ -118,7 +120,7 @@ const shortAddress = value => value ? `${value.slice(0, 8)}…${value.slice(-6)}
 const explorerToken = address => `${network.explorer}/token/${address}`
 const kindLabel = kind => ({ companion: 'Smart agent', game: 'Game', fine_tuned: 'Fine-tuned model', abliterated: 'Uncensored model' }[kind] || 'Model')
 const assetIcon = kind => ({ companion: 'automation', game: 'sports_esports' }[kind] || 'model_training')
-const assetPurpose = kind => kind === 'companion' ? 'A social token for a smart agent, used to settle its jobs in the BonzAI economy.' : kind === 'game' ? 'An issued token linked to a registered BonzAI game collectible. Distribution and liquidity are managed by its creator.' : 'An issued token linked to a model published through BonzAI. Explore its onchain identity before trading.'
+const assetPurpose = kind => kind === 'companion' ? 'A social token for a smart agent, used to settle its jobs in the BonzAI economy.' : kind === 'game' ? 'An issued token linked to a registered BonzAI game collectible. 96% of supply funds permanently locked liquidity; trading fees support the creator, treasury and rewards.' : 'An issued token linked to a model published through BonzAI. Explore its onchain identity before trading.'
 const isWatched = asset => watchlist.value.includes(asset.address.toLowerCase())
 function toggleWatch(asset) { const address = asset.address.toLowerCase(); watchlist.value = isWatched(asset) ? watchlist.value.filter(item => item !== address) : [...watchlist.value, address]; storageError.value = ''; try { localStorage.setItem(storageKey, JSON.stringify(watchlist.value)) } catch { storageError.value = 'Your watchlist is available for this session, but could not be saved on this device.' } }
 function clearFilters() { query.value = ''; filter.value = 'all'; watchOnly.value = false }

@@ -1,0 +1,152 @@
+[
+  {
+    "id": "llm/chat",
+    "label": "Text \u00b7 completion",
+    "group": "Text"
+  },
+  {
+    "id": "llm/stream",
+    "label": "Text \u00b7 streaming",
+    "group": "Text"
+  },
+  {
+    "id": "llm/vision",
+    "label": "Multimodal LLM",
+    "group": "Analysis"
+  },
+  {
+    "id": "llm/pool",
+    "label": "Workflow workers \u00b7 LLM pool",
+    "group": "Text"
+  },
+  {
+    "id": "llm/proxy",
+    "label": "LLM API \u00b7 workflow gateway",
+    "group": "Text"
+  },
+  {
+    "id": "3d/object",
+    "label": "3D assets \u00b7 full generation",
+    "group": "3D"
+  },
+  {
+    "id": "3d/level",
+    "label": "3D levels \u00b7 full generation",
+    "group": "3D"
+  },
+  {
+    "id": "3d/game",
+    "label": "3D games \u00b7 full generation",
+    "group": "3D"
+  },
+  {
+    "id": "/image/standard",
+    "label": "Image \u00b7 Standard",
+    "group": "Image"
+  },
+  {
+    "id": "/image/quality",
+    "label": "Image \u00b7 Quality",
+    "group": "Image"
+  },
+  {
+    "id": "/image/advanced",
+    "label": "Image \u00b7 Advanced",
+    "group": "Image"
+  },
+  {
+    "id": "/image/turbo",
+    "label": "Image \u00b7 Klein",
+    "group": "Image"
+  },
+  {
+    "id": "/image/image/turbo",
+    "label": "Image editing \u00b7 Klein",
+    "group": "Image"
+  },
+  {
+    "id": "/image/experimental/klein-9b",
+    "label": "Image \u00b7 Klein 9B",
+    "group": "Image"
+  },
+  {
+    "id": "/audio/turbo",
+    "label": "Speech \u00b7 Fast",
+    "group": "Audio"
+  },
+  {
+    "id": "/audio/quality/design",
+    "label": "Speech \u00b7 Voice design",
+    "group": "Audio"
+  },
+  {
+    "id": "/audio/quality/clone",
+    "label": "Speech \u00b7 Voice clone",
+    "group": "Audio"
+  },
+  {
+    "id": "/audio/quality/persona",
+    "label": "Speech \u00b7 Persona",
+    "group": "Audio"
+  },
+  {
+    "id": "/audio/music",
+    "label": "Music",
+    "group": "Audio"
+  },
+  {
+    "id": "/video",
+    "label": "Video \u00b7 Fast",
+    "group": "Video"
+  },
+  {
+    "id": "/video/quality",
+    "label": "Video \u00b7 Wan",
+    "group": "Video"
+  },
+  {
+    "id": "/video/sota",
+    "label": "Video \u00b7 Max (H3)",
+    "group": "Video"
+  },
+  {
+    "id": "/video/test",
+    "label": "Video \u00b7 Test pipeline",
+    "group": "Video"
+  },
+  {
+    "id": "/video/enhance",
+    "label": "Video \u00b7 Enhance",
+    "group": "Video"
+  },
+  {
+    "id": "/vision/analyze",
+    "label": "Vision \u00b7 Analyze",
+    "group": "Analysis"
+  },
+  {
+    "id": "/vision/caption",
+    "label": "Vision \u00b7 Caption",
+    "group": "Analysis"
+  },
+  {
+    "id": "/vision/ocr",
+    "label": "OCR",
+    "group": "Analysis"
+  },
+  {
+    "id": "/forecast",
+    "label": "Forecast",
+    "group": "Analysis"
+  },
+  {
+    "id": "/workflows/finger-frame/analyze",
+    "label": "Finger Frame \u00b7 Analyze",
+    "group": "Analysis"
+  },
+  {
+    "id": "/workflows/finger-frame/composite",
+    "label": "Finger Frame \u00b7 Composite",
+    "group": "Video"
+  }
+]

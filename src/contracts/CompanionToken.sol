@@ -18,7 +18,7 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  * - Stores companion's profile image URI for token lists
  * - Links to companion's agent wallet address
  * - Tracks NFT token ID for on-chain verification
- * - LP tokens are burned (unruggable liquidity)
+ * - Factory-created LP positions are permanently held by the shared fee vault
  */
 contract CompanionToken is ERC20, ERC20Burnable, EIP712 {
     mapping(address => mapping(bytes32 => bool)) public authorizationState;

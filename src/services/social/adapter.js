@@ -72,7 +72,7 @@ export class SocialPlatformAdapter {
    */
   async isAuthenticated() {
     const creds = await this.getCredentials();
-    if (!creds?.access_token) return false;
+    if (!creds?.access_token && !creds?.connected) return false;
     if (creds.expires_at && Date.now() >= creds.expires_at) return false;
     return true;
   }
@@ -259,7 +259,7 @@ export class SocialPlatformAdapter {
   /**
    * Make an authenticated API call through IPC proxy
    */
-  async apiCall(url, options = {}) {
+  async apiCall(url, options = {}, refreshed = false) {
     const creds = await this.getCredentials();
     if (!creds?.access_token) {
       throw new Error(`Not authenticated for ${this.platform}`);
@@ -284,10 +284,10 @@ export class SocialPlatformAdapter {
     });
 
     // Auto-refresh on 401
-    if (result.status === 401) {
+    if (result.status === 401 && !refreshed) {
       try {
         await this.refreshToken();
-        return this.apiCall(url, options); // Retry once
+        return this.apiCall(url, options, true); // Retry once
       } catch (e) {
         throw new Error(`Auth expired for ${this.platform}, re-authenticate required`);
       }

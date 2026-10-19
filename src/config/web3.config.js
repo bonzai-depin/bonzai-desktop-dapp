@@ -382,16 +382,16 @@ export const CONFIG = {
     totalSupply: '1000000000', // 1 billion tokens per model
     minEthLiquidity: '0.01',
     lpLocked: true,
-    deadAddress: '0x000000000000000000000000000000000000dEaD',
+    custody: 'immutable-vault',
 
-    // Hook fee split: 80% creator, 10% treasury, 10% MintPool(LVL6)
-    hookFeeBps: 100, // 1% total swap fee
+    // Vault fee split: 80% creator, 10% treasury, 10% reward basket
+    tradingFeeBps: 100, // 1% total swap fee
     beneficiaryShareBps: 8000,
     treasuryShareBps: 1000,
     mintPoolShareBps: 1000,
-    mintPoolIndex: 5, // LVL6 / training pool
+    rewardDestination: "basket",
 
-    description: 'Launch burnable ERC-20 tokens for fine-tuned models with V4 LP (unruggable, hook fees)',
+    description: 'Launch burnable ERC-20 tokens for fine-tuned models with V4 LP (permanently locked principal, 1% trading fees)',
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -683,26 +683,28 @@ export const CONFIG = {
     totalSupply: "1000000000", // 1 billion tokens per companion
     minEthLiquidity: "0.01", // Minimum ETH for initial liquidity
 
-    // LP position NFT locked at dead address - unruggable liquidity
+    // LP position NFT held permanently by the immutable vault
     lpLocked: true,
-    deadAddress: "0x000000000000000000000000000000000000dEaD",
+    custody: "immutable-vault",
 
-    // Hook fee split: 40% agent wallet, 40% owner, 10% treasury, 10% pools
-    hookFeeBps: 100, // 1% total swap fee
+    // Vault fee split: 40% agent wallet, 40% owner, 10% treasury, 10% pools
+    tradingFeeBps: 100, // 1% total swap fee
     companionWalletBps: 4000,
     companionOwnerBps: 4000,
     treasuryShareBps: 1000,
     companionPoolBps: 1000,
 
     // Description
-    description: "Launch burnable ERC-20 tokens with V4 LP (unruggable, hook fees)",
+    description: "Launch burnable ERC-20 tokens with V4 LP (permanently locked principal, 1% trading fees)",
   },
 
   gameTokenFactory: {
     contractAddress: ECONOMY_CONTRACTS.gameTokenFactory,
     chainId: ECONOMY_CHAIN_ID,
     totalSupply: "1000000000",
-    liquidityMode: "external",
+    liquidityMode: "locked-vault",
+    minEthLiquidity: "0.01",
+    tradingFeeBps: 100,
     description: "Issue one burnable ERC-20 for each creator-owned game collectible",
   },
 

@@ -33,6 +33,8 @@ Use semantic tokens instead of introducing view-specific color systems. A new to
 
 ## Layout
 
+- Main views use `bz-page-content` on exactly one padding owner and `bz-page-header` on their title/actions row (`src/assets/page-layout.css`). Benchmark is the reference. Use the shared responsive page gutter, a 52px icon tile, one `bz-h1`, an optional uppercase `bz-eyebrow`, and trailing actions. Never repeat the title in the eyebrow. Omit generic explanatory subtitles. Chat places its model name immediately beside the Chat title. Creation-stage labels share the global `agent-stage-label` style across child components. Chat shells apply the same gutter inside their own scroll region. Do not override these dimensions in individual views.
+
 - Product navigation stays predictable and stable.
 - Prefer unframed sections and clear dividers. Cards are for repeated items, framed tools, and modals, not every section.
 - Do not nest cards.

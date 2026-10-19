@@ -5,6 +5,13 @@ import { mediaHash } from './agentWorkerHost.js';
 const LIMIT = 128 * 1024 * 1024;
 const formats = { image: ['png', 'image/png'], audio: ['wav', 'audio/wav'], music: ['wav', 'audio/wav'], video: ['mp4', 'video/mp4'] };
 const mimeExt = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'audio/wav': 'wav', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'video/mp4': 'mp4', 'model/gltf-binary': 'glb' };
+const MODEL_CONFIG = /^(?:config|adapter_config|tokenizer|tokenizer_config|special_tokens_map|generation_config|vocab|model_index|preprocessor_config|processor_config|scheduler_config|feature_extractor_config)\.json$/;
+const MODEL_INDEX = /^(?:model\.safetensors|pytorch_model\.bin)\.index\.json$/;
+const MODEL_WEIGHT = /(?:\.safetensors|\.gguf)$|^(?:pytorch_model(?:-\d+-of-\d+)?|adapter_model)\.bin$/i;
+function modelArtifact(name) {
+  return MODEL_WEIGHT.test(name) || MODEL_CONFIG.test(name) || MODEL_INDEX.test(name)
+    || ['merges.txt', 'tokenizer.model', 'spiece.model', 'vocab.txt'].includes(name);
+}
 /** Only outputs of the scoped local executor become remotely readable blob IDs. */
 export function createWorkerMedia({ blobs, roots, trainedRoot }) {
   return {
@@ -21,9 +28,24 @@ export function createWorkerMedia({ blobs, roots, trainedRoot }) {
           for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
             if (entry.isSymbolicLink()) throw new Error('Linked training artifacts cannot be delivered.');
             const filename = path.join(directory, entry.name);
-            if (entry.isDirectory()) { await walk(filename); continue; }
+            if (entry.isDirectory()) {
+              // Intermediate Trainer checkpoints contain optimizer/RNG state and
+              // duplicated weights; only the final exported artifact is delivered.
+              if (!/^(?:checkpoint-\d+|logs|runs|dataset|datasets)$/.test(entry.name)) await walk(filename);
+              continue;
+            }
             // Exclude logs, dataset copies, credentials, Python and training metadata.
-            if (!entry.isFile() || !(/\.(?:safetensors|gguf|bin)$/i.test(entry.name) || /^(?:config|adapter_config|tokenizer|tokenizer_config|special_tokens_map|generation_config|vocab)\.json$/.test(entry.name) || entry.name === 'merges.txt')) continue;
+            if (!entry.isFile() || !modelArtifact(entry.name)) continue;
+            if (MODEL_INDEX.test(entry.name)) {
+              if ((await fs.stat(filename)).size > 4 * 1024 * 1024) throw new Error('Model shard index is too large.');
+              const index = JSON.parse(await fs.readFile(filename, 'utf8'));
+              if (!index.weight_map || typeof index.weight_map !== 'object' || Array.isArray(index.weight_map)) throw new Error('Invalid model shard index.');
+              for (const shard of new Set(Object.values(index.weight_map))) {
+                if (typeof shard !== 'string' || path.basename(shard) !== shard || shard.includes('\\') || !MODEL_WEIGHT.test(shard)) throw new Error('Invalid model shard path.');
+                const info = await fs.lstat(path.join(directory, shard));
+                if (!info.isFile() || info.isSymbolicLink() || !info.size) throw new Error('Missing or linked model shard.');
+              }
+            }
             size += (await fs.stat(filename)).size;
             if (size > 32 * 1024 ** 3 || artifacts.length >= 128) throw new Error('Training delivery exceeds 32 GiB or 128 files.');
             const ext = path.extname(filename).slice(1).toLowerCase();

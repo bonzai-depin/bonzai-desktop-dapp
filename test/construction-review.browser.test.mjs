@@ -4,7 +4,7 @@ import {chromium} from 'playwright';
 const url=process.env.BONZAI_UI_URL;
 // Real GPU frames with simulated local model responses test orchestration,
 // persistence and conservative status handling, not aesthetic model capability.
-test('manual refinements review three real views, correct once and persist the reviewed source',{skip:!url,timeout:120000},async()=>{
+test('local visual suggestions are saved but an unqualified judge cannot rewrite or certify the asset',{skip:!url,timeout:120000},async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true});
  try{
   const page=await browser.newPage({viewport:{width:1280,height:900}});
@@ -34,12 +34,20 @@ test('manual refinements review three real views, correct once and persist the r
    return{calls:window.visionCalls.map(call=>({local:call.auto_download===false,prompt:call.prompt})),chatCalls:window.chatCalls.length,
     status:vm.lastStatus,record:{code:record.code,screenshots:record.screenshots.length,review:record.fidelityReview,quality:record.qualityStatus,prompt:record.prompt}};
   });
-  assert.equal(result.calls.length,6,JSON.stringify(result.record.review));assert.equal(result.chatCalls,2);
+  assert.equal(result.calls.length,3,JSON.stringify(result.record.review));assert.equal(result.chatCalls,1);
   assert.ok(result.calls.every(call=>call.local&&call.prompt.includes('A finished metal instrument')));
   assert.match(result.calls[0].prompt,/Overall construction/);assert.match(result.calls[1].prompt,/Reverse construction/);assert.match(result.calls[2].prompt,/Surface and joint detail/);
-  assert.equal(result.record.screenshots,4);assert.match(result.record.code,/0x888888/);
-  assert.equal(result.record.quality,'reviewed');assert.equal(result.record.review.views.length,3);
+  assert.equal(result.record.screenshots,4);assert.match(result.record.code,/0x777777/);
+  assert.equal(result.record.quality,'needs-refinement');assert.equal(result.record.review.views.length,3);
+  assert.equal(result.record.review.assurance,'advisory');
   assert.match(result.record.prompt,/Improve the finish/);
+  const affirmative=await page.evaluate(async()=>{
+    window.electronAPI.analyzeLocalImage=async()=>JSON.stringify({score:.95,silhouette:.95,proportions:.95,materials:.95,criticalDetails:.95,verdict:'pass',defects:[]});
+    window.vm.refinePrompt='Keep the silhouette';await window.vm.onRefine();
+    const record=window.vm.objectInferences.at(-1);
+    return {status:record.qualityStatus,verified:record.visionVerified};
+  });
+  assert.deepEqual(affirmative,{status:'ai-reviewed',verified:false});
   const unavailable=await page.evaluate(async()=>{
     let count=0;window.electronAPI.analyzeLocalImage=async()=>{
       count++;return count===3?'invalid review':JSON.stringify({score:.9,silhouette:.9,proportions:.9,materials:.9,criticalDetails:.9,verdict:'pass',defects:[]});

@@ -160,6 +160,11 @@ function _warnOnce(err) {
  */
 export function loadCompanions() {
   return _withCompanionStorage(async () => {
+    return _loadCompanions();
+  });
+}
+
+async function _loadCompanions() {
     const api = _api()?.companions;
     const pending = await _pendingLocalRoster();
     if (pending) {
@@ -184,7 +189,6 @@ export function loadCompanions() {
       } catch (err) { _warnOnce(err); }
     }
     return _restoreLaunches(await _legacyCompanions());
-  });
 }
 
 /**
@@ -582,6 +586,7 @@ function _sessionRowToLegacyShape(sess, messages, ctx = {}) {
   const legacySettings = ctx.legacy?.settings || {};
   const settings = {
     ...legacySettings,
+    journeyTrackId: idParts[4] || legacySettings.journeyTrackId || undefined,
     contentLevel: keyContentLevel
       ?? sess.contentLevel
       ?? legacySettings.contentLevel

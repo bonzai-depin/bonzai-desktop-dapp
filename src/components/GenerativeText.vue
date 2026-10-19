@@ -32,12 +32,12 @@
 
         <!-- HEADER — model name + toolset (clear / import / export) -->
         <template #header>
-          <div class="bz-text-chat__head">
+          <div class="bz-text-chat__head bz-page-header">
             <div class="bz-text-chat__head-left">
-              <span class="bz-eyebrow">Chat</span>
-              <h1 class="bz-h1 fira-sans-condensed-black-italic">
-                {{ chatHeaderTitle }}
+              <h1 class="bz-h1 fira-sans-condensed-black-italic"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">chat_bubble</span>
+                Chat
               </h1>
+              <span class="bz-text-chat__model">{{ chatHeaderTitle }}</span>
             </div>
             <div class="bz-text-chat__head-actions">
               <button

@@ -12,12 +12,13 @@ const ROUTER_ABI = [
   'function getRoute(bytes32 assetId) view returns (address publisher,string metadataURI,bool active,uint256 createdAt,uint256 totalReceived,tuple(address wallet,uint16 baseBps,uint16 contributionScore,string role)[] recipients)',
 ]
 
-const MODEL_TOKEN_ABI = [
-  'function creator() view returns (address)',
-]
-const HOOK_ABI = [
-  'function getPoolConfig(bytes32 poolId) view returns (address beneficiary,address companionOwner,uint8 poolType,uint8 mintPoolIndex,bool active)',
-]
+const MODEL_VAULT_ABI = [
+    'function factory() view returns(address)',
+    'function positions(uint256) view returns(address currency0,address currency1,address beneficiary,address agentCollection,uint256 agentId,bool registered)',
+    'function setCreatorRecipients(uint256,address[],uint16[])',
+    'function getCreatorRecipients(uint256) view returns(tuple(address wallet,uint16 bps)[])',
+
+];
 const CURRENCY_ABI = ['function decimals() view returns(uint8)', 'function symbol() view returns(string)']
 
 function config() {
@@ -126,29 +127,32 @@ async function registerRoute({ assetId, metadataURI, participants, fallbackWalle
 }
 
 async function registerModelRevenueRoute(model, provenance = {}, assetIdOverride = null) {
-  const revenuePlan = provenance?.attribution?.revenuePlan || {}
-  const tokenAddress = model?.fineTuneToken?.tokenAddress
-  const poolId = assetIdOverride || model?.fineTuneToken?.poolId
-  if (!ethers.isAddress(tokenAddress) || tokenAddress === ethers.ZeroAddress || !ethers.isHexString(poolId, 32) || poolId === ethers.ZeroHash) {
-    throw new Error('Launch the model token before registering its pool revenue route.')
+  const tokenAddress=model?.fineTuneToken?.tokenAddress;
+  const factoryAddress=CONFIG.fineTuneTokenFactory?.contractAddress;
+  if(!ethers.isAddress(tokenAddress)||!ethers.isAddress(factoryAddress))throw new Error('Launch the model token before assigning trading-fee recipients.');
+  const network=networkKeyForChain(CONFIG.fineTuneTokenFactory.chainId);
+  await web3Service.switchNetwork(network);
+  const signer=await (await web3Service.getBrowserProvider()).getSigner();
+  const factory=new ethers.Contract(factoryAddress,['function liquidityVault() view returns(address)','function liquidityPosition(address) view returns(uint256)'],signer);
+  const [address,id]=await Promise.all([factory.liquidityVault(),factory.liquidityPosition(tokenAddress)]);
+  if(address===ethers.ZeroAddress||id===0n)throw new Error('Model has no registered liquidity vault.');
+  const vault=new ethers.Contract(address,MODEL_VAULT_ABI,signer);
+  const position=await vault.positions(id);
+  if((await vault.factory()).toLowerCase()!==factoryAddress.toLowerCase() || !position.registered || position.currency1.toLowerCase()!==tokenAddress.toLowerCase())throw new Error('Model liquidity identity mismatch.');
+  if((await signer.getAddress()).toLowerCase()!==position.beneficiary.toLowerCase())throw new Error('Only the original model token creator can set its trading-fee recipients.');
+  const participants=normalizeRouteParticipants(provenance?.attribution?.revenuePlan?.participants||[],position.beneficiary).filter(p=>p.bps>0);
+  const result = {success:true,assetId:assetIdOverride||model.fineTuneToken.poolId,vaultAddress:address,positionId:id.toString(),kind:'liquidity-vault',participants};
+  const existing = await vault.getCreatorRecipients(id);
+  if (existing.length) {
+    const matches = existing.length === participants.length && existing.every((entry, index) =>
+      entry.wallet.toLowerCase() === participants[index].wallet.toLowerCase() && Number(entry.bps) === participants[index].bps);
+    if (!matches) throw new Error('Trading-fee recipients are already permanently assigned to a different plan.');
+    // Recover local state after a confirmed transaction whose response was lost.
+    return {...result, alreadyConfigured:true};
   }
-  const network = networkKeyForChain(config().chainId)
-  const hookAddress = CONFIG.uniswap?.[network]?.feeHook
-  if (!ethers.isAddress(hookAddress) || hookAddress === ethers.ZeroAddress) throw new Error('Model fee hook is not configured.')
-  const provider = await web3Service.getProvider(network)
-  const token = new ethers.Contract(tokenAddress, MODEL_TOKEN_ABI, provider)
-  const hook = new ethers.Contract(hookAddress, HOOK_ABI, provider)
-  const [creator, pool] = await Promise.all([token.creator(), hook.getPoolConfig(poolId)])
-  if (!pool.active || pool.poolType !== 1n || creator === ethers.ZeroAddress || pool.beneficiary.toLowerCase() !== creator.toLowerCase()) {
-    throw new Error('The active model pool does not match the token creator.')
-  }
-  return registerRoute({
-    assetId: poolId,
-    metadataURI: model?.modelRegistry?.metadataURI || model?.nft?.metadataUrl || model?.nft?.contentUrl || `bonzai-model://${model?.id || Date.now()}`,
-    participants: revenuePlan.participants || [],
-    fallbackWallet: creator,
-    expectedPublisher: creator,
-  })
+  const tx=await vault.setCreatorRecipients(id,participants.map(p=>p.wallet),participants.map(p=>p.bps));
+  const receipt=await tx.wait();
+  return {...result,txHash:receipt.hash};
 }
 
 async function getRoute(assetId) {
@@ -238,6 +242,7 @@ export async function claimTokenRoyalties(assetId, currency, { expectedWallet = 
 
 export const bonzaiRevenueRouterService = {
   isConfigured,
+  isModelFeeConfigured: () => Boolean(CONFIG.fineTuneTokenFactory?.contractAddress),
   registerRoute,
   registerModelRevenueRoute,
   getRoute,

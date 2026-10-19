@@ -87,7 +87,7 @@ const defaultContracts = [
   'BonzaiCollectibles.sol', 'BonzaiCollectiblesFactory.sol', 'BonzaiProviderRegistry.sol', 'BonzaiUnlock.sol',
   'CompanionToken.sol', 'CompanionTokenFactory.sol', 'BonzaiMintPool.sol',
   'BonzaiRoyaltySplitter.sol', 'BonzaiUniswapHook.sol', 'FineTuneTokenFactory.sol',
-  'BonzaiJobEscrow.sol', 'BonzaiBasketRewards.sol', 'BonzaiStakingVault.sol', 'BonzaiRevenueRouter.sol',
+  'BonzaiLiquidityVault.sol', 'GameTokenFactory.sol', 'BonzaiJobEscrow.sol', 'BonzaiBasketRewards.sol', 'BonzaiStakingVault.sol', 'BonzaiRevenueRouter.sol',
 ];
 // Optional source names allow deterministic scoped regeneration during parallel work.
 const requestedContracts = process.argv.slice(2);

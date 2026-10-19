@@ -40,6 +40,7 @@ import { assemble } from './gen3d/parametricAssembly.js';
 import { constructionHelpers } from './gen3d/constructionHelpers.js';
 import { productionGeometry } from './gen3d/productionGeometry.js';
 import { inspectScene, qualityViews } from './gen3d/sceneInspection.js';
+import { inspectGameSession } from './gen3d/gameRuntime.js';
 import { prepareGeneratedSurfaces, fitDirectionalShadow, fitLevelOrbit } from './gen3d/renderQuality.js';
 import { levelEditingHelpers, seededLevelMath, sceneSourceSeed } from './gen3d/levelEditing.js';
 import { generatedThreeAPI, awaitSceneConstruction } from './gen3d/runtimeRecovery.js';
@@ -379,6 +380,7 @@ export default {
     enablePhysics: { type: Boolean, default: true },
     initialTimeOfDay: { type: String, default: "day" },
     initialWeather: { type: String, default: "sunny" },
+    inferencePending: { type: Boolean, default: false },
   },
   data() {
     return {
@@ -814,6 +816,8 @@ export default {
         console.warn("HDR Environment failed:", e);
       }
       const controls = new OrbitControls(camera, renderer.domElement);
+      controls.addEventListener('start', () => { this._orbitInteracting = true; });
+      controls.addEventListener('end', () => { this._orbitInteracting = false; });
       controls.enableDamping = true;
       controls.dampingFactor = 0.07;
       controls.minDistance = 1.0;
@@ -5120,6 +5124,7 @@ export default {
       this.setHeightFog({ enabled: false });
     },
     startRenderLoop() {
+      let sinceRender = 0;
       const loop = () => {
         if (this._celestialBody && this._lights.sun) {
           const sunWorldPos = new THREE.Vector3();
@@ -5303,8 +5308,16 @@ export default {
         this._restoreViewerAtmosphere();
         const clearPreset = this._presets[this.currentTimeOfDay] || this._presets.day;
         if (this.renderer && clearPreset) this.renderer.setClearColor(clearPreset.skyMid ?? clearPreset.skyTop, 1);
-        this._renderScene();
-        this.updateStats(dt);
+        sinceRender += dt;
+        // Share the GPU with local inference. Simulation/input still update on
+        // every tick; captures render directly at full quality. Never throttle
+        // a running game or the user-controlled level walkthrough.
+        const limitPreview = this.inferencePending && !this._orbitInteracting && this._activeEngine?.GAME?.active?.phase !== 'running' && this.navigationMode === 'orbit';
+        if (!limitPreview || sinceRender >= 1 / 8) {
+          this._renderScene();
+          this.updateStats(sinceRender);
+          sinceRender = 0;
+        }
         this._animationId = requestAnimationFrame(loop);
       };
       loop();
@@ -5457,12 +5470,17 @@ export default {
     },
     captureQualityViews() {
       const root = this.scene?.getObjectByName('GeneratedObject');
-      if (!root || !this.camera) return [];
+      if (!root || !this.camera || !this.renderer) return [];
       const saved = { position:this.camera.position.clone(), quaternion:this.camera.quaternion.clone(),
-        target:this.controls?.target.clone(), enabled:this.controls?.enabled, near:this.camera.near, far:this.camera.far };
+        target:this.controls?.target.clone(), enabled:this.controls?.enabled, near:this.camera.near, far:this.camera.far,
+        aspect:this.camera.aspect, size:this.renderer.getSize(new THREE.Vector2()) };
       try {
         if(this.controls)this.controls.enabled=false;
-        return qualityViews(root, this.camera.fov, this.camera.aspect).map(view => {
+        // A wide application viewport used to shrink inspection to 768x279.
+        // Render square views so joints stay legible without larger image tokens.
+        this.renderer.setSize(768,768,false);this.composer?.setSize(768,768);
+        this.camera.aspect=1;
+        return qualityViews(root, this.camera.fov, 1).map(view => {
           this.camera.position.copy(view.position);
           this.camera.near = Math.max(.001, view.distance / 1000);
           this.camera.far = Math.max(saved.far, view.distance * 20);
@@ -5473,7 +5491,8 @@ export default {
         }).filter(Boolean);
       } finally {
         this.camera.position.copy(saved.position);this.camera.quaternion.copy(saved.quaternion);
-        this.camera.near=saved.near;this.camera.far=saved.far;
+        this.camera.near=saved.near;this.camera.far=saved.far;this.camera.aspect=saved.aspect;
+        this.renderer.setSize(saved.size.x,saved.size.y,false);this.composer?.setSize(saved.size.x,saved.size.y);
         if(saved.target){this.controls.target.copy(saved.target);this.controls.enabled=saved.enabled;}
         this.camera.updateProjectionMatrix();this.camera.updateMatrixWorld(true);
         this._renderScene();
@@ -6045,6 +6064,10 @@ export default {
           if(options.kind === 'level' || options.kind === 'scene') result.userData.worldScale=true;
           const construction = inspectScene(result);
           if (construction.errors.length) throw new Error(construction.errors.join("; "));
+          if (options.kind === 'game') {
+            const gameplay = inspectGameSession(_engine.GAME?.active, result);
+            if (gameplay.errors.length) throw new Error(gameplay.errors.join('; '));
+          }
           this.autoEnhanceObject(result, THREE);
           // An empty vessel is valid; only explicit fluid tags opt into normalization.
 

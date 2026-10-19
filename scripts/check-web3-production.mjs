@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './load-protocol-config.mjs';
 import { pathToFileURL } from 'node:url';
 import { ethers } from 'ethers';
 import { CONFIG } from '../src/config/web3.config.js';
@@ -9,7 +10,7 @@ export const requiredContracts = [
   'MINT_POOL', 'ROYALTY_SPLITTER', 'FINE_TUNE_TOKEN_FACTORY', 'COMPANIONS',
   'COMPANION_TOKEN_FACTORY', 'PROVIDER_REGISTRY', 'SERVICE_TIME', 'STAKING_VAULT',
   'REVENUE_ROUTER', 'CONTRIBUTION_REGISTRY', 'DATASET_REGISTRY', 'MODEL_REGISTRY',
-  'EVALUATION_REGISTRY', 'CONTRIBUTION_SCORE_ORACLE', 'UNISWAP_HOOK',
+  'EVALUATION_REGISTRY', 'CONTRIBUTION_SCORE_ORACLE',
   'GAME_REGISTRY', 'GAME_TOKEN_FACTORY', 'BASKET_REWARDS', 'JOB_ESCROW',
   'SMART_AGENTS', 'AGENT_TOKEN_FACTORY', 'NVDA_SWAP', 'NVDA',
 ];
@@ -37,8 +38,6 @@ export function productionConfiguration(env = process.env) {
   for (const [suffix, field] of Object.entries(uniswapFields)) {
     add(`UNISWAP_V4_${suffix}`, env[`VITE_UNISWAP_V4_${suffix}_${key}`] || env[`VITE_UNISWAP_V4_${suffix}`] || CONFIG.uniswap[networkKey]?.[field], `VITE_UNISWAP_V4_${suffix}`);
   }
-  const hook = addresses.get('UNISWAP_HOOK');
-  if (hook && (BigInt(hook) & 0x3fffn) !== 0x44n) failures.push('UNISWAP_HOOK address must encode afterSwap + afterSwapReturnDelta (0x0044)');
   try {
     const map = JSON.parse(env.VITE_BONZAI_SKILL_ID_MAP_JSON || '{}');
     if (!map || Array.isArray(map) || typeof map !== 'object' || !Object.keys(map).length) throw new Error('expected a nonempty object');
@@ -80,7 +79,6 @@ export const wiringChecks = [
   ['MINT_POOL', 'royaltySplitter', 'ROYALTY_SPLITTER'],
   ['MINT_POOL', 'collectiblesFactory', 'COLLECTIBLES_FACTORY'],
   ['MINT_POOL', 'companionContract', 'COMPANIONS'],
-  ['MINT_POOL', 'feeHook', 'UNISWAP_HOOK'],
   ['MINT_POOL', 'serviceTimeContract', 'SERVICE_TIME'],
   ['ROYALTY_SPLITTER', 'mintPool', 'MINT_POOL'],
   ['SERVICE_TIME', 'bonzaiToken', 'TOKEN'],
@@ -96,12 +94,9 @@ export const wiringChecks = [
   ['SKILL_OWNERSHIP', 'companionNFT', 'COMPANIONS'],
   ['SKILL_OWNERSHIP', 'companionTokenFactory', 'COMPANION_TOKEN_FACTORY'],
   ['SKILL_OWNERSHIP', 'bonzaiToken', 'TOKEN'],
-  ['UNISWAP_HOOK', 'poolManager', 'UNISWAP_V4_POOL_MANAGER'],
-  ['UNISWAP_HOOK', 'mintPool', 'MINT_POOL'],
-  ['UNISWAP_HOOK', 'revenueRouter', 'REVENUE_ROUTER'],
-  ...['COMPANION_TOKEN_FACTORY', 'FINE_TUNE_TOKEN_FACTORY'].flatMap(name => [
+  ...['COMPANION_TOKEN_FACTORY', 'FINE_TUNE_TOKEN_FACTORY', 'GAME_TOKEN_FACTORY'].flatMap(name => [
     [name, 'poolManager', 'UNISWAP_V4_POOL_MANAGER'], [name, 'positionManager', 'UNISWAP_V4_POSITION_MANAGER'],
-    [name, 'permit2', 'UNISWAP_V4_PERMIT2'], [name, 'feeHook', 'UNISWAP_HOOK'],
+    [name, 'permit2', 'UNISWAP_V4_PERMIT2'],
   ]),
 ];
 
@@ -188,12 +183,27 @@ export async function verifyProduction(config, { provider, offline = false } = {
     if (deployed.has('STAKING_VAULT') && config.addresses.has('CONTRIBUTION_SCORE_ORACLE')) await check('score attestor authorization', async () => {
       if (!await read('STAKING_VAULT', 'function scoreAttestors(address) view returns(bool)', 'scoreAttestors', [config.addresses.get('CONTRIBUTION_SCORE_ORACLE')])) failures.push('Contribution score oracle is not authorized by the staking vault');
     });
-    for (const factory of ['COMPANION_TOKEN_FACTORY', 'FINE_TUNE_TOKEN_FACTORY']) {
-      if (!deployed.has('UNISWAP_HOOK') || !config.addresses.has(factory)) continue;
-      await check(`${factory} hook authorization`, async () => {
-        if (!await read('UNISWAP_HOOK', 'function authorizedFactories(address) view returns(bool)', 'authorizedFactories', [config.addresses.get(factory)])) failures.push(`${factory} cannot register hook pools`);
+    for (const name of ['AGENT_TOKEN_FACTORY','COMPANION_TOKEN_FACTORY','FINE_TUNE_TOKEN_FACTORY','GAME_TOKEN_FACTORY']) {
+      if(!deployed.has(name)) continue;
+      await check(`${name} immutable liquidity vault`,async()=>{
+        const factory=config.addresses.get(name);
+        const address=await read(name,'function liquidityVault() view returns(address)','liquidityVault');
+        if(address===ethers.ZeroAddress || await provider.getCode(address)==='0x') throw new Error('Vault not deployed');
+        const vault=new ethers.Contract(address,[
+          'function factory() view returns(address)','function positionManager() view returns(address)',
+          'function treasury() view returns(address)','function rewardPool() view returns(address)',
+          'function TRADING_FEE() view returns(uint24)',
+        ],provider);
+        if((await vault.factory()).toLowerCase()!==factory.toLowerCase())throw new Error('Wrong factory binding');
+        if((await vault.positionManager()).toLowerCase()!==config.addresses.get('UNISWAP_V4_POSITION_MANAGER')?.toLowerCase())throw new Error('Wrong position manager');
+        if((await vault.rewardPool()).toLowerCase()!==config.addresses.get('BASKET_REWARDS')?.toLowerCase())throw new Error('Wrong reward pool');
+        const treasury=await read('REVENUE_ROUTER','function treasury() view returns(address)','treasury');
+        if((await vault.treasury()).toLowerCase()!==treasury.toLowerCase())throw new Error('Wrong treasury');
+        if(await vault.TRADING_FEE()!==10000n)throw new Error('Trading fee must be 1%');
+        if(!await read('BASKET_REWARDS','function liquidityFactoryEnabled(address) view returns(bool)','liquidityFactoryEnabled',[factory]))throw new Error('Factory not admitted by reward basket');
       });
     }
+
   } catch (error) { failures.push(`RPC verification failed: ${error.shortMessage || error.message}`); }
   finally { if (ownsProvider) provider.destroy(); }
   return { ...config, failures, offline: false, deployedContractsVerified };

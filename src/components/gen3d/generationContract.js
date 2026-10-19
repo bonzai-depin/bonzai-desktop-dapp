@@ -3,32 +3,8 @@ import { materialContext, materialFamilies } from './materialCatalogue.js';
 import { constructionRecipes } from './constructionRecipes.js';
 import { parse } from "acorn";
 
-/** Bounded, subject-routed context for local code models. Shared by generation and repair. */
-export function selectThreeReferences(brief, files, maxChars = 14000) {
-  const topics = ['geometry', 'materials'];
-  const rules = [
-    ['textures', /wood|stone|fabric|leather|marble|brick|rust|surface|texture/i],
-    ['animation', /water|fountain|flow|move|spin|animate|clock|machine|game|character/i],
-    ['shaders', /shader|water|glass|fire|lava|hologram|portal|magic|iridescen/i],
-    ['interaction', /game|interactive|click|pick|control/i],
-    ['lighting', /light|lamp|night|emissive|interior/i],
-    ['postprocessing', /cinematic|bloom|glow|magic|fog|depth.of.field/i],
-  ];
-  for (const [topic, pattern] of rules) if (pattern.test(brief)) topics.push(topic);
-  let remaining = maxChars;
-  return topics.map(topic => {
-    const entry = Object.entries(files).find(([path]) => path.includes(`threejs-${topic}/`));
-    if (!entry || remaining <= 0) return '';
-    // Only complete sections: never inject half a GLSL or JS example.
-    const sections = entry[1].split(/(?=^## )/m);
-    let result = '';
-    for (const section of sections) {
-      if (section.length > remaining) continue;
-      result += section; remaining -= section.length;
-    }
-    return result;
-  }).filter(Boolean).join('\n\n');
-}
+/** Bounded subject-specific API references, shared by generation and repair. */
+export { focusedThreeReferences as selectThreeReferences } from './threeReferences.js';
 
 export const SCENE_CONTRACT = `
 RUNTIME: THREE, root (Group), H, MAT, TEX, SHADER, FLUID, FX, CELESTIAL, P, GAME,
@@ -62,7 +38,7 @@ MAT.surface(kind,{color,roughness,metalness,repeat:[u,v],relief,seed}) returns a
 - H.framedPanels({radius,height,sides=6,rail=.02,clearance=.002,thickness=.004,y=height/2,glassMaterial,frameMaterial}) returns an OPEN polygonal chamber with frame and glazing groups. Glass dimensions derive from clear rail openings. No solid housing inside. Rename returned groups/panels to planned IDs. Glass does not cast an opaque shadow.
 - H.radialPanels({radius,height,sides=6,thickness=.004,y=height/2,material,gap=0}) returns a Group of outward-facing glass panels; radius is the polygon apothem. Assign the assembly ID to the returned Group.
 - H.strutBetween([x,y,z],[x,y,z],radius,material,segments=16) returns a cylinder aligned between exact endpoints.
-- H.latheProfile([[radius,height],...],segments=64) returns LatheGeometry; trace outside AND inside profiles for hollow vessels, with an explicit rim and bottom thickness.
+- H.latheProfile([[radius,height],...],segments=64) returns LatheGeometry; radius must be non-negative, height is vertical. This is a radial cross-section, NOT points around an XY polygon. Trace outside AND inside profiles for hollow vessels, with an explicit rim and bottom thickness. THREE.Vector2(radius,height) points are also accepted.
 - H.bevelPanel([[x,y],...],{depth:.1,bevel:.01,holes:[[[x,y],...]],segments:3}) returns an XY panel extruded along +Z, with real cutouts. Use openings for doors, windows and frames, not dark rectangles pasted onto solid walls.
 - H.worldUV(geometry,tileSize=1) returns a new geometry with baked metre-based UVs. Use for architectural modules of different sizes; use MAT.surface repeat:[1,1], tileSize matching this value. Texture coordinates survive GLB export. Reuse returned geometry for instances.
 - MAT.surface also accepts tileSize (physical metres per tile) and resolution (128/256/512/1024, default512). Matched normal/color/roughness maps reveal material at close range. Relief is physical, not a substitute for silhouette geometry.
@@ -78,13 +54,13 @@ FX.batch(meshes,{material}) batches static geometry sharing one material. await 
 // Subject guidance selects techniques, not fixed meshes or canned compositions.
 export function subjectTechniqueGuide(brief) {
   const guides = [];
-  if (/water|fountain|liquid|pool|ocean|river|lake|waterfall|basin/i.test(brief)) guides.push(WATER_TECHNIQUES);
-  if (/creature|animal|character|human|dragon|tree|plant|flower|organic|foliage/i.test(brief)) guides.push('ORGANIC FORMS: Use coherent anatomy or branching hierarchy, tapered custom surfaces, curved forms and smooth normals. Instance foliage/scales where suitable. Preserve pose, joint connections and recognizable silhouette; avoid assemblies of unrelated spheres. Animate hierarchically when requested.');
-  if (/vehicle|robot|machine|engine|mechanic|clock|tool|device|spaceship/i.test(brief)) guides.push('MECHANICAL FORMS: Use nested assemblies, shaped housings, bevelled panels, fasteners, aligned axles and plausible articulation. Make each moving part follow its physical pivot. Instance repetition and distinguish functional materials.');
-  if (/building|house|castle|temple|architecture|room|interior|city|level|landscape|terrain/i.test(brief)) guides.push('ENVIRONMENTS: Establish overall massing, navigable space, landmarks and scale before detail. Use modular construction, openings with real thickness, instancing, coherent terrain topology and layered sightlines. Keep architectural styles and environmental choices faithful to the brief.');
-  if (/cloth|fabric|dress|garment|cushion|sofa|chair|furniture/i.test(brief)) guides.push('FURNITURE / SOFT SURFACES: Model support structure, upholstery volume, seams, folds and joinery at appropriate scales. Use surface curvature and roughness variation; a patterned primitive alone is not a finished asset.');
-  if (/abstract|sculpture|portal|magic|fantasy|cosmic|hologra/i.test(brief)) guides.push('EXPRESSIVE FORMS: Develop an intentional composition and distinct spatial hierarchy. Custom shaders, emissive materials, particles and motion should reinforce the requested concept without obscuring the geometry.');
-  if (/lantern|lamp|light fixture|luminaire|flashlight|torch/i.test(brief)) guides.push('LIGHT FIXTURES: The emitting chamber must be EMPTY around the light source, not a solid opaque CylinderGeometry with glass pasted over it. Build separate base, cap and open rails; H.framedPanels derives inset glazing and frames together. Keep reflectors behind/below the emitter, not as an opaque tube enclosing it. Pair a visible emissive surface with a nearby PointLight/SpotLight, inverse-square falloff and restrained intensity. The emitter must be visible through at least one real opening. Glass should not cast an opaque shadow in the shadow-map renderer; opaque rails can. No flare or bloom can replace unobstructed construction.');
+  if (/water|fountain|liquid|pool|ocean|river|lake|waterfall|basin|fontaine|liquide|piscine|rivière|cascade|bassin/i.test(brief)) guides.push(WATER_TECHNIQUES);
+  if (/creature|animal|character|human|dragon|tree|plant|flower|organic|foliage|personnage|arbre|fleur|végétal|feuillage/i.test(brief)) guides.push('ORGANIC FORMS: Use coherent anatomy or branching hierarchy, tapered custom surfaces, curved forms and smooth normals. Instance foliage/scales where suitable. Preserve pose, joint connections and recognizable silhouette; avoid assemblies of unrelated spheres. Animate hierarchically when requested.');
+  if (/vehicle|robot|machine|engine|mechanic|clock|tool|device|spaceship|véhicule|moteur|mécanique|horloge|outil|appareil|vaisseau/i.test(brief)) guides.push('MECHANICAL FORMS: Use nested assemblies, shaped housings, bevelled panels, fasteners, aligned axles and plausible articulation. Make each moving part follow its physical pivot. Instance repetition and distinguish functional materials.');
+  if (/building|house|castle|temple|architecture|room|interior|city|level|landscape|terrain|bâtiment|maison|château|pièce|intérieur|ville|niveau|paysage|atelier|cour/i.test(brief)) guides.push('ENVIRONMENTS: Establish overall massing, navigable space, landmarks and scale before detail. Use modular construction, openings with real thickness, instancing, coherent terrain topology and layered sightlines. Keep architectural styles and environmental choices faithful to the brief.');
+  if (/cloth|fabric|dress|garment|cushion|sofa|chair|furniture|tissu|robe|vêtement|coussin|canapé|chaise|fauteuil|meuble/i.test(brief)) guides.push('FURNITURE / SOFT SURFACES: Model support structure, upholstery volume, seams, folds and joinery at appropriate scales. Use surface curvature and roughness variation; a patterned primitive alone is not a finished asset.');
+  if (/abstract|sculpture|portal|magic|fantasy|cosmic|hologra|abstrait|portail|magie|fantastique|cosmique/i.test(brief)) guides.push('EXPRESSIVE FORMS: Develop an intentional composition and distinct spatial hierarchy. Custom shaders, emissive materials, particles and motion should reinforce the requested concept without obscuring the geometry.');
+  if (/lantern|lamp|light fixture|luminaire|flashlight|torch|lanterne|torche/i.test(brief)) guides.push('LIGHT FIXTURES: The emitting chamber must be EMPTY around the light source, not a solid opaque CylinderGeometry with glass pasted over it. Build separate base, cap and open rails; H.framedPanels derives inset glazing and frames together. Keep reflectors behind/below the emitter, not as an opaque tube enclosing it. Pair a visible emissive surface with a nearby PointLight/SpotLight, inverse-square falloff and restrained intensity. The emitter must be visible through at least one real opening. Glass should not cast an opaque shadow in the shadow-map renderer; opaque rails can. No flare or bloom can replace unobstructed construction.');
   return guides.join('\n\n');
 }
 
@@ -100,7 +76,19 @@ export function buildSceneRevision({ code, instruction, references = '', mode = 
 }
 
 export function buildSceneRepair({ code, error, brief = '', mode = 'object' }) {
-  return `Repair this failed Three.js asset with minimal exact text edits. Return ONLY JSON of the form {"edits":[{"old":"exact unique existing code","new":"replacement code"}]}. At most 8 edits. Do not return a rewritten scene. Preserve geometry and intent. Match whitespace in old exactly.\nBRIEF: ${brief}\nFAILURE: ${error}\n${sceneContract(mode).replace("These names are already declared. Output only the JavaScript body, starting with setObjectInfo().", "These names are already declared by the host.")}\n${constructionHelperContext(brief,mode)}\nCODE:\n${code}\nReturn JSON edits only.`;
+  return `Repair this failed Three.js asset with minimal exact text edits. Return ONLY JSON of the form {"edits":[{"old":"exact unique existing code","new":"replacement code"}]}. At most 8 edits. Do not return a rewritten scene. Preserve geometry and intent. Match whitespace in old exactly.\nBRIEF: ${brief}\nFAILURE: ${error}\n${repairContract(mode)}\n${constructionHelperContext(brief + ' ' + error,mode)}\nCODE:\n${code}\nReturn JSON edits only.`;
+}
+
+// Repairs already contain the complete scene. Repeating the entire generation
+// guide adds costly prefill without helping a local API/construction correction.
+function repairContract(mode) {
+  return `RUNTIME: THREE, root, H, MAT, TEX, SHADER, FLUID, FX, CELESTIAL, P, GAME and addUpdateCallback are injected. Do not redeclare them, import, access DOM, fetch assets, create a renderer/camera/scene or start another render loop. Add geometry to root. Await material/construction loads; no detached async work.
+Preserve the original brief, named assemblies, unaffected geometry, materials, animation and gameplay. Keep coordinates finite, joints in contact, real openings, hollow interiors and physical material scale. Do not replace a failed detailed part with a primitive or remove it to bypass validation.
+GEOMETRY: H.latheProfile([[radius,height],...],segments=64) returns geometry; THREE.Vector2(radius,height) points are accepted. Radius must be non-negative; these are radial cross-sections, NOT XY polygon outlines. A vessel profile traces the outside, rim and inside wall. H.bevelPanel([[x,y],...],{depth,bevel,holes:[[[x,y],...]]}) returns geometry extruded along +Z. H.bevelBox(width,height,depth,radius,segments=3) returns centred rounded-box geometry. H.strutBetween([x,y,z],[x,y,z],radius,material) returns an aligned mesh. THREE.Shape.absellipse(cx,cy,rx,ry,startAngle,endAngle,clockwise,rotation=0) draws an ellipse; Shape.ellipseCurve does not exist. Preserve both radii when repairing an ellipse.
+H.framedPanels({radius,height,sides,rail,clearance,thickness,y,glassMaterial,frameMaterial}) returns an OPEN chamber with frame/glazing groups. Radius is the apothem; panes fit inside rail openings. y is the vertical CENTRE: bottom=y-height/2, top=y+height/2, not a bottom offset. To close a measured gap, adjust only that distance and preserve other joints; never move an entire chamber to the base's top coordinate. Share dimensions rather than independently sizing glass and frames. Transparent glass must not cast an opaque shadow. Pair visible emitters with a local light; keep the optical path open.
+MATERIALS: await MAT.scanned(kind,options) loads bundled PBR. MAT.surface(kind,{color,roughness,metalness,repeat:[u,v],relief,seed}) supplies matched color, bump/normal and roughness maps. H.worldUV(geometry,tileSize) returns geometry with physical-scale UVs. Share materials and clone presets before changes. Preserve the intended palette; no emission on non-luminous surfaces. Use setAO/setBloom/setColorGrade with option objects only when needed.
+${mode === 'level' || mode === 'game' ? 'WORLD: Use metres, preserve planned world dimensions and root.userData.worldScale=true. Maintain supporting ground, routes, connected architecture and foreground, midground and background. Offset/inset overlays to prevent z-fighting. Never normalize to object scale.' : 'OBJECT: Ground at y=0, longest dimension about 1.5 units.'}
+${mode === 'level' ? 'The viewer supplies exploration controls. Do not create a GAME session or input handlers.' : mode === 'game' ? 'GAME: Preserve player, solid colliders, controls, required objectives, start, win/defeat and restart. All required objectives must complete. Locked exits need a custom objective and a once:false trigger that emits its completion event only after prerequisites are complete; a reach objective completes on ANY entry. Reach objectives require trigger IDs; custom objectives require event names. Actor/player update callbacks take ({dt,time,state,input,actor,game}), not a numeric dt. Input actions are forward, backward, left, right, sprint and action. Set cameraOffset in game.player; game.camera and a global camera are unavailable. Register pickup triggers calling game.collect(actorId,1,tag). game.damage updates health and emits {actor,amount,source}; never decrement health twice. Keep game.start() after setup.' : ''}`;
 }
 
 export function applySceneEdits(code, response) {

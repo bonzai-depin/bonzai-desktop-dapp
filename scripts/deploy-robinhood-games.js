@@ -24,6 +24,14 @@ async function main() {
     throw new Error("BONZAI_COLLECTIBLES_FACTORY_ADDRESS is required");
   }
   if (await ethers.provider.getCode(collectiblesFactory) === '0x') throw new Error('Collectibles factory has no bytecode on the selected chain');
+  const manager=process.env.VITE_UNISWAP_V4_POOL_MANAGER, positions=process.env.VITE_UNISWAP_V4_POSITION_MANAGER, permits=process.env.VITE_UNISWAP_V4_PERMIT2;
+  const treasury=process.env.BONZAI_TREASURY_ADDRESS,rewards=process.env.BONZAI_BASKET_REWARDS_ADDRESS;
+  for(const [name,value] of Object.entries({manager,positions,permits,rewards})) {
+    if(!ethers.isAddress(value) || await ethers.provider.getCode(value)==='0x')throw new Error(`Missing deployed ${name}`);
+  }
+  if(!ethers.isAddress(treasury) || treasury===ethers.ZeroAddress)throw new Error('Missing treasury');
+  const basket=new ethers.Contract(rewards,['function owner() view returns(address)','function setLiquidityFactory(address,bool)'],deployer);
+  if((await basket.owner()).toLowerCase()!==deployer.address.toLowerCase())throw new Error('Deployer must own basket to admit the game vault');
   const Registry = await ethers.getContractFactory("BonzaiGameRegistry");
   const registry = await Registry.deploy(collectiblesFactory);
   await registry.waitForDeployment();
@@ -34,13 +42,16 @@ async function main() {
   await factory.waitForDeployment();
   const address = await factory.getAddress();
   const deployment = await factory.deploymentTransaction().wait();
+  await (await factory.configureLiquidity(manager,positions,permits,treasury,rewards)).wait();
+  await (await basket.setLiquidityFactory(address,true)).wait();
+  console.log(`Game liquidity vault: ${await factory.liquidityVault()}`);
 
   console.log(`GameTokenFactory: ${address}`);
   console.log(`BonzaiGameRegistry: ${registryAddress}`);
   console.log(`Transaction: ${deployment.hash}`);
   console.log(`VITE_BONZAI_GAME_TOKEN_FACTORY_${chainId === 4663 ? "ROBINHOOD" : "ROBINHOODTESTNET"}_ADDRESS=${address}`);
   console.log(`VITE_BONZAI_GAME_REGISTRY_${chainId === 4663 ? "ROBINHOOD" : "ROBINHOODTESTNET"}_ADDRESS=${registryAddress}`);
-  console.log("Liquidity was not created. Configure and verify a Robinhood-native venue separately.");
+  console.log("Game issuance atomically creates a 1% pool with permanently locked liquidity; creators explicitly fund the ETH side.");
 }
 
 main().catch((error) => {

@@ -12,12 +12,14 @@ test('markets discover all issued asset types, isolate feed failures and route t
     page.setDefaultTimeout(8000)
     const errors = [], external = [], origin = new URL(url).origin
     page.on('pageerror', error => errors.push(error.message))
-    await page.route('**/*', route => {
+    await page.route('**/*', async route => {
       const request = new URL(route.request().url())
       if (request.origin !== origin) { external.push(request.href); return route.abort() }
+      if (request.pathname === '/src/config/web3.config.js') { const response = await route.fetch(); return route.fulfill({response,body:(await response.text()) + `\nif(window.__marketConfig){for(const key of ['smartAgentIssuance','companionTokenFactory','fineTuneTokenFactory','gameTokenFactory'])CONFIG[key]=window.__marketConfig[key];}window.__marketConfig=CONFIG;`}) }
       for (const [name, fixtureKey, exported] of [['companionToken', 'companion', 'companionTokenService'], ['fineTuneToken', 'models', 'fineTuneTokenService']]) {
         if (request.pathname === `/src/services/${name}.service.js`) return route.fulfill({ contentType: 'application/javascript', body: `const service = { getAllTokenAddresses: (...args) => window.marketFixture.${fixtureKey}.getAllTokenAddresses(...args), getTokenInfo: (...args) => window.marketFixture.${fixtureKey}.getTokenInfo(...args), getTokenProfile: (...args) => window.marketFixture.${fixtureKey}.getTokenProfile(...args) }; export const ${exported} = service; export default service;` })
       }
+      if (request.pathname === '/src/services/liquidityVault.service.js') return route.fulfill({contentType:'application/javascript',body:`export async function getLiquidityVault(){return null};export async function transactLiquidityFees(){window.marketFixture.financialCalls++;throw new Error('No automatic fee transactions')}`})
       if (request.pathname === '/src/services/gameToken.service.js') return route.fulfill({ contentType: 'application/javascript', body: `export async function getAllGameTokenAddresses() { return window.marketFixture.empty ? [] : [window.marketFixture.address(4)] }; export async function getGameTokenInfo(address) { return { address, name: 'Neon Valley', symbol: 'NEON', kind: 'game' } };` })
       return route.continue()
     })
@@ -35,6 +37,8 @@ test('markets discover all issued asset types, isolate feed failures and route t
       const fixture = window.marketFixture
       fixture.companion = companion; fixture.models = models
       for (const key of ['companionTokenFactory', 'fineTuneTokenFactory', 'gameTokenFactory']) CONFIG[key].contractAddress = address(100)
+      CONFIG.smartAgentIssuance.factoryAddress = address(100)
+      CONFIG.companionTokenFactory.contractAddress = null // New issuance must not depend on the older companion factory.
       companion.getAllTokenAddresses = async ({ strict }) => { if (!strict) throw new Error('Must request explicit failure'); if (fixture.failed) throw new Error('Offline'); return fixture.empty ? [] : [address(1), address(5)] }
       companion.getTokenInfo = async address => fixture.metadataDown ? null : ({ address, name: address.endsWith('5') ? 'An extraordinarily long smart agent name used to verify responsive layouts' : 'Avalon', symbol: address.endsWith('5') ? 'LONGAGENTTOKEN' : 'AVA', decimals: 18, agentWallet: fixture.address(101) })
       models.getAllTokenAddresses = async () => fixture.empty ? [] : [address(2), address(3)]
@@ -124,7 +128,7 @@ test('markets discover all issued asset types, isolate feed failures and route t
     await page.getByRole('button', { name: 'Refresh', exact: true }).click()
     await page.getByRole('heading', { name: 'Created here. Discovered here.' }).waitFor()
     assert.match(await markets.innerText(), /Tokens issued through BonzAI appear here as they launch/)
-    await page.evaluate(async () => { const { CONFIG } = await import('/src/config/web3.config.js'); for (const key of ['companionTokenFactory', 'fineTuneTokenFactory', 'gameTokenFactory']) CONFIG[key].contractAddress = null })
+    await page.evaluate(async () => { const { CONFIG } = await import('/src/config/web3.config.js'); for (const key of ['companionTokenFactory', 'fineTuneTokenFactory', 'gameTokenFactory']) CONFIG[key].contractAddress = null; CONFIG.smartAgentIssuance.factoryAddress = null })
     await page.getByRole('button', { name: 'Refresh', exact: true }).click()
     await page.getByText(/Token listings will open when/).waitFor()
     assert.equal(await page.evaluate(() => window.marketFixture.financialCalls), 0)

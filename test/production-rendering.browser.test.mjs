@@ -97,18 +97,22 @@ test('production surfaces, bevels and fitted shadows work for objects and world-
     assert.equal(level.orbit, true); assert.ok(level.width > 20); assert.ok(level.depth > 10);
     assert.equal(level.shadowed, true); assert.ok(level.ambient < level.key*.1); assert.equal(level.environment,.65);
     await page.screenshot({ path: '/tmp/bonzai-production-level.png' });
-    const views=await page.evaluate(()=>{
+    const views=await page.evaluate(async()=>{
       const v=window.viewer;
-      const before={position:v.camera.position.toArray(),rotation:v.camera.quaternion.toArray(),target:v.controls.target.toArray(),enabled:v.controls.enabled,quality:v._renderQuality};
+      const {Vector2}=await import('/node_modules/.vite/deps/three.js');
+      const snapshot=()=>({position:v.camera.position.toArray(),rotation:v.camera.quaternion.toArray(),target:v.controls.target.toArray(),enabled:v.controls.enabled,quality:v._renderQuality,aspect:v.camera.aspect,size:v.renderer.getSize(new Vector2()).toArray()});
+      const before=snapshot();
       const map=v._lights.main.shadow.map;
       const shots=v.captureQualityViews();
-      const after={position:v.camera.position.toArray(),rotation:v.camera.quaternion.toArray(),target:v.controls.target.toArray(),enabled:v.controls.enabled,quality:v._renderQuality};
-      return {before,after,shots,mapPreserved:map===v._lights.main.shadow.map,audit:v.inspectConstruction(),ambient:v._sceneObjects.get('ambientParticles').visible};
+      const after=snapshot();
+      const dimensions=await Promise.all(shots.map(shot=>new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>resolve([image.naturalWidth,image.naturalHeight]);image.onerror=reject;image.src=shot.dataUrl;})));
+      return {before,after,shots,dimensions,mapPreserved:map===v._lights.main.shadow.map,audit:v.inspectConstruction(),ambient:v._sceneObjects.get('ambientParticles').visible};
     });
     assert.deepEqual(views.before,views.after,'inspection must not move the user camera or change controls/quality');
     assert.equal(views.mapPreserved,true,'same-sized shadow maps should not be reallocated for each capture');
     assert.equal(views.ambient,false);assert.deepEqual(views.audit.errors,[]);
     assert.equal(views.shots.length,3);assert.equal(new Set(views.shots.map(shot=>shot.dataUrl)).size,3);
+    assert.deepEqual(views.dimensions,[[768,768],[768,768],[768,768]],'quality review needs undistorted square captures regardless of the viewport');
     const {writeFile}=await import('node:fs/promises');
     for(let i=0;i<views.shots.length;i++)await writeFile(`/tmp/bonzai-inspection-${i}.jpg`,Buffer.from(views.shots[i].dataUrl.split(',')[1],'base64'));
     await page.evaluate(async()=>{

@@ -5,6 +5,15 @@ import { DEFAULT_LLM_ID, DEFAULT_LLM_TIER, DEFAULT_LLM_FILENAME, DEFAULT_3D_LLM_
 import { buildArgs } from '../src/services/llamaServer.manager.js';
 import { qwen38ContextPlan } from '../src/main/modelContext.js';
 
+test('an explicit non-speculative fallback overrides inherited MTP and external draft settings',()=>{
+ const model=resolveLLM(DEFAULT_3D_LLM_ID, DEFAULT_3D_LLM_TIER);
+ const args=buildArgs({...model,specType:'none',draftPath:'/models/draft.gguf',modelPath:'/models/model.gguf',port:8080,parallelSlots:2,mmprojPath:'/models/vision.gguf'});
+ assert.equal(args[args.indexOf('--spec-type')+1],'none');
+ assert.equal(args[args.indexOf('-np')+1],'2');
+ assert.ok(args.includes('--mmproj'));
+ assert.ok(!args.includes('--spec-draft-n-max'));assert.ok(!args.includes('-md'));
+});
+
 test('3D keeps its embedded-MTP LOW model independently of the chat default', () => {
   for (const [id, tier] of [[DEFAULT_3D_LLM_ID, DEFAULT_3D_LLM_TIER]]) {
     const model = resolveLLM(id, tier);

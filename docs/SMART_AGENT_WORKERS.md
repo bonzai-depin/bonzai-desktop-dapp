@@ -33,7 +33,7 @@ The original customer and the snapshotted NFT owner can retrieve a delivery by s
 
 ## Ownership and revenue
 
-`BonzaiSmartAgents.controlEpoch` changes on personalization, transfer, execution-wallet changes and explicit revocation. Transfer clears the execution wallet. The buyer can bind their own wallet after issuance without changing the token, metadata or burned liquidity position. Unissued reserves follow the NFT.
+`BonzaiSmartAgents.controlEpoch` changes on personalization, transfer, execution-wallet changes and explicit revocation. Transfer clears the execution wallet. The buyer can bind their own wallet after issuance without changing the token, metadata or vault-held liquidity position. Unissued reserves follow the NFT.
 
 Existing escrow jobs retain their snapshotted worker and payouts. Previously distributed tokens, including the initial 4% allocation, remain in their holders' wallets; ERC-721 transfer cannot move another wallet's ERC-20 balance or private keys. New job quotes use the current collection owner/execution wallet. `CompanionToken.agentWallet` identifies the wallet at issuance, not current NFT ownership; consumers must read the collection for current control.
 

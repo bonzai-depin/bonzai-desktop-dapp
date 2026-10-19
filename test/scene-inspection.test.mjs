@@ -22,6 +22,19 @@ test('baked UVs preserve physical texture size instead of stretching across larg
   let max=0;for(let i=0;i<uv.count;i++)max=Math.max(max,Math.abs(uv.getX(i)),Math.abs(uv.getY(i)));
   assert.equal(max,2);assert.equal(input.index.count,36);
 });
+test('native Three.js profile points work without hiding invalid radial construction',()=>{
+  const pairs=[[0,0],[.28,0],[.28,.25],[0,.25]];
+  const vectors=pairs.map(p=>new THREE.Vector2(...p));
+  assert.deepEqual(latheProfile(vectors).attributes.position.array,latheProfile(pairs).attributes.position.array);
+  assert.deepEqual(vectors.map(p=>p.toArray()),pairs,'helpers must not mutate caller-owned points');
+  assert.deepEqual(bevelPanel(vectors).attributes.position.array,bevelPanel(pairs).attributes.position.array);
+  assert.throws(()=>latheProfile([new THREE.Vector2(-.2,0),...vectors]),/radial|cross-sections/);
+  assert.throws(()=>latheProfile([new THREE.Vector2(Infinity,0),...vectors]),/finite/);
+  assert.throws(()=>latheProfile([{x:0,y:0},...vectors]),/Vector2/);
+  assert.throws(()=>latheProfile(pairs,NaN),/segments must be finite/);
+  assert.equal(latheProfile(pairs,6).parameters.segments,6,'a hexagonal fitting must retain six faces');
+  assert.equal(latheProfile(pairs,10000).parameters.segments,128,'subdivisions remain bounded');
+});
 test('a successfully compiled but corrupt mesh cannot masquerade as valid construction',()=>{
   const root=new THREE.Group();
   const geometry=new THREE.BoxGeometry();geometry.attributes.position.setX(0,NaN);

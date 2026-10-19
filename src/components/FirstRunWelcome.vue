@@ -7,7 +7,7 @@
             <div>
               <p class="bz-eyebrow">{{ i18n.t('onboarding.eyebrow') }}</p>
               <h1 :id="titleId" class="bz-h1">{{ i18n.t('onboarding.title') }}</h1>
-              <p class="welcome-version">BonzAI v4.0.0 RC</p>
+              <p class="welcome-version">BonzAI v{{ version }}</p>
             </div>
             <LanguageSelector />
           </header>
@@ -58,6 +58,7 @@
 
 <script setup>
 import { ref, useId } from 'vue'
+import { version } from '../../package.json'
 import { useModalAccessibility } from '../composables/useModalAccessibility.js'
 import LanguageSelector from './LanguageSelector.vue'
 import { useI18n } from '../i18n/index.js'

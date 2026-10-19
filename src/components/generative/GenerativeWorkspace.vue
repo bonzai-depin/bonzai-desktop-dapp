@@ -1,7 +1,7 @@
 <template>
-  <div class="bz-workspace">
+  <div class="bz-workspace bz-page-content">
     <!-- HEADER: eyebrow + title + actions -->
-    <header class="bz-workspace__header">
+    <header class="bz-workspace__header bz-page-header">
       <div class="bz-workspace__title">
         <span v-if="eyebrow" class="bz-eyebrow">{{ eyebrow }}</span>
         <h1 class="bz-h1">

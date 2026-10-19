@@ -15,11 +15,6 @@ export const FineTuneTokenFactoryABI = [
         "internalType": "address",
         "name": "_permit2",
         "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_feeHook",
-        "type": "address"
       }
     ],
     "stateMutability": "nonpayable",
@@ -235,19 +230,6 @@ export const FineTuneTokenFactoryABI = [
   },
   {
     "inputs": [],
-    "name": "MINT_POOL_INDEX",
-    "outputs": [
-      {
-        "internalType": "uint8",
-        "name": "",
-        "type": "uint8"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
     "name": "MIN_TICK",
     "outputs": [
       {
@@ -318,6 +300,24 @@ export const FineTuneTokenFactoryABI = [
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "treasury",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "rewards",
+        "type": "address"
+      }
+    ],
+    "name": "configureLiquidityVault",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "contentContract",
     "outputs": [
@@ -335,19 +335,6 @@ export const FineTuneTokenFactoryABI = [
     "name": "disableLegacyLaunch",
     "outputs": [],
     "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "feeHook",
-    "outputs": [
-      {
-        "internalType": "contract IBonzaiUniswapHookFTF",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -532,6 +519,38 @@ export const FineTuneTokenFactoryABI = [
         "internalType": "bool",
         "name": "",
         "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "liquidityPosition",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "liquidityVault",
+    "outputs": [
+      {
+        "internalType": "contract BonzaiLiquidityVault",
+        "name": "",
+        "type": "address"
       }
     ],
     "stateMutability": "view",

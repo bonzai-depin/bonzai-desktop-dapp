@@ -41,17 +41,15 @@ async function main() {
   const smartAgents = required("BONZAI_SMART_AGENTS_ADDRESS");
   const workerFactory = required("BONZAI_AGENT_TOKEN_FACTORY_ADDRESS");
   const fineTuneFactory = required("BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS");
-  const feeHook = required("BONZAI_UNISWAP_HOOK_ADDRESS");
   const collectiblesFactory = required("BONZAI_COLLECTIBLES_FACTORY_ADDRESS");
   const mintPool = required("BONZAI_MINT_POOL_ADDRESS");
   const serviceTime = required("BONZAI_SERVICE_TIME_ADDRESS");
   const providerRegistry = required("BONZAI_PROVIDER_REGISTRY_ADDRESS");
-  for (const [name, address] of Object.entries({ bonzaiToken, usdc, companions, companionFactory, smartAgents, workerFactory, fineTuneFactory, feeHook, collectiblesFactory, mintPool, serviceTime, providerRegistry })) {
+  for (const [name, address] of Object.entries({ bonzaiToken, usdc, companions, companionFactory, smartAgents, workerFactory, fineTuneFactory,  collectiblesFactory, mintPool, serviceTime, providerRegistry })) {
     if (!ethers.isAddress(address) || address === ethers.ZeroAddress) throw new Error(`Invalid ${name} address`);
     if (await ethers.provider.getCode(address) === '0x') throw new Error(`${name} has no deployed bytecode on chain ${chainId}`);
   }
   if (!ethers.isAddress(treasury) || treasury === ethers.ZeroAddress) throw new Error('Invalid treasury');
-  if ((BigInt(feeHook) & 0x3fffn) !== 0x44n) throw new Error('Hook address must encode v4 afterSwap and afterSwapReturnDelta (0x0044)');
   const decimals = await new ethers.Contract(bonzaiToken, ['function decimals() view returns(uint8)'], ethers.provider).decimals();
   if (decimals !== 18n) throw new Error('BONZAI token must have 18 decimals');
   if (await new ethers.Contract(usdc, ['function decimals() view returns(uint8)'], ethers.provider).decimals() !== 6n) throw new Error('Verified USDC token must have 6 decimals');
@@ -79,7 +77,7 @@ async function main() {
   const workerCollection = new ethers.Contract(smartAgents, ['function launcher() view returns(address)'], ethers.provider);
   if (ethers.getAddress(await workerCollection.launcher()) !== ethers.getAddress(workerFactory)) throw new Error('Smart-agent collection launcher does not match the worker factory');
   // Check every privileged wiring call before paying to deploy new contracts.
-  for (const [name, address] of Object.entries({ feeHook, collectiblesFactory, mintPool, serviceTime, providerRegistry, companions, companionFactory, fineTuneFactory })) {
+  for (const [name, address] of Object.entries({ collectiblesFactory, mintPool, serviceTime, providerRegistry, companions, companionFactory, workerFactory, fineTuneFactory })) {
     const owner = await new ethers.Contract(address, ['function owner() view returns(address)'], ethers.provider).owner();
     if (ethers.getAddress(owner) !== ethers.getAddress(deployer.address)) throw new Error(`Deployer does not own ${name}; prepare its authorized governance wiring before deployment`);
   }
@@ -105,10 +103,15 @@ async function main() {
   const jobEscrow = await deploy("BonzaiJobEscrow", [treasury, await revenueRouter.getAddress()]);
 
   await (await basketRewards.setRewardCurrency(usdc, true)).wait();
+  // Each factory deploys its immutable vault once. Admit those vaults before issuing tokens.
+  for (const factory of [workerFactory, companionFactory, fineTuneFactory]) {
+    await call(factory,["function configureLiquidityVault(address,address)"],"configureLiquidityVault",[treasury,await basketRewards.getAddress()]);
+    await (await basketRewards.setLiquidityFactory(factory,true)).wait();
+  }
+
   await (await revenueRouter.setBasketRewards(await basketRewards.getAddress())).wait();
   await (await jobEscrow.configureSmartAgentEconomy(workerFactory, await basketRewards.getAddress())).wait();
   await (await stakingVault.setScoreAttestor(await scoreOracle.getAddress(), true)).wait();
-  await call(feeHook, ["function setRevenueRouter(address)"], "setRevenueRouter", [await revenueRouter.getAddress()]);
   await call(collectiblesFactory, ["function setStakingVault(address)"], "setStakingVault", [await stakingVault.getAddress()]);
   await call(mintPool, ["function setStakingVault(address)"], "setStakingVault", [await stakingVault.getAddress()]);
   await call(mintPool, ["function setBasketRewards(address)"], "setBasketRewards", [await basketRewards.getAddress()]);
@@ -134,7 +137,6 @@ async function main() {
     smartAgents,
     agentTokenFactory: workerFactory,
     fineTuneTokenFactory: fineTuneFactory,
-    uniswapHook: feeHook,
     collectiblesFactory,
     mintPool,
     serviceTime,
@@ -162,7 +164,6 @@ async function main() {
     VITE_BONZAI_COMPANIONS_ADDRESS: addresses.companions,
     VITE_BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS: addresses.companionTokenFactory,
     VITE_BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS: addresses.fineTuneTokenFactory,
-    VITE_BONZAI_UNISWAP_HOOK_ADDRESS: addresses.uniswapHook,
     VITE_BONZAI_COLLECTIBLES_FACTORY_ADDRESS: addresses.collectiblesFactory,
     VITE_BONZAI_MINT_POOL_ADDRESS: addresses.mintPool,
     VITE_BONZAI_SERVICE_TIME_ADDRESS: addresses.serviceTime,

@@ -444,14 +444,14 @@ SPEECH: [what you'll say out loud]`;
 Personality: ${companion.personality || 'friendly and engaging'}
 Background: ${companion.background || 'An AI companion created by BonzAI'}
 
-You are posting autonomously on social media. Stay in character. Be authentic, engaging, and occasionally promote BonzAI (${BONZAI_KNOWLEDGE.downloadUrl}) naturally.
+Prepare a public social media draft for human review. Stay in character. Do not reveal private conversations or personal information.
 
 Rules:
 - Write as yourself (first person)
 - Be concise and impactful
 - No asterisks or roleplay actions for social media
 - Hashtags are fine but don't overdo it (2-4 max)
-- Occasionally mention BonzAI naturally (not every post)`;
+- Do not add advertising or endorsements unless requested.`;
   }
 
   _buildPostPrompt(companion, topic, context = {}) {
@@ -471,6 +471,7 @@ Rules:
    * Pick a topic based on companion personality and recent history.
    */
   _pickTopic(companion, context = {}) {
+    if (context.topic?.title?.trim()) return { title: context.topic.title.trim().slice(0, 2000) };
     const topics = [...THOUGHT_LEADERSHIP_TOPICS];
 
     // Weighted random selection

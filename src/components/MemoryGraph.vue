@@ -1,12 +1,9 @@
 <template>
-  <section class="memory-graph" :class="{ 'memory-graph--empty': !graph.nodes.length }">
-    <header class="memory-hero">
+  <section class="memory-graph bz-page-content" :class="{ 'memory-graph--empty': !graph.nodes.length }">
+    <header class="memory-hero bz-page-header">
       <div>
         <p class="bz-eyebrow">{{ $t('views.memory.eyebrow') }}</p>
-        <h1 class="bz-h1 fira-sans-condensed-black-italic">{{ $t('views.memory.title') }}</h1>
-        <p class="memory-subtitle">
-          {{ $t('views.memory.subtitle') }}
-        </p>
+        <h1 class="bz-h1 fira-sans-condensed-black-italic"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">neurology</span>{{ $t('views.memory.title') }}</h1>
       </div>
       <button class="bz-btn bz-btn--ghost memory-refresh fira-sans-condensed-black-italic" @click="refreshMemory">
         <span class="material-symbols-outlined">sync</span>

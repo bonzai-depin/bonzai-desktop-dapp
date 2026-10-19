@@ -278,8 +278,11 @@
               <div v-if="generation.assetKind === 'game'" class="game-token-issue">
                 <div class="game-token-issue__head">
                   <strong>Game economy</strong>
-                  <span>One token can be issued for this collectible.</span>
+                  <span>1 billion tokens: 96% locked liquidity, 4% to you. Trading fee: 1%, split 80% creator / 10% treasury / 10% rewards.</span>
                 </div>
+                <label v-if="!gameTokenResult">Permanently locked liquidity (ETH)
+                  <input v-model="gameLiquidityEth" type="number" min="0.01" step="0.01" class="bz-field-input" />
+                </label>
                 <div v-if="!gameTokenResult" class="game-token-issue__form">
                   <input
                     v-model="gameTokenSymbol"
@@ -291,7 +294,7 @@
                   <button
                     type="button"
                     class="bz-btn bz-btn--primary"
-                    :disabled="issuingGameToken || gameTokenSymbol.trim().length < 2"
+                    :disabled="issuingGameToken || gameTokenSymbol.trim().length < 2 || Number(gameLiquidityEth) < 0.01"
                     @click="startGameTokenIssue"
                   >
                     <span class="material-symbols-outlined">token</span>
@@ -410,6 +413,7 @@ const issuingGameToken = ref(false);
 const gameTokenResult = ref(null);
 const gameTokenError = ref("");
 const gameTokenSymbol = ref("");
+const gameLiquidityEth = ref("0.01");
 const errorMessage = ref("");
 const confirmationPending = ref(false);
 
@@ -451,6 +455,7 @@ async function startGameTokenIssue() {
       symbol: gameTokenSymbol.value,
       metadataURI: mintResult.value.metadataUrl,
       projectManifest: props.generation?.projectManifest,
+      liquidityEth: gameLiquidityEth.value,
     });
   } catch (error) {
     gameTokenError.value = error.message;

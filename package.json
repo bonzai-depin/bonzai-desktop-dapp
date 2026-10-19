@@ -1,8 +1,8 @@
 {
   "name": "bonzai",
   "productName": "BonzAI v4.0.0 RC",
-  "version": "4.0.0-rc.1",
-  "description": "BonzAI v4.0.0 RC — local-first AI creation, inference mesh, agentic companies, companions, games, and optional digital ownership.",
+  "version": "4.0.1-rc.1",
+  "description": "BonzAI v4.0.1 RC \u2014 local-first AI creation, inference mesh, agentic companies, companions, games, and optional digital ownership.",
   "main": ".vite/build/main.js",
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "make": "npm run package && npx electron-installer-dmg out/BonzAI-darwin-arm64/BonzAI.app BonzAI --out=out/make --overwrite",
     "make:x64": "npm run build:vite && electron-packager . BonzAI --platform=darwin --arch=x64 --out=out --overwrite --icon=src/assets/logo --ignore=\"^/(dist|bonzai|binaries|out|out-test|\\.venv|venv|build)$\" && npx electron-installer-dmg out/BonzAI-darwin-x64/BonzAI.app BonzAI --out=out/make --overwrite",
     "publish": "echo 'Use CI for publishing'",
-    "test": "npx hardhat --config hardhat.config.cjs test",
+    "test": "node scripts/test-contracts.mjs",
     "test:coverage": "npx hardhat --config hardhat.config.cjs coverage",
     "build:rpc": "node scripts/build-llama-rpc.js",
     "build:rpc:clean": "node scripts/build-llama-rpc.js --clean",
@@ -27,7 +27,7 @@
     "test:i18n": "node scripts/check-i18n.mjs && node --test test/i18n-catalog.test.mjs",
     "test:ui": "node --test test/company-task-review.browser.test.mjs test/ownership-assets.test.mjs test/ownership-workspace.browser.test.mjs test/markets-workspace.browser.test.mjs test/ui-request-timeout.test.mjs test/model-licenses.test.mjs test/training-capabilities.test.mjs test/training-workspace.browser.test.mjs test/v4-release.test.mjs test/v4-ui.browser.test.mjs test/download-requirements.test.mjs test/download-requirements.browser.test.mjs test/connection-dialog.test.mjs test/smart-agent-experience.browser.test.mjs test/basket-rewards.browser.test.mjs test/companion-store.test.mjs test/company-companion-roster.browser.test.mjs test/companion-public-metadata.test.mjs test/agent-navigation.browser.test.mjs test/agent-download-layout.browser.test.mjs test/download-cancellation.test.mjs test/sidebar-value.browser.test.mjs test/companion-actions-theme.browser.test.mjs test/companion-carousel.browser.test.mjs test/button-readability.browser.test.mjs test/emphasis-theme.browser.test.mjs test/roleplay-scenarios.test.mjs test/roleplay-profile.test.mjs",
     "test:startup": "node --test test/python-runtime.test.mjs test/server-readiness.test.mjs test/paced-peer-routing.test.mjs test/p2p-dht-policy.test.mjs",
-    "test:web3": "node --test test/market-data.test.mjs test/x402.service.test.mjs test/web3-production.test.mjs test/reward-services.test.mjs test/economy-abi.test.mjs test/wallet-credentials.test.mjs test/basket-ui-services.test.mjs test/staking-basket-services.test.mjs test/reward-membership.test.mjs test/agent-wallet-creation.test.mjs test/token-royalty-services.test.mjs",
+    "test:web3": "node --test test/market-data.test.mjs test/game-liquidity-preflight.test.mjs test/x402.service.test.mjs test/web3-production.test.mjs test/reward-services.test.mjs test/economy-abi.test.mjs test/wallet-credentials.test.mjs test/basket-ui-services.test.mjs test/staking-basket-services.test.mjs test/reward-membership.test.mjs test/agent-wallet-creation.test.mjs test/token-royalty-services.test.mjs",
     "test:connectors": "node --test test/company-connectors.test.mjs test/finance-connectors.test.mjs test/smart-agent-creation.test.mjs",
     "test:company": "node --test test/company-harness.test.mjs test/company-execution.test.mjs test/company-persistence.test.mjs test/company-automation.test.mjs test/company-connectors.test.mjs test/company-conversation.test.mjs test/company-workspace-blueprints.test.mjs test/company-maintenance-workspace.test.mjs test/gmao-domain.test.mjs test/smart-agent-creation.test.mjs test/team-communication.test.mjs",
     "test:gmao": "node --test test/gmao-domain.test.mjs test/gmao-operations.test.mjs test/gmao-pdf.test.mjs test/gmao-presentation.test.mjs",
@@ -38,7 +38,8 @@
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "test:chat": "node --test test/chat-capabilities.test.mjs test/public-sessions.test.mjs test/model-context.test.mjs"
+    "test:chat": "node --test test/chat-capabilities.test.mjs test/public-sessions.test.mjs test/model-context.test.mjs",
+    "test:roleplay": "node --test test/roleplay-journey.test.mjs test/roleplay-journey.browser.test.mjs test/roleplay-scenarios.test.mjs test/roleplay-profile.test.mjs test/roleplay-media-policy.test.mjs test/roleplay-video.test.mjs"
   },
   "keywords": [],
   "author": {

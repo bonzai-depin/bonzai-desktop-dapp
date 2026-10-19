@@ -453,6 +453,7 @@ export const addObjectInference = async (prompt, code, metadata = {}) => {
     success: Boolean(metadata.success ?? true),
     title: metadata.title ? String(metadata.title) : undefined,
     notes: metadata.notes ? String(metadata.notes) : undefined,
+    generationTrace: metadata.generationTrace || undefined,
     assemblyContract: metadata.assemblyContract || undefined,
     assemblyReport: metadata.assemblyReport || undefined,
     assemblyPlanningDiagnostics: metadata.assemblyPlanningDiagnostics || undefined,

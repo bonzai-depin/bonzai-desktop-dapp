@@ -90,7 +90,6 @@ describe("CompanionTokenFactory", function () {
       expect(await factory.poolManager()).to.equal(await poolManager.getAddress());
       expect(await factory.positionManager()).to.equal(await positionManager.getAddress());
       expect(await factory.permit2()).to.equal(await permit2.getAddress());
-      expect(await factory.feeHook()).to.equal(await feeHook.getAddress());
     });
 
     it("should set companionContract via deploy helper", async function () {
@@ -105,7 +104,6 @@ describe("CompanionTokenFactory", function () {
       expect(await factory.AGENT_SHARE_BPS()).to.equal(AGENT_SHARE_BPS);
       expect(await factory.BPS_DENOMINATOR()).to.equal(BPS_DENOMINATOR);
       expect(await factory.BURN_ADDRESS()).to.equal(BURN_ADDRESS);
-      expect(await factory.MINT_POOL_INDEX()).to.equal(0); // Unused for COMPANION — hook hardcodes pool 5
     });
   });
 
@@ -170,29 +168,14 @@ describe("CompanionTokenFactory", function () {
       expect(expectedAgentAmount).to.equal(TOTAL_SUPPLY * 400n / 10000n);
     });
 
-    it("should register pool with feeHook using poolType=0 and live NFT lookup", async function () {
-      const fixture = await loadFixture(deployCompanionTokenFactory);
-      const { poolId, nftTokenId } = await mintAndLaunch(fixture);
-
-      // H7: pool registration carries the NFT contract + tokenId so the hook
-      // can read the live owner / agent wallet at swap time. The legacy
-      // companionOwner field has been replaced.
-      const reg = await fixture.feeHook.getRegistration(poolId);
-      expect(reg.beneficiary).to.equal(fixture.agentWallet.address);
-      expect(reg.companionNFT).to.equal(await fixture.mockCompanions.getAddress());
-      expect(reg.companionTokenId).to.equal(nftTokenId);
-      expect(reg.poolType).to.equal(0);
-      expect(reg.mintPoolIndex).to.equal(0); // Unused for COMPANION — hook spreads slice across all 6 buckets
-    });
-
-    it("should transfer LP position NFT to BURN_ADDRESS", async function () {
+    it("should permanently hold the LP position in the vault", async function () {
       const fixture = await loadFixture(deployCompanionTokenFactory);
       await mintAndLaunch(fixture);
 
       // The MockPositionManager mints position NFT with tokenId=1 to the factory,
       // then factory transfers it to BURN_ADDRESS
       const positionNftOwner = await fixture.positionManager.ownerOf(1);
-      expect(positionNftOwner).to.equal(BURN_ADDRESS);
+      expect(positionNftOwner).to.equal(await fixture.factory.liquidityVault());
     });
 
     it("should emit CompanionTokenLaunched event with correct args", async function () {
@@ -480,10 +463,11 @@ describe("CompanionTokenFactory", function () {
       const factory = await CompanionTokenFactory.deploy(
         await poolManager.getAddress(),
         await positionManager.getAddress(),
-        await permit2.getAddress(),
-        await feeHook.getAddress()
+        await permit2.getAddress()
       );
 
+      const rewards=await (await ethers.getContractFactory("MockVaultRewards")).deploy();
+      await factory.configureLiquidityVault(owner.address,await rewards.getAddress());
       // Do NOT call setCompanionContract
       await expect(
         factory

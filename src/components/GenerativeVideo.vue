@@ -1,10 +1,10 @@
 <template>
   <div class="background"></div>
   <div class="bz-tab-shell">
-    <div class="models__deployment-install">
+    <div class="models__deployment-install bz-page-content">
       <div class="columns">
         <div class="column is-12">
-          <header class="bz-screen-header">
+          <header class="bz-screen-header bz-page-header">
             <div class="bz-screen-titleblock">
               <p class="bz-eyebrow">{{ $t('create.eyebrow') }}</p>
                 <h1 class="bz-h1 fira-sans-condensed-black-italic">

@@ -17,20 +17,27 @@ describe("GameTokenFactory", function () {
       await collectionFactory.getAddress(),
       await registry.getAddress(),
     );
-    return { owner, other, nft, factory, collectionFactory, registry };
+    const pools=await (await ethers.getContractFactory('MockPoolManager')).deploy();
+    const positions=await (await ethers.getContractFactory('MockPositionManager')).deploy();
+    const permits=await (await ethers.getContractFactory('MockPermit2')).deploy();
+    const rewards=await (await ethers.getContractFactory('MockVaultRewards')).deploy();
+    await positions.setPermit2(await permits.getAddress());
+    await factory.configureLiquidity(await pools.getAddress(),await positions.getAddress(),await permits.getAddress(),other.address,await rewards.getAddress());
+    return { owner, other, nft, factory, collectionFactory, registry, positions };
+
   }
 
   it("issues one fixed-supply token to the game collectible owner", async function () {
     const { owner, nft, factory, registry } = await fixture();
     await registry.register(await nft.getAddress(), 1, ethers.id("manifest"), "ipfs://game");
-    await expect(factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game"))
+    await expect(factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game",{value:ethers.parseEther("0.01")}))
       .to.emit(factory, "GameTokenIssued");
     const key = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(["address", "uint256"], [await nft.getAddress(), 1]),
     );
     const tokenAddress = await factory.tokenForCollectible(key);
     const token = await ethers.getContractAt("GameToken", tokenAddress);
-    expect(await token.balanceOf(owner.address)).to.equal(ethers.parseEther("1000000000"));
+    expect(await token.balanceOf(owner.address)).to.equal(ethers.parseEther("40000000"));
     expect(await token.collectibleTokenId()).to.equal(1);
     expect(await factory.getAllTokens()).to.deep.equal([tokenAddress]);
     expect(await factory.totalTokensIssued()).to.equal(1);
@@ -39,19 +46,19 @@ describe("GameTokenFactory", function () {
   it("rejects non-owners and duplicate issuance", async function () {
     const { other, nft, factory, registry } = await fixture();
     await expect(
-      factory.connect(other).issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game"),
+      factory.connect(other).issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game",{value:ethers.parseEther("0.01")}),
     ).to.be.revertedWith("Not BonzAI collection");
     await registry.register(await nft.getAddress(), 1, ethers.id("manifest"), "ipfs://game");
-    await factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game");
+    await factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game",{value:ethers.parseEther("0.01")});
     await expect(
-      factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game"),
+      factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game",{value:ethers.parseEther("0.01")}),
     ).to.be.revertedWith("Token already issued");
   });
 
   it("rejects a generic 3D collectible until it is registered as a game", async function () {
     const { nft, factory } = await fixture();
     await expect(
-      factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game"),
+      factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game",{value:ethers.parseEther("0.01")}),
     ).to.be.revertedWith("Not registered game");
   });
 
@@ -67,7 +74,7 @@ describe("GameTokenFactory", function () {
     const { owner, nft, factory, collectionFactory } = await fixture();
     await collectionFactory.setCollection(owner.address, ethers.ZeroAddress);
     await expect(
-      factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game"),
+      factory.issue(await nft.getAddress(), 1, "Temple Run", "TEMPLE", "ipfs://game",{value:ethers.parseEther("0.01")}),
     ).to.be.revertedWith("Not BonzAI collection");
   });
 });

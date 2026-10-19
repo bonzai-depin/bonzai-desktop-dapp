@@ -35,7 +35,7 @@ export async function loadMarketSnapshot({ signal } = {}) {
   const deadline = Date.now() + 24000
   const read = request => withTimeout(request, Math.max(1, Math.min(6000, deadline - Date.now())), 'Market read timed out')
   const definitions = [
-    { id: 'companion', label: 'Smart agents', config: CONFIG.companionTokenFactory, list: () => companionTokenService.getAllTokenAddresses({ strict: true }), info: address => companionTokenService.getTokenInfo(address) },
+    { id: 'companion', label: 'Smart agents', config: isMarketAddress(CONFIG.smartAgentIssuance?.factoryAddress) ? { contractAddress: CONFIG.smartAgentIssuance.factoryAddress, chainId: CONFIG.smartAgentIssuance.chainId } : CONFIG.companionTokenFactory, list: () => companionTokenService.getAllTokenAddresses({ strict: true }), info: address => companionTokenService.getTokenInfo(address) },
     { id: 'fine_tuned', label: 'Models', config: CONFIG.fineTuneTokenFactory, list: () => fineTuneTokenService.getAllTokenAddresses({ strict: true }), info: async address => {
       const info = await fineTuneTokenService.getTokenInfo(address)
       if (!info) return null

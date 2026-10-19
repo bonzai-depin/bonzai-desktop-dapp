@@ -23,7 +23,7 @@ export function assemblyPlanPrompt(brief,mode='object',reference='') {
   return `Design a coherent functional assembly for: ${brief}
 ${reference?`Reference evidence (preserve observed construction): ${reference}`:''}
 Return ONLY JSON with version:1, mechanism:string, parts:[{id:string,role:string,surface:"opaque"|"glass"|"emissive",bounds:[[minX,minY,minZ],[maxX,maxY,maxZ]]}], relations:[{type:"contact"|"inside"|"above"|"separate",a:partId,b:partId}]. Use valid JSON numbers (0.3, never .3).
-Use 3–16 named functional assemblies, at most 24. Every relationship refers to declared IDs. Bounds are approximate intended root-local [minimum XYZ,maximum XYZ] envelopes, including repeated pieces grouped under one ID. ${mode==='level'?'Use metres, connected navigable space and realistic building dimensions.':'Use normalized scene units, ground y=0, longest dimension about 1.5; these are not real-world metre claims.'}
+Use 3–16 named functional assemblies, at most 24. Every relationship refers to declared IDs. Bounds are approximate intended root-local [minimum XYZ,maximum XYZ] envelopes, including repeated pieces grouped under one ID. ${mode==='level'||mode==='game'?'Use metres, preserve the requested world extent, connected navigable space and realistic building dimensions.':'Use normalized scene units, ground y=0, longest dimension about 1.5; these are not real-world metre claims.'}
 Surface is opaque, glass or emissive. Mark glass assemblies separately from their opaque frames. Mark emitters separately from glass. Relations are contact (parts join; envelopes may overlap for frames and hollow bodies), inside (a envelope contained in b), above (a entirely above b), separate (no volumetric overlap). Do not declare contact for disjoint pieces, or separation between a hollow enclosure and its contents: these checks use bounding boxes. Declare meaningful relations where applicable; a single-part object may have none. State negative spaces and openings in roles; never fill a light chamber, window, door or hollow vessel with an opaque solid. Spatial coordinates must agree with each relation.
 Resolve the operating principle BEFORE styling. A battery lantern has a compact battery base, visible emitter, clear surrounding light chamber, protective frame and carrying handle. A fuel lantern has a reservoir below a burner and chimney; do not mix batteries with fuel components unless explicitly requested. Doors/windows need openings; wheeled vehicles need aligned axles; vessels need interiors; furniture needs load-bearing contacts. Physical function outranks creative variations.
 No texture IDs, code, effects or invented API calls. Details, materials and decorative variations follow the functional assembly.`;
@@ -34,10 +34,10 @@ export function assemblyPlanObservations(plan) {
   return plan.relations.map(r=>relationshipError(r,boxes.get(r.a),boxes.get(r.b))).filter(Boolean);
 }
 
-export function assemblyInstructions(plan) {
+export function assemblyInstructions(plan,{includePlan=true}={}) {
   if(!plan)return '';
   const observations=assemblyPlanObservations(plan);
-  return `ASSEMBLY CONSTRUCTION GUIDE:\n${JSON.stringify(plan)}\nCreate exactly one named Group or Mesh per part ID, with node.name equal to that ID. Put its geometry beneath it. Use planned root-local bounds as approximate design guidance, not a substitute for correct geometry. Glass groups contain only glass meshes (transmission >= .5 or opacity <= .5); put frames in separate groups. Relations express intended function, not infallible geometry. Physical construction and the original request take priority over contradictory coordinates. Keep named parts stable so inspection can associate them with the plan. These are functional envelopes: construct real openings and hollow profiles, not solid boxes matching the bounds. For framed polygonal glazing use H.framedPanels so pane sizes derive from frame openings; use H.radialPanels only for unframed panes. Use H.strutBetween for exact support endpoints. Light-source chambers must remain open around emitters: the body ID should be an open frame Group, not an opaque cylinder enclosing the source. Return complete code; finish core structure before surface decoration.\n${observations.length?'PLANNER SPATIAL OBSERVATIONS (advisory, not proven mesh defects): '+observations.join('; ')+'. Resolve the intended assembly rather than forcing these inconsistent envelopes. For example, an emitter belongs inside the chamber, not inside a thin glass pane.':''}`;
+  return `ASSEMBLY CONSTRUCTION GUIDE:\n${includePlan?JSON.stringify(plan):'Use the assembly plan above.'}\nCreate exactly one named Group or Mesh per part ID, with node.name equal to that ID. Put its geometry beneath it. Use planned root-local bounds as approximate design guidance, not a substitute for correct geometry. Glass groups contain only glass meshes (transmission >= .5 or opacity <= .5); put frames in separate groups. Relations express intended function, not infallible geometry. Physical construction and the original request take priority over contradictory coordinates. Keep named parts stable so inspection can associate them with the plan. These are functional envelopes: construct real openings and hollow profiles, not solid boxes matching the bounds. For framed polygonal glazing use H.framedPanels so pane sizes derive from frame openings; use H.radialPanels only for unframed panes. Use H.strutBetween for exact support endpoints. Light-source chambers must remain open around emitters: the body ID should be an open frame Group, not an opaque cylinder enclosing the source. Return complete code; finish core structure before surface decoration.\n${observations.length?'PLANNER SPATIAL OBSERVATIONS (advisory, not proven mesh defects): '+observations.join('; ')+'. Resolve the intended assembly rather than forcing these inconsistent envelopes. For example, an emitter belongs inside the chamber, not inside a thin glass pane.':''}`;
 }
 
 export function inspectAssembly(root,plan) {
@@ -46,6 +46,7 @@ export function inspectAssembly(root,plan) {
   if(!root)return {status:'invalid',errors:['Generated assembly is missing'],warnings:[],parts:[]};
   root.updateWorldMatrix(true,true);
   const inv=new THREE.Matrix4().copy(root.matrixWorld).invert(), bounds=new Map(),errors=[],warnings=[],report=[];
+  const intended=new Map(checked.parts.map(part=>[part.id,new THREE.Box3(new THREE.Vector3(...part.bounds[0]),new THREE.Vector3(...part.bounds[1]))]));
   for(const part of checked.parts){
     const matches=[];root.traverse(n=>{if(n.name===part.id)matches.push(n);});
     if(matches.length!==1){errors.push(`${part.id}: expected one named assembly; found ${matches.length}`);continue;}
@@ -64,12 +65,21 @@ export function inspectAssembly(root,plan) {
     if(box.min.distanceTo(expected.min)>tolerance||box.max.distanceTo(expected.max)>tolerance)warnings.push(`${part.id}: bounds ${JSON.stringify([box.min.toArray(),box.max.toArray()])} differ from planned ${JSON.stringify(part.bounds)}`);
     if(part.surface==='glass'&&meshes.some(m=>(Array.isArray(m.material)?m.material:[m.material]).some(mat=>!((mat.transmission||0)>=.5||(mat.transparent&&mat.opacity<=.5)))))errors.push(`${part.id}: glazing contains opaque material`);
     if(part.surface==='emissive'&&!meshes.some(m=>(Array.isArray(m.material)?m.material:[m.material]).some(mat=>mat.emissive?.getHex()>0&&(mat.emissiveIntensity??1)>0)))errors.push(`${part.id}: planned light source has no emissive surface`);
-    report.push({id:part.id,bounds:[box.min.toArray(),box.max.toArray()]});
+    const extent=Math.max(.002,...expected.getSize(new THREE.Vector3()).toArray());
+    const planDeviation=Math.max(box.min.distanceTo(expected.min),box.max.distanceTo(expected.max))/extent;
+    report.push({id:part.id,bounds:[box.min.toArray(),box.max.toArray()],planDeviation});
   }
   errors.push(...inspectLightPaths(root,checked));
   for(const r of checked.relations){
     const a=bounds.get(r.a),b=bounds.get(r.b);if(!a||!b)continue;
-    const failure=relationshipError(r,a,b);if(failure)warnings.push(failure);
+    const failure=relationshipError(r,a,b);
+    if(!failure)continue;
+    // Disjoint envelopes prove a gap; overlapping envelopes do NOT prove
+    // surface contact or penetration. Never make contradictory plans fatal.
+    if(r.type==='contact'&&!relationshipError(r,intended.get(r.a),intended.get(r.b))) {
+      const gap=Math.hypot(...['x','y','z'].map(axis=>Math.max(0,Math.max(a.min[axis],b.min[axis])-Math.min(a.max[axis],b.max[axis]))));
+      errors.push(`${r.a} / ${r.b}: measured joint gap ${gap.toPrecision(3)} root-local units; join the intended supports using shared dimensions`);
+    } else warnings.push(failure);
   }
   return {status:errors.length?'invalid':'checked',errors:errors.slice(0,16),warnings:warnings.slice(0,24),parts:report};
 }
@@ -101,9 +111,35 @@ export async function requestAssemblyPlan({brief,mode,reference='',generate}) {
 }
 
 // Improve a drawable scene once, retaining it if a speculative rebuild fails.
-export async function repairAssembly({code,inspect,rebuild,render,validate=()=>{},repairSyntax}) {
+function improvesAssembly(next,previous) {
+  if(next.errors.length>=previous.errors.length)return false;
+  // A large displacement can hide a gap by making group envelopes overlap,
+  // even while leaving constituent surfaces further apart. Approximate plans
+  // are not a hard constraint, but a repair must not greatly worsen their fit.
+  const before=new Map((previous.parts||[]).map(part=>[part.id,part]));
+  return !(next.parts||[]).some(part=>Number.isFinite(part.planDeviation)
+    && Number.isFinite(before.get(part.id)?.planDeviation)
+    && part.planDeviation>before.get(part.id).planDeviation+.15);
+}
+
+export async function repairAssembly({code,inspect,rebuild,patch,render,validate=()=>{},repairSyntax}) {
   const initial=inspect();
   if(!initial.errors.length)return {code,report:initial};
+  // Naming/material mismatches usually need a local edit, not another complete
+  // scene. Other construction defects retain the full bounded rebuild path.
+  if(patch && initial.errors.every(error=>/expected one named assembly|glazing contains opaque material|planned light source has no emissive surface|measured joint gap/.test(error))) {
+    let touched=false;
+    try {
+      const revised=await patch(initial);
+      if(revised && revised!==code) {
+        validate(revised);touched=true;await render(revised);
+        const report=inspect();
+        if(improvesAssembly(report,initial))return {code:revised,report};
+        initial.warnings=[...(initial.warnings||[]),'Assembly patch rejected: it did not reduce defects without substantially displacing planned parts.'];
+      }
+    } catch(error) {initial.warnings=[...(initial.warnings||[]),'Assembly patch did not improve the draft: '+error.message];}
+    if(touched)await render(code);
+  }
   let sceneTouched=false;
   try {
     let revised=await rebuild(initial);
@@ -116,7 +152,8 @@ export async function repairAssembly({code,inspect,rebuild,render,validate=()=>{
     sceneTouched=true;
     await render(revised);
     const report=inspect();
-    if(report.errors.length<initial.errors.length)return {code:revised,report};
+    if(improvesAssembly(report,initial))return {code:revised,report};
+    initial.warnings=[...(initial.warnings||[]),'Assembly rebuild rejected: it did not reduce defects without substantially displacing planned parts.'];
   } catch(error) {
     initial.warnings=[...(initial.warnings||[]),'Assembly rebuild did not improve the draft: '+error.message];
   }

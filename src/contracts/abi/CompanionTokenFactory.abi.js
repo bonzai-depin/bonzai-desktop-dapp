@@ -15,11 +15,6 @@ export const CompanionTokenFactoryABI = [
         "internalType": "address",
         "name": "_permit2",
         "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_feeHook",
-        "type": "address"
       }
     ],
     "stateMutability": "nonpayable",
@@ -217,19 +212,6 @@ export const CompanionTokenFactoryABI = [
   },
   {
     "inputs": [],
-    "name": "MINT_POOL_INDEX",
-    "outputs": [
-      {
-        "internalType": "uint8",
-        "name": "",
-        "type": "uint8"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
     "name": "MIN_TICK",
     "outputs": [
       {
@@ -345,16 +327,21 @@ export const CompanionTokenFactoryABI = [
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "feeHook",
-    "outputs": [
+    "inputs": [
       {
-        "internalType": "contract IBonzaiUniswapHook",
-        "name": "",
+        "internalType": "address",
+        "name": "treasury",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "rewards",
         "type": "address"
       }
     ],
-    "stateMutability": "view",
+    "name": "configureLiquidityVault",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -455,6 +442,38 @@ export const CompanionTokenFactoryABI = [
       }
     ],
     "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "liquidityPosition",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "liquidityVault",
+    "outputs": [
+      {
+        "internalType": "contract BonzaiLiquidityVault",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

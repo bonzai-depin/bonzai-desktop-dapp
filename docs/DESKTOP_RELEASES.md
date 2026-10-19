@@ -130,6 +130,10 @@ optional economy. Existing workflows read these from repository secrets for
 compatibility; addresses and app IDs are public configuration, not private keys.
 Never add a wallet private key, seed phrase or Privy app secret to the desktop build.
 Use `BONZAI_VALIDATE_WEB3=true` only after the complete deployment is configured.
+The shared `config/protocol.env` template and aggregate GitHub variable
+`BONZAI_PROTOCOL_CONFIG_ENV` now provide the full configuration, including newer
+agent contracts missing from legacy per-secret mappings. See
+[Protocol configuration](PROTOCOL_CONFIGURATION.md); remove conflicting old values.
 
 ## Standalone model hosting
 

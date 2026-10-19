@@ -90,7 +90,7 @@ test('route failure preserves the issued token and offers route recovery without
       launchFineTuneToken: async () => { launches++; return { success: true, tokenAddress: 'issued-token', poolId: 'pool', txHash: 'confirmed-transaction' }; },
     },
     bonzaiRevenueRouterService: {
-      isConfigured: () => true,
+      isConfigured: () => true, isModelFeeConfigured: () => true,
       registerModelRevenueRoute: async (model) => { assert.equal(model.fineTuneToken.tokenAddress, 'issued-token'); throw new Error('Route signature declined'); },
     },
   });

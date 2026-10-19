@@ -30,6 +30,7 @@ test('roleplay suggestions remain readable and creation controls use compact men
  await page.locator('.chat-creation-selection button').click();
  assert.equal(await page.locator('.chat-creation-selection').count(),0);
  await page.setViewportSize({width:390,height:900});
+ assert.ok(await page.locator('.chat-messages-container').evaluate(el=>el.getBoundingClientRect().height>=260));
  assert.ok(await page.locator('.chat-input').evaluate(el=>el.getBoundingClientRect().width<=innerWidth));
  await page.screenshot({path:'/tmp/bonzai-roleplay-composer.png'});
  }finally{await browser.close();}

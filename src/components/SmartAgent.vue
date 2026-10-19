@@ -63,7 +63,7 @@
       <template #header>
         <CompanyWorkflowContext :skill-id="selectedSkillId" :task-context="companyTaskContext" :saving="savingWorkflowResult" :save-error="workflowResultError" :can-retry-save="canRetryWorkflowResult" :saved-result="savedWorkflowResult" @retry-save="retryWorkflowResult" @reviewed="handleWorkflowReviewed"
             @loaded="savedWorkflowResult = { ...savedWorkflowResult, issue: $event }" />
-        <div v-if="!companyWorkflowId" class="agent-command-head">
+        <div v-if="!companyWorkflowId" class="agent-command-head bz-page-header">
           <div class="agent-command-head__title">
             <span class="bz-eyebrow">{{ agentModeEyebrow }}</span>
             <h1 class="bz-h1 fira-sans-condensed-black-italic">
@@ -2089,7 +2089,7 @@ Return ONLY the JSON, no explanation.`;
     ]);
     const activeAgentTab = computed(() => agentTabs.find((tab) => tab.value === activeTab.value) || agentTabs[0]);
     const agentModeEyebrow = computed(() => {
-      if (activeTab.value === "browseAgents") return "Smart agents";
+      if (activeTab.value === "browseAgents") return "Create & roleplay";
       if (activeTab.value === "my-skills") return "Roleplay";
       return "Automate";
     });
@@ -3264,7 +3264,7 @@ Provide a concise analysis covering:
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: var(--bz-space-4) var(--bz-space-4) var(--bz-space-6);
+  padding: 0;
 }
 
 .agent-command-center :deep(.bz-chat__input) { display: none; }

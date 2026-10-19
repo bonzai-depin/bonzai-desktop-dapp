@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
+import "./BonzaiLiquidityVault.sol";
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -53,20 +54,6 @@ interface IPositionManagerFTF {
  */
 interface IPermit2FTF {
     function approve(address token, address spender, uint160 amount, uint48 expiration) external;
-}
-
-/**
- * @title IBonzaiUniswapHookFTF
- */
-interface IBonzaiUniswapHookFTF {
-    function registerPool(
-        bytes32 poolId,
-        address beneficiary,
-        address companionNFT,
-        uint256 companionTokenId,
-        uint8 poolType,
-        uint8 mintPoolIndex
-    ) external;
 }
 
 /**
@@ -159,19 +146,9 @@ contract FineTuneToken is ERC20, ERC20Burnable {
 }
 
 /**
- * @title FineTuneTokenFactory
- * @notice Factory for atomic fine-tune model token deployment + Uniswap V4 liquidity.
- *         Adapts the CompanionTokenFactory V4 pattern for fine-tuned AI models.
- *
- * Features:
- * - One-click token launch with 96% supply in liquidity, 4% to creator
- * - LP position NFT BURNED at launch (sent to 0xdead — canonical V4 burn,
- *   liquidity stays in the pool, NFT permanently unreachable)
- * - Tokens are burnable (deflationary)
- * - One token per content NFT (prevents duplicates)
- * - Links to content NFT token ID and IPFS model hash
- * - Hook captures 1% of swap output: 80% creator, 10% treasury, 10% MintPool
- *   (MintPool slice spread equally across all 6 content-type buckets)
+ * @notice Fixed-supply issuance with 96% permanently vaulted liquidity and 4% creator allocation.
+ * Hookless pools charge 1%; the shared vault accounts trading fees once.
+ * See docs/LOCKED_LIQUIDITY.md for beneficiary splits and deployment wiring.
  */
 contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     using SafeERC20 for IERC20;
@@ -181,6 +158,12 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// @notice Fixed total supply for all model tokens (1 billion)
+    BonzaiLiquidityVault public liquidityVault;
+    mapping(address=>uint256) public liquidityPosition;
+    function configureLiquidityVault(address treasury,address rewards) external onlyOwner {
+        require(address(liquidityVault)==address(0),"Vault already configured");
+        liquidityVault=new BonzaiLiquidityVault(address(positionManager),treasury,rewards);
+    }
     uint256 public constant TOTAL_SUPPLY = 1_000_000_000 * 1e18;
 
     /// @notice Percentage of supply allocated to liquidity pool (96%)
@@ -192,10 +175,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Basis points denominator
     uint256 public constant BPS_DENOMINATOR = 10000;
 
-    /// @notice Dead address for locking LP position NFT
-    /// @notice Address with no known private key. Receiving the LP position NFT
-    ///         here is equivalent to burning it: ERC-721 transfers to address(0)
-    ///         revert in OZ v5, so this is the canonical V4 burn pattern.
+    /// @notice Retires unused token rounding dust; LP positions are held by liquidityVault.
     address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
     /// @notice Native ETH placeholder (V4 uses address(0))
@@ -208,8 +188,6 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Pool tick spacing
     int24 public constant TICK_SPACING = 60;
 
-    /// @notice Hook mint pool index for training tokens (LVL6 = training pool)
-    uint8 public constant MINT_POOL_INDEX = 5;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -224,8 +202,6 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Permit2 contract
     IPermit2FTF public immutable permit2;
 
-    /// @notice BonzaiUniswapHook for fee capture
-    IBonzaiUniswapHookFTF public immutable feeHook;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // STATE
@@ -274,23 +250,19 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
      * @param _poolManager Uniswap V4 PoolManager on Base
      * @param _positionManager Uniswap V4 PositionManager on Base
      * @param _permit2 Permit2 contract on Base
-     * @param _feeHook BonzaiUniswapHook address
      */
     constructor(
         address _poolManager,
         address _positionManager,
-        address _permit2,
-        address _feeHook
+        address _permit2
     ) Ownable(msg.sender) {
         require(_poolManager != address(0), "Invalid PoolManager");
         require(_positionManager != address(0), "Invalid PositionManager");
         require(_permit2 != address(0), "Invalid Permit2");
-        require(_feeHook != address(0), "Invalid feeHook");
 
         poolManager = IPoolManagerFTF(_poolManager);
         positionManager = IPositionManagerFTF(_positionManager);
         permit2 = IPermit2FTF(_permit2);
-        feeHook = IBonzaiUniswapHookFTF(_feeHook);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -349,6 +321,8 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         bytes32 validationHash,
         address creator
     ) internal returns (address token, bytes32 poolId) {
+        require(address(liquidityVault)!=address(0),"Vault not configured");
+        require(msg.value<=type(uint128).max,"Liquidity too large");
         require(msg.value >= minEthLiquidity, "Insufficient ETH for liquidity");
         require(modelTokens[contentCollection][contentTokenId] == address(0), "Token already launched for this model");
         require(creator != address(0), "Invalid creator address");
@@ -390,9 +364,9 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         IPositionManagerFTF.PoolKey memory poolKey = IPositionManagerFTF.PoolKey({
             currency0: NATIVE_ETH,
             currency1: token,
-            fee: 0,
+            fee: 10000,
             tickSpacing: TICK_SPACING,
-            hooks: address(feeHook)
+            hooks: address(0)
         });
 
         // 6. Calculate sqrtPriceX96
@@ -402,9 +376,9 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         IPoolManagerFTF.PoolKey memory pmKey = IPoolManagerFTF.PoolKey({
             currency0: NATIVE_ETH,
             currency1: token,
-            fee: 0,
+            fee: 10000,
             tickSpacing: TICK_SPACING,
-            hooks: address(feeHook)
+            hooks: address(0)
         });
         poolManager.initialize(pmKey, sqrtPriceX96);
 
@@ -420,22 +394,23 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         params[0] = abi.encode(
             poolKey, MIN_TICK, MAX_TICK,
             uint256(BonzaiV4Liquidity.liquidity(msg.value, lpAmount, sqrtPriceX96)),
-            uint128(msg.value), uint128(lpAmount), BURN_ADDRESS, bytes("")
+            uint128(msg.value), uint128(lpAmount), address(liquidityVault), bytes("")
         );
         params[1] = abi.encode(NATIVE_ETH, token);
         params[2] = abi.encode(NATIVE_ETH, msg.sender);
         positionManager.modifyLiquidities{value: msg.value}(abi.encode(hex"020d14", params), block.timestamp);
-        require(IERC721(address(positionManager)).ownerOf(positionId) == BURN_ADDRESS, "Position not locked");
+        liquidityPosition[token]=positionId;
+        liquidityVault.register(positionId,NATIVE_ETH,token,creator,address(0),0);
         // Any rounding remainder is inaccessible to the factory administrator.
         uint256 tokenDust = newToken.balanceOf(address(this));
         if (tokenDust > 0) newToken.transfer(BURN_ADDRESS, tokenDust);
         newToken.approve(address(permit2), 0);
         permit2.approve(token, address(positionManager), 0, 0);
 
-        // 11. Compute poolId and register with hook
+        // 11. Compute pool identity; the vault was registered with the minted position.
         poolId = keccak256(abi.encode(poolKey));
         // FineTune doesn't use live NFT lookups — pass zeros for NFT fields.
-        feeHook.registerPool(poolId, creator, address(0), 0, 1, MINT_POOL_INDEX); // 1 = FINETUNE
+        // Vault credits the 80/10/10 split directly; no hook or second revenue-router deduction.
 
         emit ModelTokenLaunched(
             contentCollection,

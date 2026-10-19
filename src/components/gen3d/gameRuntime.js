@@ -1,3 +1,5 @@
+import { createGameCollisions } from './gameCollision.js';
+
 const DEFAULT_INPUT = {
   forward: ["KeyW", "ArrowUp"],
   backward: ["KeyS", "ArrowDown"],
@@ -20,11 +22,14 @@ export function validateGameSpec(spec = {}) {
     errors.push("objectives must be an array");
   }
   if (spec.clearGroups != null && !Array.isArray(spec.clearGroups)) errors.push("clearGroups must be an array");
-  for (const [index, objective] of (spec.objectives || []).entries()) {
+  for (const [index, objective] of (Array.isArray(spec.objectives) ? spec.objectives : []).entries()) {
     if (!objective?.id) errors.push(`objectives[${index}].id is required`);
     if (!["collect", "score", "defeat", "reach", "survive", "custom"].includes(objective?.type)) {
       errors.push(`objectives[${index}].type is unsupported`);
     }
+    if(objective?.type==='reach' && (typeof objective.trigger!=='string'||!objective.trigger.trim()))errors.push(`objectives[${index}].trigger must identify the exit/goal trigger`);
+    if(objective?.type==='custom' && (typeof objective.event!=='string'||!objective.event.trim()))errors.push(`objectives[${index}].event must identify the completion event`);
+    if(objective?.target!=null && (!Number.isFinite(objective.target)||objective.target<=0))errors.push(`objectives[${index}].target must be a positive finite number`);
   }
   return { ok: errors.length === 0, errors };
 }
@@ -49,6 +54,22 @@ export function validateGeneratedGameCode(code = "") {
   };
 }
 
+// A source-level GAME call is not evidence of a live playable scene. Check the
+// objects created by the module before accepting a game generation.
+export function inspectGameSession(session, root) {
+  const errors = [];
+  if (!session) return { errors: ['Generated game did not create a GAME session'] };
+  const player = session.actors.get('player')?.object;
+  let attached = false, visibleGeometry = false, visible = true;
+  for (let node = player; node; node = node.parent) { if (node === root) attached = true; if(!node.visible)visible=false; }
+  player?.traverseVisible(node => { if (node.isMesh && node.geometry?.getAttribute('position')?.count > 0) visibleGeometry = true; });
+  if (!attached || !visible || !visibleGeometry) errors.push('The registered player needs visible geometry attached to root');
+  if (!session.objectives.some(objective => objective.required)) errors.push('Generated game needs at least one required objective');
+  for(const objective of session.objectives)if(objective.type==='reach'&&!session.triggers.has(objective.trigger))errors.push(`Goal ${objective.id} refers to missing trigger ${objective.trigger}`);
+  if (session.phase !== 'running') errors.push('Generated game must start in a playable running state');
+  return { errors };
+}
+
 export function createGameRuntime({
   THREE,
   addUpdateCallback,
@@ -59,6 +80,11 @@ export function createGameRuntime({
   now = () => performance.now(),
 } = {}) {
   if (!THREE) throw new Error("createGameRuntime requires THREE");
+  const finiteVector=(value,label)=>{
+    const xyz=Array.isArray(value)?value:value?.isVector3?value.toArray():null;
+    if(!xyz||xyz.length!==3||!xyz.every(Number.isFinite))throw Error(`GAME ${label} must contain three finite coordinates`);
+    return new THREE.Vector3(...xyz);
+  };
 
   const sessions = new Set();
   let active = null;
@@ -73,6 +99,7 @@ export function createGameRuntime({
     const triggers = new Map();
     const levels = new Map();
     const interactions = new Map();
+    const collisions = createGameCollisions(THREE);
     const pressed = new Set();
     const justPressed = new Set();
     const initialState = {
@@ -83,7 +110,7 @@ export function createGameRuntime({
       elapsed: 0,
       ...(spec.state || {}),
     };
-    const state = { ...initialState };
+    const state = structuredClone(initialState);
     const objectives = (spec.objectives || []).map((objective) => ({
       target: 1,
       progress: 0,
@@ -97,6 +124,7 @@ export function createGameRuntime({
     let phase = "ready";
     let disposed = false;
     let startedAt = 0;
+    let startLevelId = null;
     let hud = null;
 
     const emit = (type, detail = {}) => {
@@ -105,6 +133,7 @@ export function createGameRuntime({
     };
 
     const onKeyDown = (event) => {
+      if(event.target?.closest?.('input, textarea, select, [contenteditable="true"]'))return;
       const fresh = !pressed.has(event.code);
       if (fresh) justPressed.add(event.code);
       pressed.add(event.code);
@@ -114,8 +143,10 @@ export function createGameRuntime({
       }
     };
     const onKeyUp = (event) => pressed.delete(event.code);
+    const onBlur = () => { pressed.clear(); justPressed.clear(); };
     eventTarget?.addEventListener?.("keydown", onKeyDown);
     eventTarget?.addEventListener?.("keyup", onKeyUp);
+    eventTarget?.addEventListener?.("blur", onBlur);
 
     const inputMap = { ...DEFAULT_INPUT, ...(spec.input || {}) };
     const actionDown = (action) => (inputMap[action] || []).some((code) => pressed.has(code));
@@ -162,6 +193,7 @@ export function createGameRuntime({
     }
 
     function updateObjectives(eventType, detail = {}) {
+      if (phase !== 'running') return;
       for (const objective of objectives) {
         if (objective.complete) continue;
         let next = objective.progress;
@@ -216,10 +248,11 @@ export function createGameRuntime({
 
       for (const actor of actors.values()) {
         actor.update?.({ dt, time, state, input: session.input, actor, game: session });
+        if (phase !== 'running') { justPressed.clear(); return; }
       }
 
       const player = actors.get("player");
-      if (player?.controller !== false) {
+      if (player && player.controller !== false) {
         const move = new THREE.Vector3();
         if (autonomous?.enabled) {
           const pending = objectives.find((objective) => objective.required && !objective.complete);
@@ -252,8 +285,9 @@ export function createGameRuntime({
           );
         }
         if (move.lengthSq()) {
-          move.normalize().multiplyScalar((player.speed || 3) * (actionDown("sprint") ? player.sprintMultiplier || 1.75 : 1) * dt);
-          player.object.position.add(move);
+          move.normalize().multiplyScalar((player.speed ?? 3) * (actionDown("sprint") ? player.sprintMultiplier || 1.75 : 1) * dt);
+          if(collisions.solids.size)move.copy(collisions.move(player.object,move,{radius:player.radius,height:player.height,levelId:session.activeLevelId}));
+          else player.object.position.add(move);
           player.object.rotation.y = Math.atan2(move.x, move.z);
           emit("move", { actor: player, movement: move });
         }
@@ -288,10 +322,11 @@ export function createGameRuntime({
           emit("reach", { id: trigger.id, trigger });
           updateObjectives("reach", { id: trigger.id });
           trigger.onEnter?.(session, trigger);
+          if (phase !== 'running') break;
         }
       }
 
-      updateObjectives("tick");
+      if (phase === 'running') updateObjectives("tick");
       syncHud();
       justPressed.clear();
     }
@@ -305,6 +340,8 @@ export function createGameRuntime({
       triggers,
       levels,
       interactions,
+      solids: collisions.solids,
+      solid: (id, object, options) => collisions.add(id, object, options),
       input: {
         down: actionDown,
         pressed: actionPressed,
@@ -343,6 +380,7 @@ export function createGameRuntime({
         if (phase === "running") return session;
         phase = "running";
         startedAt = now();
+        startLevelId = session.activeLevelId;
         hud ||= createHud();
         syncHud(spec.startMessage || "");
         emit("start", { startedAt });
@@ -361,7 +399,10 @@ export function createGameRuntime({
         emit("resume");
       },
       restart() {
-        Object.assign(state, initialState);
+        for(const key of Object.keys(state))delete state[key];
+        Object.assign(state, structuredClone(initialState));
+        pressed.clear(); justPressed.clear(); checkpoints.clear();
+        startedAt = now();
         objectives.forEach((objective) => {
           objective.progress = 0;
           objective.complete = false;
@@ -369,9 +410,14 @@ export function createGameRuntime({
         clearGroups.forEach((group) => { group.complete = false; });
         for (const actor of actors.values()) {
           if (actor.spawn) actor.object.position.copy(actor.spawn);
-          actor.object.visible = true;
+          if (actor.spawnQuaternion) actor.object.quaternion.copy(actor.spawnQuaternion);
+          if (actor.spawnScale) actor.object.scale.copy(actor.spawnScale);
+          actor.object.visible = actor.spawnVisible;
           actor.health = actor.maxHealth;
+          actor.collected = false;
         }
+        for(const trigger of triggers.values())trigger.fired=false;
+        if(startLevelId)session.goToLevel(startLevelId);
         phase = "running";
         syncHud();
         emit("restart");
@@ -384,6 +430,9 @@ export function createGameRuntime({
           health: options.health ?? 100,
           maxHealth: options.health ?? 100,
           spawn: object.position.clone(),
+          spawnQuaternion: object.quaternion.clone(),
+          spawnScale: object.scale.clone(),
+          spawnVisible: object.visible,
           ...options,
           tags: new Set(options.tags || []),
         };
@@ -391,7 +440,13 @@ export function createGameRuntime({
         return actor;
       },
       player(object, options = {}) {
-        return session.actor("player", object, { tags: ["player"], ...options });
+        const health=options.health??state.health;
+        if(!Number.isFinite(health)||health<=0)throw Error('GAME player health must be a positive finite number');
+        const cameraOffset=options.cameraOffset==null?undefined:finiteVector(options.cameraOffset,'cameraOffset');
+        // The actor, HUD and restart snapshot must use the same health scale.
+        state.health=health;initialState.health=health;
+        state.maxHealth=health;initialState.maxHealth=health;
+        return session.actor("player", object, { tags: ["player"], ...options,health,cameraOffset });
       },
       trigger(id, object, options = {}) {
         const trigger = { id, object, radius: 1, once: true, fired: false, ...options };
@@ -419,9 +474,10 @@ export function createGameRuntime({
         if (!id || !object?.isObject3D) {
           throw new Error("GAME.level requires an id and THREE.Object3D");
         }
-        const level = { id, object, entry: new THREE.Vector3(), ...options };
+        const level = { id, object, ...options,entry:options.entry==null?new THREE.Vector3():finiteVector(options.entry,'level entry') };
         levels.set(id, level);
         object.visible = levels.size === 1;
+        if(levels.size===1)session.activeLevelId=id;
         return level;
       },
       goToLevel(id) {
@@ -452,9 +508,9 @@ export function createGameRuntime({
         emit("damage", { actor, amount, source });
         if (actor.health === 0) {
           actor.object.visible = false;
+          if (id === "player") session.lose("You were defeated");
           emit("defeat", { actor, tag: [...actor.tags][0] });
           updateObjectives("defeat", { tag: [...actor.tags][0] });
-          if (id === "player") session.lose("You were defeated");
         }
         return actor.health;
       },
@@ -480,13 +536,13 @@ export function createGameRuntime({
         return true;
       },
       win(message = spec.winMessage || "Objective complete") {
-        if (phase === "won") return;
+        if (phase === "won" || phase === "lost" || disposed) return;
         phase = "won";
         syncHud(message);
         emit("win", { score: state.score, elapsed: state.elapsed });
       },
       lose(message = spec.loseMessage || "Run ended") {
-        if (phase === "lost") return;
+        if (phase === "lost" || phase === "won" || disposed) return;
         phase = "lost";
         syncHud(message);
         emit("lose", { score: state.score, elapsed: state.elapsed });
@@ -497,11 +553,13 @@ export function createGameRuntime({
         phase = "disposed";
         eventTarget?.removeEventListener?.("keydown", onKeyDown);
         eventTarget?.removeEventListener?.("keyup", onKeyUp);
+        eventTarget?.removeEventListener?.("blur", onBlur);
         hud?.remove();
         listeners.clear();
         actors.clear();
         triggers.clear();
         interactions.clear();
+        levels.clear(); checkpoints.clear(); collisions.clear();
         sessions.delete(session);
         if (active === session) active = null;
       },

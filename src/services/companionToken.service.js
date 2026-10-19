@@ -1,3 +1,4 @@
+import {getLiquidityVault,transactLiquidityFees} from './liquidityVault.service.js';
 import {mintLicenseStatus} from './mintValidation.js';
 // Social-token reads and minted-agent-only reserve issuance.
 import { ethers } from 'ethers';
@@ -10,8 +11,6 @@ import { BonzaiSmartAgentsABI } from '../contracts/abi/BonzaiSmartAgents.abi.js'
 import { BonzaiAgentTokenFactoryABI } from '../contracts/abi/BonzaiAgentTokenFactory.abi.js';
 import {
   getPoolInfo as _getPoolInfo,
-  getUnclaimedFees as _getUnclaimedFees,
-  claimFees as _claimFees,
   getUniswapTradeUrl,
   getBaseScanUrl,
   getDexScreenerUrl,
@@ -308,8 +307,8 @@ async function getTokenInfo(tokenAddress) {
 // Delegate to shared uniswapV4 utils with service-specific log prefix
 const LOG_PREFIX = 'CompanionToken';
 const getPoolInfo = (poolId) => _getPoolInfo(poolId, LOG_PREFIX);
-const getUnclaimedFees = (addr) => _getUnclaimedFees(addr, LOG_PREFIX);
-const claimFees = () => _claimFees(LOG_PREFIX);
+const getUnclaimedFees = (addr, token) => getLiquidityVault(token, 'companion', addr);
+const claimFees = (token, currency) => transactLiquidityFees({token, kind:'companion', action:'claim', currency});
 
 /**
  * Get minimum ETH required for liquidity

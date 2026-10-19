@@ -15,7 +15,9 @@ describe('Worker lifecycle: deployed local contracts and production authorizatio
   const positions=await deploy('MockAgentPositionManager',await permit.getAddress()), pools=await deploy('MockPoolManager');
   const agents=await deploy('BonzaiSmartAgents',treasury.address,'ipfs://slot');
   const factory=await deploy('BonzaiAgentTokenFactory',await agents.getAddress(),await nvda.getAddress(),await swap.getAddress(),await pools.getAddress(),await positions.getAddress(),await permit.getAddress());
-  await agents.setLauncher(await factory.getAddress());const start=(await time.latest())+2;await agents.scheduleDrop(start,start+10000);await time.increaseTo(start);
+  const rewards=await (await ethers.getContractFactory("MockVaultRewards")).deploy();
+ await factory.configureLiquidityVault(treasury.address,await rewards.getAddress());
+ await agents.setLauncher(await factory.getAddress());const start=(await time.latest())+2;await agents.scheduleDrop(start,start+10000);await time.increaseTo(start);
   await agents.connect(owner).mintSlots(1,{value:ethers.parseEther('2')});
   await agents.connect(owner).personalize(1,'ipfs://agent','Rose Kanagawa','ROSE','ipfs://portrait',worker.address);
   await agents.connect(owner).issueToken(1,24000000,(await time.latest())+1000);

@@ -245,4 +245,27 @@ describe('BONZAI LVL currency basket', function () {
     expect(await router.claimable(route, bob.address)).to.equal(0);
     expect(await router.claimable(route, alice.address) + await router.claimable(route, contributor.address)).to.equal(81);
   });
+  it('admits only audited canonical liquidity vaults, automatically registers issued currencies and preserves governance disabling',async()=>{
+    const f=await fixture();
+    const deploy=async(n,...args)=>(await ethers.getContractFactory(n)).deploy(...args);
+    const permits=await deploy('MockPermit2'),positions=await deploy('MockPositionManager'),pools=await deploy('MockPoolManager');
+    await positions.setPermit2(await permits.getAddress());
+    const nft=await deploy('MockBonzaiContent');await nft.mintTo(f.owner.address);
+    const collections=await deploy('MockCollectiblesFactory');await collections.setCollection(f.owner.address,await nft.getAddress());
+    const registry=await deploy('BonzaiGameRegistry',await collections.getAddress());
+    await registry.register(await nft.getAddress(),1,ethers.id('game'),'ipfs://game');
+    const factory=await deploy('GameTokenFactory',await collections.getAddress(),await registry.getAddress());
+    await factory.configureLiquidity(await pools.getAddress(),await positions.getAddress(),await permits.getAddress(),f.treasury.address,await f.basket.getAddress());
+    await expect(factory.configureLiquidity(await pools.getAddress(),await positions.getAddress(),await permits.getAddress(),f.treasury.address,await f.basket.getAddress())).to.be.revertedWith('Vault already configured');
+    const issue=()=>factory.issue(awaitAddress,1,'Game','GAME','ipfs://game',{value:units('.01')});
+    const awaitAddress=await nft.getAddress();
+    await expect(issue()).to.be.revertedWith('Untrusted liquidity vault');
+    expect(await factory.totalTokensIssued()).to.equal(0);
+    await expect(f.basket.connect(f.alice).setLiquidityFactory(await factory.getAddress(),true)).to.be.revertedWithCustomError(f.basket,'OwnableUnauthorizedAccount');
+    await f.basket.setLiquidityFactory(await factory.getAddress(),true);await issue();
+    const [token]=await factory.getAllTokens();expect(await f.basket.rewardCurrencyEnabled(token)).to.equal(true);
+    await f.basket.setRewardCurrency(token,false);
+    expect(await f.basket.rewardCurrencyEnabled(token)).to.equal(false);
+  });
+
 });

@@ -2,7 +2,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {parseAssemblyPlan,inspectAssembly,requestAssemblyPlan,repairAssembly,assemblyInstructions,assemblyPlanObservations} from '../src/components/gen3d/assemblyContract.js';
+import {assemblyPlanPrompt,parseAssemblyPlan,inspectAssembly,requestAssemblyPlan,repairAssembly,assemblyInstructions,assemblyPlanObservations} from '../src/components/gen3d/assemblyContract.js';
 import {radialPanels,strutBetween,framedPanels} from '../src/components/gen3d/productionGeometry.js';
 import {renderWithRecovery} from '../src/components/gen3d/runtimeRecovery.js';
 const plan={version:1,mechanism:'Battery base supports a transparent light chamber.',parts:[
@@ -96,4 +96,26 @@ test('framed glazing maintains clearance from every rail',()=>{
 test('unrepairable syntax never replaces or replays the current scene',async()=>{
  let renders=0;const result=await repairAssembly({code:'old',inspect:()=>({errors:['blocked emitter'],warnings:[]}),rebuild:async()=> 'invalid',validate:()=>{throw Error('syntax');},repairSyntax:async()=> 'still invalid',render:async()=>{renders++;}});
  assert.equal(renders,0);assert.equal(result.code,'old');assert.match(result.report.warnings[0],/syntax/);
+});
+
+
+test('game planning preserves playable world scale instead of miniature object dimensions',()=>{
+ for(const mode of ['level','game']) {
+  const prompt=assemblyPlanPrompt('A 16 metre garden',mode);
+  assert.match(prompt,/preserve the requested world extent/);
+  assert.doesNotMatch(prompt,/longest dimension about 1.5/);
+ }
+ assert.match(assemblyPlanPrompt('A handheld lamp','object'),/longest dimension about 1.5/);
+});
+
+test('a measured gap in a consistently planned joint requests repair without trusting contradictory plans',()=>{
+ const root=scene();root.getObjectByName('chamber').position.y+=.08;
+ const report=inspectAssembly(root,plan);
+ assert.match(report.errors.join(' '),/measured joint gap/);
+ assert.match(report.errors.join(' '),/base.*chamber/);
+ const inconsistent=structuredClone(plan);inconsistent.parts[1].bounds[0][1]=.4;
+ assert.deepEqual(inspectAssembly(root,inconsistent).errors,[],'inconsistent planner coordinates remain advisory');
+ assert.ok(inspectAssembly(root,inconsistent).warnings.length);
+ root.getObjectByName('chamber').position.y-=.08;
+ assert.deepEqual(inspectAssembly(root,plan).errors,[]);
 });

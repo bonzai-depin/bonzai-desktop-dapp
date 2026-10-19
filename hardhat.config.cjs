@@ -1,5 +1,6 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("dotenv").config();
+require("./scripts/protocol-config.cjs").loadProtocolConfig();
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -16,7 +17,8 @@ module.exports = {
   },
   networks: {
     hardhat: {
-      allowUnlimitedContractSize: true,
+      // Exercise the same runtime bytecode limit as production deployments.
+      allowUnlimitedContractSize: false,
     },
     // Ethereum Mainnet
     ethereum: {

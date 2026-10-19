@@ -1,3 +1,8 @@
+import { localInference, startInferenceBroker } from './services/localInferenceCoordinator.js';
+import { createScenarioRunner } from './main/performance/scenarioRunner.js';
+import { fingerprintFile, localRequest, validateScenarioOutput } from './main/performance/scenarioTransport.js';
+import { createPerformanceJournal } from './main/performance/journal.js';
+import { setPerformanceJournal } from './services/performanceCapture.js';
 import { closeHttpServer, installShutdown } from './main/shutdown.js';
 import { wavDuration, meditationExportTiming, meditationCaptionCues, meditationVideoArgs } from './main/media/meditationExport.js';
 import { createCompanyOAuth } from './main/connectors/companyOAuth.js';
@@ -52,6 +57,7 @@ import fs from "fs";
 import si from "systeminformation";
 import psTree from "ps-tree";
 import * as llamaServer from "./services/llamaServer.manager.js";
+import { completionMetrics } from './services/completionMetrics.js';
 import { readLocalExecutionStatus } from "./services/localExecutionStatus.js";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -407,6 +413,7 @@ const launchPythonSubprocess = async () => {
 
   const env = {
     ...process.env,
+    ...await startInferenceBroker(),
     PYTHONUNBUFFERED: "1",
     PYTHONDONTWRITEBYTECODE: "1",
     // Ensure HOME is set (required for some libraries)
@@ -423,6 +430,7 @@ const launchPythonSubprocess = async () => {
     LC_ALL: process.env.LC_ALL || "en_US.UTF-8",
     // Pass model directory to Flask server
     BONZAI_MODEL_DIR: MODEL_DIR,
+    BONZAI_BENCHMARK_DIR: path.join(app.getPath("userData"), "performance-benchmarks"),
     // Pass JWT secret so tokens survive server restarts
     BONZAI_JWT_SECRET: JWT_SECRET,
     // Privacy-pipeline UDS path. The bridge listener may not be up yet
@@ -759,6 +767,132 @@ if (process.platform === "win32") {
 // Store helpers
 // ─────────────────────────────────────────────────────────────────────────────
 const store = new Store();
+const performanceJournal = createPerformanceJournal(path.join(app.getPath("userData"), "performance-benchmarks"));
+performanceJournal.recover();
+setPerformanceJournal(performanceJournal);
+
+async function benchmarkHardware() {
+  const safe = async task => {
+    let timer;
+    try { return await Promise.race([task(), new Promise(resolve => { timer = setTimeout(() => resolve(null), 10000); })]); }
+    catch { return null; } finally { clearTimeout(timer); }
+  };
+  const [cpu, graphics, memory, system, disks] = await Promise.all([
+    safe(() => si.cpu()), safe(() => si.graphics()), safe(() => si.mem()), safe(() => si.osInfo()), safe(() => si.diskLayout()),
+  ]);
+  return {
+    cpu: cpu ? { manufacturer: cpu.manufacturer, brand: cpu.brand, physicalCores: cpu.physicalCores, logicalCores: cpu.cores, speedGHz: cpu.speed, performanceCores: cpu.performanceCores, efficiencyCores: cpu.efficiencyCores, cache: cpu.cache } : null,
+    gpus: graphics?.controllers?.map(g => ({ vendor: g.vendor, model: g.model, vramMB: g.vram, driverVersion: g.driverVersion, bus: g.bus })) || [],
+    memory: memory ? { totalBytes: memory.total, availableBytes: memory.available, swapTotalBytes: memory.swaptotal, swapUsedBytes: memory.swapused } : null,
+    os: { platform: process.platform, arch: process.arch, release: system?.release || os.release(), distro: system?.distro, kernel: system?.kernel },
+    disks: disks?.map(d => ({ type: d.type, interfaceType: d.interfaceType, sizeBytes: d.size })) || [],
+    runtime: { electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome },
+    capturedAt: new Date().toISOString(),
+  };
+}
+// Record every pipeline automatically, independently of explicitly launched tests.
+const continuousBenchmark = performanceJournal.start({}, app.getVersion());
+void benchmarkHardware().then(hardware => performanceJournal.updateHardware(continuousBenchmark.id, hardware)).catch(() => {});
+const benchmarkPort = () => Number(process.env.BONZAI_SERVER_PORT || PY_SERVER_PORT);
+const standardizedBenchmarks = createScenarioRunner({
+  journal: performanceJournal, hardware: benchmarkHardware, version: () => app.getVersion(),
+  idle: async () => {
+    const [llm, media] = await Promise.all([
+      readLocalExecutionStatus(llamaServer, await _getPool()),
+      localRequest(benchmarkPort(), '/benchmark/status', undefined, 10000),
+    ]);
+    return llm.activityComplete && !llm.loading && !llm.activeRequests && media.status === 200 && media.data.busy === false;
+  },
+  environment: async item => {
+    const runtime = await localRequest(benchmarkPort(), '/benchmark/status', undefined, 10000);
+    if (runtime.status !== 200) return { ready: false, reason: 'Restart the local AI server to enable standardized benchmarks.' };
+    if (item.kind === 'text' || item.kind === '3d') {
+      const spec = llamaServer.getActiveSpec();
+      if (!llamaServer.isRunning() || !spec?.modelPath) return { ready: false, reason: 'Load a local text model first.' };
+      if (llamaServer.getRpcPeers()?.length) return { ready: false, reason: 'Distributed LLM execution cannot measure this machine alone. Select local execution.' };
+      const files = {};
+      for (const key of ['modelPath','draftPath','mmprojPath']) if (spec[key]) files[key] = await fingerprintFile(spec[key]);
+      return { ready: true, model: path.basename(spec.modelPath), files,
+        implementation: runtime.data.implementation, packages: runtime.data.packages,
+        settings: Object.fromEntries(['ctxSize','ngl','batchSize','ubatchSize','threads','specType','specDraftNMax','mtp','parallelSlots'].filter(k => spec[k] !== undefined).map(k => [k,spec[k]])),
+        device: runtime.data.device };
+    }
+    const manifest = await localRequest(benchmarkPort(), '/benchmark/environment', { pipeline: item.plan });
+    return { ...manifest.data, implementation: runtime.data.implementation, packages: runtime.data.packages, device: runtime.data.device };
+  },
+  execute: async (item, extras, env) => {
+    if (item.kind === 'text' || item.kind === '3d') {
+      const spec = llamaServer.getActiveSpec();
+      if (!spec?.modelPath || path.basename(spec.modelPath) !== env.model || llamaServer.getRpcPeers()?.length ||
+          (await fingerprintFile(spec.modelPath)).sha256 !== env.files.modelPath.sha256) {
+        return { status: 'failed', reason: 'The selected local model changed during this run.', halt: true };
+      }
+      const result = await llamaServer.chat({ ...item.params, _benchmark: true });
+      const text = result.choices?.[0]?.message?.content || '';
+      if (!text.trim()) return { status: 'failed', reason: 'The model returned no usable text.' };
+      if (item.kind === '3d') {
+        const code = text.trim().replace(/^```(?:javascript|js)?\s*/i, '').replace(/```\s*$/, '');
+        await exportWorker3D(code, { BrowserWindow,
+          url: VITE_DEV_SERVER_URL ? new URL('worker-3d-runtime.html', VITE_DEV_SERVER_URL).href : null,
+          file: path.join(__dirname, '../renderer/main_window/worker-3d-runtime.html') });
+      }
+      return { status: 'completed', metrics: {
+        tokenCount: result.usage?.completion_tokens, inputTokens: result.usage?.prompt_tokens,
+        tokensPerSecond: result.timings?.predicted_per_second,
+        prefillMs: result.timings?.prompt_ms, genMs: result.timings?.predicted_ms,
+      }};
+    }
+    let response;
+    try {
+      response = await localRequest(benchmarkPort(), item.pipeline, { ...item.params, ...extras, auto_download: false, _benchmark: true });
+    } catch { return { status: 'failed', reason: 'Connection lost. Run stopped because the server may still be generating.', halt: true }; }
+    if (response.status === 409) return { status: 'busy', reason: 'Other work took priority. Run this scenario again when the machine is idle.' };
+    if (![200,201].includes(response.status) || response.data.error || !validateScenarioOutput(item, response.data))
+      return { status: 'failed', reason: response.status === 202 ? 'The endpoint accepted work but did not return a completed result.' : 'The endpoint did not return a successful result. Check installed models and local logs.' };
+    const output = response.data;
+    return { status: 'completed', metrics: {
+      queueMs: output.queue_ms, executionMs: output.execution_ms,
+      width: output.width, height: output.height, num_frames: output.frames || output.num_frames,
+      fps: output.fps, duration: output.duration,
+    }};
+  },
+  notify: (id, suite, finished = false) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('benchmark:progress', { id, title: 'Standardized benchmark',
+      stage: suite.current ? suite.current + ' · ' + suite.phase : suite.phase,
+      status: finished ? (suite.phase === 'Failed' ? 'failed' : suite.phase === 'Finished' ? 'completed' : 'cancelled') : 'running',
+      progress: { current: suite.completed, total: suite.total } });
+  },
+});
+ipcMain.handle('benchmark:run', (_event, options) => standardizedBenchmarks.start(options));
+
+const benchmark3dSamples = new Map();
+ipcMain.handle('benchmark:begin3d', (event, { mode, model } = {}) => {
+  if (!['object', 'level', 'game'].includes(mode)) return null;
+  const finish = performanceJournal.begin(`3d/${mode}`, {}, model);
+  if (!finish) return null;
+  const id = crypto.randomUUID();
+  benchmark3dSamples.set(id, { finish, senderId: event.sender.id });
+  return id;
+});
+ipcMain.handle('benchmark:finish3d', (event, { id, trace } = {}) => {
+  const sample = benchmark3dSamples.get(id);
+  if (!sample || sample.senderId !== event.sender.id) return;
+  benchmark3dSamples.delete(id);
+  sample.finish(['completed', 'failed', 'cancelled'].includes(trace?.status) ? trace.status : 'interrupted', trace);
+});
+ipcMain.handle('benchmark:list', () => performanceJournal.list());
+ipcMain.handle('benchmark:report', (_event, id) => performanceJournal.report(id));
+ipcMain.handle('benchmark:snapshot', (_event, id) => performanceJournal.snapshot(id));
+ipcMain.handle('benchmark:stop', () => { standardizedBenchmarks.stop(); });
+ipcMain.handle('benchmark:archive', (_event, { id, receipt }) => performanceJournal.archive(id, receipt));
+ipcMain.handle('benchmark:export', async (_event, id) => {
+  const report = performanceJournal.report(id);
+  const { canceled, filePath } = await dialog.showSaveDialog({ defaultPath: `bonzai-benchmark-${id}.json`, filters: [{ name: 'Benchmark report', extensions: ['json'] }] });
+  if (canceled || !filePath) return false;
+  await fs.promises.writeFile(filePath, JSON.stringify(report, null, 2), { mode: 0o600 });
+  return true;
+});
+
 let companyRuntime;
 const workerRuntimeCommand = (name, args) => {
   if (!companyRuntime) throw new Error('Local worker runtime is starting.');
@@ -3386,7 +3520,7 @@ const OPENCLAW_SKILL_DIR = path.join(os.homedir(), ".openclaw", "skills", "bonza
 const HERMES_SKILLS_DIR = path.join(os.homedir(), ".hermes", "skills");
 const HERMES_ENV_PATH = path.join(os.homedir(), ".hermes", ".env");
 const HERMES_BONZAI_SKILL_DIR = path.join(HERMES_SKILLS_DIR, "ai", "bonzai");
-const BONZAI_HARNESS_VERSION = "4.0.0-rc.1";
+const BONZAI_HARNESS_VERSION = "4.0.1-rc.1";
 const BONZAI_PROVIDER_ID = "bonzai/bonzai-sovereign";
 
 /**
@@ -4412,13 +4546,28 @@ ipcMain.handle("model-download-mmproj", downloadMmproj);
  * a company explicitly asks for it.
  */
 let _pool = null;
+let mediaNeedsRelease = false;
+localInference.prepare = async (kind) => {
+  if (kind !== 'workflow' && _pool) await _pool.shutdown();
+  if (kind !== 'llm') await llamaServer.suspendForInference();
+  if (kind === 'media') mediaNeedsRelease = true;
+  if (kind !== 'media' && subpy && mediaNeedsRelease) {
+    const response = await fetch(`http://127.0.0.1:${PY_SERVER_PORT}/memory/clear`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preserve_tts: true }), signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) throw new Error('Could not release idle media models before LLM inference');
+    mediaNeedsRelease = false;
+  }
+};
+
 async function _getPool() {
   if (_pool) return _pool;
   const poolPath = app.isPackaged
     ? path.join(app.getAppPath(), "src", "services", "llamaServer.pool.js")
     : path.resolve("src/services/llamaServer.pool.js");
   _pool = await import(pathToFileURL(poolPath).href);
-  if (_pool?.configure) _pool.configure({ resourcesPath: app.isPackaged ? process.resourcesPath : null });
+  if (_pool?.configure) _pool.configure({ resourcesPath: app.isPackaged ? process.resourcesPath : null, inferenceCoordinator: localInference });
   return _pool;
 }
 
@@ -4428,7 +4577,7 @@ const BONZAI_VISION_MODEL = Object.freeze({
   mmproj: "meetara-vl-qwen3.5-0.8b.gguf",
 });
 
-async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens, review } = {}) {
+async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens, review, _benchmark = false } = {}) {
   const encoded = image_base64 || image;
   if (!encoded) throw new Error("image_base64 is required");
   const modelPath = path.join(MODEL_DIR, BONZAI_VISION_MODEL.filename);
@@ -4451,9 +4600,10 @@ async function runCrossPlatformVision({ image_base64, image, prompt, max_tokens,
     : `data:image/jpeg;base64,${encoded}`;
   const text = await pool.chat({
     modelKey: BONZAI_VISION_MODEL.key,
+    ...(_benchmark === true ? { _benchmark: true, seed: 42, enableThinking: false } : {}),
     ...(review === true ? { responseFormat: VISUAL_REVIEW_FORMAT, enableThinking: false } : {}),
     maxTokens: Number(max_tokens) || 512,
-    temperature: 0.1,
+    temperature: _benchmark === true ? 0 : 0.1,
     messages: [{
       role: "user",
       content: [
@@ -6328,6 +6478,8 @@ async function loadModel(_event, currentModel) {
   }
 
   const incomingFilename = (currentModel.filename || "").toLowerCase();
+  // An explicit measured fallback must win over catalogue/filename defaults.
+  if (currentModel.specType === 'none') currentModel = { ...currentModel, mtp: false, draftModel: null, draftUrl: null };
   if (isQwen38LowMtp(incomingFilename)) {
     currentModel = { ...currentModel, context: Math.min(currentModel.context || LOW_MTP_CONTEXT, LOW_MTP_CONTEXT), kvCacheTypeK: currentModel.kvCacheTypeK || "q8_0", kvCacheTypeV: currentModel.kvCacheTypeV || "q8_0" };
   }
@@ -6339,7 +6491,7 @@ async function loadModel(_event, currentModel) {
     /^qwen3\.6-27b-ud-q[248]_k_xl\.gguf$/.test(incomingFilename) ||
     /^qwen3\.6-35b-a3b-ud-q[248]_k_xl\.gguf$/.test(incomingFilename)
   );
-  if (isQwenMtpGguf && (currentModel.specType !== "draft-mtp" || currentModel.mtp !== true)) {
+  if (isQwenMtpGguf && currentModel.specType !== 'none' && (currentModel.specType !== "draft-mtp" || currentModel.mtp !== true)) {
     currentModel = {
       ...currentModel,
       specType: "draft-mtp",
@@ -6364,6 +6516,8 @@ async function loadModel(_event, currentModel) {
     requestedFilename === currentFilename &&
     currentLoadedModel &&
     llamaServer.isRunning() &&
+    (currentModel.specType == null || currentModel.specType === (currentLoadedModel.specType || 'none')) &&
+    (currentModel.specDraftNMax == null || currentModel.specDraftNMax === (currentLoadedModel.specDraftNMax ?? 2)) &&
     !currentModel.forceReload
   ) {
     console.log(`[LLM] Model already loaded: ${requestedFilename}, skipping reload`);
@@ -6719,6 +6873,7 @@ async function chat(_event, input) {
     temperature,
     maxTokens,
     seed,
+    enableThinking: typeof input?.enableThinking === 'boolean' ? input.enableThinking : undefined,
   });
 
   const assistantMessage = result.choices?.[0]?.message?.content ?? "";
@@ -6729,13 +6884,13 @@ async function chat(_event, input) {
   }
 
   if (returnMetadata) {
-    const usage = result.usage || {};
     const elapsedMs = Date.now() - startTime;
     return {
       text: assistantMessage,
-      tokenCount: usage.completion_tokens || 0,
-      elapsedMs,
-      prefillMs: 0, // llama-server doesn't expose prefill separately by default
+      ...completionMetrics({ usage: result.usage, timings: result.timings, elapsedMs,
+        finishReason: result.choices?.[0]?.finish_reason }),
+      usage: result.usage || null,
+      timings: result.timings || null,
     };
   }
   return assistantMessage;
@@ -6857,13 +7012,14 @@ async function chatStream(event, input) {
 
   try {
     const messages = input?.isolated ? [{ role: "user", content: userMessage }] : _buildMessages(userMessage, { maxTokens });
-    const assistantMessage = await llamaServer.chatStream(
+    const response = await llamaServer.chatStream(
       {
         messages,
         temperature,
         maxTokens,
         seed,
         enableThinking,
+        returnMetadata: input?.returnMetadata === true,
       },
       (chunk) => {
         if (win && !win.isDestroyed()) {
@@ -6873,12 +7029,13 @@ async function chatStream(event, input) {
       { signal: ctrl.signal },
     );
 
-    recordLifetimeTokenUsage({ messages, output: assistantMessage });
+    const assistantMessage = typeof response === 'string' ? response : response.text;
+    recordLifetimeTokenUsage({ messages, output: assistantMessage, usage: response?.usage });
     if (!input?.isolated) {
       chatHistory.push({ role: "user", content: userMessage });
       chatHistory.push({ role: "assistant", content: assistantMessage });
     }
-    return assistantMessage;
+    return response;
   } catch (err) {
     if (err.name === "AbortError" || ctrl.signal.aborted) {
       console.log("[LLM] chatStream aborted for sender", key);
@@ -6907,10 +7064,8 @@ async function unloadModel(_event, { force } = {}) {
     return false;
   }
 
-  if (llamaServer.isRunning()) {
-    console.log("[LLM] Stopping llama-server to free GPU memory...");
-    await llamaServer.stopModel();
-  }
+  // Also forget a temporarily suspended model on an explicit unload.
+  await llamaServer.stopModel();
   currentLoadedModel = null;
   chatHistory = [];
 

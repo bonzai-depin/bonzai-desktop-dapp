@@ -48,7 +48,7 @@ contract MockAgentPositionManager is ERC721 {
         (bytes memory actions,bytes[] memory params)=abi.decode(data,(bytes,bytes[]));
         require(keccak256(actions)==keccak256(hex"020d")&&params.length==2,"Invalid actions");
         (PoolKey memory key,int24 lower,int24 upper,uint256 liquidity,uint128 a0,uint128 a1,address recipient,)=abi.decode(params[0],(PoolKey,int24,int24,uint256,uint128,uint128,address,bytes));
-        require(key.currency0<key.currency1&&key.currency0!=address(0)&&key.fee==0&&key.hooks==address(0),"Not hookless token pair");
+        require(key.currency0<key.currency1&&key.currency0!=address(0)&&key.fee==10000&&key.hooks==address(0),"Not hookless token pair");
         require(lower==-887220&&upper==887220&&liquidity>0,"Invalid position");
         (address c0,address c1)=abi.decode(params[1],(address,address));require(c0==key.currency0&&c1==key.currency1,"Settlement mismatch");
         currency0=c0;currency1=c1;amount0=a0;amount1=a1;

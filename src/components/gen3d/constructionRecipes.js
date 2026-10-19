@@ -1,5 +1,12 @@
 // Small executable patterns, not prebuilt replacement scenes. The model adapts
 // dimensions and profiles to its blueprint. Keep context for the actual asset.
+const glazedChamber = `FITTED POLYGONAL GLAZING (adapt dimensions and names to the plan):
+const chamber=H.framedPanels({radius:.3,height:.7,sides:6,rail:.018,clearance:.003,thickness:.004,y:.6,glassMaterial,frameMaterial});
+chamber.getObjectByName('frame').name='frame_part_id';
+chamber.getObjectByName('glazing').name='glass_part_id';
+root.add(chamber);
+// Replace both placeholder names with actual plan IDs. The helper derives pane widths, normals and rail openings together; do not rebuild those panes in a separate trigonometry loop.
+// Radius is the polygon APOTHEM (centre to face), not the corner radius. y is its CENTRE, so bottom=y-height/2 and top=y+height/2. Add custom base/cap/handle separately, anchored to these shared dimensions. Keep its interior open for the emitter.`;
 const opening = `REAL OPENING / ARCH PATTERN (adapt measurements):
 const aperture=[[-1,0],[-1,2]];
 for(let i=0;i<=24;i++){const a=Math.PI-i*Math.PI/24;aperture.push([Math.cos(a),2+Math.sin(a)]);}
@@ -26,6 +33,7 @@ for(const x of [-.43,.43])for(const y of [-.18,.18]){pose.position.set(x,y,.134)
 
 export function constructionRecipes(brief, mode='object') {
   const text=String(brief).toLowerCase(), recipes=[];
+  if(/lantern|lanterne|polygonal.*glass|glass.*cage/.test(text))recipes.push(glazedChamber);
   if(/arch|building|station|castle|temple|room|corridor|courtyard|facade|window|door|city|village|bâtiment|château|gare|porte|fenêtre/.test(text))recipes.push(opening);
   if(/vase|bowl|fountain|vessel|chalice|bottle|urn|cup|fontaine|vasque|coupe/.test(text))recipes.push(vessel);
   if(/robot|industrial|machine|sci.fi|vehicle|weapon|engine|radio|instrument|spaceship|mécanique|vaisseau/.test(text))recipes.push(manufactured);

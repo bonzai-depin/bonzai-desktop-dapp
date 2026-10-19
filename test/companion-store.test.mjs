@@ -370,3 +370,16 @@ test('separate token issuance journal survives quota failure without replacing t
     assert.equal(recovered.tokenLaunchStatus,'pending');
   } finally { globalThis.window = previous; }
 });
+
+test('connector roster reads regenerated portraits from SQLite instead of its stale mirror', async () => fixture(async ({ legacy }) => {
+  const original = {id:'portrait-agent',name:'Portrait Agent',image:'data:image/webp;base64,b2xk'};
+  await store.saveCompanions([original]);
+  repo.upsert({...original,image:'data:image/webp;base64,bmV3'});
+  assert.equal(legacy.get('roleplayCompanions')[0].image,original.image);
+  const source = await readFile(new URL('../src/services/openclaw.handler.js',import.meta.url),'utf8');
+  const declaration = source.match(/async function getCompanions\(\) \{[\s\S]*?\n\}/)[0];
+  const readRoster = new Function('roleplayStore','DEFAULT_COMPANIONS',`${declaration};return getCompanions;`)(store,[]);
+  const [actual] = await readRoster();
+  assert.equal(actual.image,'data:image/webp;base64,bmV3');
+  assert.equal(actual.name,original.name);
+}));

@@ -54,4 +54,7 @@ def model_file(name):
     info = MODEL_FILES.get(name)
     if info is None:
         raise ValueError("Unknown mirrored model: " + name)
-    return dict(name=name, url=f"{MODEL_CDN}/{name}", **info)
+    # Legacy name retained for existing installations; the identical blob is
+    # published under its current filename (same SHA-256 and byte length).
+    remote_name = {'mysticxxx_mmh3-v4.safetensors': 'h3_extra.safetensors'}.get(name, name)
+    return dict(name=name, url=f"{MODEL_CDN}/{remote_name}", **info)

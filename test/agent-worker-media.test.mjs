@@ -42,3 +42,21 @@ test('training delivery includes weights/config but excludes datasets, logs and 
   await assert.rejects(media.prepare({pipeline:'fineTune',meta:{modelId:'../secret'}},{}),/identity/);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('sharded models retain their load manifest but never transmit optimizer checkpoints', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bonzai-model-shards-'));
+  const folder = path.join(root, 'model_2');
+  await fs.mkdir(path.join(folder, 'checkpoint-100'), { recursive: true });
+  const blobs = { async writeFromPathStream(file) { const bytes = await fs.readFile(file); return { id: mediaHash(bytes), size: bytes.length }; } };
+  const media = createWorkerMedia({ blobs, roots: [root], trainedRoot: () => root });
+  try {
+    for (const name of ['model-00001-of-00001.safetensors', 'config.json', 'optimizer.bin', 'tokenizer.model', 'checkpoint-100/model.safetensors']) await fs.writeFile(path.join(folder, name), '{}');
+    const index = path.join(folder, 'model.safetensors.index.json');
+    await fs.writeFile(index, JSON.stringify({ weight_map: { layer: 'model-00001-of-00001.safetensors' } }));
+    const output = { pipeline: 'fineTune', meta: { modelId: 'model_2' } };
+    const result = await media.prepare(output, {});
+    assert.deepEqual(result.artifacts.map(a => a.name).sort(), ['config.json', 'model-00001-of-00001.safetensors', 'model.safetensors.index.json', 'tokenizer.model']);
+    await fs.writeFile(index, JSON.stringify({ weight_map: { layer: '../private.safetensors' } }));
+    await assert.rejects(media.prepare(output, {}), /Invalid model shard path/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

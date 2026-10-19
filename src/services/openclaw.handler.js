@@ -479,7 +479,7 @@ async function getOrCreateSession(channelId, companions, scenarios) {
 
 async function getCompanions() {
   try {
-    const companions = await window.electronAPI.store.get('roleplayCompanions', null);
+    const companions = await roleplayStore.loadCompanions();
     return companions && companions.length > 0 ? companions : DEFAULT_COMPANIONS;
   } catch (e) {
     return DEFAULT_COMPANIONS;

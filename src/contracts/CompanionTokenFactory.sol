@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
+import "./BonzaiLiquidityVault.sol";
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -63,40 +64,18 @@ interface IPermit2 {
 }
 
 /**
- * @title IBonzaiUniswapHook
- */
-interface IBonzaiUniswapHook {
-    function registerPool(
-        bytes32 poolId,
-        address beneficiary,
-        address companionNFT,
-        uint256 companionTokenId,
-        uint8 poolType,
-        uint8 mintPoolIndex
-    ) external;
-}
-
-/**
- * @title CompanionTokenFactory
- * @notice Factory for atomic companion token deployment + Uniswap V4 liquidity
- * @dev Deploys ERC-20 token, creates V4 pool with fee=0 (hook-only fees),
- *      mints full-range LP position, locks LP NFT to DEAD address, and
- *      registers the pool with BonzaiUniswapHook for 40/40/10/10 fee capture.
- *
- * Features:
- * - One-click token launch with 96% supply in liquidity, 4% to companion (agent wallet)
- * - LP position NFT BURNED at launch (sent to 0xdead — no private key exists, so
- *   the NFT is permanently unreachable and the underlying liquidity stays in the
- *   V4 pool forever; this is the canonical V4 burn pattern since ERC-721
- *   transfers to address(0) revert).
- * - Tokens are burnable (deflationary)
- * - No trading tax, no honeypot, no special permissions
- * - One token per companion (prevents duplicates)
- * - Minimum ETH requirement to prevent dust attacks
- * - Hook captures 1% of swap output: 40 wallet / 40 owner / 10 treasury / 10 MintPool
+ * @notice Fixed-supply issuance with 96% permanently vaulted liquidity and 4% creator allocation.
+ * Hookless pools charge 1%; the shared vault accounts trading fees once.
+ * See docs/LOCKED_LIQUIDITY.md for beneficiary splits and deployment wiring.
  */
 contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Lifetime number of canonical agent social-token contracts, not ERC20 units.
+    BonzaiLiquidityVault public liquidityVault;
+    mapping(address=>uint256) public liquidityPosition;
+    function configureLiquidityVault(address treasury,address rewards) external onlyOwner {
+        require(address(liquidityVault)==address(0),"Vault already configured");
+        liquidityVault=new BonzaiLiquidityVault(address(positionManager),treasury,rewards);
+    }
     uint256 public constant MAX_SOCIAL_TOKENS = 10_000;
     using SafeERC20 for IERC20;
 
@@ -116,10 +95,7 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Basis points denominator
     uint256 public constant BPS_DENOMINATOR = 10000;
 
-    /// @notice Dead address for locking LP position NFT (unruggable liquidity)
-    /// @notice Address with no known private key. Receiving the LP position NFT
-    ///         here is equivalent to burning it: ERC-721 transfers to address(0)
-    ///         revert in OZ v5, so this is the canonical V4 burn pattern.
+    /// @notice Retires unused token rounding dust; LP positions are held by liquidityVault.
     address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
     /// @notice Native ETH placeholder (Uniswap V4 uses address(0) for native ETH)
@@ -132,10 +108,6 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Pool tick spacing
     int24 public constant TICK_SPACING = 60;
 
-    /// @notice Hook mint pool index for companion tokens (LVL4 = video pool)
-    /// @notice Unused for COMPANION pool type — companion hook fees always go to pool 5 (LVL6 training).
-    /// This value is passed to registerPool() but ignored by BonzaiUniswapHook for POOL_TYPE_COMPANION.
-    uint8 public constant MINT_POOL_INDEX = 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // IMMUTABLES
@@ -150,8 +122,6 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /// @notice Permit2 contract for token approvals
     IPermit2 public immutable permit2;
 
-    /// @notice BonzaiUniswapHook for fee capture
-    IBonzaiUniswapHook public immutable feeHook;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // STATE
@@ -196,23 +166,19 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
      * @param _poolManager Uniswap V4 PoolManager on Base
      * @param _positionManager Uniswap V4 PositionManager on Base
      * @param _permit2 Permit2 contract on Base
-     * @param _feeHook BonzaiUniswapHook address
      */
     constructor(
         address _poolManager,
         address _positionManager,
-        address _permit2,
-        address _feeHook
+        address _permit2
     ) Ownable(msg.sender) {
         require(_poolManager != address(0), "Invalid PoolManager");
         require(_positionManager != address(0), "Invalid PositionManager");
         require(_permit2 != address(0), "Invalid Permit2");
-        require(_feeHook != address(0), "Invalid feeHook");
 
         poolManager = IPoolManagerCTF(_poolManager);
         positionManager = IPositionManager(_positionManager);
         permit2 = IPermit2(_permit2);
-        feeHook = IBonzaiUniswapHook(_feeHook);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -222,14 +188,14 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
     /**
      * @notice Launch a new companion token with Uniswap V4 liquidity
      * @dev Deploys token, creates V4 pool, mints full-range LP, locks LP NFT,
-     *      and registers with hook — all atomically.
+     *      and registers the immutable fee vault — all atomically.
      *
      * @param nftTokenId Companion NFT token ID (must be > 0, must be minted first)
      * @param name Full name of the companion (e.g., "Aurore Delacroix")
      * @param symbol Token symbol - companion's first name uppercase (e.g., "AURORE")
      * @param imageURI IPFS URI of companion's profile image
      * @param agentWallet Companion's agent wallet address
-     * @param companionOwner NFT owner address (receives 40% of hook fees)
+     * @param companionOwner NFT owner address (receives 40% of collected trading fees)
      *
      * @return token Address of the deployed token
      * @return poolId Pool ID hash for the V4 pool
@@ -243,6 +209,8 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         address companionOwner
     ) external payable nonReentrant returns (address token, bytes32 poolId) {
         // Validation
+        require(address(liquidityVault)!=address(0),"Vault not configured");
+        require(msg.value<=type(uint128).max,"Liquidity too large");
         require(msg.value >= minEthLiquidity, "Insufficient ETH for liquidity");
         require(nftTokenId > 0, "Must have minted NFT");
         require(nftTokenId <= MAX_SOCIAL_TOKENS && allTokens.length < MAX_SOCIAL_TOKENS, "Social token supply cap reached");
@@ -287,9 +255,9 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         IPositionManager.PoolKey memory poolKey = IPositionManager.PoolKey({
             currency0: NATIVE_ETH,
             currency1: token,
-            fee: 0,              // No LP fee — hook captures all fees
+            fee: 10000,          // 1% LP fee, collected by the immutable vault
             tickSpacing: TICK_SPACING,
-            hooks: address(feeHook)
+            hooks: address(0)
         });
 
         // 6. Calculate sqrtPriceX96 from ETH/token ratio
@@ -302,9 +270,9 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         IPoolManagerCTF.PoolKey memory pmKey = IPoolManagerCTF.PoolKey({
             currency0: NATIVE_ETH,
             currency1: token,
-            fee: 0,
+            fee: 10000,
             tickSpacing: TICK_SPACING,
-            hooks: address(feeHook)
+            hooks: address(0)
         });
         poolManager.initialize(pmKey, sqrtPriceX96);
 
@@ -320,32 +288,20 @@ contract CompanionTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         params[0] = abi.encode(
             poolKey, MIN_TICK, MAX_TICK,
             uint256(BonzaiV4Liquidity.liquidity(msg.value, poolAmount, sqrtPriceX96)),
-            uint128(msg.value), uint128(poolAmount), BURN_ADDRESS, bytes("")
+            uint128(msg.value), uint128(poolAmount), address(liquidityVault), bytes("")
         );
         params[1] = abi.encode(NATIVE_ETH, token);
         params[2] = abi.encode(NATIVE_ETH, msg.sender);
         positionManager.modifyLiquidities{value: msg.value}(abi.encode(hex"020d14", params), block.timestamp);
-        require(IERC721(address(positionManager)).ownerOf(positionId) == BURN_ADDRESS, "Position not locked");
+        liquidityPosition[token]=positionId;
+        liquidityVault.register(positionId,NATIVE_ETH,token,agentWallet,companionContract,nftTokenId);
         // Any rounding remainder is inaccessible to the factory administrator.
         uint256 tokenDust = newToken.balanceOf(address(this));
         if (tokenDust > 0) newToken.transfer(BURN_ADDRESS, tokenDust);
         newToken.approve(address(permit2), 0);
         permit2.approve(token, address(positionManager), 0, 0);
 
-        // 11. Compute poolId and register with hook. The hook reads owner +
-        //     agent wallet LIVE from the NFT contract on every swap, so we
-        //     pass companionContract + nftTokenId rather than snapshotting
-        //     companionOwner. agentWallet is kept as a legacy fallback in
-        //     PoolConfig.beneficiary.
         poolId = keccak256(abi.encode(poolKey));
-        feeHook.registerPool(
-            poolId,
-            agentWallet,
-            companionContract,   // NFT contract for live ownerOf / getAgentWallet
-            nftTokenId,
-            0,                    // 0 = COMPANION
-            MINT_POOL_INDEX
-        );
 
         emit CompanionTokenLaunched(
             nftTokenId,

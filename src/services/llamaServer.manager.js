@@ -1,3 +1,6 @@
+import { localInference } from './localInferenceCoordinator.js';
+import { beginPerformanceSample } from './performanceCapture.js';
+import { completionMetrics } from './completionMetrics.js';
 /**
  * llama-server subprocess manager.
  *
@@ -22,6 +25,7 @@ import fs from "fs";
 import net from "net";
 import child_process from "child_process";
 import { Agent } from "undici";
+import { collectCompletionMetrics } from './completionMetrics.js';
 
 const LLAMA_SERVER_EXE = process.platform === "win32" ? "llama-server.exe" : "llama-server";
 
@@ -183,7 +187,7 @@ async function pickFreePort() {
  *                                          ignore it harmlessly.
  */
 export function buildArgs(spec) {
-  const isMtpSpecDecode = spec.specType === "draft-mtp" || spec.mtp === true;
+  const isMtpSpecDecode = spec.specType !== 'none' && (spec.specType === "draft-mtp" || spec.mtp === true);
   const requestedParallelSlots = spec.parallelSlots && spec.parallelSlots >= 1 ? spec.parallelSlots : 1;
   const parallelSlots = isMtpSpecDecode ? 1 : requestedParallelSlots;
   if (isMtpSpecDecode && requestedParallelSlots !== 1) {
@@ -244,6 +248,8 @@ export function buildArgs(spec) {
       "--spec-type", "draft-mtp",
       "--spec-draft-n-max", String(spec.specDraftNMax ?? 2),
     );
+  } else if (spec.specType === 'none') {
+    args.push('--spec-type', 'none');
   } else if (spec.draftPath) {
     args.push(
       "-md", spec.draftPath,
@@ -305,7 +311,7 @@ async function waitForReady(port, pid, signal) {
  * Start a model. If another is running, it is stopped first.
  * @returns {Promise<{port: number, pid: number}>}
  */
-export async function startModel(spec, { resourcesPath = null } = {}) {
+async function startModelCoordinatedBody(spec, { resourcesPath = null } = {}) {
   if (!spec?.modelPath) throw new Error("startModel: modelPath required");
   if (!fs.existsSync(spec.modelPath)) throw new Error(`Model file not found: ${spec.modelPath}`);
   if (spec.mmprojPath && !fs.existsSync(spec.mmprojPath)) {
@@ -313,6 +319,7 @@ export async function startModel(spec, { resourcesPath = null } = {}) {
     spec = { ...spec, mmprojPath: null };
   }
 
+  if (spec.specType === 'none') spec = { ...spec, mtp: false, draftPath: null };
   const isMtpSpecDecode = spec.specType === "draft-mtp" || spec.mtp === true;
   if (isMtpSpecDecode) {
     if (spec.mmprojPath) {
@@ -486,7 +493,7 @@ export function getRpcPeers() {
  * so consumers of onExit() can distinguish a deliberate shutdown from a
  * crash.
  */
-export async function stopModel({ force = false } = {}) {
+async function stopModelBody({ force = false } = {}) {
   if (!activeProcess) return false;
   const proc = activeProcess;
   const pid = proc.pid;
@@ -534,7 +541,7 @@ function requireRunning() {
  *   reasoning on/off without a server restart. Templates without the
  *   variable ignore it.
  */
-export async function chat({ messages, temperature, maxTokens, stop, tools, toolChoice, seed, enableThinking }) {
+async function chatUnmeasured({ messages, temperature, maxTokens, stop, tools, toolChoice, seed, enableThinking }) {
   const port = requireRunning();
   const body = {
     messages,
@@ -573,12 +580,13 @@ export async function chat({ messages, temperature, maxTokens, stop, tools, tool
  * full concatenated text. The chunk shape from llama-server mirrors OpenAI's
  * Server-Sent Events — we strip `data: ` framing for the caller.
  */
-export async function chatStream({ messages, temperature, maxTokens, stop, seed, enableThinking }, onChunk, { signal } = {}) {
+async function chatStreamUnmeasured({ messages, temperature, maxTokens, stop, seed, enableThinking, returnMetadata = false }, onChunk, { signal } = {}) {
   const port = requireRunning();
   const body = {
     messages,
     stream: true,
   };
+  if (returnMetadata) body.stream_options = { include_usage: true };
   if (typeof temperature === "number") body.temperature = temperature;
   if (typeof maxTokens === "number") body.max_tokens = maxTokens;
   if (stop) body.stop = stop;
@@ -590,6 +598,8 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
   _inFlight++;
   let buffer = "";
   let full = "";
+  const metrics = collectCompletionMetrics();
+  const result = () => returnMetadata ? { text: full, ...metrics.result() } : full;
   try {
     const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
       method: "POST",
@@ -621,7 +631,7 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
         buffer = buffer.slice(newlineIdx + 1);
         if (!line || !line.startsWith("data:")) continue;
         const payload = line.slice(5).trim();
-        if (payload === "[DONE]") return full;
+        if (payload === "[DONE]") return result();
         try {
           const parsed = JSON.parse(payload);
           const deltaObj = parsed.choices?.[0]?.delta ?? {};
@@ -630,6 +640,7 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
           // `content`; this is a safety net for callers that override the
           // flag or for future llama-server defaults.
           const delta = (deltaObj.reasoning_content ?? "") + (deltaObj.content ?? "");
+          metrics.observe(parsed, delta);
           if (delta) {
             full += delta;
             onChunk?.(delta, parsed);
@@ -640,11 +651,11 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
       }
     }
     // Signal-aborted streams still carry the partial text accumulated so far.
-    return full;
+    return result();
   } catch (err) {
     if (err.name === "AbortError" || signal?.aborted) {
       console.log("[llama-server] chatStream aborted, returning partial text");
-      return full;
+      return result();
     }
     throw err;
   } finally {
@@ -657,7 +668,7 @@ export async function chatStream({ messages, temperature, maxTokens, stop, seed,
  * Routed through /v1/chat/completions with an image_url content part, which
  * llama-server natively understands when started with --mmproj.
  */
-export async function chatVision({ message, imageBase64, imageMime = "image/png", temperature, maxTokens }) {
+async function chatVisionUnmeasured({ message, imageBase64, imageMime = "image/png", temperature, maxTokens }) {
   const port = requireRunning();
   if (!activeSpec?.mmprojPath) {
     throw new Error("Active model was not loaded with mmproj; vision is unavailable.");
@@ -707,12 +718,33 @@ export async function chatVision({ message, imageBase64, imageMime = "image/png"
  *
  * @returns {Response} fetch Response, body may be a stream
  */
-export async function proxyRequest(subpath, { method = "GET", headers = {}, body = null, signal } = {}) {
+async function proxyRequestBody(subpath, { method = "GET", headers = {}, body = null, signal } = {}) {
   const port = requireRunning();
   const targetUrl = `http://127.0.0.1:${port}${subpath}`;
   const init = { method, headers, signal, dispatcher: llamaFetchDispatcher };
   if (body != null) init.body = typeof body === "string" ? body : JSON.stringify(body);
-  return fetch(targetUrl, init);
+  const measured = method === 'POST' && ['/v1/chat/completions', '/v1/completions', '/v1/embeddings'].includes(subpath);
+  let parameters = {};
+  try { parameters = typeof body === 'string' ? JSON.parse(body) : body || {}; } catch { /* malformed request still reaches runtime */ }
+  const finish = measured ? beginPerformanceSample('llm/proxy', parameters, activeSpec?.modelPath) : () => {};
+  try {
+    const response = await fetch(targetUrl, init);
+    if (!measured) return response;
+    if (!response.ok || !response.body) { finish(response.ok ? 'completed' : 'failed'); return response; }
+    // End-to-end proxy timing ends when the caller consumes the body, not at headers.
+    const reader = response.body.getReader();
+    const stream = new ReadableStream({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) { finish(signal?.aborted ? 'cancelled' : 'completed'); controller.close(); }
+          else controller.enqueue(value);
+        } catch (error) { finish(signal?.aborted ? 'cancelled' : 'failed'); controller.error(error); }
+      },
+      async cancel(reason) { finish('cancelled'); await reader.cancel(reason); },
+    });
+    return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
+  } catch (error) { finish(signal?.aborted ? 'cancelled' : 'failed'); throw error; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -768,7 +800,7 @@ export async function getMetrics() {
 }
 
 /** Tokenize the rendered chat template so code generation can reserve output reliably. */
-export async function countPromptTokens(messages) {
+async function countPromptTokensBody(messages) {
   const port = requireRunning();
   const post = async (endpoint, body) => {
     const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), dispatcher: llamaFetchDispatcher, signal: AbortSignal.timeout(30000) });
@@ -780,4 +812,100 @@ export async function countPromptTokens(messages) {
   const result = await post('/tokenize', { content: rendered.prompt, add_special: false, parse_special: true });
   if (!Array.isArray(result.tokens)) throw new Error('The model server did not return a token count.');
   return result.tokens.length;
+}
+
+// Instrument at the runtime boundary so UI and worker callers share measurements.
+async function chatCoordinatedBody(options) {
+  const finish = beginPerformanceSample('llm/chat', { ...activeSpec, ...options, _distributed: !!activeSpec?.rpcPeers?.length }, activeSpec?.modelPath);
+  try {
+    const result = await chatUnmeasured(options);
+    finish(result.choices?.length ? 'completed' : 'failed', completionMetrics({ usage: result.usage, timings: result.timings }));
+    return result;
+  } catch (error) { finish('failed'); throw error; }
+}
+async function chatStreamCoordinatedBody(options, onChunk, transport = {}) {
+  const finish = beginPerformanceSample('llm/stream', { ...activeSpec, ...options, _distributed: !!activeSpec?.rpcPeers?.length }, activeSpec?.modelPath);
+  try {
+    const result = await chatStreamUnmeasured({ ...options, returnMetadata: true }, onChunk, transport);
+    finish(transport.signal?.aborted ? 'cancelled' : result.finishReason ? 'completed' : 'interrupted', result);
+    return options.returnMetadata ? result : result.text;
+  } catch (error) { finish(transport.signal?.aborted ? 'cancelled' : 'failed'); throw error; }
+}
+async function chatVisionCoordinatedBody(options) {
+  const finish = beginPerformanceSample('llm/vision', { ...activeSpec, ...options, _distributed: !!activeSpec?.rpcPeers?.length }, activeSpec?.modelPath);
+  try { const result = await chatVisionUnmeasured(options); finish(result ? 'completed' : 'failed'); return result; }
+  catch (error) { finish('failed'); throw error; }
+}
+
+// Retain the exact launch settings across temporary memory handoffs.
+let suspendedLaunch = null;
+let launchOptions = {};
+export async function suspendForInference() {
+  if (!isRunning()) return;
+  suspendedLaunch = { ...getActiveSpec() };
+  await stopModelBody();
+}
+async function restoreSuspendedModel() {
+  if (!isRunning() && suspendedLaunch) await startModelCoordinatedBody(suspendedLaunch, launchOptions);
+}
+export function startModel(spec, options = {}) {
+  return localInference.run('llm', async () => {
+    const result = await startModelCoordinatedBody(spec, options);
+    launchOptions = options;
+    suspendedLaunch = { ...getActiveSpec() };
+    return result;
+  });
+}
+export function chat(options) {
+  return localInference.run('llm', async () => { await restoreSuspendedModel(); return chatCoordinatedBody(options); });
+}
+export function chatStream(options, onChunk, transport = {}) {
+  return localInference.run('llm', async () => { await restoreSuspendedModel(); return chatStreamCoordinatedBody(options, onChunk, transport); }, { signal: transport.signal });
+}
+export function chatVision(options) {
+  return localInference.run('llm', async () => { await restoreSuspendedModel(); return chatVisionCoordinatedBody(options); });
+}
+
+export function stopModel(options = {}) {
+  // Shutdown must still be able to interrupt work when the application exits.
+  if (options.force) { suspendedLaunch = null; return stopModelBody(options); }
+  return localInference.run('llm', async () => {
+    suspendedLaunch = null;
+    return stopModelBody(options);
+  });
+}
+export function countPromptTokens(messages) {
+  return localInference.run('llm', async () => {
+    await restoreSuspendedModel();
+    return countPromptTokensBody(messages);
+  });
+}
+export async function proxyRequest(subpath, options = {}) {
+  let deliver, fail;
+  const responseReady = new Promise((resolve, reject) => { deliver = resolve; fail = reject; });
+  const work = localInference.run('llm', async () => {
+    await restoreSuspendedModel();
+    const response = await proxyRequestBody(subpath, options);
+    if (!response.body) { deliver(response); return; }
+    const reader = response.body.getReader();
+    let finish;
+    const consumed = new Promise(resolve => { finish = resolve; });
+    const abort = () => { void reader.cancel().then(finish, finish); };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
+    const stream = new ReadableStream({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) { controller.close(); finish(); }
+          else controller.enqueue(value);
+        } catch (error) { controller.error(error); finish(); }
+      },
+      async cancel(reason) { try { await reader.cancel(reason); } finally { finish(); } },
+    });
+    deliver(new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers }));
+    try { await consumed; } finally { options.signal?.removeEventListener('abort', abort); }
+  }, { signal: options.signal });
+  work.catch(fail);
+  return responseReady;
 }

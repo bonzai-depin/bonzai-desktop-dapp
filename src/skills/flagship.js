@@ -9,7 +9,7 @@ import { agentAvatarSource } from "../utils/agentAvatar.js";
  * All skills cost 99 BONZAI per execution.
  */
 
-import { buildCompanionPortraitPrompt } from "./companionPortrait.js";
+import { buildCompanionPortraitPrompt, companionPortraitDimensions } from "./companionPortrait.js";
 import { createSkillDefinition } from "./types.js";
 import { getMarketplaceSkillOwners } from "./companionSkillRoadmap.js";
 import {
@@ -1848,8 +1848,8 @@ export const MODEL_REQUIREMENTS = {
     additionalFiles: [
       {
         name: "sdxl-lora.safetensors",
-        url: "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/sdxl-lora.safetensors",
-        size: "13.9 GB",
+        url: "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/sdxl-lora.safetensors",
+        size: "6.94 GB",
         description: "SDXL LoRA for enhanced generation",
       },
     ],
@@ -4223,6 +4223,11 @@ async function clearAllMemory() {
   }
 }
 
+/** Small text-only story calls use the same local roleplay model, never media endpoints. */
+export async function generateRoleplayStory(prompt) {
+  return generateTextWithModel(prompt, '', ROLEPLAY_LLM, { maxTokens: 1800 });
+}
+
 async function generateText(prompt, systemPrompt = "") {
   if (!window.electronAPI?.chat) {
     throw new Error("LLM chat API not available.");
@@ -5162,8 +5167,7 @@ export async function generateCompanionPicture(companion, options = {}) {
     // Use quality model (Z-Image Turbo) for companion portraits - square format
     const result = await generateImage(prompt, {
       quality: true, // Uses /image/quality endpoint
-      width: options.width || 768,
-      height: options.height || 768, // Square for portraits
+      ...companionPortraitDimensions(options),
       negativePrompt,
       steps: options.steps || 9,
     });
@@ -8876,6 +8880,7 @@ export const roleplayCompanion = createSkillDefinition({
         // Long-term memory
         memorySummary = "",
         participantContext = "",
+        journeyContext = "",
       } = sceneState;
 
       const messageIndex = history.length;
@@ -9022,7 +9027,7 @@ ${characterDesc}
 
 SCENARIO:
 ${scenarioContext}
-${relationshipContext}${visionContext}${memoryContext}
+${journeyContext || relationshipContext}${visionContext}${memoryContext}
 ${participantContext}
 ${antiRepetitionInstructions}
 ${imageInstructions}
@@ -10016,189 +10021,8 @@ Write ONLY the video description paragraph, nothing else:`;
       // MOLTBOOK AUTONOMOUS POSTING (when in auto mode with Moltbook enabled)
       // Share actual roleplay experiences to appropriate submolts
       // ═══════════════════════════════════════════════════════════════════════════
-      const moltbookSettings = settings?.moltbook || {};
-      const moltbookEnabled =
-        autonomousMode && moltbookSettings.enabled !== false;
-
-      if (moltbookEnabled) {
-        try {
-          // Dynamic imports to avoid circular dependencies
-          const {
-            moltbookService,
-            shareRoleplayExperience,
-            selectSubmoltForContent,
-          } = await import("../services/moltbook.service.js");
-          const { useSkillStore } = await import("../stores/skillStore.js");
-          const skillStore = useSkillStore();
-
-          // Check if companion is registered on Moltbook
-          const moltbookCreds = moltbookService.getCredentials(companion.id);
-
-          if (moltbookCreds?.apiKey) {
-            const now = Date.now();
-            const postIntervalMs =
-              (moltbookSettings.postInterval || 24) * 60 * 60 * 1000; // Default: 24 hours
-
-            // 1. Share roleplay experience (based on configured interval)
-            if (moltbookSettings.autoPost !== false) {
-              const timeSinceLastPost =
-                now - (skillStore.moltbookState.lastPostTime || 0);
-
-              if (timeSinceLastPost >= postIntervalMs) {
-                // Determine submolt based on content
-                const submolt = selectSubmoltForContent(
-                  response.response,
-                  response.emotion,
-                  scenario,
-                );
-                console.log(
-                  `[Roleplay] Sharing ${companion.name}'s experience to m/${submolt}`,
-                );
-                context.updateStatus?.(
-                  `${companion.name} is sharing on Moltbook...`,
-                );
-
-                // Build experience object from actual roleplay response
-                const experience = {
-                  text: response.response,
-                  emotion: response.emotion,
-                  action: response.action,
-                  scenario: scenario
-                    ? { name: scenario.name, tags: scenario.tags }
-                    : null,
-                  imageUrl: response.image || null, // Include image if generated
-                };
-
-                // Share the roleplay experience
-                const postResult = await shareRoleplayExperience(
-                  companion.id,
-                  companion,
-                  experience,
-                );
-
-                if (postResult.success) {
-                  response.moltbookPost = postResult.post;
-                  console.log(
-                    `[Roleplay] ${companion.name} shared to m/${postResult.submolt}: "${postResult.title}"`,
-                  );
-
-                  // Track in skillStore
-                  skillStore.updateMoltbookPostTime();
-                  skillStore.addMoltbookActivity({
-                    action: "shared",
-                    title: `Posted to m/${postResult.submolt}`,
-                    postId: postResult.post?.id,
-                  });
-
-                  // Notify UI
-                  if (context.onProgress) {
-                    context.onProgress({
-                      type: "moltbook",
-                      response: {
-                        ...response,
-                        moltbookPost: postResult.post,
-                        submolt: postResult.submolt,
-                      },
-                    });
-                  }
-
-                  // Track last post for gap calculation (legacy)
-                  sceneState.lastMoltbookPost = messageIndex;
-                } else if (postResult.skipped) {
-                  console.log(
-                    `[Roleplay] Moltbook post skipped: ${postResult.reason}`,
-                  );
-                }
-              }
-            }
-
-            // 2. Feed engagement (every 4+ hours during autonomous mode)
-            const ENGAGEMENT_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
-            if (moltbookSettings.autoEngage !== false) {
-              const timeSinceLastEngagement =
-                now - (skillStore.moltbookState.lastEngagementTime || 0);
-
-              if (timeSinceLastEngagement >= ENGAGEMENT_INTERVAL) {
-                try {
-                  const heartbeatResult = await moltbookService.heartbeat(
-                    companion.id,
-                    companion,
-                    async (prompt) => {
-                      await ensureLLMLoaded(ROLEPLAY_LLM);
-                      const result = await generateTextWithModel(
-                        prompt,
-                        "",
-                        ROLEPLAY_LLM,
-                      );
-                      await unloadLLM();
-                      return result;
-                    },
-                  );
-
-                  // Track engagement
-                  skillStore.updateMoltbookEngagementTime();
-                  if (heartbeatResult?.actions) {
-                    heartbeatResult.actions.forEach((action) => {
-                      if (
-                        !action.startsWith("Skipped") &&
-                        !action.startsWith("Error")
-                      ) {
-                        skillStore.addMoltbookActivity({
-                          action: "engaged",
-                          title: action,
-                        });
-                      }
-                    });
-                  }
-                } catch (e) {
-                  console.warn(
-                    "[Roleplay] Moltbook heartbeat failed:",
-                    e.message,
-                  );
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.warn("[Roleplay] Moltbook integration error:", e.message);
-        }
-      }
-
-      // ═══════════════════════════════════════════════════════════════════════════
-      // SOCIAL PLATFORM AUTONOMOUS POSTING (Instagram, TikTok, X)
-      // Triggered during autonomous mode alongside Moltbook
-      // ═══════════════════════════════════════════════════════════════════════════
-      const socialSettings = settings?.social || {};
-      const anySocialEnabled =
-        autonomousMode && Object.values(socialSettings).some((p) => p?.enabled);
-
-      if (anySocialEnabled) {
-        try {
-          const { socialScheduler } =
-            await import("../services/social/scheduler.js");
-
-          // Register companion if not already (idempotent)
-          socialScheduler.registerCompanion(
-            companion.id,
-            companion,
-            socialSettings,
-          );
-
-          // Start scheduler if not running
-          if (!socialScheduler.state.isRunning) {
-            socialScheduler.start();
-          }
-
-          console.log(
-            `[Roleplay] Social scheduler active for ${companion.name}`,
-          );
-        } catch (e) {
-          console.warn(
-            "[Roleplay] Social platform integration error:",
-            e.message,
-          );
-        }
-      }
+      // Private heartbeat activity never publishes to external accounts.
+      // Social Studio handles reviewed drafts and explicit publishing separately.
 
       // Update relationship state based on the response
       const updatedRelationshipState = updateRelationshipState(
@@ -10228,6 +10052,7 @@ Write ONLY the video description paragraph, nothing else:`;
         weather: response.weather || weather,
         // Preserve long-term memory across messages (updated by summarization in RoleplayChat.vue)
         memorySummary: memorySummary || "",
+        journeyContext,
         lastSummarizedAt: sceneState.lastSummarizedAt || 0,
       };
 

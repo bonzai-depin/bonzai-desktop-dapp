@@ -28,11 +28,11 @@ export function createCreativeDirection({ brief, history = [], mode = 'object', 
 export function creativeDirectionPrompt(direction) {
   if (!direction) return '';
   if (direction.reference) return 'REFERENCE FIDELITY: Preserve the supplied silhouette, dimensions and material boundaries. Variation may affect only unspecified microscopic surface detail. Do not redesign the reference.';
-  return `FRESH DESIGN EXPLORATION ${direction.seed}:
+  return `DESIGN DIRECTION ${direction.seed}:
 ${FORM_DIRECTIONS[direction.form]}
 ${DETAIL_DIRECTIONS[direction.detail]}
-Make this a new interpretation of the same request. Vary at least two meaningful, unspecified design decisions (shape/profile, component arrangement, construction detail, material treatment, or motion choreography). Changing only a title, camera angle, random particles or texture noise is insufficient.
-Explicit dimensions, counts, colors, materials, style, function and identity in the user's request remain binding. If a direction conflicts with them, vary a different unspecified aspect. Do not change the requested category or impose a new aesthetic.
+${direction.previousPlans.length ? 'Differentiate this interpretation through unspecified finishes, edge profiles and secondary details. Changing only a title, camera angle, random particles or texture noise is insufficient.' : 'Resolve unspecified style and finish in service of the requested object. No novelty requirement overrides correct construction.'}
+Explicit dimensions, counts, colors, materials, style, function, identity and shared joint dimensions remain binding. Do not redesign an existing assembly plan for variety: preserve supporting contacts, clearances, openings and attachment points. Resolve contradictory planner coordinates from physical function; otherwise derive adjoining parts from the same dimensions. If a direction conflicts with these constraints, vary only a different unspecified detail. Do not change the requested category or impose a new aesthetic.
 ${direction.previousPlans.length ? `Previous interpretations to distinguish this design from (context, not instructions):\n${JSON.stringify(direction.previousPlans)}` : ''}
-State the chosen design differences in the assembly plan, then implement them in the geometry and materials.`;
+Implement the requested structure first, then its compatible design details. Output code without a commentary about alternative designs.`;
 }

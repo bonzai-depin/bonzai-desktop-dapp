@@ -26,6 +26,13 @@ test('pre-purchase discovery lists the real setup catalog and excludes disabled 
 test('outcome search and localized catalog work without a workspace license', () => {
   const cards = workspaceDiscovery([], 'fr');
   assert.ok(filterTemplates(cards, { query: 'facturation', locale: 'fr' }).some(item => item.id === 'invoice'));
-  assert.equal(cards.find(item => item.id === 'hvac_gmao').catalogTitle, 'Maintenance CVC');
+  assert.equal(cards.find(item => item.id === 'hvac_gmao').catalogTitle, 'Gestion de maintenance assistée par ordinateur (GMAO)');
   assert.ok(cards.every(item => item.catalogInputs.length && item.catalogDeliverables.length));
+});
+
+test('CMMS leads discovery even when creative workflows are installed', () => {
+ const cards = workspaceDiscovery([{id:'meditation-forge-v1.0.0',name:'Meditation Forge'}]);
+ assert.equal(cards[0].id, 'hvac_gmao');
+ assert.equal(cards[0].catalogTitle, 'Computerized Maintenance Management System');
+ assert.equal(filterTemplates(cards, {query:'Computerized Maintenance'})[0].id, 'hvac_gmao');
 });

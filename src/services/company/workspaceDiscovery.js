@@ -46,5 +46,5 @@ export function workspaceDiscovery(catalog = [], locale = 'en') {
       hasInstalledWorkflow: Boolean(skill),
       catalogSetup: skill ? SETUP[skill.id.replace(/-v\d.*$/, '')] || '' : '',
     };
-  });
+  }).sort((a, b) => Number(b.id === 'hvac_gmao') - Number(a.id === 'hvac_gmao'));
 }

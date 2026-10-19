@@ -1,0 +1,70 @@
+/* Page identity contract. The page gutter has one owner; embedded tools retain
+   their own local spacing. Specificity intentionally beats legacy scoped rules. */
+:root { --bz-page-gutter: clamp(20px, 3vw, 40px); --bz-page-header-gap: 28px; }
+.bz-page-content.bz-page-content.bz-page-content {
+  padding: var(--bz-page-gutter);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+}
+.bz-page-content > .columns { margin: 0; }
+.bz-page-content > .columns > .column { padding: 0; }
+.bz-page-header.bz-page-header.bz-page-header {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 20px;
+  padding: 0 0 var(--bz-page-header-gap); margin: 0 0 var(--bz-page-header-gap);
+  border: 0; border-bottom: 1px solid var(--bz-border);
+  background: transparent; min-width: 0;
+}
+.bz-page-header.bz-page-header.bz-page-header > :first-child {
+  position: relative; padding-left: 72px; min-width: 0;
+  flex: 1 1 280px; max-width: none;
+}
+.bz-page-header.bz-page-header.bz-page-header h1 {
+  margin: 0; color: var(--bz-fg); font-family: var(--bz-font-metric);
+  font-size: var(--bz-size-h1); font-weight: 900; font-style: italic;
+  line-height: 1.2; display: block; overflow-wrap: anywhere;
+}
+.bz-page-header.bz-page-header.bz-page-header :is(.bz-title-icon,.bz-workspace__icon,.bench-title-icon) {
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center; width: 52px; height: 52px;
+  padding: 0; margin: 0; border: 1px solid var(--bz-border);
+  border-radius: var(--bz-r-md,12px); background: var(--bz-panel);
+  color: var(--bz-accent); -webkit-text-fill-color: currentColor; font-size: 24px; font-style: normal; font-weight: 200;
+  font-variation-settings: "FILL" 0, "wght" 200, "GRAD" 0, "opsz" 24;
+}
+.bz-page-header.bz-page-header.bz-page-header .bz-eyebrow,
+.bz-page-content .bz-eyebrow {
+  font-family: var(--bz-font-body); font-weight: 500;
+  font-size: var(--bz-size-micro); line-height: 1.3;
+  letter-spacing: var(--bz-track-eyebrow); text-transform: uppercase;
+  color: var(--bz-fg-mid); margin: 0 0 6px;
+}
+.bz-page-header.bz-page-header.bz-page-header > :first-child > p:not(.bz-eyebrow) {
+  color: var(--bz-fg-mid); font-size: var(--bz-size-body);
+  line-height: 1.5; margin: 8px 0 0; max-width: 75ch;
+}
+/* Chat surfaces own their scroll region, so apply gutters inside that shell. */
+.bz-page-header.bz-page-header.agent-command-head,
+.bz-page-header.bz-page-header.bz-text-chat__head {
+  padding: var(--bz-page-gutter); margin: 0;
+}
+@media (max-width: 600px) {
+  .bz-page-header.bz-page-header.bz-page-header { gap: 16px; }
+  .bz-page-header.bz-page-header.bz-page-header > :first-child { padding-left: 60px; }
+  .bz-page-header.bz-page-header.bz-page-header :is(.bz-title-icon,.bz-workspace__icon,.bench-title-icon) { width:44px; height:44px; }
+}
+
+.bz-chat__header.bz-chat__header:has(.bz-page-header) { padding:0; border-bottom:0; }
+.bz-chat.bz-chat:has(.agent-command-head) .bz-chat__stream { padding:var(--bz-page-gutter); }
+.bz-page-content *, .bz-page-header * { box-sizing:border-box; }
+
+.bz-workspace.bz-page-content, .access-inner.bz-page-content { gap:var(--bz-page-header-gap); }
+.bz-workspace.bz-page-content > .bz-page-header,
+.access-inner.bz-page-content > .bz-page-header { margin-bottom:0; }
+
+/* Stage labels cross component boundaries (the launch stage is a child). */
+.agent-stage-label { display:block; font:600 10px/1.3 var(--bz-font-body); letter-spacing:.08em; text-transform:uppercase; color:var(--bz-accent); margin-bottom:16px; }
+.bz-page-header.bz-page-header.bz-text-chat__head > .bz-text-chat__head-left { display:flex; align-items:center; justify-content:flex-start; gap:16px; flex-wrap:wrap; min-height:52px; }
+.bz-page-header.bz-page-header.bz-text-chat__head h1 { flex:none; text-align:left; }
+.bz-text-chat__model { color:var(--bz-fg-mid); font:500 15px/1.4 var(--bz-font-body); overflow-wrap:anywhere; min-width:0; }

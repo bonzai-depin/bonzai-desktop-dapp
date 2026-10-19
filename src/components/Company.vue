@@ -1,7 +1,7 @@
 <template>
   <CompanyWorkspaceAccess @choose-template="openWizard">
   <div class="bz-tab-shell company-tab company-screen">
-    <div class="models__deployment-install company-shell">
+    <div class="models__deployment-install company-shell bz-page-content">
       <p v-if="rosterLoadError" class="bz-notice bz-notice--danger" role="alert">{{ rosterLoadError }}</p>
       <div v-if="store.state.runtimeError" class="bz-notice bz-notice--danger" role="alert">
         <strong>{{ $ui('Execution unavailable') }}</strong> · {{ store.state.runtimeError }}
@@ -395,7 +395,7 @@ hr {
   flex-direction: column;
   flex: 1 0 auto;
   gap: var(--bz-space-4);
-  padding: var(--bz-space-5) clamp(20px, 2.4vw, 40px) var(--bz-space-6) !important;
+  padding: var(--bz-page-gutter);
   min-height: 100%;
   overflow: visible;
 }

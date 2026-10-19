@@ -43,6 +43,11 @@ export function startActivityTracking() {
     const status = ({error:'failed',failed:'failed',canceled:'cancelled',cancelled:'cancelled',completed:'completed'})[data.status] || 'running';
     reportOperation({id:`download:${data.filename}`,source:'download',title:'Downloading model',stage:status==='running'?(data.phase==='merging'?'Merging':'Downloading'):status,progress:Number.isFinite(data.percent)?data.percent*100:null,status,location:'On this device',error:data.error});
   };
+  const stopBenchmark = window.electronAPI?.performanceBenchmark?.onProgress?.(event => {
+    reportOperation({ ...event, id: `benchmark:${event.id}`, source: 'benchmark', mode: 'benchmark',
+      progress: event.progress?.total ? 100 * event.progress.current / event.progress.total : null,
+      location: 'On this device' });
+  });
   const stopDownload = window.electronAPI?.onDownloadProgress?.((_event,data) => download(data));
   let stopped = false, timer;
   const base = window.electronAPI?.env?.API_BASE || 'http://127.0.0.1:65000';
@@ -79,7 +84,7 @@ export function startActivityTracking() {
     timer = setTimeout(poll,4000);
   };
   poll();
-  dispose = () => { stopped=true;clearTimeout(timer);stopDownload?.();Object.entries(handlers).forEach(([event,fn])=>socket.off(event,fn));dispose=null; };
+  dispose = () => { stopped=true;clearTimeout(timer);stopBenchmark?.();stopDownload?.();Object.entries(handlers).forEach(([event,fn])=>socket.off(event,fn));dispose=null; };
   return dispose;
 }
 export default { state: readonly(state), reportOperation, dismissOperation, startActivityTracking };

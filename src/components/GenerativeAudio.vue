@@ -1,10 +1,9 @@
 <template>
-  <div class="background"></div>
   <div class="bz-tab-shell">
-    <div class="models__deployment-install">
+    <div class="models__deployment-install bz-page-content">
       <div class="columns">
         <div class="column is-12">
-          <header class="bz-screen-header">
+          <header class="bz-screen-header bz-page-header">
             <div class="bz-screen-titleblock">
               <p class="bz-eyebrow">{{ $t('create.eyebrow') }}</p>
                 <h1 class="bz-h1 fira-sans-condensed-black-italic">
@@ -81,6 +80,10 @@
                   class="mt-5"
                 />
 
+                <DownloadRequirement v-if="mode === 'music' && !lyricsModelReady"
+                  category="text" :items="[{ category: 'text', size: '2.8 GB' }]"
+                  :active="lyricsDownloading" :progress="lyricsDownloadProgress"
+                  :error="lyricsDownloadError" title="Lyrics writer" @download="downloadLyricsModel" />
                 <!-- MUSIC MODE INPUTS -->
                 <div v-if="mode === 'music'" class="music-workspace mb-4">
                   <div class="audio-control-row music-mode-controls">
@@ -149,7 +152,7 @@
                           @click.prevent="generateLyrics"
                           :title="
                             !lyricsModelReady
-                              ? 'Download Qwen3.5 4B MTP from the Chat tab first'
+                              ? 'Download the lyrics writer above first'
                               : lyricsTheme.trim()
                                 ? 'Generate lyrics using Qwen3.5 4B MTP'
                                 : 'Enter a theme first'
@@ -718,7 +721,7 @@
                 <hr class="mt-5" />
 
                 <!-- GENERATION HISTORY HEADER -->
-                <div class="level pt-5 mt-5">
+                <div class="level pt-5 mt-5 audio-history-head">
                   <div class="level-left">
                     <div class="level-item">
                       <h2 class="bz-h2 fira-sans-condensed-black-italic">
@@ -1506,12 +1509,10 @@ export default {
         (!synthesisBase64.value || !referenceTranscript.value.trim())
       )
         return false;
-      // Music mode requires either caption or prompt AND the enhancer LLM.
-      // The enhancer is used by both the lyrics writer and the final music
-      // prompt assembly — without it the pipeline can't produce usable output.
+      // Writing lyrics is optional; supplied lyrics and instrumental music
+      // only require the music pipeline.
       if (mode.value === "music") {
         if (!musicCaption.value.trim() && !form.prompt.trim()) return false;
-        if (!lyricsModelReady.value) return false;
       }
       return true;
     });
@@ -1728,14 +1729,31 @@ export default {
     // events so the readiness flag flips automatically once the user pulls
     // the file via the skill downloader.
     const lyricsModelReady = ref(false);
+    const lyricsDownloading = ref(false);
+    const lyricsDownloadProgress = ref(0);
+    const lyricsDownloadError = ref('');
+    const downloadLyricsModel = async () => {
+      if (lyricsDownloading.value) return;
+      lyricsDownloading.value = true;
+      lyricsDownloadError.value = '';
+      try {
+        if (!window.electronAPI?.downloadModel) throw new Error('Model downloads require the desktop app.');
+        const result = await window.electronAPI.downloadModel(LYRICS_LLM.url, LYRICS_LLM.filename);
+        if (result?.error) throw new Error(result.error);
+        await checkLyricsModel();
+        if (!lyricsModelReady.value) throw new Error('Download did not complete. Please retry.');
+      } catch (error) { lyricsDownloadError.value = error.message; }
+      finally { lyricsDownloading.value = false; }
+    };
     const checkLyricsModel = async () => {
       try {
         const result = await window.electronAPI?.checkModel?.(LYRICS_LLM.filename);
-        lyricsModelReady.value = !!result?.exists;
+        lyricsModelReady.value = result === true || result?.exists === true;
       } catch { lyricsModelReady.value = false; }
     };
     checkLyricsModel();
-    window.electronAPI?.onDownloadProgress?.((_e, data) => {
+    const unsubscribeLyricsDownload = window.electronAPI?.onDownloadProgress?.((_e, data) => {
+      if (data?.filename === LYRICS_LLM.filename) lyricsDownloadProgress.value = data.percent || 0;
       if (
         data?.filename === LYRICS_LLM.filename &&
         (data.percent >= 1 || data.done === true)
@@ -1749,6 +1767,7 @@ export default {
         throw new Error("LLM API not available");
       }
 
+      await checkLyricsModel();
       if (!lyricsModelReady.value) {
         throw new Error(`Lyrics model not downloaded. Download "${LYRICS_LLM.modelname}" from the Chat tab first.`);
       }
@@ -3007,6 +3026,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     });
 
     onBeforeUnmount(() => {
+      unsubscribeLyricsDownload?.();
       if (downloadsSocket.value?.connected) {
         try {
           downloadsSocket.value.disconnect();
@@ -3119,7 +3139,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       isGeneratingLyrics,
       lyricsError,
       generateLyrics,
-      lyricsModelReady,
+      lyricsModelReady, lyricsDownloading, lyricsDownloadProgress, lyricsDownloadError, downloadLyricsModel,
       generateMusic,
       restoreFromHistory,
       openInspector,
@@ -4588,4 +4608,73 @@ input.music-toggle[type="checkbox"]:checked + label {
 .music-workspace .lyrics-gen-row > select { float: none !important; max-width: 100%; height: 42px !important; border: 1px solid var(--bz-border) !important; }
 .music-workspace .music-section { min-width: 0; padding: 24px; }
 @media (max-width: 850px) { .music-workspace { display: flex; flex-direction: column; } .music-workspace > * { width: 100%; box-sizing: border-box; } .music-workspace .music-section { padding: 16px; } }
+</style>
+
+<style scoped>
+/* Composition desk: a script channel beside the sound controls, with a shared
+   transport strip. Every control still maps to an actual generation parameter. */
+.music-workspace {
+  display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);
+  gap:0; align-items:stretch; background:var(--bz-panel);
+  border:1px solid var(--bz-border); border-radius:var(--bz-r-lg);
+  overflow:hidden;
+}
+.music-mode-controls { grid-column:1 / -1; margin:0; padding:16px 24px; border-bottom:1px solid var(--bz-border); background:var(--bz-canvas); }
+.music-workspace .music-section { padding:24px; border:0; border-radius:0; background:transparent; }
+.music-section--lyrics { grid-column:1; grid-row:2; border-right:1px solid var(--bz-border) !important; }
+.music-section--settings { grid-column:2; grid-row:2; }
+.music-workspace .audio-field-label { font-family:var(--bz-font-body); font-style:normal; font-size:14px; font-weight:600; letter-spacing:0; }
+.music-workspace .params-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:20px !important; }
+.music-workspace .param-item { min-width:0; padding:16px; background:var(--bz-canvas); border:1px solid var(--bz-border); border-radius:var(--bz-r-sm); }
+.music-workspace .param-label { display:flex; align-items:center; gap:8px; color:var(--bz-fg-mid); }
+.music-workspace .param-value { color:var(--bz-fg); font-variant-numeric:tabular-nums; }
+.music-workspace input[type=range] { width:100%; accent-color:var(--bz-accent); cursor:pointer; }
+.music-workspace textarea { min-height:220px; resize:vertical; line-height:1.6; background:var(--bz-canvas); }
+.music-workspace .music-section--palette { border-top:1px solid var(--bz-border); }
+.music-generate-bar { grid-column:1 / -1; margin:0 !important; padding:20px 24px; background:var(--bz-canvas); border-top:1px solid var(--bz-border); display:flex; justify-content:flex-end; align-items:center; gap:16px; flex-wrap:wrap; }
+@media (max-width: 1000px) {
+  .music-workspace { display:grid; grid-template-columns:1fr; }
+  .music-workspace .music-section { grid-column:1; grid-row:auto; border-right:0 !important; border-bottom:1px solid var(--bz-border); }
+}
+@media (max-width: 520px) {
+  .music-workspace .params-grid { grid-template-columns:1fr; }
+  .music-workspace .music-section,.music-mode-controls,.music-generate-bar { padding:16px; }
+}
+</style>
+
+<style scoped>
+/* A single console: writing desk, compact channel strips and transport. */
+.music-workspace { grid-template-columns:minmax(0,1.25fr) minmax(0,1fr); }
+.music-workspace .music-section--lyrics { grid-row:2 / 4; display:flex; flex-direction:column; }
+.music-workspace .music-section--settings { grid-column:2; grid-row:2; padding-bottom:16px; }
+.music-workspace .music-section--direction { grid-column:2; grid-row:3; padding-top:0; }
+.music-workspace .music-section--direction textarea { min-height:100px; max-height:180px; }
+.music-workspace .music-section--settings > .params-grid:not(.advanced-params) { grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; border:1px solid var(--bz-border); border-radius:var(--bz-r-md); overflow:hidden; }
+.music-workspace .music-section--settings > .params-grid:not(.advanced-params) .param-item { display:flex; flex-direction:column; gap:12px; padding:12px; border:0; border-radius:0; border-right:1px solid var(--bz-border); }
+.music-workspace .music-section--settings > .params-grid:not(.advanced-params) .param-item:last-child { border-right:0; }
+.music-workspace .music-section--settings > .params-grid:not(.advanced-params) .param-label { flex-wrap:wrap; align-content:flex-start; min-height:64px; font-size:12px; }
+.music-workspace .music-section--settings > .params-grid:not(.advanced-params) .param-value { display:block; width:100%; font-size:24px; }
+.music-workspace .music-section--settings > .params-grid:not(.advanced-params) .param-control { display:flex; justify-content:center; }
+.music-workspace :is(#audio-musicDuration,#audio-musicBPM) { appearance:auto; writing-mode:vertical-lr; direction:rtl; width:24px; height:112px; margin:0; }
+.music-workspace .select-control select { min-width:0; width:100%; }
+.music-workspace .music-section--lyrics > .field:last-child { flex:1; display:flex; flex-direction:column; }
+.music-workspace .music-section--lyrics > .field:last-child .control { flex:1; display:flex; }
+.music-workspace #audio-musicLyrics { flex:1; width:100%; min-height:200px; }
+.music-workspace .music-section--lyrics hr { margin:16px 0; }
+.music-workspace .structure-tags-help { display:flex; gap:6px; flex-wrap:wrap; font-size:12px; }
+.music-workspace .structure-tags-help .skill-chip { margin:0!important; }
+@media (max-width:1200px) { .music-workspace .music-section--settings > .params-grid:not(.advanced-params) { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:1000px) {
+ .music-workspace { grid-template-columns:1fr; }
+ .music-workspace .music-section--lyrics,.music-workspace .music-section--settings,.music-workspace .music-section--direction { grid-column:1; grid-row:auto; }
+ .music-workspace .music-section--direction { padding-top:24px; }
+}
+</style>
+<style scoped>
+.models__activity--payouts:has(.music-workspace) { background:transparent; border:0; padding:0; }
+.models__activity--payouts > .columns { margin:0; }
+.models__activity--payouts > .columns > .column { padding:0; }
+.audio-history-head { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
+.audio-history-head h2 { margin:0; text-align:left; }
+.audio-history-head .buttons { display:flex; gap:8px; }
 </style>

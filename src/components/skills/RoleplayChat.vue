@@ -657,7 +657,7 @@
             <div class="columns is-vcentered p-5">
               <!-- Portrait image -->
               <div class="column is-narrow">
-                <div class="custom-preview-portrait" :class="{ 'agent-polaroid': managementOnly }">
+                <div class="custom-preview-portrait" :class="{ 'agent-portrait-preview': managementOnly }">
                   <img
                     v-if="customCompanion?.image"
                     :src="getImageSrc(customCompanion.image)"
@@ -685,7 +685,6 @@
                       }}
                     </span>
                   </div>
-                  <span v-if="managementOnly" class="agent-polaroid-caption fira-sans-condensed-black-italic">{{ customCompanion?.name ? 'Smart agent' : 'Your next smart agent' }}</span>
                 </div>
               </div>
               <!-- Info -->
@@ -949,6 +948,7 @@
                   session.settings?.contentLevel
                 }}
                 • {{ formatResponseMode(session.settings?.responseMode) }}
+                <span v-if="session.settings?.journeyTrackId"> · {{ session.settings.journeyTrackName || 'Relationship track' }}</span>
                 <span v-if="session.updatedAt">
                   • {{ formatSessionDate(session.updatedAt) }}
                 </span>
@@ -1513,6 +1513,9 @@
         </div>
       </div>
 
+      <RelationshipJourney v-if="selectedCompanion && selectedScenario" ref="journeyPanel" :companion="selectedCompanion" :scene="selectedScenario" :track-id="settings.journeyTrackId" editable @select-track="selectJourneyTrack" />
+      <p v-if="journeyStartError" class="bz-notice bz-notice--danger" role="alert">{{ journeyStartError }}</p>
+
       <!-- Spending Management Section -->
       <div
         v-if="selectedCompanion && hasAccess && selectedCompanion.agentWallet"
@@ -1730,535 +1733,7 @@
         </div>
       </div>
 
-      <!-- Autonomous Mode Integration (only shown when user has access) -->
-      <div
-        v-if="selectedCompanion && hasAccess"
-        class="models__activity--payouts roleplay-settings roleplay-away-mode mb-5"
-      >
-        <h3
-          class="roleplay-settings__label fira-sans-condensed-black-italic has-text-left mb-4"
-        >
-          <span class="material-symbols-outlined mr-2 is-size-2">autoplay</span>
-          Away Mode
-        </h3>
-        <hr />
-
-        <div class="columns mt-4 is-multiline">
-          <!-- Left column: Timing Settings -->
-          <div class="column is-12">
-            <div class="field has-text-left">
-              <label
-                class="label has-text-white is-size-5 mb-3 fira-sans-condensed-black-italic"
-              >
-                <span class="has-text-brand">Heartbeat Settings</span>
-              </label>
-
-              <!-- Idle Timeout -->
-              <div class="field mb-4">
-                <label class="label has-text-grey-light is-size-7">
-                  You will be marked as away after :
-                </label>
-                <div class="control">
-                  <div class="select is-medium skill-fullwidth">
-                    <select v-model.number="settings.autonomous.idleTimeout">
-                      <option :value="1">1 minute</option>
-                      <option :value="3">3 minutes</option>
-                      <option :value="5">5 minutes (default)</option>
-                      <option :value="10">10 minutes</option>
-                      <option :value="15">15 minutes</option>
-                      <option :value="30">30 minutes</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Message Interval -->
-              <div class="field mb-4">
-                <label class="label has-text-grey-light is-size-7">
-                  Your companion will post every :
-                </label>
-                <div class="control">
-                  <div class="select is-medium skill-fullwidth">
-                    <select
-                      v-model.number="settings.autonomous.messageInterval"
-                    >
-                      <option :value="5">5 minutes</option>
-                      <option :value="10">10 minutes</option>
-                      <option :value="15">15 minutes (default)</option>
-                      <option :value="30">30 minutes</option>
-                      <option :value="60">1 hour</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Max Autonomous Messages -->
-              <div class="field mb-5">
-                <label class="label has-text-grey-light is-size-7">
-                  Max Messages (before auto mode stops)
-                </label>
-                <div class="control">
-                  <div class="select is-medium skill-fullwidth">
-                    <select v-model.number="settings.autonomous.maxMessages">
-                      <option :value="6">6 messages</option>
-                      <option :value="12">12 messages (default)</option>
-                      <option :value="24">24 messages</option>
-                      <option :value="48">48 messages</option>
-                      <option :value="999">Unlimited</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <hr />
-
-              <!-- x402 Autonomous Purchases Section -->
-              <label
-                v-if="companionPaymentsEnabled"
-                class="label has-text-white is-size-5 mb-3 mt-5 fira-sans-condensed-black-italic"
-              >
-                <span class="has-text-brand">Autonomous Purchases</span>
-              </label>
-
-              <!-- Enable Autonomous Purchases -->
-              <div v-if="companionPaymentsEnabled" class="field mb-4">
-                <label class="checkbox has-text-grey-light is-size-7">
-                  <input
-                    type="checkbox"
-                    v-model="settings.autonomous.enablePurchases"
-                  />
-                  <span class="ml-2">Enable Autonomous Purchases</span>
-                </label>
-                <p class="help has-text-grey is-size-7 mt-1">
-                  Allow companion to make x402 payments from their agent wallet
-                </p>
-              </div>
-
-              <!-- Max Purchase Amount -->
-              <div
-                class="field mb-4"
-                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
-              >
-                <label
-                  class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
-                >
-                  Max per Transaction (ETH)
-                </label>
-                <div class="control mt-3">
-                  <div class="select is-medium skill-fullwidth">
-                    <select v-model="settings.autonomous.maxPurchaseAmount">
-                      <option value="0.0005">0.0005 ETH (~$1)</option>
-                      <option value="0.001">0.001 ETH (~$2, default)</option>
-                      <option value="0.0025">0.0025 ETH (~$5)</option>
-                      <option value="0.005">0.005 ETH (~$10)</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Daily Spending Limit -->
-              <div
-                class="field mb-4"
-                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
-              >
-                <label
-                  class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
-                >
-                  Daily Spending Limit (ETH)
-                </label>
-                <div class="control mt-3">
-                  <div class="select is-medium skill-fullwidth">
-                    <select v-model="settings.autonomous.dailySpendingLimit">
-                      <option value="0.001">0.001 ETH (~$2)</option>
-                      <option value="0.005">0.005 ETH (~$10, default)</option>
-                      <option value="0.01">0.01 ETH (~$20)</option>
-                      <option value="0.025">0.025 ETH (~$50)</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Purchase Mode -->
-              <div
-                class="field mb-4"
-                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
-              >
-                <label
-                  class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
-                >
-                  Purchase Mode
-                </label>
-                <div class="control mt-3">
-                  <div class="select is-medium skill-fullwidth">
-                    <select v-model="settings.autonomous.purchaseMode">
-                      <option value="default">
-                        Default (all sellers equally)
-                      </option>
-                      <option value="specialized">
-                        Specialized (weighted by spending profile)
-                      </option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Seller Registry Panel -->
-              <div
-                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases"
-                class="skill-card p-3 mb-4"
-              >
-                <p
-                  class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
-                >
-                  Seller Registry
-                </p>
-                <div
-                  v-for="seller in registrySellers"
-                  :key="seller.id"
-                  class="is-flex is-align-items-center is-justify-content-space-between mb-2"
-                  style="gap: 8px"
-                >
-                  <label
-                    class="checkbox has-text-grey-light is-size-7"
-                    style="flex: 1"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="seller.enabled"
-                      @change="
-                        toggleSellerEnabled(seller.id, $event.target.checked)
-                      "
-                    />
-                    <span class="ml-2">{{ seller.name }}</span>
-                    <span class="skill-chip is-size-7 ml-1">
-                      {{ seller.category }}
-                    </span>
-                  </label>
-                  <button
-                    v-if="!seller.builtin"
-                    class="delete is-small"
-                    @click="removeCustomSeller(seller.id)"
-                    title="Remove custom seller"
-                  ></button>
-                </div>
-
-                <!-- Add Custom Seller Form -->
-                <details class="mt-3">
-                  <summary
-                    class="is-size-7 has-text-info"
-                    style="cursor: pointer"
-                  >
-                    Add Custom Merchant
-                  </summary>
-                  <div class="mt-2">
-                    <div class="field mb-2 column is-6 p-0">
-                      <input
-                        class="input is-small"
-                        v-model="newCustomSeller.name"
-                        placeholder="Merchant Name"
-                      />
-                    </div>
-                    <div class="field mb-2 column is-6 p-0">
-                      <input
-                        class="input is-small"
-                        v-model="newCustomSeller.endpoint"
-                        placeholder="Sale Endpoint (x402)"
-                      />
-                    </div>
-                    <div class="field column is-6 p-0 pb-5">
-                      <div class="select is-small">
-                        <select v-model="newCustomSeller.category">
-                          <option
-                            v-for="cat in [
-                              'beauty',
-                              'education',
-                              'entertainment',
-                              'fashion',
-                              'finance',
-                              'food',
-                              'healthcare',
-                              'housing',
-                              'reading',
-                              'social',
-                              'sports',
-                              'travel',
-                            ]"
-                            :key="cat"
-                            :value="cat"
-                          >
-                            {{ cat }}
-                          </option>
-                        </select>
-                      </div>
-
-                      <button
-                        class="bz-btn bz-btn--sm bz-btn--agent-cta skill-float-right"
-                        style="position: relative; right: -18px;"
-                        @click="addCustomSellerEntry"
-                        :disabled="
-                          !newCustomSeller.name || !newCustomSeller.endpoint
-                        "
-                      >
-                        Add Merchant
-                      </button>
-                    </div>
-                  </div>
-                </details>
-              </div>
-
-              <!-- Agent Wallet Status -->
-              <div
-                class="field"
-                v-if="companionPaymentsEnabled && settings.autonomous.enablePurchases && selectedCompanion"
-              >
-                <div class="agent-wallet-status skill-card p-3">
-                  <div
-                    class="is-flex is-justify-content-space-between is-align-items-center"
-                  >
-                    <div>
-                      <p
-                        class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
-                      >
-                        Agent Wallet
-                      </p>
-                      <p
-                        v-if="agentWalletAddress"
-                        class="is-size-7 has-text-info"
-                        style="font-family: monospace"
-                      >
-                        {{ truncateAddress(agentWalletAddress) }}
-                      </p>
-                      <p v-else class="is-size-7 has-text-warning">
-                        <span
-                          class="material-symbols-outlined mr-1"
-                          style="font-size: 14px; vertical-align: middle"
-                        >
-                          warning
-                        </span>
-                        Mint a custom companion to setup a cryptocurrency wallet.
-                      </p>
-                    </div>
-                    <div class="has-text-right" v-if="agentWalletBalance">
-                      <p class="is-size-7 has-text-grey-light mb-1">
-                        Balance (Base)
-                      </p>
-                      <p class="is-size-6 has-text-success">
-                        {{ agentWalletBalance }} ETH
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    v-if="agentWalletAddress"
-                    class="bz-btn bz-btn--sm is-info bz-btn--ghost mt-2"
-                    @click="refreshAgentWalletBalance"
-                    :disabled="isRefreshingBalance"
-                  >
-                    <span
-                      v-if="isRefreshingBalance"
-                      class="material-symbols-outlined rotating mr-1"
-                      style="font-size: 14px"
-                    >
-                      progress_activity
-                    </span>
-                    <span
-                      v-else
-                      class="material-symbols-outlined mr-1"
-                      style="font-size: 14px"
-                    >
-                      refresh
-                    </span>
-                    Refresh Balance
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <hr />
-
-          <!-- Right column: Moltbook Integration -->
-          <div class="column is-12" v-if="isCustomCompanion">
-            <div class="field has-text-left">
-              <label
-                class="label has-text-white is-size-5 mb-3 fira-sans-condensed-black-italic"
-              >
-                <span class="has-text-brand">Social Networks</span>
-              </label>
-              <!-- Unified platform cards -->
-              <div
-                v-for="platform in socialPlatforms"
-                :key="platform.id"
-                class="social-platform-card mb-3"
-                :class="{ 'is-connected': socialConnected[platform.id] }"
-              >
-                <div
-                  class="is-flex is-align-items-center is-justify-content-space-between"
-                >
-                  <div class="is-flex is-align-items-center">
-                    <span
-                      class="material-symbols-outlined mr-2"
-                      :style="{
-                        color: platform.color,
-                        fontSize: '20px',
-                      }"
-                    >
-                      {{ platform.icon }}
-                    </span>
-                    <span class="is-size-6 has-text-white">
-                      {{ platform.label }}
-                    </span>
-                  </div>
-
-                  <div>
-                    <button
-                      v-if="!socialConnected[platform.id]"
-                      class="bz-btn bz-btn--sm bz-btn--agent-cta"
-                      :class="{
-                        'bz-btn--running': isConnectingSocial === platform.id,
-                      }"
-                      @click="connectSocialPlatform(platform.id)"
-                      :disabled="isConnectingSocial !== null"
-                    >
-                      Connect
-                    </button>
-                    <template v-else>
-                      <button
-                        class="bz-btn bz-btn--sm is-danger p-4"
-                        @click="disconnectSocialPlatform(platform.id)"
-                      >
-                        Disconnect
-                      </button>
-                    </template>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Moltbook API Key input (shown when connecting moltbook) -->
-              <div
-                v-if="showMoltbookKeyInput"
-                class="skill-card p-3 mb-3"
-              >
-                <div class="field mb-2">
-                  <div class="control">
-                    <input
-                      type="password"
-                      class="input is-small"
-                      v-model="moltbookApiKey"
-                      placeholder="Moltbook API key (from moltbook.com/settings)"
-                    />
-                  </div>
-                </div>
-                <div class="buttons are-small">
-                  <button
-                    class="bz-btn bz-btn--agent-cta is-small"
-                    @click="saveMoltbookCredentials"
-                    :disabled="!moltbookApiKey"
-                    :class="{ 'bz-btn--running': isSavingMoltbook }"
-                  >
-                    Save
-                  </button>
-                  <button
-                    class="bz-btn bz-btn--sm"
-                    @click="showMoltbookKeyInput = false"
-                  >
-                    Cancel
-                  </button>
-                </div>
-                <p class="help has-text-grey-light">
-                  Get your API key from
-                  <a
-                    href="https://www.moltbook.com/settings"
-                    target="_blank"
-                    class="has-text-info"
-                  >
-                    moltbook.com/settings
-                  </a>
-                  . Or
-                  <a
-                    href="#"
-                    @click.prevent="registerMoltbookAccount"
-                    class="has-text-info"
-                  >
-                    register a new account
-                  </a>
-                  .
-                </p>
-              </div>
-
-              <!-- Shared posting configuration (shown when any platform is connected) -->
-              <div
-                v-if="anyPlatformConnected"
-                class="social-posting-config mt-3 has-text-white skill-card p-3"
-              >
-                <div class="columns is-multiline">
-                  <div class="column is-6">
-                    <label class="checkbox mt-4 mb-2 is-block">
-                      <input
-                        type="checkbox"
-                        v-model="settings.socialPosting.autoPost"
-                      />
-                      <span class="ml-2 is-size-7">Thought-leadership.</span>
-                    </label>
-                    <label class="checkbox mb-2 is-block">
-                      <input
-                        type="checkbox"
-                        v-model="settings.socialPosting.autoEngage"
-                      />
-                      <span class="ml-2 is-size-7">Engage with feed.</span>
-                    </label>
-                    <label class="checkbox mb-3 is-block">
-                      <input
-                        type="checkbox"
-                        v-model="settings.socialPosting.promoteBonzai"
-                      />
-                      <span class="ml-2 is-size-7">Promote BonzAI.</span>
-                    </label>
-
-                    <!-- Post interval -->
-                  </div>
-                  <!-- Content mix -->
-                  <div class="column is-6 is-size-7 has-text-grey-light">
-                    <div class="field mb-3">
-                      <label
-                        class="is-size-7 has-text-grey-light mb-2 fira-sans-condensed-black-italic"
-                      >
-                        Post Interval
-                      </label>
-                      <div class="select is-medium skill-fullwidth mt-3">
-                        <select
-                          v-model.number="settings.socialPosting.postInterval"
-                        >
-                          <option :value="6">Every 6 hours</option>
-                          <option :value="12">Every 12 hours</option>
-                          <option :value="24">Daily</option>
-                          <option :value="48">Every 2 days</option>
-                          <option :value="168">Weekly</option>
-                        </select>
-                      </div>
-                    </div>
-                    <label
-                      class="checkbox mr-5"
-                      v-for="type in ['text', 'image', 'video']"
-                      :key="type"
-                    >
-                      <input
-                        type="checkbox"
-                        :checked="
-                          settings.socialPosting.contentMix?.includes(type)
-                        "
-                        @change="toggleContentMix(type, $event)"
-                      />
-                      <span class="ml-1" style="text-transform: capitalize">
-                        {{ type }}
-                      </span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <HeartbeatStudio v-if="selectedCompanion && hasAccess" :companion="selectedCompanion" v-model:config="settings.autonomous"><template #connections><details v-if="isCustomCompanion" class="roleplay-moltbook-connection"><summary>Moltbook · {{ socialConnected.moltbook ? 'Connected' : 'API key connection' }}</summary><p class="help">Account connection only. Heartbeat does not publish posts or engage with feeds.</p><button v-if="socialConnected.moltbook" class="bz-btn bz-btn--sm" @click="disconnectMoltbook">Disconnect Moltbook</button><form v-else @submit.prevent="saveMoltbookCredentials"><label>Moltbook API key<input v-model="moltbookApiKey" type="password" class="input" autocomplete="off" /></label><button class="bz-btn bz-btn--sm" :disabled="!moltbookApiKey || isSavingMoltbook">{{ isSavingMoltbook ? 'Connecting…' : 'Connect Moltbook' }}</button></form></details></template></HeartbeatStudio>
 
       <!-- Start Button (gated by access level) -->
       <div class="control has-text-centered models__activity--payouts roleplay-start-panel">
@@ -2400,9 +1875,9 @@
     <div v-else-if="phase === 'chat'" class="chat-phase">
       <!-- Chat Header -->
       <div class="roleplay-stage">
-      <div class="chat-header">
-        <div class="columns is-vcentered is-multiline">
-          <div class="column">
+      <div class="roleplay-session-header">
+        <div class="roleplay-session-header__row">
+          <div class="roleplay-session-identity">
             <div class="companion-header has-text-left">
               <span class="companion-header__portrait" :class="{ 'has-image': selectedCompanion?.image }">
                 <img
@@ -2431,10 +1906,10 @@
             </div>
           </div>
 
-          <div class="column is-narrow roleplay-session-actions">
+          <div class="roleplay-session-actions">
             <!-- Autonomous Mode Toggle -->
             <label
-              class="checkbox autonomous-toggle mr-5"
+              class="checkbox autonomous-toggle"
               :class="{
                 active: autonomousModeDisplay,
                 disabled: isInitializingSession,
@@ -2458,12 +1933,12 @@
                     ? "Setting scene..."
                     : autonomousPending
                       ? "Starting..."
-                      : "Enable Autonomous Mode"
+                      : autonomousModeDisplay ? "Heartbeat on" : "Heartbeat off"
                 }}
               </span>
             </label>
             <button
-              class="bz-iconbtn mr-5"
+              class="bz-iconbtn"
               @click="toggleFullscreen"
               :title="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
             >
@@ -2514,6 +1989,8 @@
         </div>
       </div>
 
+      <details class="roleplay-activity-settings"><summary>Heartbeat & Social Studio</summary><HeartbeatStudio :companion="selectedCompanion" v-model:config="settings.autonomous" :active="autonomousModeDisplay" :count="skillStore.autonomousMessageCount" :generating="skillStore.isGeneratingAutonomous" in-session :busy="isInitializingSession || autonomousPending" @toggle="toggleAutonomousMode"><template #connections><details v-if="isCustomCompanion" class="roleplay-moltbook-connection"><summary>Moltbook · {{ socialConnected.moltbook ? 'Connected' : 'API key connection' }}</summary><p class="help">Account connection only. Heartbeat does not publish posts or engage with feeds.</p><button v-if="socialConnected.moltbook" class="bz-btn bz-btn--sm" @click="disconnectMoltbook">Disconnect Moltbook</button><form v-else @submit.prevent="saveMoltbookCredentials"><label>Moltbook API key<input v-model="moltbookApiKey" type="password" class="input" autocomplete="off" /></label><button class="bz-btn bz-btn--sm" :disabled="!moltbookApiKey || isSavingMoltbook">{{ isSavingMoltbook ? 'Connecting…' : 'Connect Moltbook' }}</button></form></details></template></HeartbeatStudio></details>
+      <RelationshipJourney v-if="selectedCompanion && selectedScenario" ref="journeyPanel" :companion="selectedCompanion" :scene="selectedScenario" :track-id="settings.journeyTrackId" :disabled="isTyping || isProcessingMessage || isInitializingSession" @action="sendStoryAction($event)" />
       <!-- Chat Messages Container -->
       <div class="chat-messages-container">
         <!-- Background layer with fade-in transition (changes on scene/location change) -->
@@ -3321,6 +2798,9 @@
 
 <script>
 import RoleplayVideoPlayer from './RoleplayVideoPlayer.vue';
+import RelationshipJourney from '../roleplay/RelationshipJourney.vue';
+import HeartbeatStudio from '../roleplay/HeartbeatStudio.vue';
+import { loadJourneys, importJourneys } from '../../services/roleplayJourney.js';
 import AgentLaunchStep from '../AgentLaunchStep.vue';
 import PublicAgentSession from '../chat/PublicAgentSession.vue';
 import ChatWorkflowResult from '../chat/ChatWorkflowResult.vue';
@@ -3419,7 +2899,7 @@ function resolveBundledAsset(defaultImage) {
 export default {
   name: "RoleplayChat",
   components: {
-    RoleplayVideoPlayer,
+    RoleplayVideoPlayer, RelationshipJourney, HeartbeatStudio,
     AgentLaunchStep, PublicAgentSession, ChatWorkflowResult,
     DownloadRequirement,
     BzCloseButton,
@@ -3443,6 +2923,9 @@ export default {
     const economyNetwork = CONFIG.networks[ECONOMY_NETWORK_KEY];
     const availableWorkflows = ref([]);
     const sessionAudience = ref('local');
+    const journeyPanel = ref(null);
+    const journeyStartError = ref('');
+    const selectJourneyTrack = (id, name) => { settings.value.journeyTrackId = id; settings.value.journeyTrackName = name; };
     const assignedChatWorkflows = computed(() => availableWorkflows.value.filter(item => getAgentWorkflowIds(selectedCompanion.value, availableWorkflows.value).includes(item.id)));
     const selectedCreation = ref(null);
     const prepareChatCommand = (pipeline) => {
@@ -3668,9 +3151,9 @@ export default {
       },
       // Shared social posting configuration (applies to all connected platforms)
       socialPosting: {
-        autoPost: true, // Post thought-leadership content
-        autoEngage: true, // Engage with feed (upvote, comment)
-        promoteBonzai: true, // Include BonzAI promotion
+        autoPost: false, // Post thought-leadership content
+        autoEngage: false, // Engage with feed (upvote, comment)
+        promoteBonzai: false, // Include BonzAI promotion
         postInterval: 24, // Hours between posts
         contentMix: ["text", "image", "video"], // Content types to post
       },
@@ -4468,12 +3951,13 @@ export default {
 
     // Get current session key based on selected options
     const currentSessionKey = computed(() => {
-      return getSessionKey(
+      const base = getSessionKey(
         selectedCompanion.value,
         selectedScenario.value,
         settings.value.contentLevel,
         responseMode.value, // Use computed responseMode from checkboxes
       );
+      return base && settings.value.journeyTrackId ? `${base}__${settings.value.journeyTrackId}` : base;
     });
 
     // Check if there's a matching session for current selections
@@ -4670,9 +4154,9 @@ export default {
       // Default moltbook settings
       const defaultMoltbook = {
         enabled: false,
-        autoPost: true,
-        autoEngage: true,
-        promoteBonzai: true,
+        autoPost: false,
+        autoEngage: false,
+        promoteBonzai: false,
         postInterval: 24,
       };
 
@@ -4681,9 +4165,9 @@ export default {
       // settings.social.<platform>.*). Without them, the social-posting
       // config block crashes when `anyPlatformConnected` is true.
       const defaultSocialPosting = {
-        autoPost: true,
-        autoEngage: true,
-        promoteBonzai: true,
+        autoPost: false,
+        autoEngage: false,
+        promoteBonzai: false,
         postInterval: 24,
         contentMix: ["text", "image", "video"],
       };
@@ -4746,6 +4230,7 @@ export default {
         };
       }
 
+      settings.value.journeyTrackId = savedSettings.journeyTrackId || key.split('__')[4] || undefined;
       console.log(
         `[Roleplay] Restored contentLevel: ${settings.value.contentLevel}`,
       );
@@ -5052,8 +4537,8 @@ export default {
       } else {
         console.log("[Roleplay] Disabling autonomous mode");
         autonomousPending.value = false;
-        // Stop autonomous mode completely
-        skillStore.stopAutonomousMode();
+        // Keep the session available for resume from the activity bar.
+        skillStore.toggleAutonomousMode(false);
       }
     };
 
@@ -5544,19 +5029,8 @@ export default {
           `[Roleplay] ${selectedCompanion.value.name} connected to Moltbook as @${credentials.username}`,
         );
 
-        // Auto-subscribe to relevant communities
-        try {
-          const subscribed = await moltbookService.autoSubscribeToSubmolts(
-            selectedCompanion.value.id,
-          );
-          if (subscribed.length > 0) {
-            console.log(
-              `[Roleplay] Auto-subscribed to: ${subscribed.join(", ")}`,
-            );
-          }
-        } catch (e) {
-          console.warn("[Roleplay] Auto-subscribe failed:", e.message);
-        }
+        // Connecting an account does not authorize subscriptions or publishing.
+        socialConnected.value.moltbook = true;
 
         // Clear input fields after saving
         moltbookApiKey.value = "";
@@ -5829,6 +5303,7 @@ export default {
       try {
         const text = await file.text();
         const importedData = JSON.parse(text);
+        if (importedData.relationshipTracks) await importJourneys(importedData.relationshipTracks);
 
         // Check if it's a single session or multiple sessions
         if (importedData.sessions) {
@@ -5874,12 +5349,13 @@ export default {
           alert(`Successfully imported ${importedCount} session(s)`);
         } else if (importedData.companion && importedData.scenario) {
           // Single session format
-          const key = getSessionKey(
+          const baseKey = getSessionKey(
             importedData.companion,
             importedData.scenario,
             importedData.settings?.contentLevel || "pg13",
             importedData.settings?.responseMode || "text+image",
           );
+          const key = baseKey && importedData.settings?.journeyTrackId ? `${baseKey}__${importedData.settings.journeyTrackId}` : baseKey;
 
           if (key) {
             savedSessions.value[key] = importedData;
@@ -5911,12 +5387,13 @@ export default {
       event.target.value = "";
     };
 
-    const exportSession = (key) => {
+    const exportSession = async (key) => {
       const session = savedSessions.value[key];
       if (!session) return;
 
       const exportData = {
         ...session,
+        relationshipTracks: (await loadJourneys()).tracks.filter(track => track.id === (session.settings?.journeyTrackId || `legacy-${session.companion?.id}`)),
         exportedAt: new Date().toISOString(),
         version: "1.0",
       };
@@ -5936,9 +5413,10 @@ export default {
       console.log(`[Roleplay] Exported session: ${key}`);
     };
 
-    const exportAllSessions = () => {
+    const exportAllSessions = async () => {
       const exportData = {
         sessions: structuredClone(toRaw(savedSessions.value)),
+        relationshipTracks: (await loadJourneys()).tracks,
         customCompanions: roleplayStore.serializeCompanionData(companions.value),
         exportedAt: new Date().toISOString(),
         version: "1.0",
@@ -6579,6 +6057,7 @@ export default {
         return;
       }
 
+      if (selectedCompanion.value?.id !== companion.id) settings.value.journeyTrackId = undefined;
       selectedCompanion.value = companion;
       emit("companion-selected", roleplayStore.serializeCompanionData(companion));
       showCustomCompanion.value = false;
@@ -7638,6 +7117,9 @@ export default {
 
     // Start a new chat (fresh session)
     const startNewChat = async () => {
+      journeyStartError.value = '';
+      try { await journeyPanel.value?.prepare(); await nextTick(); }
+      catch (error) { journeyStartError.value = error.message; return; }
       // Auto-disable optional media if the model isn't available
       if (!isModelAvailable("audio_quality"))
         settings.value.enableAudio = false;
@@ -8427,9 +7909,9 @@ export default {
 
     // Process a single message (internal function)
     const processMessage = async (messageData) => {
-      const { messageContent, visionData } = messageData;
+      const { messageContent, visionData, storyAction = false } = messageData;
       let capability;
-      try { capability = chatRequest(messageContent, availableWorkflows.value); }
+      try { capability = storyAction ? null : chatRequest(messageContent, availableWorkflows.value); }
       catch (error) { chatHistory.value.push({ id: _msgId(), ts: Date.now(), role: 'assistant', content: error.message }); await saveSession(); return; }
       if (capability) {
         isTyping.value = true;
@@ -8457,12 +7939,17 @@ export default {
         } finally { isTyping.value = false; typingStatus.value = ''; await saveSession(); scrollToBottom(); }
         return;
       }
-      const recalledMemory = await memoryService.buildRecallContext(messageContent, {
+      // Fresh relationship tracks must not inherit another track's companion memories.
+      const recalledMemory = settings.value.journeyTrackId ? '' : await memoryService.buildRecallContext(messageContent, {
         companion: selectedCompanion.value,
         includeUser: true,
         limit: 10,
       });
 
+      // Capture the active journal before generation; no progress is earned for a failed response.
+      let storyContext = '';
+      try { storyContext = await journeyPanel.value?.context() || ''; }
+      catch (error) { journeyStartError.value = error.message; }
       // Generate response
       isTyping.value = true;
       typingStatus.value = "";
@@ -8505,6 +7992,7 @@ export default {
             settings: executionSettings,
             sceneState: {
               ...sceneState.value,
+              journeyContext: storyContext,
               userAppearance: userProfile.value.userDescription || "a man",
               participantContext: roleplayParticipantContext(userProfile.value),
               memorySummary: [sceneState.value.memorySummary, recalledMemory].filter(Boolean).join("\n\n"),
@@ -8664,7 +8152,7 @@ export default {
 
           // Handle purchase intent if detected
           if (
-            companionPaymentsEnabled &&
+            companionPaymentsEnabled && !storyAction &&
             result.response.purchaseIntent &&
             settings.value.autonomous.enablePurchases
           ) {
@@ -8700,6 +8188,16 @@ export default {
             console.log(
               `[Roleplay] Image skipped: shouldVisualize=${result.meta.shouldVisualize}`,
             );
+          }
+
+          await saveSession(); // Preserve the response even if quest assessment fails.
+          typingStatus.value = 'Checking story progress…';
+          try {
+            await journeyPanel.value?.recordTurn(messageContent, result.response?.response || '', chatHistory.value[assistantMessageIndex]?.id || _msgId());
+            sceneState.value.journeyContext = await journeyPanel.value?.context() || storyContext;
+          } catch (error) {
+            // A journal failure must never replace a successfully generated message.
+            journeyStartError.value = error.message;
           }
 
           // Trigger long-term memory summarization if due (only count user interactions, not autonomous)
@@ -8786,7 +8284,8 @@ export default {
       });
     };
 
-    const sendMessage = async (message = null) => {
+    const sendStoryAction = (message) => sendMessage(message, { storyAction: true });
+    const sendMessage = async (message = null, options = {}) => {
       // Block messages until scene setup is complete
       if (isInitializingSession.value) {
         console.log("[Roleplay] Cannot send message - scene setup in progress");
@@ -8809,7 +8308,7 @@ export default {
         : null;
 
       // Build user message content
-      const messageContent = selectedCreation.value
+      const messageContent = selectedCreation.value && !options.storyAction
         ? `/${selectedCreation.value} ${msg || "Describe this image"}`
         : msg || (hasImage ? "*shares an image*" : "");
       selectedCreation.value = null;
@@ -8828,7 +8327,7 @@ export default {
       scrollToBottom();
 
       // Create message data object
-      const messageData = { messageContent, visionData };
+      const messageData = { messageContent, visionData, storyAction: !!options.storyAction };
 
       // Preserve every request while an earlier creation is still running.
       pendingMessages.value.push(messageData);
@@ -9112,7 +8611,16 @@ export default {
       // Disconnecting a wallet does not delete local profiles or their skills.
     });
 
+    // Register the ready conversation without enabling background work, so the
+    // global activity bar can start heartbeat without a second trip into settings.
+    watch(() => [phase.value, currentSessionKey.value, isInitializingSession.value], () => {
+      if (phase.value !== 'chat' || !currentSessionKey.value || isInitializingSession.value || !selectedCompanion.value || !selectedScenario.value || skillStore.autonomousMode || skillStore.isGeneratingAutonomous) return;
+      skillStore.startAutonomousSession({ sessionKey: currentSessionKey.value, companion: selectedCompanion.value, scenario: selectedScenario.value, settings: settings.value, history: chatHistory.value, sceneState: sceneState.value, backgroundImage: scenarioBackgroundImage.value, backgroundHistory: backgroundHistory.value });
+    });
+
     return {
+      skillStore,
+      journeyPanel, journeyStartError, selectJourneyTrack, sendStoryAction,
       sessionAudience, selectedCreation, CHAT_MEDIA, assignedChatWorkflows, prepareChatCommand, prepareWorkflowCommand,
       mediaPipelineId, mediaDownloadError, mediaDownloadKey, downloadMedia, cancelMediaDownload,
       roleplayMedia: [
@@ -9510,7 +9018,7 @@ export default {
   flex-direction: column;
 }
 
-.roleplay-chat.is-fullscreen .chat-header {
+.roleplay-chat.is-fullscreen .roleplay-session-header {
   flex-shrink: 0;
 }
 
@@ -9822,6 +9330,9 @@ export default {
 }
 
 .companion-portrait {
+  position: absolute;
+  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -10619,9 +10130,11 @@ hr {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 1px !important;
-  border: 4px solid #fff;
-  border-width: 8px 8px 48px;
+  display: block;
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
+  border-radius: 0;
+  border: 0;
 }
 
 .regenerate-image-btn {
@@ -10838,10 +10351,9 @@ hr {
 }
 
 /* Chat Phase */
-.chat-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+.roleplay-session-header {
+  position: relative;
+  z-index: 1;
 }
 
 .companion-header {
@@ -10884,20 +10396,21 @@ hr {
 .chat-phase {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 180px);
-  min-height: 400px;
+  height: calc(100dvh - 220px);
+  min-height: 620px;
 }
 .roleplay-stage {
   min-height: 0;
   flex: 1;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  display: flex;
+  flex-direction: column;
   gap: var(--bz-space-4);
   padding: var(--bz-space-5);
   border: 1px solid var(--bz-border);
   background: var(--bz-panel);
 }
-.chat-header {
+.roleplay-stage > :not(.chat-messages-container) { flex-shrink: 0; }
+.roleplay-session-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -10905,10 +10418,16 @@ hr {
   padding-bottom: var(--bz-space-4);
   border-bottom: 1px solid var(--bz-border);
 }
-.chat-header .columns,
-.chat-header .column {
-  display: contents;
-}
+.roleplay-session-header__row { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 16px; flex-wrap: wrap; }
+.roleplay-session-identity { min-width: 0; flex: 1 1 220px; }
+.roleplay-session-header .companion-header { min-width: 0; }
+.roleplay-session-header .companion-header h3 { line-height: 1.25; overflow-wrap: anywhere; }
+.roleplay-session-header .companion-header__portrait { border-radius: 50%; }
+.roleplay-session-header .companion-header__scene { line-height: 1.5; }
+.roleplay-activity-settings { border-bottom: 1px solid var(--bz-border); padding: 8px 0; }
+.roleplay-activity-settings summary { cursor: pointer; color: var(--bz-fg-mid); padding: 8px 0; }
+.roleplay-activity-settings[open] { max-height: 55vh; overflow-y: auto; }
+.roleplay-stage :deep(.journey__body) { max-height: 40vh; overflow-y: auto; }
 .roleplay-session-actions {
   display: flex !important;
   align-items: center;
@@ -10958,8 +10477,7 @@ hr {
 
 .empty-chat-content .pulsing-icon {
   font-size: 64px;
-  color: hsl(171, 100%, 41%);
-  animation: pulse-glow 2s ease-in-out infinite;
+  color: var(--bz-accent);
 }
 
 .empty-chat-content .pulsing-text {
@@ -10969,7 +10487,7 @@ hr {
   font-family: "Fira Sans Condensed", sans-serif;
   font-weight: 700;
   font-style: italic;
-  animation: pulse-opacity 2s ease-in-out infinite;
+
 }
 
 @keyframes pulse-glow {
@@ -12285,7 +11803,7 @@ hr {
   background: transparent;
 }
 .is-agent-management .companion-creation-editor { min-width: 0; padding: 0; }
-.is-agent-management .agent-creation-requirements { width: 100%; min-width: 600px; }
+.is-agent-management .agent-creation-requirements { width: 100%; min-width: 0; }
 .is-agent-management .agent-creation-requirements:not(:empty) { margin-bottom: var(--bz-space-6); }
 .is-agent-management .agent-creation-requirements :deep(.bz-download-requirement) { margin-top: 0; }
 .is-agent-management .agent-creation-requirements :deep(.bz-meta) { margin: var(--bz-space-2) 0 0; font-size: 12px; line-height: 1.5; color: var(--bz-fg-muted); }
@@ -12312,11 +11830,10 @@ hr {
 .is-agent-management .custom-companion-preview .columns { display: flex; flex-direction: column; align-items: stretch; padding: 0 !important; margin: 0; }
 .is-agent-management .custom-companion-preview .column { width: 100%; min-width: 0; padding: 0 !important; }
 .is-agent-management .custom-companion-preview .column + .column { margin-top: var(--bz-space-4); }
-/* Match the existing companion polaroid: narrow white edges and a deep caption edge. */
-.is-agent-management .custom-preview-portrait.agent-polaroid { position: relative; display: block; box-sizing: border-box; width: 100%; height: auto; padding: 8px 8px 48px; border: 0; border-radius: 1px; overflow: hidden; background: #fff; }
-.is-agent-management .agent-polaroid img, .is-agent-management .agent-polaroid .no-portrait { display: flex; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 0; }
-.is-agent-management .agent-polaroid .no-portrait { min-height: 0; color: var(--bz-fg-muted); background: var(--bz-card); }
-.is-agent-management .agent-polaroid-caption { position: absolute; bottom: 13px; left: 12px; right: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 18px; line-height: 22px; color: #222; }
+/* Show the actual square artwork without adding a printed-photo frame. */
+.is-agent-management .custom-preview-portrait.agent-portrait-preview { position: relative; display: block; box-sizing: border-box; width: 100%; height: auto; aspect-ratio: 1 / 1; padding: 0; border: 0; border-radius: var(--bz-r-sm); overflow: hidden; background: var(--bz-card); }
+.is-agent-management .agent-portrait-preview img, .is-agent-management .agent-portrait-preview .no-portrait { display: flex; width: 100%; height: auto; aspect-ratio: 1 / 1; box-sizing: border-box; object-fit: cover; border-radius: 0; }
+.is-agent-management .agent-portrait-preview .no-portrait { min-height: 0; color: var(--bz-fg-muted); background: var(--bz-card); }
 .is-agent-management .no-portrait .material-symbols-outlined { font-size: 48px !important; opacity: 0.6 !important; }
 .is-agent-management .custom-companion-preview h5 { margin: 0; line-height: 1.2; font-size: 24px !important; overflow-wrap: anywhere; }
 .is-agent-management .agent-placeholder-copy { margin: 0; color: var(--bz-fg-muted); font-size: 13px; line-height: 1.5; }
@@ -12345,7 +11862,7 @@ hr {
   align-items: stretch !important;
   gap: var(--bz-space-4) !important;
   min-height: max(640px, calc(100dvh - 350px));
-  min-width: 600px;
+  min-width: 0;
 }
 .is-agent-management .companion-creation-editor,
 .is-agent-management .custom-companion-preview,
@@ -12366,7 +11883,7 @@ hr {
 .is-agent-management .agent-generate-actions .bz-btn--agent-cta { width: 100%; min-width: 0; min-height: 44px; }
 .is-agent-management .agent-preview-heading { min-height: 28px; margin-bottom: 20px; }
 .is-agent-management .agent-preview-heading .companion-name > .material-symbols-outlined { display: none; }
-.is-agent-management .agent-polaroid { max-width: 320px; margin-inline: auto; }
+.is-agent-management .agent-portrait-preview { max-width: 320px; margin-inline: auto; }
 .is-agent-management .agent-preview-spending canvas { max-width: 200px; margin-inline: auto; }
 .is-agent-management .agent-preview-spending .spending-chart-container { display: flex; justify-content: center; }
 .is-agent-management .agent-launch-heading { display: block; }
@@ -12380,8 +11897,8 @@ hr {
 .is-agent-management .agent-launch-section .agent-preview-economy { margin-top: auto; padding-top: 24px; }
 .is-agent-management .agent-preview-economy .bz-btn { width: 100%; min-height: 44px; white-space: normal; }
 @container (max-width: 900px) {
+  .is-agent-management .agent-creation-layout { grid-template-columns:1fr !important; min-height:0; }
   .is-agent-management .agent-creation-controls { grid-template-columns: 1fr; }
-  .is-agent-management .agent-polaroid-caption { font-size: 14px; }
 }
 /* Card actions remain readable on photographs and in every theme. */
 :is(.card-action-btn,
@@ -12451,7 +11968,7 @@ button:is(.card-action-btn,
 .companion-selector__navigation { display:flex; align-items:center; gap:8px; }
 .companion-selector__navigation > span { margin-right:8px; color:var(--bz-fg-mid); white-space:nowrap; }
 .companion-selector__roster { display:flex; gap:10px; overflow-x:auto; padding:6px 3px 18px; scroll-snap-type:x proximity; }
-.companion-selector__portrait { position:relative; flex:0 0 92px; height:112px; border:2px solid var(--bz-border-strong); border-radius:var(--bz-r-sm); padding:0; overflow:hidden; background:var(--bz-card); color:var(--bz-fg); cursor:pointer; scroll-snap-align:center; }
+.companion-selector__portrait { position:relative; flex:0 0 92px; width:92px; height:92px; aspect-ratio:1 / 1; box-sizing:border-box; border:2px solid var(--bz-border-strong); border-radius:var(--bz-r-sm); padding:0; overflow:hidden; background:var(--bz-card); color:var(--bz-fg); cursor:pointer; scroll-snap-align:center; }
 .companion-selector__portrait img { width:100%; height:100%; object-fit:cover; object-position:top; }
 .companion-selector__portrait > .material-symbols-outlined { font-size:36px; }
 .companion-selector__portrait-name { position:absolute; bottom:0; left:0; right:0; padding:6px; background:var(--bz-panel); color:var(--bz-fg); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -12547,8 +12064,8 @@ button:is(.card-action-btn,
 .chat-capability-workflows{left:0;right:auto;bottom:calc(100% + 8px);width:min(320px,75vw);min-width:180px;padding:8px;background:var(--bz-panel);border:1px solid var(--bz-border-strong);border-radius:12px;box-shadow:0 8px 24px #0002;gap:4px}.chat-capability-workflows button{display:flex;align-items:center;gap:12px;text-align:left;white-space:normal;padding:10px 12px;border:0;border-radius:8px;background:transparent;color:var(--bz-fg);font:inherit;font-size:14px;cursor:pointer}.chat-capability-workflows button:hover{background:var(--bz-accent-soft)}
 .roleplay-session-status{display:flex;gap:14px;flex-wrap:wrap;align-items:center}.roleplay-session-status .skill-chip{background:transparent!important;border:0!important;padding:0!important;box-shadow:none!important;color:var(--bz-muted)!important;font-size:12px;text-transform:none}
 .message-header{background:transparent!important;color:var(--bz-fg)!important;padding:10px 14px!important}.message-header .skill-chip{background:var(--bz-panel)!important;color:var(--bz-fg)!important;border:1px solid var(--bz-border)!important}.action-text{color:var(--bz-fg-mid)!important;opacity:1;line-height:1.6}
-.roleplay-stage{grid-template-columns:minmax(0,1fr);border-radius:16px;min-width:0;max-width:100%;box-sizing:border-box}.roleplay-stage>*{min-width:0}.chat-phase{min-width:0;max-width:100%}.chat-messages-container{border-radius:12px}.chat-header{flex-wrap:wrap}.roleplay-session-actions{flex-wrap:wrap}.chat-input{box-sizing:border-box;min-width:0;max-width:100%}
-@media(max-width:600px){.roleplay-stage{padding:12px;gap:12px}.chat-messages{padding:16px 12px}.chat-input{padding:12px}.chat-header{gap:12px}.roleplay-session-actions{gap:8px}.chat-message{max-width:100%}}
+.roleplay-stage{grid-template-columns:minmax(0,1fr);border-radius:16px;min-width:0;max-width:100%;box-sizing:border-box}.roleplay-stage>*{min-width:0}.chat-phase{min-width:0;max-width:100%}.chat-messages-container{border-radius:12px}.roleplay-session-header{flex-wrap:wrap}.roleplay-session-actions{flex-wrap:wrap}.chat-input{box-sizing:border-box;min-width:0;max-width:100%}
+@media(max-width:600px){.roleplay-stage{padding:12px;gap:12px}.chat-messages{padding:16px 12px}.chat-input{padding:12px}.roleplay-session-header{gap:12px}.roleplay-session-actions{gap:8px}.chat-message{max-width:100%}}
 </style>
 
 <style scoped>
@@ -12558,4 +12075,9 @@ button:is(.card-action-btn,
 .is-agent-management .agent-creation-requirements { min-width:0; }
 .is-agent-management .custom-companion-form .textarea { min-height:180px; height:220px; max-height:400px; }
 .is-agent-management .agent-creation-heading h2 { font-family:var(--bz-font-metric); font-weight:900; font-style:italic; }
+/* Keep actual dialogue visible when the journal and composer stack on small screens. */
+@media (max-width: 600px) {
+  .chat-phase { height: auto; min-height: 0; }
+  .roleplay-stage .chat-messages-container { flex: none; height: 50vh; min-height: 260px; }
+}
 </style>

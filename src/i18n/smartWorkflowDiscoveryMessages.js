@@ -84,3 +84,12 @@ const resultNavigationRows = [
  ['View results', 'Voir les résultats', 'Ver resultados', '結果を表示', '결과 보기', '查看结果', 'Посмотреть результаты'],
 ];
 for (const [key, ...values] of resultNavigationRows) locales.forEach((locale, index) => { smartWorkflowDiscoveryMessages[locale][key] = values[index]; });
+
+const discoveryHeroRows = [
+ ['Find your next workflow', 'Trouvez votre prochain workflow', 'Encuentra tu próximo flujo', '次のワークフローを探す', '다음 워크플로 찾기', '查找下一个工作流', 'Найдите свой процесс'],
+ ['Less busywork. More possibility.', 'Moins de tâches. Plus de possibilités.', 'Menos tareas. Más posibilidades.', '作業を減らし、可能性を広げる。', '작업은 줄이고 가능성은 넓히세요.', '减少琐事，拓展可能。', 'Меньше рутины. Больше возможностей.'],
+ ['Start with an idea.', 'Partez d’une idée.', 'Empieza con una idea.', 'アイデアから始めよう。', '아이디어로 시작하세요.', '从一个想法开始。', 'Начните с идеи.'],
+ ['Leave with a result.', 'Repartez avec un résultat.', 'Obtén un resultado.', '成果を手にしよう。', '결과를 얻으세요.', '收获一个成果。', 'Получите результат.'],
+ ['Explore all workflows', 'Explorer tous les workflows', 'Explorar todos los flujos', 'すべてのワークフローを見る', '모든 워크플로 둘러보기', '探索所有工作流', 'Все рабочие процессы'],
+];
+for (const [key, ...values] of discoveryHeroRows) locales.forEach((locale, index) => { smartWorkflowDiscoveryMessages[locale][key] = values[index]; });

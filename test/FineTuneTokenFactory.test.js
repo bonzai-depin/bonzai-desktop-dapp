@@ -109,7 +109,6 @@ describe("FineTuneTokenFactory", function () {
       expect(await factory.poolManager()).to.equal(await poolManager.getAddress());
       expect(await factory.positionManager()).to.equal(await positionManager.getAddress());
       expect(await factory.permit2()).to.equal(await permit2.getAddress());
-      expect(await factory.feeHook()).to.equal(await feeHook.getAddress());
     });
 
     it("should set default minEthLiquidity to 0.01 ether", async function () {
@@ -131,16 +130,16 @@ describe("FineTuneTokenFactory", function () {
       const [, pm, p2, fh] = await ethers.getSigners();
       const Factory = await ethers.getContractFactory("FineTuneTokenFactory");
       await expect(
-        Factory.deploy(ethers.ZeroAddress, pm.address, p2.address, fh.address)
+        Factory.deploy(ethers.ZeroAddress, pm.address, p2.address)
       ).to.be.revertedWith("Invalid PoolManager");
     });
 
-    it("should revert if constructor receives zero feeHook address", async function () {
+    it("should revert if constructor receives zero Permit2 address", async function () {
       const [, pm, posm, p2] = await ethers.getSigners();
       const Factory = await ethers.getContractFactory("FineTuneTokenFactory");
       await expect(
-        Factory.deploy(pm.address, posm.address, p2.address, ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid feeHook");
+        Factory.deploy(pm.address, posm.address, ethers.ZeroAddress)
+      ).to.be.revertedWith("Invalid Permit2");
     });
   });
 
@@ -241,40 +240,16 @@ describe("FineTuneTokenFactory", function () {
       expect(creatorBalance).to.equal(expectedCreatorAmount);
     });
 
-    it("should register pool with feeHook using poolType=1 and mintPoolIndex=5", async function () {
+    it("uses a vault without a hook or second fee deduction", async function () {
       const { factory, contentCollection, feeHook, contentTokenId, creator } = await loadFixture(launchFixture);
-
-      const tx = await launchValidatedModel(factory, contentCollection,
-        contentTokenId,
-        tokenName,
-        tokenSymbol,
-        modelIrysHash,
-        creator.address,
-        { value: MIN_ETH_LIQUIDITY }
-      );
-      const receipt = await tx.wait();
-
-      // Get the poolId from event
-      const event = receipt.logs.find(
-        (log) => {
-          try {
-            return factory.interface.parseLog(log)?.name === "ModelTokenLaunched";
-          } catch {
-            return false;
-          }
-        }
-      );
-      const parsed = factory.interface.parseLog(event);
-      const poolId = parsed.args.poolId;
-
-      // Verify feeHook registration — FineTune pools don't use live NFT lookup,
-      // so companionNFT/companionTokenId are zero.
-      const reg = await feeHook.getRegistration(poolId);
-      expect(reg.beneficiary).to.equal(creator.address);
-      expect(reg.companionNFT).to.equal(ethers.ZeroAddress);
-      expect(reg.companionTokenId).to.equal(0);
-      expect(reg.poolType).to.equal(POOL_TYPE_FINETUNE); // 1
-      expect(reg.mintPoolIndex).to.equal(5); // MINT_POOL_INDEX
+      const tx = await launchValidatedModel(factory,contentCollection,contentTokenId,tokenName,tokenSymbol,modelIrysHash,creator.address,{value:MIN_ETH_LIQUIDITY});
+      const receipt=await tx.wait();
+      const event=receipt.logs.map(l=>{try{return factory.interface.parseLog(l)}catch{return null}}).find(l=>l?.name==='ModelTokenLaunched');
+      const reg=await feeHook.getRegistration(event.args.poolId);
+      expect(reg.beneficiary).to.equal(ethers.ZeroAddress);
+      const vault=await ethers.getContractAt('BonzaiLiquidityVault',await factory.liquidityVault());
+      expect((await vault.positions(event.args.positionId)).beneficiary).to.equal(creator.address);
+      expect(await vault.TRADING_FEE()).to.equal(10000);
     });
 
     it("should emit ModelTokenLaunched event with correct args", async function () {
@@ -292,7 +267,7 @@ describe("FineTuneTokenFactory", function () {
       ).to.emit(factory, "ModelTokenLaunched");
     });
 
-    it("should lock LP position NFT to BURN_ADDRESS", async function () {
+    it("should lock LP position NFT in the immutable vault", async function () {
       const { factory, contentCollection, positionManager, contentTokenId, creator } =
         await loadFixture(launchFixture);
 
@@ -308,7 +283,7 @@ describe("FineTuneTokenFactory", function () {
 
       // The position NFT (tokenId=1) should be owned by BURN_ADDRESS
       const positionOwner = await positionManager.ownerOf(1);
-      expect(positionOwner).to.equal(BURN_ADDRESS);
+      expect(positionOwner).to.equal(await factory.liquidityVault());
     });
 
     it("should increment totalTokensLaunched after each launch", async function () {
@@ -450,10 +425,11 @@ describe("FineTuneTokenFactory", function () {
       const factory = await Factory.deploy(
         await poolManager.getAddress(),
         await positionManager.getAddress(),
-        await permit2.getAddress(),
-        await feeHook.getAddress()
+        await permit2.getAddress()
       );
 
+      const rewards=await (await ethers.getContractFactory("MockVaultRewards")).deploy();
+      await factory.configureLiquidityVault(owner.address,await rewards.getAddress());
       const contentCollection = owner.address;
       // Do NOT call setContentContract
       await expect(

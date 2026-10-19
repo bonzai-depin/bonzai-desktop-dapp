@@ -9,6 +9,7 @@
  */
 
 import { defineStore } from 'pinia';
+import { heartbeatConfig, heartbeatDue } from '../services/roleplayHeartbeat.js';
 import { ref, computed, toRaw, watch } from 'vue';
 import { skillService } from '../services/skill.service.js';
 import { levelService } from '../services/level.service.js';
@@ -96,6 +97,7 @@ export const useSkillStore = defineStore('skill', () => {
   const autonomousInterval = ref(null);
   const isGeneratingAutonomous = ref(false);
   const foregroundRoleplayBusy = ref(false);
+  const lastHeartbeatAt = ref(Date.now());
   const autonomousMessageCount = ref(0); // Track how many autonomous messages generated
 
   // Configurable autonomous mode settings (defaults, can be overridden by session settings)
@@ -756,7 +758,7 @@ export const useSkillStore = defineStore('skill', () => {
     const wasIdle = isIdle.value;
     const hasFocus = document.hasFocus();
 
-    isIdle.value = !hasFocus || timeSinceActive > IDLE_TIMEOUT.value;
+    isIdle.value = timeSinceActive >= IDLE_TIMEOUT.value;
   };
 
   /**
@@ -803,7 +805,7 @@ export const useSkillStore = defineStore('skill', () => {
     if (!autonomousMode.value) {
       return;
     }
-    if (!isIdle.value) return;
+    if (!heartbeatDue({ enabled: autonomousMode.value, busy: isGeneratingAutonomous.value || foregroundRoleplayBusy.value, lastActive: lastActiveTime.value, lastRun: lastHeartbeatAt.value, now: Date.now(), config: autonomousConfig.value })) return;
     if (isGeneratingAutonomous.value || foregroundRoleplayBusy.value) return;
 
     if (autonomousMessageCount.value >= MAX_AUTONOMOUS_MESSAGES.value) {
@@ -831,6 +833,7 @@ export const useSkillStore = defineStore('skill', () => {
     }
 
     isGeneratingAutonomous.value = true;
+    lastHeartbeatAt.value = Date.now();
     const msgNum = autonomousMessageCount.value + 1;
 
     try {
@@ -887,7 +890,7 @@ REQUIREMENTS:
             contentLevel: session.settings.contentLevel,
             responseMode: responseMode.join('+'),
             autonomousMode: true, // Flag for special handling
-            forceVisualize: true, // Always generate image in autonomous mode
+            forceVisualize: !!session.settings.enableImage, // Respect the selected media budget
             forceLocationChange: shouldChangeLocation,
           },
           sceneState: session.sceneState,
@@ -996,6 +999,7 @@ REQUIREMENTS:
    * Called by RoleplayChat when enabling autonomous mode
    */
   const startAutonomousSession = (sessionData) => {
+    if (autonomousSession.value.sessionKey !== sessionData.sessionKey) autonomousMessageCount.value = 0;
     autonomousSession.value = {
       sessionKey: sessionData.sessionKey,
       companion: sessionData.companion,
@@ -1010,11 +1014,7 @@ REQUIREMENTS:
     // Apply autonomous settings from session if provided
     const autoSettings = sessionData.settings?.autonomous;
     if (autoSettings) {
-      autonomousConfig.value = {
-        idleTimeout: autoSettings.idleTimeout || 5,
-        messageInterval: autoSettings.messageInterval || 15,
-        maxMessages: autoSettings.maxMessages || 12,
-      };
+      autonomousConfig.value = heartbeatConfig(autoSettings);
     }
 
   };
@@ -1078,18 +1078,21 @@ REQUIREMENTS:
   /**
    * Toggle autonomous mode on/off
    */
-  const toggleAutonomousMode = (enabled) => {
+  const toggleAutonomousMode = (enabled, { resume = false } = {}) => {
+    if (autonomousMode.value === enabled) return;
     autonomousMode.value = enabled;
 
     if (enabled) {
       // Reset message counter when starting
-      autonomousMessageCount.value = 0;
+      if (!resume || autonomousMessageCount.value >= MAX_AUTONOMOUS_MESSAGES.value) autonomousMessageCount.value = 0;
+      lastHeartbeatAt.value = Date.now();
+      lastActiveTime.value = Date.now();
 
       // Start idle checking
       idleCheckInterval.value = setInterval(checkIdle, 30000);
 
       // Start autonomous message generation
-      autonomousInterval.value = setInterval(generateAutonomousMessage, AUTONOMOUS_MESSAGE_INTERVAL.value);
+      autonomousInterval.value = setInterval(generateAutonomousMessage, 30000);
 
       // Add event listeners
       document.addEventListener('mousemove', onMouseMove);
@@ -1280,6 +1283,8 @@ REQUIREMENTS:
     updateActivity,
     autonomousMessageCount,
     autonomousConfig,
+    lastHeartbeatAt,
+    lastActiveTime,
     IDLE_TIMEOUT,
     AUTONOMOUS_MESSAGE_INTERVAL,
     MAX_AUTONOMOUS_MESSAGES,

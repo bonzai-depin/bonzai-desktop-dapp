@@ -67,3 +67,19 @@ test('generation, refinement and repair receive the same bounded construction AP
  }
  const prompt=buildScenePrompt({brief:'A forest castle bridge',mode:'level'});assert.match(prompt,/H\.terrainPatch/);assert.match(prompt,/H\.seatedProp/);
 });
+
+test('French briefs receive the same functional construction guidance',()=>{
+ assert.match(buildScenePrompt({brief:'Une chaise en chêne'}),/support structure, upholstery volume/);
+ assert.match(buildScenePrompt({brief:'Une fontaine en pierre'}),/FLUID.jet/);
+ assert.match(buildScenePrompt({brief:'Un atelier de maintenance',mode:'level'}),/navigable space/);
+ const lantern=buildScenePrompt({brief:'Une lanterne avec six vitres'});
+ assert.match(lantern,/FITTED POLYGONAL GLAZING/);assert.match(lantern,/H.framedPanels/);
+ assert.doesNotMatch(buildScenePrompt({brief:'A walnut chair'}),/FITTED POLYGONAL GLAZING/);
+});
+test('runtime repairs retain physical construction rules with bounded prefill',()=>{
+ const prompt=buildSceneRepair({brief:'Emergency lantern',code:'const body = H.latheProfile(points);',error:'Lathe radii cannot be negative'});
+ assert.match(prompt,/non-negative/);assert.match(prompt,/NOT XY polygon outlines/);
+ assert.match(prompt,/THREE.Vector2/);assert.match(prompt,/Do not replace a failed detailed part/);
+ assert.ok(prompt.length<8500,'a local repair must not repeat the full generation guide');
+ assert.match(buildSceneRepair({mode:'game',code:'game.start()',error:'missing player'}),/required objectives.*start.*restart/);
+});
