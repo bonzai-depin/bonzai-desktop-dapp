@@ -1,0 +1,51 @@
+name: Publish validated unsigned RC
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'RC tag, matching the built package (vX.Y.Z-rc.N)'
+        required: true
+        type: string
+      source_sha:
+        description: 'Full 40-character commit built by all platforms'
+        required: true
+        type: string
+      macos_run:
+        description: 'Successful macOS native build run'
+        required: true
+        type: string
+      windows_run:
+        description: 'Successful Windows native build run'
+        required: true
+        type: string
+      linux_run:
+        description: 'Successful Linux CUDA and ROCm build run'
+        required: true
+        type: string
+      allow_unsigned_macos:
+        description: 'Explicitly approve publishing an unsigned, non-notarized macOS RC'
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-validated-rc-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native builds and hosted manifests, then publish RC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          MACOS_RUN: ${{ inputs.macos_run }}
+          WINDOWS_RUN: ${{ inputs.windows_run }}
+          LINUX_RUN: ${{ inputs.linux_run }}
+          ALLOW_UNSIGNED_MACOS: ${{ inputs.allow_unsigned_macos }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || secrets.R2_PUBLIC_URL }}
+        run: python scripts/publish-validated-rc.py

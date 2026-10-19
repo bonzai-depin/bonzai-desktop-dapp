@@ -164,3 +164,21 @@ and links in the Actions summary. Existing objects with different contents are r
 These are explicitly unsigned test builds (macOS is not notarized), not signed releases.
 This path allows tested artifacts to be hosted without rerunning compilation or requiring
 local copies of bucket credentials. Artifact retention still applies before promotion.
+
+## Publish an explicitly unsigned release candidate without rebuilding
+
+After all four native installer jobs pass for one source commit, use **Host
+validated installers** for each of the three build runs. This verifies the full
+public downloads and writes immutable manifests under `releases/test-builds/`.
+
+**Publish validated unsigned RC** accepts the full source commit, its matching
+`vX.Y.Z-rc.N` tag and the three successful build run IDs. It verifies checkout
+provenance, all four hosted installers, checksums and version before creating a
+GitHub prerelease with direct R2 links and checksum manifests. Release notes live
+in `.github/release-notes/<tag>.md`. It refuses conflicting existing tags.
+
+This route requires explicit approval of an unsigned, non-notarized macOS RC.
+It does not change the signing requirements of normal release workflows. The
+publisher uses GitHub's workflow token, so publishing the validated artifacts
+does not trigger redundant native builds. The release tag identifies the actual
+built source commit; later release-automation-only commits need not be rebuilt.
