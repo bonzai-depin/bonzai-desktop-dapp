@@ -31,7 +31,7 @@ describe('Smart-agent social-token job settlement', function () {
     }
     const fund = (id = job, agentId = 1, routeId = route, workerAddress = worker.address) => escrow.connect(employer).fundTokenJob(id, workerAddress, agentId, amount, ethers.id('quote terms'), routeId, owner.address);
     const submit = async (id = job) => { await escrow.connect(worker).acceptJob(id); await escrow.connect(worker).submitWork(id, ethers.id('delivered result')); };
-    return { owner, employer, worker, treasury, contributor, outsider, nextOwner, agents, factory, basket, social, otherSocial, router, escrow, job, route, amount, fund, submit };
+    return { owner, employer, worker, treasury, contributor, outsider, nextOwner, bonzai, vault, agents, factory, basket, social, otherSocial, router, escrow, job, route, amount, fund, submit };
   }
 
   async function conserved(escrow, token) {
@@ -41,6 +41,30 @@ describe('Smart-agent social-token job settlement', function () {
       + await escrow.tokenPendingContributions(currency) + await escrow.pendingBasketFees(currency));
     expect(await escrow.totalEscrowed()).to.equal(0);
   }
+
+  it('lets an eligible BONZAI holder claim the full 10% workflow allocation after epoch close', async function () {
+    const f = await fixture();
+    await f.bonzai.mint(f.outsider.address, 6);
+    await f.bonzai.connect(f.outsider).approve(await f.vault.getAddress(), 6);
+    await f.vault.connect(f.outsider).stakeForRewards(6);
+    await time.increaseTo(await f.basket.epochStart(1));
+    await f.fund(); await f.submit(); await f.escrow.connect(f.employer).approveWork(f.job);
+    await time.increaseTo(await f.basket.epochStart(2));
+    const currency = await f.social.getAddress();
+    expect(await f.basket.claimable(f.outsider.address, currency, 1)).to.equal(f.amount / 10n);
+    await f.basket.connect(f.outsider).claim(currency, [1], f.outsider.address);
+    expect(await f.social.balanceOf(f.outsider.address)).to.equal(f.amount / 10n);
+    await expect(f.basket.connect(f.outsider).claim(currency, [1], f.outsider.address)).to.be.revertedWith('Nothing to claim');
+    await conserved(f.escrow, f.social);
+  });
+
+  it('indexes jobs for contributors and the appointed arbitrator so lost local history cannot hide queued royalties',async function(){
+    const {owner,employer,worker,contributor,outsider,escrow,job,fund}=await fixture();
+    await fund();
+    for(const account of [owner,employer,worker,contributor])expect(await escrow.getWalletJobs(account.address,0,100)).to.deep.equal([job]);
+    expect(await escrow.getWalletJobs(outsider.address,0,100)).to.deep.equal([]);
+    expect(await escrow.getWalletJobs(contributor.address,1,100)).to.deep.equal([]);
+  });
 
   it('requires the exact registered agent currency and verified owner/wallet before taking payment', async function () {
     const { owner, employer, worker, outsider, escrow, job, amount, factory, basket, fund } = await fixture();
@@ -57,17 +81,19 @@ describe('Smart-agent social-token job settlement', function () {
     const currency = await social.getAddress();
     await fund(); await submit(); await escrow.connect(employer).approveWork(job);
     expect(await escrow.jobCurrency(job)).to.equal(currency);
-    expect(await escrow.tokenWithdrawable(currency, worker.address)).to.equal(950_000);
-    expect(await escrow.tokenWithdrawable(currency, treasury.address)).to.equal(12_500);
+    expect(await escrow.tokenWithdrawable(currency, worker.address)).to.equal(675_000);
+    expect(await escrow.tokenWithdrawable(currency, treasury.address)).to.equal(200_000);
     expect(await escrow.pendingBasketFees(currency)).to.equal(0);
-    expect(await basket.totalDeposited(currency)).to.equal(12_500);
-    expect(await escrow.pendingContributions(job)).to.equal(25_000);
+    expect(await basket.totalDeposited(currency)).to.equal(100_000);
+    expect(await escrow.pendingContributions(job)).to.equal(0);
+    expect(await escrow.tokenWithdrawable(currency, contributor.address)).to.equal(25_000);
     await conserved(escrow, social);
     await escrow.connect(worker).withdrawTokenPayments(currency, worker.address);
     await escrow.connect(treasury).withdrawTokenPayments(currency, treasury.address);
-    await escrow.routeContribution(job);
-    expect(await router.tokenClaimable(route, currency, contributor.address)).to.equal(20_000);
-    expect(await basket.totalDeposited(currency)).to.equal(15_000); // Platform 12,500 + route bonus 2,500.
+    await escrow.connect(contributor).withdrawTokenPayments(currency, contributor.address);
+    expect(await router.tokenClaimable(route, currency, contributor.address)).to.equal(0);
+    expect(await basket.totalDeposited(currency)).to.equal(100_000);
+    expect(await social.balanceOf(contributor.address)).to.equal(25_000);
     expect(await social.allowance(await escrow.getAddress(), await router.getAddress())).to.equal(0);
     expect(await social.allowance(await escrow.getAddress(), await basket.getAddress())).to.equal(0);
     await conserved(escrow, social);
@@ -98,7 +124,7 @@ describe('Smart-agent social-token job settlement', function () {
       await time.increaseTo((state === 'funded' ? terms.acceptBy : state === 'accepted' ? terms.deliverBy : terms.reviewBy) + 1n);
       await escrow.connect(outsider).expireJob(job);
       expect(await escrow.tokenWithdrawable(await social.getAddress(), employer.address)).to.equal(state === 'submitted' ? 0 : amount);
-      expect(await escrow.tokenWithdrawable(await social.getAddress(), worker.address)).to.equal(state === 'submitted' ? 975_000 : 0);
+      expect(await escrow.tokenWithdrawable(await social.getAddress(), worker.address)).to.equal(state === 'submitted' ? 700_000 : 0);
       await conserved(escrow, social);
     }
   });
@@ -112,10 +138,10 @@ describe('Smart-agent social-token job settlement', function () {
     await escrow.connect(owner).resolveDispute(job, 4000);
     const currency = await social.getAddress();
     expect(await escrow.tokenWithdrawable(currency, employer.address)).to.equal(600_000);
-    expect(await escrow.tokenWithdrawable(currency, worker.address)).to.equal(380_000);
+    expect(await escrow.tokenWithdrawable(currency, worker.address)).to.equal(270_000);
     expect(await escrow.pendingBasketFees(currency)).to.equal(0);
-    expect(await basket.totalDeposited(currency)).to.equal(5000);
-    expect(await escrow.pendingContributions(job)).to.equal(10_000);
+    expect(await basket.totalDeposited(currency)).to.equal(40_000);
+    expect(await escrow.pendingContributions(job)).to.equal(0);
     await conserved(escrow, social);
   });
 
@@ -125,13 +151,12 @@ describe('Smart-agent social-token job settlement', function () {
     await fund(); await submit();
     await router.pause(); await basket.setRewardCurrency(currency, false);
     await expect(escrow.connect(employer).approveWork(job)).to.emit(escrow, 'BasketFeeRoutingFailed');
-    await expect(escrow.routeContribution(job)).to.emit(escrow, 'ContributionRoutingFailed');
+    await expect(escrow.routeContribution(job)).to.be.revertedWith('No pending contribution');
     await expect(escrow.routeBasketFees(currency)).to.be.revertedWith('Basket routing unavailable');
-    expect(await escrow.pendingBasketFees(currency)).to.equal(12_500);
+    expect(await escrow.pendingBasketFees(currency)).to.equal(100_000);
     expect(await social.allowance(await escrow.getAddress(), await router.getAddress())).to.equal(0);
     await escrow.connect(worker).withdrawTokenPayments(currency, worker.address);
-    await time.increaseTo(await escrow.contributionFallbackAt(job));
-    await escrow.distributeContributionFallback(job);
+    // Contributors are credited directly even while the router is paused.
     expect(await escrow.tokenWithdrawable(currency, contributor.address)).to.equal(25_000);
     await basket.setRewardCurrency(currency, true);
     await escrow.routeBasketFees(currency);
@@ -160,4 +185,15 @@ describe('Smart-agent social-token job settlement', function () {
     await expect(fund()).to.be.revertedWith('Smart-agent registry changed');
     await expect(basket.registerSocialToken(1)).to.be.revertedWith('Smart-agent registry changed');
   });
+  it('recovers jobs and every paid currency without a local journal, and keeps them wallet-scoped',async()=>{
+    const {employer,worker,outsider,escrow,social,job,fund,submit}=await fixture();
+    await fund();await submit();await escrow.connect(employer).approveWork(job);
+    expect(await escrow.getWalletJobs(employer.address,0,100)).to.deep.equal([job]);
+    expect(await escrow.getWalletJobs(worker.address,0,100)).to.deep.equal([job]);
+    expect(await escrow.getWalletJobs(outsider.address,0,100)).to.deep.equal([]);
+    expect(await escrow.getWalletJobs(employer.address,1,100)).to.deep.equal([]);
+    expect(await escrow.getPaymentCurrencies(worker.address,0,100)).to.deep.equal([await social.getAddress()]);
+    await expect(escrow.getWalletJobs(employer.address,0,101)).to.be.revertedWith('Page too large');
+  });
+
 });

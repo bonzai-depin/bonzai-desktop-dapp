@@ -320,7 +320,9 @@ export const CONFIG = {
     byCompanionId: parseCompanionTokens(),
     tradeUrlTemplate:
       env.VITE_COMPANION_TOKEN_TRADE_URL_TEMPLATE ||
-      'https://app.uniswap.org/swap?chain=robinhood&outputCurrency={tokenAddress}',
+      ({ 1: 'ethereum', 8453: 'base', 42161: 'arbitrum', 4663: 'robinhood' }[ECONOMY_CHAIN_ID]
+        ? `https://app.uniswap.org/swap?chain=${{ 1: 'ethereum', 8453: 'base', 42161: 'arbitrum', 4663: 'robinhood' }[ECONOMY_CHAIN_ID]}&outputCurrency={tokenAddress}`
+        : null),
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -384,10 +386,10 @@ export const CONFIG = {
     lpLocked: true,
     custody: 'immutable-vault',
 
-    // Vault fee split: 80% creator, 10% treasury, 10% reward basket
+    // Vault fee split: 70% creator, 20% treasury, 10% reward basket
     tradingFeeBps: 100, // 1% total swap fee
-    beneficiaryShareBps: 8000,
-    treasuryShareBps: 1000,
+    beneficiaryShareBps: 7000,
+    treasuryShareBps: 2000,
     mintPoolShareBps: 1000,
     rewardDestination: "basket",
 
@@ -687,11 +689,11 @@ export const CONFIG = {
     lpLocked: true,
     custody: "immutable-vault",
 
-    // Vault fee split: 40% agent wallet, 40% owner, 10% treasury, 10% pools
+    // Vault fee split: 35% agent wallet, 35% owner, 20% treasury, 10% pools
     tradingFeeBps: 100, // 1% total swap fee
-    companionWalletBps: 4000,
-    companionOwnerBps: 4000,
-    treasuryShareBps: 1000,
+    companionWalletBps: 3500,
+    companionOwnerBps: 3500,
+    treasuryShareBps: 2000,
     companionPoolBps: 1000,
 
     // Description
@@ -771,6 +773,7 @@ for (const [field, suffix] of Object.entries(uniswapFields)) {
   const configured = env[`VITE_UNISWAP_V4_${suffix}_${ECONOMY_NETWORK_KEY.toUpperCase()}`] || env[`VITE_UNISWAP_V4_${suffix}`];
   if (configured) CONFIG.uniswap[ECONOMY_NETWORK_KEY][field] = configured;
 }
+CONFIG.uniswap[ECONOMY_NETWORK_KEY].routerAbiVersion = env.VITE_UNISWAP_V4_ROUTER_ABI_VERSION || 'v1';
 CONFIG.uniswap[ECONOMY_NETWORK_KEY].feeHook = economyAddress('UNISWAP_HOOK');
 
 export default CONFIG;

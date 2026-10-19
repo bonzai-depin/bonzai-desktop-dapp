@@ -42,3 +42,26 @@ test('game liquidity failures never submit a registration transaction', async ()
     delete globalThis.__gameLiquidityWallet;
   }
 });
+
+test('game recovery distinguishes pending registration from issued tokens without sending funds',async()=>{
+ const file=new URL('../src/services/gameToken.service.js',import.meta.url);
+ const address='0x0000000000000000000000000000000000000001', token='0x0000000000000000000000000000000000000002';
+ const original=CONFIG.gameTokenFactory.contractAddress;
+ const abi=new ethers.Interface(['function tokenForCollectible(bytes32) view returns(address)']);
+ let receipt=null, issued=false;
+ globalThis.__gameRecovery={getProvider:async()=>({getTransactionReceipt:async()=>receipt,call:async({data})=>{
+  const [key]=abi.decodeFunctionData('tokenForCollectible',data);
+  assert.equal(key,ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address','uint256'],[address,7])));
+  return abi.encodeFunctionResult('tokenForCollectible',[issued?token:ethers.ZeroAddress]);
+ }}),getSigner:()=>{throw new Error('Recovery must not sign');},switchNetwork:()=>{throw new Error('Recovery must not switch the wallet');}};
+ let source=(await readFile(file,'utf8')).replace(/^import \{ getSigner, getProvider, switchNetwork \} from .*;$/m,'const {getSigner,getProvider,switchNetwork}=globalThis.__gameRecovery;');
+ source=source.replace(/from ["']([^"']+)["']/g,(_,spec)=>`from '${spec.startsWith('.')?new URL(spec,file).href:import.meta.resolve(spec)}'`);
+ try {
+  CONFIG.gameTokenFactory.contractAddress=address;
+  const {recoverGameIssuance}=await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  assert.deepEqual(await recoverGameIssuance(address,7,'0xsubmitted'),{pending:true});
+  receipt={status:0};assert.deepEqual(await recoverGameIssuance(address,7,'0xsubmitted'),{reverted:true});
+  receipt={status:1,hash:'0xconfirmed'};assert.deepEqual(await recoverGameIssuance(address,7,'0xsubmitted'),{registeredOnly:true});
+  issued=true;assert.equal((await recoverGameIssuance(address,7,'0xsubmitted')).tokenAddress,token);
+ }finally {CONFIG.gameTokenFactory.contractAddress=original;delete globalThis.__gameRecovery;}
+});

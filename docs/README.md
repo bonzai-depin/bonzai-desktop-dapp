@@ -17,6 +17,7 @@ This directory contains concise references for implemented BonzAI systems. Publi
 | [Smart-agent chat channels](SMART_AGENT_CHAT.md) | Local media/workflow results, X public sessions, isolation and delivery recovery |
 | [Locked liquidity](LOCKED_LIQUIDITY.md) | Shared agent/model/game custody, trading-fee accounting and deployment wiring |
 | [Protocol configuration](PROTOCOL_CONFIGURATION.md) | Shared public addresses, GitHub build configuration, secrets and verification boundaries |
+| [Economy simulation](ECONOMY_SIMULATION.md) | Reproducible Q4/Q1 acquisition and fee-allocation scenarios, assumptions and limits |
 | [Protocol architecture](BONZAI_V4_ARCHITECTURE.md) | Implemented protocol and economic layers |
 | [Smart-agent workers](SMART_AGENT_WORKERS.md) | Signed peer assignments, escrow verification, company backlog and delivery boundaries |
 | [Smart-agent provisioning](SMART_AGENT_PROVISIONING.md) | Reserved agent slots, NVDA issuance, immutable liquidity, and deployment boundaries |

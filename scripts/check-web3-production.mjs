@@ -24,6 +24,8 @@ export function productionConfiguration(env = process.env) {
     || env[`${key.replace('ROBINHOODTESTNET', 'ROBINHOOD_TESTNET')}_RPC_URL`]
     || (chainId === 1 && env.MAINNET_RPC_URL) || CONFIG.networks[networkKey].rpc;
   const failures = [];
+  const routerAbiVersion = env.VITE_UNISWAP_V4_ROUTER_ABI_VERSION || CONFIG.uniswap[networkKey]?.routerAbiVersion || 'v1';
+  if (!['v1', 'v2'].includes(routerAbiVersion)) failures.push('VITE_UNISWAP_V4_ROUTER_ABI_VERSION must be v1 or v2 for the deployed router');
   const addresses = new Map();
   const add = (name, value, label) => {
     if (!value) failures.push(`Missing ${label}`);

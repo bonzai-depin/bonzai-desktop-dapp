@@ -11,7 +11,7 @@ test('desktop keeps DHT in client mode even with relay/public-address options', 
   const calls = [];
   const node = { peerId: { toString: () => 'test-peer' }, getMultiaddrs: () => [], addEventListener() {}, async start() {}, async stop() {} };
   const stubKey = `bonzai-dht-policy-test-${Date.now()}`;
-  const dependencies = { withPacedPeerRouting, createLibp2p: async options => {
+  const dependencies = { withPacedPeerRouting, secureCertifiedPeerRecords: () => calls.push('secured'), createLibp2p: async options => {
     calls.push({ ...options, dht: options.services.dht({}) });
     return node;
   } };
@@ -32,9 +32,11 @@ test('desktop keeps DHT in client mode even with relay/public-address options', 
     const service = await import(`data:text/javascript;base64,${Buffer.from(stubbed).toString('base64')}`);
     for (const options of [{}, { clientMode: false, enableRelay: true, announceAddresses: ['/ip4/203.0.113.1/tcp/4002'] }]) {
       await service.startP2PNode(options);
-      assert.equal(calls.at(-1).dht.options.clientMode, true);
-      assert.equal(calls.at(-1).dht.options.protocol, '/bonzai/kad/1.0.0');
-      assert.equal(calls.at(-1).transports.find(item => item.type === 'circuitRelayTransport').options.discoverRelays, 3);
+      assert.equal(calls.at(-1), 'secured');
+      assert.equal(calls.at(-2).start, false);
+      assert.equal(calls.at(-2).dht.options.clientMode, true);
+      assert.equal(calls.at(-2).dht.options.protocol, '/bonzai/kad/1.0.0');
+      assert.equal(calls.at(-2).transports.find(item => item.type === 'circuitRelayTransport').options.discoverRelays, 3);
       await service.stopP2PNode();
     }
   } finally { delete globalThis[stubKey]; }

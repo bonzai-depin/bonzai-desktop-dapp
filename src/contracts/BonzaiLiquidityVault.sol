@@ -78,7 +78,7 @@ contract BonzaiLiquidityVault is ReentrancyGuard {
         emit FeesCollected(id,amount0,amount1);
     }
     function _credit(uint256 id,address currency,uint256 amount,address beneficiary,address owner) private {
-        uint256 creatorShare=amount*80/100;uint256 treasuryShare=amount*10/100;
+        uint256 creatorShare=amount*70/100;uint256 treasuryShare=amount*20/100;
         if(owner==address(0)) {
             Recipient[] storage recipients=creatorRecipients[id];uint256 allocated;
             if(recipients.length==0)claimable[currency][beneficiary]+=creatorShare;
@@ -87,16 +87,24 @@ contract BonzaiLiquidityVault is ReentrancyGuard {
                 allocated+=share;claimable[currency][recipients[i].wallet]+=share;
             }
         }
-        else { uint256 walletShare=amount*40/100;claimable[currency][beneficiary]+=walletShare;claimable[currency][owner]+=creatorShare-walletShare; }
+        else { uint256 walletShare=amount*35/100;claimable[currency][beneficiary]+=walletShare;claimable[currency][owner]+=creatorShare-walletShare; }
         claimable[currency][treasury]+=treasuryShare;
         pendingRewards[currency]+=amount-creatorShare-treasuryShare;
     }
     /// Anyone can deliver a credit, but never redirect it or change its historical beneficiary.
     function claim(address currency,address beneficiary) external nonReentrant {
+        _claim(currency, beneficiary, beneficiary);
+    }
+    /// Only the earned beneficiary may select an alternate receiver.
+    function claimTo(address currency,address recipient) external nonReentrant {
+        require(recipient!=address(0),"Invalid recipient");
+        _claim(currency,msg.sender,recipient);
+    }
+    function _claim(address currency,address beneficiary,address recipient) private {
         uint256 amount=claimable[currency][beneficiary];require(amount>0,"No fees");
         claimable[currency][beneficiary]=0;
-        if(currency==address(0)) { (bool ok,)=payable(beneficiary).call{value:amount}("");require(ok,"Payment failed"); }
-        else IERC20(currency).safeTransfer(beneficiary,amount);
+        if(currency==address(0)) { (bool ok,)=payable(recipient).call{value:amount}("");require(ok,"Payment failed"); }
+        else IERC20(currency).safeTransfer(recipient,amount);
         emit FeesClaimed(currency,beneficiary,amount);
     }
     /// Separate retryable accounting deposit: a disabled reward currency cannot block collection or creator claims.

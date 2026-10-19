@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 import {buildMintGLBViewer} from './mintGLBViewer.js';
 /**
  * BonzAI — Content NFT Minting Service
@@ -312,6 +313,8 @@ export async function mintContent({
       return { success: false, error: `${levelRequired} required. ${reason}`, levelBlocked: true };
     }
 
+    if (!ethers.isAddress(CONFIG.contentNFT?.economy?.factoryAddress || '') || CONFIG.contentNFT.economy.factoryAddress === ethers.ZeroAddress) throw new Error('Mint is not configured on the selected network yet.');
+
     // Prepare locally before any uploads or wallet transactions. A 3D mint
     // must not proceed without a valid portable model.
     let glbBytes = null;
@@ -322,7 +325,7 @@ export async function mintContent({
       contentType = 'application/javascript';
     }
 
-    // ─── Pre-flight: ensure we're on Ethereum ─────────────────────
+    // ─── Pre-flight: use the configured economy chain ─────────────────────
     onProgress('upload', 'Preparing...', 5);
     await switchNetwork(ECONOMY_NETWORK_KEY);
 
@@ -628,6 +631,7 @@ export async function mintContent({
       tokenURI: metadataReceipt.url,
       onProgress,
       inferenceType,
+      expectedWallet: attribution.creator,
     });
 
     onProgress('mint', 'Minted successfully!', 85);
@@ -671,7 +675,7 @@ export async function mintContent({
         contentType: inferenceType || null,
         ownerWallet: mintResult.recipient || mintResult.minter || null,
         generationId: inferenceId || null,
-        ipfsCid: contentReceipt.cid || null,
+        ipfsCid: contentReceipt.cid || contentReceipt.transactionId || null,
         txHash: mintResult.transactionHash,
         metadataUrl: metadataReceipt.gatewayUrl,
         marketplaceUrl: nftData.marketplaceUrl,
@@ -704,18 +708,19 @@ export async function mintContent({
 // ETHEREUM MINTING (ERC-721)
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, inferenceType }) {
+async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, inferenceType, expectedWallet }) {
   const factoryAddress = CONFIG.contentNFT?.economy?.factoryAddress;
   if (!factoryAddress) {
     throw new Error('Mint is not configured on the selected network yet.');
   }
 
-  // Ensure we're on Ethereum (legacy "base" key is mapped to Ethereum in config)
+  // Use the configured economy network.
   await switchNetwork(ECONOMY_NETWORK_KEY);
 
   onProgress('mint', 'Preparing transaction...', 68);
   const signer = await getSigner();
   const userAddress = await signer.getAddress();
+  if (!expectedWallet || userAddress.toLowerCase() !== expectedWallet.toLowerCase()) throw new Error('Wallet changed after publication review. Reopen Mint with the intended wallet.');
 
   // Get or create the user's collection via factory
   let collectionAddress = _cachedCollectionAddress;
@@ -728,7 +733,7 @@ async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, 
     if (collectionAddress === ethers.ZeroAddress) {
       onProgress('mint', 'Creating your collection...', 69);
       const createTx = await factory.getOrCreateCollection('BonzAI Collection');
-      await createTx.wait();
+      await confirmedReceipt(createTx);
       collectionAddress = await factory.getCollection(userAddress);
       console.log('[ContentNFT] Created collection at:', collectionAddress);
     }
@@ -752,18 +757,12 @@ async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, 
 
   onProgress('mint', 'Confirm transaction in your wallet...', 72);
 
+  if ((await (await getSigner()).getAddress()).toLowerCase() !== expectedWallet.toLowerCase()) throw new Error('Wallet changed. Review the mint again.');
   const tx = await contract.mint(transactionId, model, tokenURI, contentType, { value: mintFee });
   console.log('[ContentNFT] Ethereum mint tx sent:', tx.hash);
 
   onProgress('mint', 'Waiting for confirmation...', 78);
-  let receipt;
-  try { receipt = await tx.wait(); }
-  catch (error) {
-    if (error.receipt?.status === 0) throw new Error('The Mint transaction reverted. No asset was created.');
-    const pending = new Error('The transaction was submitted but confirmation could not be verified. Check your wallet or explorer before trying again.');
-    pending.transactionHash = tx.hash;
-    throw pending;
-  }
+  const receipt = await confirmedReceipt(tx);
 
   // Parse ContentMinted event for tokenId
   let tokenId = null;
@@ -787,6 +786,7 @@ async function mintOnEconomyChain({ transactionId, model, tokenURI, onProgress, 
   }
   return {
     tokenId,
+    recipient: userAddress,
     contractAddress: collectionAddress,
     transactionHash: receipt.hash,
     explorerUrl: `${CONFIG.networks[ECONOMY_NETWORK_KEY].explorer}/tx/${receipt.hash}`,

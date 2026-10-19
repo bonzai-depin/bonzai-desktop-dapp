@@ -564,11 +564,13 @@
             <button
               v-if="localValidationPassed(m) && m.nft?.tokenId && !m.fineTuneToken?.tokenAddress"
               class="bz-btn bz-btn--ghost bz-btn--sm"
-              :disabled="!fineTuneTokenConfigured"
+              :disabled="!fineTuneTokenConfigured || !!m.tokenLaunchPending"
               @click="prepareTokenLaunch(m)"
             >
               <span class="material-symbols-outlined" style="font-size:14px">rocket_launch</span> Issue token
             </button>
+            <button v-if="m.tokenLaunchPending" class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="tokenLaunch.loading" @click="recoverModelLaunch(m)">Check Submitted Launch</button>
+            <a v-if="m.tokenLaunchPending" :href="`${protocolExplorer}/tx/${m.tokenLaunchPending}`" target="_blank" rel="noopener noreferrer">View Transaction ↗</a>
             <button
               v-if="m.nft?.tokenId && !m.modelRegistry?.modelId"
               class="bz-btn bz-btn--ghost bz-btn--sm"
@@ -632,7 +634,7 @@
             </p>
             <div v-if="tokenLaunch.error" class="bz-train__contribution-alert is-error">{{ tokenLaunch.error }}</div>
             <div class="bz-train__token-actions">
-              <button class="bz-btn bz-btn--primary bz-btn--sm" :disabled="tokenLaunch.loading" @click="launchModelToken(m)">
+              <button class="bz-btn bz-btn--primary bz-btn--sm" :disabled="tokenLaunch.loading || !!m.tokenLaunchPending" @click="launchModelToken(m)">
                 {{ tokenLaunch.loading ? 'Launching...' : `Launch ${m.type === 'abliteration' ? 'abliterated' : 'fine-tune'} token` }}
               </button>
               <button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="tokenLaunch.loading" @click="cancelTokenLaunch">
@@ -689,6 +691,8 @@ import {
   publishDatasetFromRows,
   publishModelFromProvenance,
 } from '../services/contributionRegistry.service.js'
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js'
+const protocolExplorer = CONFIG.networks[ECONOMY_NETWORK_KEY].explorer
 import { fineTuneTokenService } from '../services/fineTuneToken.service.js'
 import { bonzaiRevenueRouterService } from '../services/bonzaiRevenueRouter.service.js'
 import { i18n } from '../i18n/index.js'
@@ -1346,7 +1350,22 @@ function cancelTokenLaunch() {
   tokenLaunch.result = null
 }
 
+async function recoverModelLaunch(model) {
+  tokenLaunch.loading = true
+  tokenLaunch.activeModelId = model.id
+  tokenLaunch.error = ''
+  try {
+    const result = await fineTuneTokenService.recoverLaunch(model.nft.contractAddress, model.nft.tokenId, model.tokenLaunchPending)
+    if (result.pending) { tokenLaunch.error = 'Still awaiting confirmation. Do not launch again.'; return }
+    if (result.reverted) { updateModelEconomy(model.id, { tokenLaunchPending: null }); tokenLaunch.error = 'The launch reverted. Review before trying again.'; return }
+    updateModelEconomy(model.id, { tokenLaunchPending: null, fineTuneToken: result })
+    tokenLaunch.activeModelId = ''
+  } catch (error) { tokenLaunch.error = error.message }
+  finally { tokenLaunch.loading = false }
+}
+
 async function launchModelToken(model) {
+  if (model.tokenLaunchPending) return recoverModelLaunch(model)
   if (!model?.nft?.tokenId) {
     tokenLaunch.error = 'Mint this trained model before launching a fine-tune token.'
     return
@@ -1381,7 +1400,10 @@ async function launchModelToken(model) {
         profile: { description: tokenLaunch.description.trim(), image: tokenLaunch.image },
       },
     )
-    if (!result?.success) throw new Error(result?.error || 'Fine-tune token launch failed')
+    if (!result?.success) {
+      if (result.confirmationPending && result.transactionHash) updateModelEconomy(model.id, { tokenLaunchPending: result.transactionHash })
+      throw new Error(result?.error || 'Fine-tune token launch failed')
+    }
     tokenLaunch.result = result
     updateModelEconomy(model.id, {
       fineTuneToken: {
@@ -1411,6 +1433,7 @@ async function launchModelToken(model) {
           result.poolId,
         )
         updateModelEconomy(model.id, {
+          fineTuneToken: { ...modelEconomy.value[model.id]?.fineTuneToken, contributionRouting: { mode: 'vault-registered', vaultAddress: route.vaultAddress, positionId: String(route.positionId), participants: route.participants } },
           revenueRoute: {
             assetId: route.assetId,
             vaultAddress: route.vaultAddress, positionId: route.positionId, kind: route.kind,
@@ -1555,6 +1578,7 @@ async function publishModelRevenueRoute(model) {
     const provenance = await modelProvenance(model)
     const result = await bonzaiRevenueRouterService.registerModelRevenueRoute(model, provenance)
     updateModelEconomy(model.id, {
+      fineTuneToken: { ...modelEconomy.value[model.id]?.fineTuneToken, contributionRouting: { mode: 'vault-registered', vaultAddress: result.vaultAddress, positionId: String(result.positionId), participants: result.participants } },
       revenueRoute: {
         assetId: result.assetId,
         vaultAddress: result.vaultAddress, positionId: result.positionId, kind: result.kind,

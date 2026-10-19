@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 import { ethers } from 'ethers';
 import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { BonzaiBasketRewardsABI } from '../contracts/abi/BonzaiBasketRewards.abi.js';
@@ -36,6 +37,6 @@ export async function claimBasketCurrency(row, expectedWallet) {
   const signerAddress = await contract.runner.getAddress();
   if (signerAddress.toLowerCase() !== String(expectedWallet).toLowerCase()) throw new Error('Wallet changed. Refresh rewards before claiming.');
   const transaction = await contract.claim(row.address, row.claimEpochs, signerAddress);
-  const receipt = await transaction.wait();
+  const receipt = await confirmedReceipt(transaction);
   return { txHash: receipt.hash };
 }

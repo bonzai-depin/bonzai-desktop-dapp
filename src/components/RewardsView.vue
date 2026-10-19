@@ -3,7 +3,7 @@
     <div class="rewards-content bz-page-content">
       <header class="rewards-topline bz-page-header">
         <div><p class="bz-eyebrow">BonzAI membership</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">workspace_premium</span> {{ i18n.t('nav.rewards') }}</h1></div>
-        <span class="rewards-network"><span class="material-symbols-outlined" aria-hidden="true">language</span>{{ network.name }}</span>
+        <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="openProtocolGuide('stake')">Staking &amp; Claim Guide</button><span class="rewards-network"><span class="material-symbols-outlined" aria-hidden="true">language</span>{{ network.name }}</span>
       </header>
 
       <section class="rewards-hero" aria-labelledby="rewards-title">
@@ -49,6 +49,7 @@
           </div>
           <p v-if="actionError || (wallet && staking.error)" class="basket-error" role="alert">{{ actionError || staking.error }} <button v-if="!busy" class="rewards-text-link" @click="refreshPosition">Retry</button></p>
           <p v-if="success" class="rewards-success" role="status">{{ success }}</p>
+          <p v-if="transactionHash" role="status"><a :href="`${network.explorer}/tx/${transactionHash}`" target="_blank" rel="noopener noreferrer">View Transaction ↗</a><span v-if="pendingTransaction"> · Confirmation pending; check this transaction before trying again.</span><button v-if="pendingTransaction" class="bz-btn bz-btn--ghost bz-btn--sm" @click="checkTransaction">Check Confirmation</button></p>
           <details v-if="wallet && position?.amount" class="membership-manage">
             <summary>Manage membership <span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary>
             <p v-if="staking.rewardExitAt">{{ i18n.t('basket.exitAt', { date: withdrawalDate }) }}</p>
@@ -103,7 +104,9 @@
         </template>
         <div class="basket-footnotes"><p><span class="material-symbols-outlined" aria-hidden="true">schedule</span>{{ i18n.t('basket.periodNotice') }}</p><p><span class="material-symbols-outlined" aria-hidden="true">verified_user</span>Claim each currency directly to your wallet. Accrued rewards remain claimable after you leave.</p></div>
       </section>
-      <details v-if="CONFIG.mintPool?.contractAddress && wallet" class="rewards-legacy" @toggle="legacy = $event.target.open"><summary>{{ i18n.t('basket.legacy') }}</summary><LegacyRewardsModal v-if="legacy" embedded /></details>
+      <ProviderRewards />
+      <ProtocolRecovery />
+      <details v-if="CONFIG.mintPool?.contractAddress && wallet" class="rewards-legacy" @toggle="legacy = $event.target.open"><summary>Epoch Pool Rewards · Separate Registration</summary><p>These native-currency pool rewards use epoch registration and stake locks. They are separate from your automatic basket rewards and provider claims above.</p><LegacyRewardsModal v-if="legacy" embedded /></details>
     </div>
   </div>
 </template>
@@ -119,6 +122,9 @@ import { rewardStakePreview, amountToReachLevel, rewardWithdrawalReady } from '.
 import { requestConnection } from '../services/connectionDialog.service.js';
 import { useI18n } from '../i18n/index.js';
 import { withTimeout } from '../utils/withTimeout.js';
+import { openProtocolGuide } from '../services/protocolNavigation.js';
+import ProviderRewards from './ProviderRewards.vue';
+import ProtocolRecovery from './ProtocolRecovery.vue';
 import LegacyRewardsModal from './LegacyRewardsModal.vue';
 
 const i18n = useI18n();
@@ -137,7 +143,20 @@ const selectedLevel = ref(1), review = ref(null), actionError = ref(''), success
 const data = ref(null), basketError = ref(''), loading = ref(false), claiming = ref(''), legacy = ref(false), currencyOffset = ref(0);
 const now = ref(Date.now() / 1000);
 let requestId = 0, clock;
-const busy = computed(() => staking.isStaking || !!claiming.value);
+const transactionHash = ref(''), pendingTransaction = ref(false);
+const busy = computed(() => staking.isStaking || !!claiming.value || pendingTransaction.value);
+async function checkTransaction() {
+  const account = wallet.value, hash = transactionHash.value;
+  try {
+    const receipt = await (await web3Service.getProvider(ECONOMY_NETWORK_KEY)).getTransactionReceipt(hash);
+    if (account !== wallet.value || hash !== transactionHash.value) return;
+    if (!receipt) { actionError.value = 'Still awaiting confirmation. Check your wallet for replacement or cancellation.'; return; }
+    pendingTransaction.value = false; review.value = null;
+    actionError.value = Number(receipt.status) === 0 ? 'Transaction reverted. No balance change was confirmed.' : '';
+    success.value = Number(receipt.status) === 1 ? 'Transaction confirmed. Review your refreshed balance before another action.' : '';
+    await refresh();
+  } catch (e) { if (account === wallet.value && hash === transactionHash.value) actionError.value = e.shortMessage || e.message; }
+}
 const currentAmount = computed(() => position.value?.amountExact || String(position.value?.amount || 0));
 const preview = computed(() => rewardStakePreview(amount.value, currentAmount.value, tiers.value));
 const canStake = computed(() => wallet.value && configured.value && stakingConfigured.value && !busy.value && !staking.isLoading && !staking.error && !review.value && preview.value?.tier > 0);
@@ -166,7 +185,8 @@ async function confirmAction() {
   try {
     const result = await ({ stake: () => bonzaiStakingService.stakeForRewards(intent.amount), activate: () => bonzaiStakingService.activateRewards(), exit: () => bonzaiStakingService.requestRewardExit(), withdraw: () => bonzaiStakingService.unstake(intent.amount) })[intent.type]();
     if (intent.wallet !== wallet.value) return;
-    if (!result.success) { actionError.value = result.error; return; }
+    if (!result.success) { actionError.value = result.error; if (result.transactionHash) { transactionHash.value = result.transactionHash; pendingTransaction.value = true; } return; }
+    transactionHash.value = result.txHash;
     success.value = ({ stake: 'Stake confirmed. Your membership is ready.', activate: 'Basket rewards enabled.', exit: 'Withdrawal notice confirmed.', withdraw: 'Stake withdrawn.' })[intent.type];
     if (intent.type === 'stake') amount.value = '';
     review.value = null;
@@ -191,12 +211,12 @@ async function claim(row) {
   if (busy.value) return;
   const address = wallet.value;
   claiming.value = row.address; basketError.value = ''; success.value = '';
-  try { await claimBasketCurrency(row, address); if (address === wallet.value) { success.value = `${row.symbol} rewards claimed.`; await load(data.value?.end); } }
-  catch (error) { if (address === wallet.value) basketError.value = error.shortMessage || error.message; }
+  try { const receipt = await claimBasketCurrency(row, address); if (address === wallet.value) { transactionHash.value = receipt.txHash; success.value = `${row.symbol} rewards claimed.`; await load(data.value?.end); } }
+  catch (error) { if (address === wallet.value) { basketError.value = error.shortMessage || error.message; if (error.transactionHash) { transactionHash.value = error.transactionHash; pendingTransaction.value = true; } } }
   finally { claiming.value = ''; }
 }
 function changeCurrencies(delta) { currencyOffset.value = Math.max(0, currencyOffset.value + delta); load(data.value?.end); }
-watch(wallet, () => { data.value = null; currencyOffset.value = 0; review.value = null; actionError.value = ''; success.value = ''; load(); refreshPosition(); }, { immediate: true });
+watch(wallet, () => { transactionHash.value = ''; pendingTransaction.value = false; data.value = null; currencyOffset.value = 0; review.value = null; actionError.value = ''; success.value = ''; load(); refreshPosition(); }, { immediate: true });
 onMounted(() => { clock = setInterval(() => { now.value = Date.now() / 1000; }, 1000); });
 onBeforeUnmount(() => { requestId++; clearInterval(clock); });
 </script>

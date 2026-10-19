@@ -30,6 +30,7 @@ import { financeAuthHeaders } from "./main/connectors/financeAuth.js";
 import { assertBraveSearchRequest, braveSearchHeaders, braveValidationRequest } from "./main/connectors/braveSearch.js";
 import { qwen38ContextPlan, completionBudget, isQwen38LowMtp, LOW_MTP_CONTEXT } from './main/modelContext.js';
 import { socialCredentialVault, credentialStatus } from './main/social/credentials.js';
+import { createPublicStorage } from './main/publicStorage.js';
 import { createChorusClient } from './main/connectors/chorus.js';
 import { registerXChannel, createXTransport } from './main/social/xChannel.js';
 import { pause as pausePublicSession } from './main/db/repos/publicSessions.js';
@@ -915,6 +916,13 @@ const agentWorkerHost = createAgentWorkerHost({
   media: createWorkerMedia({ blobs: workerBlobs, roots: () => [path.join(MODEL_DIR, 'files'), app.getPath('temp')], trainedRoot: () => path.join(MODEL_DIR, 'trained') }),
 });
 const walletCredentialStore = createWalletCredentialStore({ store, safeStorage });
+const publicStorage = createPublicStorage({ store, safeStorage });
+for (const method of ['status', 'receipts', 'configure', 'disconnect', 'upload', 'uploadMetadata']) {
+  ipcMain.handle(`public-storage:${method}`, (event, payload) => {
+    if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !isTrustedRendererUrl(event.senderFrame.url)) throw new Error('Storage requires the BonzAI application.');
+    return publicStorage[method](payload);
+  });
+}
 ipcMain.handle("wallet-credentials:available", () => walletCredentialStore.ensureAvailable());
 ipcMain.handle("ows:credential-ensure-passphrase", (_event, companionId) => walletCredentialStore.ensureOWSPassphrase(companionId));
 ipcMain.handle("skill-attestation:credential-get", () => walletCredentialStore.readAttestationKey());

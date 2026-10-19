@@ -1,6 +1,7 @@
 <template>
   <section v-if="wallet" class="agent-jobs-panel">
     <header><h3 class="bz-h3">{{ ui("Smart-agent jobs") }}</h3><button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="loading || busy" @click="refresh">{{ $t('common.refresh') }}</button></header>
+    <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="openProtocolGuide('jobs')">Workflow Payment Guide</button>
     <p v-if="!records.length && !loading" class="bz-meta">{{ ui("No paid jobs on this device. Local team agents can keep working without a wallet or mint.") }}</p>
     <section v-if="incoming.length" class="agent-job__body" aria-label="Incoming worker assignments">
       <h4 class="bz-h4">{{ ui("Incoming assignments") }}</h4>
@@ -91,6 +92,7 @@ import { sendSmartAgentJob, importSmartAgentJob, queueSmartAgentJob, sendSmartAg
 import { computed, reactive, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { ethers } from 'ethers';
 import { web3Service } from '../services/web3.service.js';
+import { openProtocolGuide } from '../services/protocolNavigation.js';
 import { listSmartAgentJobs, fetchSmartAgentJob, actOnSmartAgentJob, withdrawSmartAgentPayment, smartAgentJobsConfigured, knownSmartAgentRoyaltyRoutes } from '../services/smartAgentJobs.service.js';
 import { getTokenRoyaltyEntitlement, claimTokenRoyalties } from '../services/bonzaiRevenueRouter.service.js';
 import { useI18n } from '../i18n/index.js';

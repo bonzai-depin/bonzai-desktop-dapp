@@ -13,6 +13,7 @@ const operationalApi = Object.fromEntries(Object.entries(COMPANY_OPERATIONS).map
 }]));
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  publicStorage: Object.fromEntries(['status', 'receipts', 'configure', 'disconnect', 'upload', 'uploadMetadata'].map(method => [method, payload => ipcRenderer.invoke(`public-storage:${method}`, payload)])),
   workspace: Object.fromEntries(['status','checkout','verify','backup','restore','demo','demoOpen'].map(method => [method, (...args) => ipcRenderer.invoke('workspace:'+method,...args)])),
   onWorkspaceDemo: cb => { const h=(_e,v)=>cb(v); ipcRenderer.on('workspace:demo-progress',h); return ()=>ipcRenderer.removeListener('workspace:demo-progress',h); },
   companyRuntime: {

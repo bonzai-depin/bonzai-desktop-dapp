@@ -15,14 +15,14 @@ export function buildSmartAgentJobTerms(agent, input) {
     currency: agent.tokenAddress, amount: amount.toString(), decimals: agent.decimals,
     chainId: agent.chainId, escrow: agent.escrow, arbitrator: agent.arbitrator,
     routeAssetId: agent.routeAssetId || ethers.ZeroHash,
-    platformBps: agent.platformBps, contributionBps: agent.routeAssetId && agent.routeAssetId !== ethers.ZeroHash ? agent.contributionBps : 0,
+    platformBps: agent.platformBps, treasuryBps: agent.treasuryBps, holderBps: agent.holderBps, contributionBps: agent.routeAssetId && agent.routeAssetId !== ethers.ZeroHash ? agent.contributionBps : 0,
     acceptWindow: agent.acceptWindow, deliveryWindow: agent.deliveryWindow, reviewWindow: agent.reviewWindow, disputeWindow: agent.disputeWindow,
   };
   return { terms, amount, termsHash: ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(terms))) };
 }
 
 export function verifySmartAgentQuote(reviewed, current) {
-  for (const key of ['owner', 'tokenAddress', 'worker', 'arbitrator', 'escrow', 'tokenId', 'decimals', 'platformBps', 'contributionBps', 'chainId', 'routeAssetId', 'acceptWindow', 'deliveryWindow', 'reviewWindow', 'disputeWindow']) {
+  for (const key of ['owner', 'tokenAddress', 'worker', 'arbitrator', 'escrow', 'tokenId', 'decimals', 'platformBps', 'treasuryBps', 'holderBps', 'contributionBps', 'chainId', 'routeAssetId', 'acceptWindow', 'deliveryWindow', 'reviewWindow', 'disputeWindow']) {
     if (String(reviewed[key] ?? '').toLowerCase() !== String(current[key] ?? '').toLowerCase()) throw new Error('The smart agent’s terms changed. Review the updated job before funding.');
   }
 }

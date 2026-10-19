@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 import {getLiquidityVault,transactLiquidityFees} from './liquidityVault.service.js';
 /**
  * BonzAI Fine-Tune Token Service
@@ -9,7 +10,7 @@ import {getLiquidityVault,transactLiquidityFees} from './liquidityVault.service.
  * - Automatic hookless Uniswap V4 pool creation with a 1% trading fee
  * - LP position NFT held permanently by the immutable fee vault
  * - Tokens are burnable (deflationary)
- * - 1% swap fee split: 80% creator, 10% treasury, 10% basket rewards
+ * - 1% swap fee split: 70% creator, 20% treasury, 10% basket rewards
  * - Query token, pool, and fee info
  */
 
@@ -179,7 +180,7 @@ async function launchFineTuneToken(contentCollection, contentTokenId, name, symb
     );
 
     console.log(`[FineTuneToken] Transaction sent: ${tx.hash}`);
-    const receipt = await tx.wait();
+    const receipt = await confirmedReceipt(tx);
     console.log(`[FineTuneToken] Transaction confirmed in block ${receipt.blockNumber}`);
 
     // Parse event to get token and poolId
@@ -216,7 +217,7 @@ async function launchFineTuneToken(contentCollection, contentTokenId, name, symb
       symbol: launchSymbol,
       txHash: receipt.hash,
       ethLiquidity: ethAmount,
-      lpLocked: true,  // LP position NFT sent to DEAD address
+      lpLocked: true, // Position NFT is owned by the immutable vault; principal stays locked.
       modelMetadataHash,
       modelProvenance: provenance,
       revenuePlan,
@@ -225,8 +226,8 @@ async function launchFineTuneToken(contentCollection, contentTokenId, name, symb
       validationHash,
       contributionRouting: revenuePlan
         ? {
-          mode: 'metadata-attached',
-          note: 'Current FineTuneTokenFactory records one creator on-chain. BonzAI attaches proof-of-contribution revenue routing in model metadata for downstream settlement.',
+          mode: 'allocation-pending',
+          note: 'Token launched. Confirm the contributor allocation in the liquidity vault before fees are collected; metadata alone does not distribute revenue.',
           revenuePlan,
         }
         : null,
@@ -234,7 +235,7 @@ async function launchFineTuneToken(contentCollection, contentTokenId, name, symb
   } catch (e) {
     console.error('[FineTuneToken] Launch failed:', e);
     state.error = e.message;
-    return { success: false, error: e.message };
+    return { success: false, error: e.message, transactionHash: e.transactionHash, confirmationPending: e.confirmationPending };
   } finally {
     state.isLoading = false;
     state.launchingContentTokenId = null;
@@ -264,6 +265,25 @@ async function getModelToken(contentCollection, contentTokenId) {
   const factory = await getFactoryContract(false);
   const tokenAddress = await factory.getToken(contentCollection, contentTokenId);
   return tokenAddress === ethers.ZeroAddress ? null : tokenAddress;
+}
+
+/** Recover a submitted launch without sending another transaction. */
+async function recoverLaunch(contentCollection, contentTokenId, transactionHash) {
+  requireCollection(contentCollection);
+  const provider = await web3Service.getProvider(economyNetwork());
+  const receipt = await provider.getTransactionReceipt(transactionHash);
+  if (!receipt) return { pending: true };
+  if (Number(receipt.status) === 0) return { reverted: true };
+  const factory = await getFactoryContract(false);
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== CONFIG.fineTuneTokenFactory.contractAddress.toLowerCase()) continue;
+    let event;
+    try { event = factory.interface.parseLog(log); } catch { continue; }
+    if (event?.name !== 'ModelTokenLaunched' || event.args.contentCollection.toLowerCase() !== contentCollection.toLowerCase() || String(event.args.contentTokenId) !== String(contentTokenId)) continue;
+    if ((await factory.getToken(contentCollection, contentTokenId)).toLowerCase() !== event.args.token.toLowerCase()) throw new Error('The confirmed token does not match its factory record.');
+    return { contentCollection, contentTokenId: String(contentTokenId), tokenAddress: event.args.token, poolId: event.args.poolId, symbol: event.args.symbol, ethLiquidity: ethers.formatEther(event.args.ethLiquidity), txHash: receipt.hash, contributionRouting: { mode: 'allocation-pending' } };
+  }
+  throw new Error('No matching model launch in this receipt. Check the transaction before retrying.');
 }
 
 /**
@@ -297,7 +317,7 @@ async function getTokenInfo(tokenAddress) {
 const LOG_PREFIX = 'FineTuneToken';
 const getPoolInfo = (poolId) => _getPoolInfo(poolId, LOG_PREFIX);
 const getUnclaimedFees = (addr, token) => getLiquidityVault(token, 'fine_tuned', addr);
-const claimFees = (token, currency) => transactLiquidityFees({token, kind:'fine_tuned', action:'claim', currency});
+const claimFees = (token, currency) => transactLiquidityFees({token, kind:'fine_tuned', action:'claim', currency, expectedWallet:web3Service.state.walletAddress});
 
 /**
  * Get minimum ETH required for liquidity
@@ -367,6 +387,7 @@ export const fineTuneTokenService = {
   // Queries
   hasToken,
   getModelToken,
+  recoverLaunch,
   getTokenInfo,
   getPoolInfo,
   getUnclaimedFees,

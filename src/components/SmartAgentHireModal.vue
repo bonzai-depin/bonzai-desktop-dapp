@@ -17,13 +17,18 @@
             <button v-else-if="!wallet" class="bz-btn bz-btn--primary" @click="requestConnection">{{ $t('common.connect') }}</button>
             <p v-else-if="loading" role="status">{{ $t('common.loading') }}</p>
             <form v-else-if="quote" @submit.prevent="reviewing ? fund() : review()">
-              <label>Business outcome<input v-model="form.title" required :readonly="reviewing" placeholder="Reconcile this month’s invoices" /></label>
+              <label>Desired outcome<input v-model="form.title" required :readonly="reviewing" placeholder="Reconcile this month’s invoices" /></label>
               <label>Scope and acceptance criteria<textarea v-model="form.outcome" required :readonly="reviewing" placeholder="Describe the work, permitted data, deliverables, and how success will be checked." /></label>
               <label>Job payment ({{ quote.symbol }})<input v-model="form.amount" required inputmode="decimal" :readonly="reviewing" placeholder="0.00" /></label>
+              <label>Pay with<select v-model="form.paymentMethod" :disabled="reviewing || busy"><option value="social">{{ quote.symbol }}</option><option value="usdc" :disabled="!usdcConfigured">USDC · convert automatically</option></select></label>
+              <p v-if="form.paymentMethod==='usdc'" class="bz-meta">Only the missing agent tokens are purchased. The swap and escrow are separate wallet confirmations. If funding stops, purchased tokens stay in your wallet. Refunds are in {{ quote.symbol }}.</p>
+              <p v-if="reviewing && checkout && checkout.output!=='0'" class="hire-review">USDC estimate: {{ formatUsdc(checkout.input) }} · Maximum: {{ formatUsdc(checkout.maximumInput) }} · 0.5% slippage · Quote valid for 10 minutes. Network fees are additional.</p>
               <label v-if="execution">{{ $ui('Requesting agent wallet (optional)') }}<input v-model="form.executionCaller" :readonly="reviewing" placeholder="0x…" /></label>
               <div class="hire-terms">
                 <span>Currency</span><strong>{{ quote.symbol }}</strong>
-                <span>Protocol fee</span><strong>{{ quote.platformBps / 100 }}%</strong>
+                <span>Treasury</span><strong>{{ quote.treasuryBps / 100 }}%</strong>
+                <span>BONZAI holder rewards</span><strong>{{ quote.holderBps / 100 }}%</strong>
+                <span>Provider</span><strong>{{ (10000 - quote.platformBps - (quote.routeAssetId !== zeroHash ? quote.contributionBps : 0)) / 100 }}%</strong>
                 <template v-if="quote.routeAssetId !== zeroHash"><span>Contributor royalties</span><strong>{{ quote.contributionBps / 100 }}%</strong></template>
                 <span>Accept within</span><strong>{{ quote.acceptWindow / 86400 }} days</strong>
                 <span>Deliver after acceptance</span><strong>{{ quote.deliveryWindow / 86400 }} days</strong>
@@ -51,6 +56,7 @@
 <script setup>
 import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue';
 import { ethers } from 'ethers';
+import { stablecoinCheckoutConfigured, quoteWorkflowCheckout } from '../services/workflowCheckout.js';
 import { smartAgentJobsConfigured, fetchSmartAgentQuote, fundSmartAgentJob } from '../services/smartAgentJobs.service.js';
 import { buildSmartAgentJobTerms } from '../services/smartAgentJobTerms.js';
 import { web3Service } from '../services/web3.service.js';
@@ -62,7 +68,9 @@ import { withTimeout } from '../utils/withTimeout.js';
 const props = defineProps({ agent: { type: Object, required: true }, companyId: { type: String, default: '' }, execution: { type: Object, default: null } });
 const emit = defineEmits(['close', 'hired']);
 const dialog = ref(null), quote = ref(null), result = ref(null), loading = ref(false), busy = ref(false), error = ref(''), reviewing = ref(false);
-const form = reactive({ title: '', outcome: '', amount: '', executionCaller: '' });
+const form = reactive({ title: '', outcome: '', amount: '', executionCaller: '', paymentMethod: 'social' });
+const usdcConfigured=stablecoinCheckoutConfigured(),checkout=ref(null);
+const formatUsdc=value=>ethers.formatUnits(value,6);
 const configured = computed(smartAgentJobsConfigured);
 const wallet = computed(() => web3Service.state.walletAddress);
 const zeroHash = ethers.ZeroHash;
@@ -79,15 +87,18 @@ async function load() {
   catch (failure) { if (current === revision) error.value = failure.shortMessage || failure.message; }
   finally { if (current === revision) loading.value = false; }
 }
-function review() {
-  error.value = '';
-  try { buildSmartAgentJobTerms(quote.value, { ...form, execution: props.execution, executionPeer: props.agent.peerId }); reviewing.value = true; }
-  catch (failure) { error.value = failure.message; }
+async function review() {
+  if(busy.value)return;error.value='';busy.value=true;checkout.value=null;
+  const account=wallet.value,rev=revision;
+  try { buildSmartAgentJobTerms(quote.value, { ...form, execution: props.execution, executionPeer: props.agent.peerId });
+    const result=form.paymentMethod==='usdc'?await quoteWorkflowCheckout(quote.value,form.amount,account):null;
+    if(rev===revision&&wallet.value===account){checkout.value=result;reviewing.value=true;}
+  } catch(failure){error.value=failure.message;} finally{busy.value=false;}
 }
 async function fund() {
   if (busy.value || !reviewing.value || !quote.value) return;
   busy.value = true; error.value = '';
-  try { result.value = await fundSmartAgentJob(props.agent, quote.value, { ...form, execution: props.execution, executionPeer: props.agent.peerId, companyId: props.companyId, expectedWallet: wallet.value }); emit('hired', result.value); }
+  try { result.value = await fundSmartAgentJob(props.agent, quote.value, { ...form, checkout: checkout.value, execution: props.execution, executionPeer: props.agent.peerId, companyId: props.companyId, expectedWallet: wallet.value }); emit('hired', result.value); }
   catch (failure) { error.value = failure.shortMessage || failure.message; reviewing.value = false; }
   finally { busy.value = false; }
 }
@@ -101,7 +112,7 @@ onBeforeUnmount(() => { revision++; });
 .hire-body { padding: var(--bz-space-5); }
 .hire-body form { display: grid; gap: var(--bz-space-4); }
 .hire-body label { display: grid; gap: var(--bz-space-2); font-size: var(--bz-size-caption); color: var(--bz-fg-mid); }
-.hire-body input, .hire-body textarea { width: 100%; min-height: 42px; padding: var(--bz-space-3); background: var(--bz-panel); color: var(--bz-fg); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-radius-sm); }
+.hire-body input, .hire-body textarea, .hire-body select { width: 100%; min-height: 42px; padding: var(--bz-space-3); background: var(--bz-panel); color: var(--bz-fg); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-radius-sm); }
 .hire-body textarea { min-height: 96px; resize: vertical; }
 .hire-terms { display: grid; grid-template-columns: 1fr auto; gap: var(--bz-space-2); font-size: var(--bz-size-caption); }
 .hire-terms > span { color: var(--bz-fg-mid); }

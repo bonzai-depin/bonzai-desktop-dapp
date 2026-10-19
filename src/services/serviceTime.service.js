@@ -8,12 +8,14 @@ import { ethers } from "ethers";
 import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { getSigner, getProvider, switchNetwork } from "./web3.service.js";
 import { web3Service } from "./web3.service.js";
+import { confirmedReceipt } from './transactionReceipt.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ABIs (audit-aligned)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SERVICE_TIME_ABI = [
+  "function paused() view returns (bool)",
   "function claimsPaused() view returns (bool)",
   "function serviceTimeAttestor() view returns (address)",
 
@@ -35,6 +37,7 @@ const MINT_POOL_ABI = [
   "function currentEpoch() view returns (uint256)",
   "function isEpochFinalized(uint256 epochId) view returns (bool)",
   "function stakingVault() view returns (address)",
+  "function getEpochProviderDeposits(uint256 epochId) view returns (uint256[6])",
 ];
 
 const BONZAI_TOKEN_ABI = [
@@ -200,13 +203,35 @@ export async function flushPending() {
  * Provider claim — withdraw weighted share for one (epoch, poolIndex).
  * Renderer-triggered, one tx per claim.
  */
-export async function claimProviderRewards(epochId, poolIndex) {
-  if (poolIndex < 0 || poolIndex > 5) throw new Error("Invalid poolIndex");
-  const readClient = await _getReadClients();
-  if (await readClient.serviceTime.claimsPaused()) throw new Error('Provider reward claims are paused pending verified service receipts.');
-  const { serviceTime } = await _getWriteClient();
+export async function claimProviderRewards(epochId, poolIndex, expectedWallet = web3Service.state.walletAddress) {
+  if (!Number.isSafeInteger(epochId) || epochId < 0 || !Number.isInteger(poolIndex) || poolIndex < 0 || poolIndex > 5) throw new Error("Invalid reward period or pool");
+  const rewards = await fetchProviderRewards(expectedWallet, epochId);
+  if (!rewards.rows[poolIndex].canClaim) throw new Error(rewards.paused ? 'Provider reward claims are paused.' : !rewards.stakeEligible ? 'The provider stake threshold is not met.' : 'No finalized reward is available for this pool.');
+  const { serviceTime, signer } = await _getWriteClient();
+  if (!expectedWallet || (await signer.getAddress()).toLowerCase() !== expectedWallet.toLowerCase()) throw new Error('Wallet changed. Refresh provider rewards before claiming.');
   const tx = await serviceTime.claimProviderRewards(epochId, poolIndex);
-  return tx.wait();
+  return confirmedReceipt(tx);
+}
+
+/** Read chain receipts, never the unauthenticated local timing ledger. */
+export async function fetchProviderRewards(wallet, requestedEpoch) {
+  if (!ethers.isAddress(wallet || '')) throw new Error('Connect your provider wallet.');
+  const { serviceTime, mintPool, provider } = await _getReadClients();
+  if (!mintPool) throw new Error('Provider reward pool is not configured.');
+  const [current, claimsPaused, pausedAll, attestor, threshold, vaultAddress] = await Promise.all([mintPool.currentEpoch(), serviceTime.claimsPaused(), serviceTime.paused(), serviceTime.serviceTimeAttestor(), serviceTime.LVL1_THRESHOLD(), mintPool.stakingVault()]);
+  const paused = claimsPaused;
+  const vault = vaultAddress !== ethers.ZeroAddress ? new ethers.Contract(vaultAddress, ['function positions(address) view returns (uint256 amount,uint256 lockedUntil,uint256 updatedAt,uint32 contributionScore)'], provider) : null;
+  const stake = vault ? (await vault.positions(wallet)).amount : 0n;
+  const stakeEligible = Boolean(vault) && stake >= threshold;
+  const epoch = requestedEpoch ?? Math.max(0, Number(current) - 1);
+  if (!Number.isSafeInteger(epoch) || epoch < 0 || epoch > Number(current)) throw new Error('Choose an existing reward period.');
+  const [finalized, deposits] = await Promise.all([mintPool.isEpochFinalized(epoch), mintPool.getEpochProviderDeposits(epoch)]);
+  const rows = await Promise.all(['Text', 'Audio', 'Images', 'Video', '3D', 'Training'].map(async (label, pool) => {
+    const [seconds, total, claimed] = await Promise.all([serviceTime.providerServiceTime(epoch, pool, wallet), serviceTime.totalServiceTime(epoch, pool), serviceTime.providerClaimed(epoch, pool, wallet)]);
+    const amount = total > 0n && !claimed ? deposits[pool] * seconds / total : 0n;
+    return { pool, label, seconds: seconds.toString(), claimed, amount: ethers.formatEther(amount), canClaim: finalized && !paused && amount > 0n };
+  }));
+  return { epoch, current: Number(current), paused, finalized, stakeEligible, threshold: ethers.formatEther(threshold), rows };
 }
 
 // ─── Reads (UI-facing) ──────────────────────────────────────────────────

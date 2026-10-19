@@ -94,7 +94,7 @@
                 <span class="bz-notice__icon"><span class="material-symbols-outlined">account_balance_wallet</span></span>
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">Wallet not connected</p>
-                  <p class="bz-notice__text">Connect your wallet to mint your content as a collectible.</p>
+                  <p class="bz-notice__text">Connect your wallet to mint your content as a collectible.</p><button class="bz-btn bz-btn--primary" @click="requestConnection">Connect Wallet</button>
                 </div>
               </div>
 
@@ -119,10 +119,12 @@
                 <span class="bz-notice__icon"><span class="material-symbols-outlined">lock</span></span>
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">{{ mintAccess.levelRequired }} required</p>
-                  <p class="bz-notice__text">{{ mintAccess.reason }}.</p>
+                  <p class="bz-notice__text">{{ mintAccess.reason }}.</p><button class="bz-btn bz-btn--ghost" @click="openGuide('stake')">View Staking Steps</button>
                 </div>
               </div>
 
+              <div v-if="!mintConfigured || !storageReady" class="bz-notice bz-notice--warning" role="status"><div class="bz-notice__body"><p v-if="!mintConfigured">Minting contracts are not configured on {{ networkConfig.label }} yet.</p><p v-if="!storageReady">Set up your IPFS storage before publishing.</p><button class="bz-btn bz-btn--ghost" @click="openGuide(!storageReady ? 'storage' : 'mint')">{{ !storageReady ? 'Set Up Storage' : 'View Minting Steps' }}</button><button class="bz-btn bz-btn--ghost" :disabled="isCheckingLevels" @click="refreshAccess">Refresh Access</button></div></div>
+              <p v-if="accessError" role="alert">{{ accessError }}</p>
               <div class="mint-field">
                 <label class="mint-label" for="mint-title">
                   Collectible Title
@@ -169,7 +171,7 @@
                   type="button"
                   class="bz-btn bz-btn--primary bz-btn--lg"
                   @click="startMint"
-                  :disabled="isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields || !hasRenderableContent || !licenseStatus.allowed || !previewReady || !!previewError"
+                  :disabled="!mintConfigured || !storageReady || isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields || !hasRenderableContent || !licenseStatus.allowed || !previewReady || !!previewError"
                 >
                   <span class="material-symbols-outlined">token</span>
                   <template v-if="!isWalletConnected">Connect wallet to mint</template>
@@ -278,7 +280,7 @@
               <div v-if="generation.assetKind === 'game'" class="game-token-issue">
                 <div class="game-token-issue__head">
                   <strong>Game economy</strong>
-                  <span>1 billion tokens: 96% locked liquidity, 4% to you. Trading fee: 1%, split 80% creator / 10% treasury / 10% rewards.</span>
+                  <span>1 billion tokens: 96% locked liquidity, 4% to you. Trading fee: 1%, split 70% creator / 20% treasury / 10% rewards.</span>
                 </div>
                 <label v-if="!gameTokenResult">Permanently locked liquidity (ETH)
                   <input v-model="gameLiquidityEth" type="number" min="0.01" step="0.01" class="bz-field-input" />
@@ -294,13 +296,15 @@
                   <button
                     type="button"
                     class="bz-btn bz-btn--primary"
-                    :disabled="issuingGameToken || gameTokenSymbol.trim().length < 2 || Number(gameLiquidityEth) < 0.01"
+                    :disabled="!gameConfigured || !!gamePendingHash || issuingGameToken || gameTokenSymbol.trim().length < 2 || Number(gameLiquidityEth) < 0.01"
                     @click="startGameTokenIssue"
                   >
                     <span class="material-symbols-outlined">token</span>
                     {{ issuingGameToken ? 'Issuing…' : 'Issue game token' }}
                   </button>
                 </div>
+                <p v-if="!gameConfigured">Game token contracts are not configured on this network.</p>
+                <p v-if="gamePendingHash"><a :href="`${web3Explorer}/tx/${gamePendingHash}`" target="_blank" rel="noopener noreferrer">View Submitted Transaction ↗</a> <button class="bz-btn bz-btn--ghost" :disabled="issuingGameToken" @click="checkGameIssuance">Check Issuance</button></p>
                 <p v-if="gameTokenError" class="game-token-issue__error">{{ gameTokenError }}</p>
                 <div v-if="gameTokenResult" class="detail-row">
                   <span class="label">Game token</span>
@@ -364,13 +368,18 @@
 import { ref, computed, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
 import {useModalAccessibility} from "../composables/useModalAccessibility.js";
 import BzCloseButton from "./BzCloseButton.vue";
+import { requestConnection } from '../services/connectionDialog.service.js';
+import { openProtocolGuide } from '../services/protocolNavigation.js';
+import { storageStatus } from '../services/storage.service.js';
+import { isAddress, ZeroAddress } from 'ethers';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { mintStore } from "../stores/mintStore.js";
 import { mintContent } from "../services/contentNFT.service.js";
 import { canMintContentType, checkAllLevels } from "../services/level.service.js";
 import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
 import { CONTENT_TYPE_MAP } from "../constants/index.js";
-import { issueGameToken } from "../services/gameToken.service.js";
+import { issueGameToken, recoverGameIssuance } from "../services/gameToken.service.js";
 import audioBgSrc from "../assets/bonzai_music.webp";
 import videoPosterSrc from "../assets/bonzai_video.webp";
 import logoSrc from "../assets/bonzai_logo-full.png";
@@ -401,6 +410,16 @@ const mintFee = computed(() => {
 const web3Store = useWeb3Store();
 const isWalletConnected = computed(() => web3Store.isConnected);
 const isCheckingLevels = ref(false);
+const storageReady = ref(false), accessError = ref('');
+const mintConfigured = computed(() => isAddress(CONFIG.contentNFT?.economy?.factoryAddress || '') && CONFIG.contentNFT.economy.factoryAddress !== ZeroAddress);
+function openGuide(activity) { handleClose(); openProtocolGuide(activity); }
+async function refreshAccess() {
+  isCheckingLevels.value = true; accessError.value = '';
+  try { storageReady.value = (await storageStatus()).configured; if (isWalletConnected.value) await checkAllLevels(); }
+  catch (error) { storageReady.value = false; accessError.value = error.message; }
+  finally { isCheckingLevels.value = false; }
+}
+watch(isWalletConnected, () => { if (props.visible) refreshAccess().catch(() => { storageReady.value = false; }); });
 
 // Stage: 'ready' | 'minting' | 'success' | 'error'
 const stage = ref("ready");
@@ -410,7 +429,9 @@ const progressMessage = ref("");
 const currentStage = ref("upload");
 const mintResult = ref({});
 const issuingGameToken = ref(false);
-const gameTokenResult = ref(null);
+const gameTokenResult = ref(null), gamePendingHash = ref('');
+const web3Explorer = CONFIG.networks[ECONOMY_NETWORK_KEY].explorer;
+const gameConfigured = computed(() => [CONFIG.gameRegistry?.contractAddress, CONFIG.gameTokenFactory?.contractAddress].every(address => isAddress(address || '') && address !== ZeroAddress));
 const gameTokenError = ref("");
 const gameTokenSymbol = ref("");
 const gameLiquidityEth = ref("0.01");
@@ -444,7 +465,19 @@ const generationType = computed(() => {
   return props.generation?.type || props.inferenceType || "Content";
 });
 
+async function checkGameIssuance() {
+  if (issuingGameToken.value) return;
+  issuingGameToken.value = true; gameTokenError.value = '';
+  try {
+    const result = await recoverGameIssuance(mintResult.value.contractAddress, mintResult.value.tokenId, gamePendingHash.value);
+    if (result.pending) { gameTokenError.value = 'Awaiting confirmation. Do not issue again.'; return; }
+    if (result.reverted || result.registeredOnly) { gamePendingHash.value = ''; gameTokenError.value = result.reverted ? 'Transaction reverted. Review before trying again.' : 'Registration confirmed. Review the token issuance to continue.'; return; }
+    gameTokenResult.value = result; gamePendingHash.value = '';
+  } catch (error) { gameTokenError.value = error.message; }
+  finally { issuingGameToken.value = false; }
+}
 async function startGameTokenIssue() {
+  if (issuingGameToken.value || gamePendingHash.value || !gameConfigured.value) return;
   issuingGameToken.value = true;
   gameTokenError.value = "";
   try {
@@ -459,6 +492,7 @@ async function startGameTokenIssue() {
     });
   } catch (error) {
     gameTokenError.value = error.message;
+    if (error.confirmationPending && error.transactionHash) gamePendingHash.value = error.transactionHash;
   } finally {
     issuingGameToken.value = false;
   }
@@ -553,6 +587,8 @@ watch(
   () => [props.visible, props.inferenceId],
   async ([v]) => {
     if (v) {
+      storageReady.value = false;
+      storageStatus().then(status => { storageReady.value = status.configured; }).catch(() => {});
       stage.value = "ready";
       isMinting.value = false;
       progressPercent.value = 0;
@@ -583,7 +619,7 @@ watch(
       mintTitle.value =
         (props.generation?.metadata?.title || props.prompt || "").substring(0, 80) ||
         `BonzAI ${generationType.value}`;
-      gameTokenResult.value = null;
+      gameTokenResult.value = null; gamePendingHash.value = '';
       gameTokenError.value = "";
       gameTokenSymbol.value = mintTitle.value
         .replace(/[^a-z0-9]/gi, "")
@@ -601,7 +637,7 @@ watch(isNsfwGeneration, (blocked) => {
 });
 
 async function startMint() {
-  if(isMinting.value || !hasValidFields.value || !hasRenderableContent.value || !licenseStatus.value.allowed || !previewReady.value || previewError.value)return;
+  if(!mintConfigured.value || !storageReady.value || isMinting.value || !hasValidFields.value || !hasRenderableContent.value || !licenseStatus.value.allowed || !previewReady.value || previewError.value)return;
   isMinting.value = true;
   stage.value = "minting";
   progressPercent.value = 5;

@@ -65,10 +65,13 @@ const api = { publicClaim: id => call('public-claim', id), publicComplete: (id, 
 await processPublicRequest(repo.session('a'), meditationRequest, [], { api, agents: [publicAgent], catalog: async () => [], run: async (task, context) => {
   assert.deepEqual(Object.keys(context.agent).sort(), ['assignedWorkflowIds', 'id']);
   assert.equal(task.workflowId, 'meditation-forge-v1.0.0');
-  const made = await createMeditation({ duration: 1 }, { includeImage: false }, async action => ({ pipeline: action.pipeline, payload: action.pipeline === 'text' ? 'Breathe slowly.' : wav.toString('base64') }));
+  // Match the production narration contract: a complete, paced script and the
+  // measured audio duration. A two-word draft correctly fails duration checks.
+  const script = 'Breathe gently and let your shoulders soften. Feel the steady support beneath you as you settle into this quiet moment. Notice each breath without trying to change it. Let passing thoughts drift away and bring your attention back to the present. Take one final comfortable breath, then slowly open your eyes when you feel ready.';
+  const made = await createMeditation({ duration: 1 }, { includeImage: false }, async action => ({ pipeline: action.pipeline, payload: action.pipeline === 'text' ? script : wav.toString('base64'), meta: action.pipeline === 'audio' ? { durationSeconds: 1 } : {} }));
   return { version: 1, title: made.meditation.title, text: made.meditation.script, artifacts: [{ kind: 'audio', blobId: artifact.id, ext: 'wav', mime: 'audio/wav' }] };
 } });
-assert.equal(repo.request(meditationRequest.id).status, 'review');
+assert.equal(repo.request(meditationRequest.id).status, 'review', repo.request(meditationRequest.id).error);
 await call('public-publish', meditationRequest.id);
 assert.equal(repo.request(meditationRequest.id).status, 'posted');
 assert.equal(uploads.filter(item => item.path.endsWith('initialize')).at(-1).body.media_type, 'video/mp4');

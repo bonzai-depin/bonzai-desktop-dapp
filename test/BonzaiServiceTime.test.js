@@ -96,14 +96,16 @@ describe("BonzaiServiceTime (recordServiceTime API)", function () {
     await expect(f.serviceTime.recordVerifiedServiceTime(f.provider.address,0,60,0,ethers.id("late"))).to.be.revertedWith("Invalid receipt epoch");
   });
 
-  it("requires active stake for both verified accounting and payment", async function () {
+  it("requires stake to earn new rewards but preserves previously earned rewards after unstaking", async function () {
     const f = await loadFixture(deployServiceTimeFixture);
     await verified(f);
     await f.serviceTime.setClaimsPaused(false);
     await f.stakingVault.connect(f.provider).unstake(PROVIDER_LVL1);
     await expect(verified(f, 0, 60, ethers.id("other"))).to.be.revertedWithCustomError(f.serviceTime,"ProviderBelowLvl1");
     await time.increase(EPOCH_DURATION);
-    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.be.revertedWithCustomError(f.serviceTime,"ProviderBelowLvl1");
+    await f.serviceTime.pause();
+    await f.mintPool.pause();
+    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.changeEtherBalance(f.provider, ethers.parseEther("0.5"));
   });
 
   it("pays validated work exactly once after epoch finalization", async function () {
@@ -142,4 +144,20 @@ describe("BonzaiServiceTime (recordServiceTime API)", function () {
     await f.serviceTime.connect(f.provider).claimProviderRewards(0,0);
     expect((await registry.getProvider(f.provider.address)).completedJobs).to.equal(1);
   });
+  it("rolls only unearned provider allocations without duplicating deposits or erasing earned claims",async()=>{
+    const f=await loadFixture(deployServiceTimeFixture);
+    await verified(f);await time.increase(EPOCH_DURATION);
+    await expect(f.mintPool.rollEmptyAllocation(0,0,true)).to.be.revertedWith('Providers earned rewards');
+    await f.mintPool.connect(f.treasury).depositForPool(0,{value:ethers.parseEther('2')});
+    const totals=await f.mintPool.getAllTotalDeposited();
+    await time.increase(EPOCH_DURATION);
+    await f.mintPool.connect(f.consumer).rollEmptyAllocation(1,0,true);
+    expect((await f.mintPool.getEpochProviderDeposits(1))[0]).to.equal(0);
+    expect((await f.mintPool.getEpochProviderDeposits(2))[0]).to.equal(ethers.parseEther('1'));
+    expect(await f.mintPool.getAllTotalDeposited()).to.deep.equal(totals);
+    await expect(f.mintPool.rollEmptyAllocation(1,0,true)).to.be.revertedWith('No unearned allocation');
+    await f.serviceTime.setClaimsPaused(false);
+    await expect(f.serviceTime.connect(f.provider).claimProviderRewards(0,0)).to.changeEtherBalance(f.provider,ethers.parseEther('0.5'));
+  });
+
 });

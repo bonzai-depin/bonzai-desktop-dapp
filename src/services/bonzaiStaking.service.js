@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 import { computed, reactive } from 'vue'
 import { ethers } from 'ethers'
 import { CONFIG, networkKeyForChainId } from '../config/web3.config.js'
@@ -165,12 +166,12 @@ async function rewardStakeAction(method, amount) {
     }
     const contract = await stakingContract(true, wallet)
     const tx = await contract[method](...args)
-    const receipt = await tx.wait()
+    const receipt = await confirmedReceipt(tx)
     await fetchPosition(wallet)
     return { success: true, txHash: receipt.hash }
   } catch (err) {
     state.error = err.shortMessage || err.message
-    return { success: false, error: state.error }
+    return { success: false, error: state.error, transactionHash: err.transactionHash, confirmationPending: err.confirmationPending }
   } finally { state.isStaking = false }
 }
 
@@ -179,7 +180,7 @@ async function approveIfNeeded(wallet, amountWei) {
   const allowance = await token.allowance(wallet, config().stakingVaultAddress)
   if (allowance >= amountWei) return null
   const tx = await token.approve(config().stakingVaultAddress, amountWei)
-  return tx.wait()
+  return confirmedReceipt(tx)
 }
 
 async function stake(amount, lockSeconds = 0) {
@@ -194,12 +195,12 @@ async function stake(amount, lockSeconds = 0) {
     await approveIfNeeded(wallet, amountWei)
     const contract = await stakingContract(true, wallet)
     const tx = await contract.stake(amountWei, Number(lockSeconds || 0))
-    const receipt = await tx.wait()
+    const receipt = await confirmedReceipt(tx)
     await fetchPosition(wallet)
     return { success: true, txHash: receipt.hash }
   } catch (err) {
     state.error = err.message || 'BONZAI staking failed.'
-    return { success: false, error: state.error }
+    return { success: false, error: state.error, transactionHash: err.transactionHash, confirmationPending: err.confirmationPending }
   } finally {
     state.isStaking = false
   }
@@ -216,12 +217,12 @@ async function unstake(amount) {
     if (amountWei <= 0n) throw new Error('Enter a BONZAI amount to unstake.')
     const contract = await stakingContract(true, wallet)
     const tx = await contract.unstake(amountWei)
-    const receipt = await tx.wait()
+    const receipt = await confirmedReceipt(tx)
     await fetchPosition(wallet)
     return { success: true, txHash: receipt.hash }
   } catch (err) {
     state.error = err.message || 'BONZAI unstaking failed.'
-    return { success: false, error: state.error }
+    return { success: false, error: state.error, transactionHash: err.transactionHash, confirmationPending: err.confirmationPending }
   } finally {
     state.isStaking = false
   }
@@ -236,12 +237,12 @@ async function extendLock(lockSeconds) {
     if (!wallet) throw new Error('Connect a wallet before extending a lock.')
     const contract = await stakingContract(true, wallet)
     const tx = await contract.extendLock(Number(lockSeconds || 0))
-    const receipt = await tx.wait()
+    const receipt = await confirmedReceipt(tx)
     await fetchPosition(wallet)
     return { success: true, txHash: receipt.hash }
   } catch (err) {
     state.error = err.message || 'Lock extension failed.'
-    return { success: false, error: state.error }
+    return { success: false, error: state.error, transactionHash: err.transactionHash, confirmationPending: err.confirmationPending }
   } finally {
     state.isStaking = false
   }

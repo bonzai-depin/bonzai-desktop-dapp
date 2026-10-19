@@ -50,7 +50,7 @@ describe('Worker lifecycle: deployed local contracts and production authorizatio
   expect(Buffer.from((await send('media',{artifactId:blobId,offset:0})).data,'base64')).to.deep.equal(bytes);
   await send('execute',{...execution,job:packet});expect(count).to.equal(1);
   const evidence=JSON.stringify(result.result);await escrow.connect(worker).submitWork(jobId,ethers.keccak256(ethers.toUtf8Bytes(evidence)));await escrow.connect(employer).approveWork(jobId);
-  expect(await escrow.tokenWithdrawable(await token.getAddress(),worker.address)).to.equal(amount*9750n/10000n);
+  expect(await escrow.tokenWithdrawable(await token.getAddress(),worker.address)).to.equal(amount*7000n/10000n);
   await escrow.connect(worker).withdrawTokenPayments(await token.getAddress(),worker.address);
   await agents.connect(owner).transferFrom(owner.address,buyer.address,1);expect(await host.discover()).to.deep.equal([]);
   expect((await send('status')).status).to.equal('completed');

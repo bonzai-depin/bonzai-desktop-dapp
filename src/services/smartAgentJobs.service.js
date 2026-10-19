@@ -1,4 +1,7 @@
 import { ethers } from 'ethers';
+import { assertNoPendingPayment } from './transactionJournal.js';
+import { confirmedReceipt } from './transactionReceipt.js';
+import { acquireWorkflowTokens } from './workflowCheckout.js';
 import { assertMintReference } from './agentMintEligibility.js';
 import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { web3Service } from './web3.service.js';
@@ -32,8 +35,8 @@ export async function fetchSmartAgentQuote(agent) {
   const configuredFactory = agent.contractAddress?.toLowerCase() === CONFIG.smartAgentIssuance?.contractAddress?.toLowerCase()
     ? CONFIG.smartAgentIssuance?.factoryAddress : CONFIG.companionTokenFactory?.contractAddress;
   if (!configuredFactory) throw new Error('This agent collection has no configured job-settlement factory.');
-  const [factoryAddress, arbitrator, platformBps, contributionBps, acceptWindow, deliveryWindow, reviewWindow, disputeWindow] = await Promise.all([
-    contract.socialTokenFactory(), contract.owner(), contract.platformBps(), contract.contributionBps(), contract.ACCEPT_WINDOW(), contract.DELIVERY_WINDOW(), contract.REVIEW_WINDOW(), contract.DISPUTE_WINDOW(),
+  const [factoryAddress, arbitrator, platformBps, contributionBps, treasuryBps, holderBps, acceptWindow, deliveryWindow, reviewWindow, disputeWindow] = await Promise.all([
+    contract.socialTokenFactory(), contract.owner(), contract.platformBps(), contract.contributionBps(), contract.treasuryBps(), contract.holderBps(), contract.ACCEPT_WINDOW(), contract.DELIVERY_WINDOW(), contract.REVIEW_WINDOW(), contract.DISPUTE_WINDOW(),
   ]);
   if (factoryAddress.toLowerCase() !== configuredFactory.toLowerCase()) throw new Error('Smart-agent token factory is not configured in the escrow.');
   const factory = new ethers.Contract(factoryAddress, FACTORY_ABI, provider);
@@ -46,7 +49,7 @@ export async function fetchSmartAgentQuote(agent) {
   const [owner, wallet, decimals, symbol] = await Promise.all([identity.ownerOf(agent.tokenId), identity.getAgentWallet(agent.tokenId), token.decimals(), token.symbol()]);
   const precision = Number(decimals);
   if (!Number.isInteger(precision) || precision < 0 || precision > 36) throw new Error('Unsupported social-token precision.');
-  return { tokenId: String(agent.tokenId), tokenAddress, decimals: precision, symbol: String(symbol).slice(0, 32), worker: wallet !== ethers.ZeroAddress ? wallet : owner, owner, arbitrator, platformBps: Number(platformBps), contributionBps: Number(contributionBps), acceptWindow: Number(acceptWindow), deliveryWindow: Number(deliveryWindow), reviewWindow: Number(reviewWindow), disputeWindow: Number(disputeWindow), routeAssetId: agent.routeAssetId || ethers.ZeroHash, escrow: config().jobEscrowAddress, chainId: config().chainId };
+  return { tokenId: String(agent.tokenId), tokenAddress, decimals: precision, symbol: String(symbol).slice(0, 32), worker: wallet !== ethers.ZeroAddress ? wallet : owner, owner, arbitrator, platformBps: Number(platformBps), treasuryBps: Number(treasuryBps), holderBps: Number(holderBps), contributionBps: Number(contributionBps), acceptWindow: Number(acceptWindow), deliveryWindow: Number(deliveryWindow), reviewWindow: Number(reviewWindow), disputeWindow: Number(disputeWindow), routeAssetId: agent.routeAssetId || ethers.ZeroHash, escrow: config().jobEscrowAddress, chainId: config().chainId };
 }
 
 export async function listSmartAgentJobs(companyId, wallet = web3Service.state.walletAddress) {
@@ -82,16 +85,18 @@ export async function fundSmartAgentJob(agent, reviewed, input) {
   const contract = await escrow(true);
   const employer = await contract.runner.getAddress();
   if (employer.toLowerCase() !== String(input.expectedWallet).toLowerCase()) throw new Error('Wallet changed. Review the job again.');
+  await assertNoPendingPayment(config().chainId, employer, await web3Service.getProvider(ECONOMY_NETWORK_KEY), [config().jobEscrowAddress]);
   const current = await fetchSmartAgentQuote(agent);
   verifySmartAgentQuote(reviewed, current);
   const { terms, amount, termsHash } = buildSmartAgentJobTerms(current, input);
   if ([employer.toLowerCase(), current.worker.toLowerCase()].includes(current.arbitrator.toLowerCase())) throw new Error('This job requires an independent arbitrator.');
   const token = new ethers.Contract(current.tokenAddress, TOKEN_ABI, contract.runner);
+  if (input.paymentMethod === 'usdc') await acquireWorkflowTokens(input.checkout, current, input.amount, employer);
   const [balance, allowance] = await Promise.all([token.balanceOf(employer), token.allowance(employer, current.escrow)]);
   if (balance < amount) throw new Error(`Insufficient ${current.symbol}. Acquire the smart agent’s token before funding.`);
   if (allowance < amount) {
     const approval = await token.approve(current.escrow, amount);
-    await approval.wait();
+    await confirmedReceipt(approval);
   }
   // Revalidate after approval, before a payment transaction can be proposed.
   verifySmartAgentQuote(reviewed, await fetchSmartAgentQuote(agent));
@@ -105,7 +110,7 @@ export async function fundSmartAgentJob(agent, reviewed, input) {
   let storageError = '';
   try { await saveJob(record); } catch { storageError = 'The job was submitted, but its local record could not be saved. Keep the job ID and transaction hash.'; }
   let receipt;
-  try { receipt = await transaction.wait(); }
+  try { receipt = await confirmedReceipt(transaction); }
   catch (failure) {
     // A submitted transaction may still confirm after an RPC timeout. Never
     // propose a second payment merely because confirmation was unavailable.
@@ -163,7 +168,7 @@ export async function actOnSmartAgentJob(action, jobId, detail, options = {}) {
     if ((await contract.runner.getAddress()).toLowerCase() !== String(expected).toLowerCase()) throw new Error('Wallet changed. Review this job action again.');
   }
   const transaction = await contract[action](jobId, ...(['submitWork', 'raiseDispute'].includes(action) ? [hash] : []));
-  const receipt = await transaction.wait();
+  const receipt = await confirmedReceipt(transaction);
   window.dispatchEvent(new CustomEvent('bonzai:smart-agent-job'));
   return { txHash: receipt.hash };
 }
@@ -173,7 +178,7 @@ export async function withdrawSmartAgentPayment(currency, expectedWallet = web3S
   const wallet = await contract.runner.getAddress();
   if (wallet.toLowerCase() !== String(expectedWallet).toLowerCase()) throw new Error('Wallet changed. Review the withdrawal again.');
   const transaction = await contract.withdrawTokenPayments(currency, wallet);
-  const receipt = await transaction.wait();
+  const receipt = await confirmedReceipt(transaction);
   window.dispatchEvent(new CustomEvent('bonzai:smart-agent-job'));
   return { txHash: receipt.hash };
 }
@@ -185,7 +190,7 @@ export async function withdrawAgentJobPayment(agent, jobId, { approved } = {}) {
   if (recipient.toLowerCase() !== live.worker.toLowerCase()) throw new Error('This smart agent is not the hired worker.');
   const contract = new ethers.Contract(config().jobEscrowAddress, BonzaiJobEscrowABI, signer);
   const transaction = await contract.withdrawTokenPayments(live.currency, recipient);
-  const receipt = await transaction.wait();
+  const receipt = await confirmedReceipt(transaction);
   window.dispatchEvent(new CustomEvent('bonzai:smart-agent-job'));
   return { txHash: receipt.hash };
 }

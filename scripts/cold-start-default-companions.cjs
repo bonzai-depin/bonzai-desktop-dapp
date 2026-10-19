@@ -171,7 +171,7 @@ async function main() {
   }
 
   const mnemonic = process.env.DEFAULT_COMPANION_MNEMONIC;
-  const pinataJWT = process.env.PINATA_JWT || process.env.VITE_PINATA_JWT;
+  const pinataJWT = process.env.PINATA_JWT;
   const ownershipAddress = requiredAddress("BONZAI_SKILL_OWNERSHIP_ADDRESS");
   const attestationKey = process.env.ATTESTATION_SIGNER_PRIVATE_KEY;
   const skillIdMap = JSON.parse(process.env.VITE_BONZAI_SKILL_ID_MAP_JSON || "{}");

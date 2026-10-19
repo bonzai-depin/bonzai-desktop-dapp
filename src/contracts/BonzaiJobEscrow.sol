@@ -41,7 +41,9 @@ interface IJobBasketRewards {
 contract BonzaiJobEscrow is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     uint16 public constant BPS = 10_000;
-    uint16 public constant platformBps = 250;
+    uint16 public constant platformBps = 3000;
+    uint16 public constant treasuryBps = 2000;
+    uint16 public constant holderBps = 1000;
     uint16 public constant contributionBps = 250;
     uint256 public constant ACCEPT_WINDOW = 7 days;
     uint256 public constant DELIVERY_WINDOW = 30 days;
@@ -56,7 +58,6 @@ contract BonzaiJobEscrow is Ownable, ReentrancyGuard {
     IJobSocialTokenFactory public socialTokenFactory;
     IJobSmartAgents public smartAgents;
     IJobBasketRewards public basketRewards;
-    uint16 public constant holderPlatformShareBps = 5000;
 
     // Existing terminal status values are preserved for indexers.
     enum Status { None, Funded, Accepted, Submitted, Completed, Cancelled, Disputed }
@@ -172,6 +173,9 @@ contract BonzaiJobEscrow is Ownable, ReentrancyGuard {
         require(arbitrator != address(0) && arbitrator != msg.sender && arbitrator != worker, "Independent arbitrator required");
         if (routeAssetId != bytes32(0)) _snapshotRoute(jobId, routeAssetId);
         jobs[jobId] = Job(msg.sender, worker, companionTokenId, amount, termsHash, routeAssetId, bytes32(0), Status.Funded);
+        _indexJob(msg.sender,jobId);
+        _indexJob(worker,jobId);
+        _indexJob(arbitrator,jobId);
         jobTerms[jobId].arbitrator = arbitrator;
         jobTerms[jobId].acceptBy = uint64(block.timestamp + ACCEPT_WINDOW);
         emit JobFunded(jobId, msg.sender, worker, amount, companionTokenId);
@@ -390,6 +394,7 @@ contract BonzaiJobEscrow is Ownable, ReentrancyGuard {
             require(recipients[i].wallet != address(0), "Invalid route recipient");
             totalBps += recipients[i].baseBps;
             fallbackRecipients[jobId].push(FallbackRecipient(recipients[i].wallet, recipients[i].baseBps));
+            if(recipients[i].baseBps>0) _indexJob(recipients[i].wallet,jobId);
         }
         require(totalBps == BPS, "Invalid route shares");
     }
@@ -397,22 +402,29 @@ contract BonzaiJobEscrow is Ownable, ReentrancyGuard {
     function _settle(bytes32 jobId, uint16 workerShareBps) private {
         require(workerShareBps <= BPS, "Invalid worker share");
         Job storage job = jobs[jobId];
+        address currency = jobCurrency[jobId];
         uint256 grossWorker = job.amount * workerShareBps / BPS;
         uint256 refund = job.amount - grossWorker;
-        uint256 platformAmount = grossWorker * platformBps / BPS;
+        // Native escrow is the pre-economy compatibility path; production
+        // disables it on configuration and only accepts registered agent tokens.
+        uint256 platformAmount = grossWorker * (currency == address(0) ? 250 : platformBps) / BPS;
         uint256 contributionAmount = job.routeAssetId != bytes32(0) ? grossWorker * contributionBps / BPS : 0;
         uint256 workerAmount = grossWorker - platformAmount - contributionAmount;
         job.status = workerShareBps == 0 ? Status.Cancelled : Status.Completed;
         delete settlementProposals[jobId];
-        address currency = jobCurrency[jobId];
         if (currency == address(0)) totalEscrowed -= job.amount;
         else tokenEscrowed[currency] -= job.amount;
         _credit(currency, job.employer, refund);
         _credit(currency, job.worker, workerAmount);
-        uint256 holderAmount = currency == address(0) ? 0 : platformAmount * holderPlatformShareBps / BPS;
+        uint256 holderAmount = currency == address(0) ? 0 : grossWorker * holderBps / BPS;
         _credit(currency, treasury, platformAmount - holderAmount);
         if (holderAmount > 0) pendingBasketFees[currency] += holderAmount;
-        if (contributionAmount > 0) {
+        if (contributionAmount > 0 && currency != address(0)) {
+            // The protocol split has already been applied. Credit the agreed
+            // contributors directly: routing again would tax their share twice.
+            _creditContributors(jobId, currency, contributionAmount);
+            emit ContributionRouted(jobId, contributionAmount);
+        } else if (contributionAmount > 0) {
             pendingContributions[jobId] = contributionAmount;
             contributionFallbackAt[jobId] = block.timestamp + ROUTING_RETRY_WINDOW;
             if (currency == address(0)) totalPendingContributions += contributionAmount;
@@ -425,11 +437,45 @@ contract BonzaiJobEscrow is Ownable, ReentrancyGuard {
         if (holderAmount > 0) _tryBasketFees(currency, holderAmount);
     }
 
+    function _creditContributors(bytes32 jobId, address currency, uint256 amount) private {
+        FallbackRecipient[] storage recipients = fallbackRecipients[jobId];
+        uint256 lastPositive;
+        for (uint256 i; i < recipients.length; ++i) if (recipients[i].baseBps > 0) lastPositive = i;
+        uint256 allocated;
+        for (uint256 i; i < recipients.length; ++i) {
+            uint256 share = i == lastPositive ? amount - allocated : amount * recipients[i].baseBps / BPS;
+            allocated += share;
+            _credit(currency, recipients[i].wallet, share);
+        }
+    }
+
+    mapping(address=>address[]) private paymentCurrencies;
+    mapping(address=>mapping(address=>bool)) private knownPaymentCurrency;
+    mapping(address=>bytes32[]) private walletJobs;
+    mapping(address=>mapping(bytes32=>bool)) private indexedWalletJob;
+    function _indexJob(address wallet,bytes32 id) private {
+        if(!indexedWalletJob[wallet][id]) {indexedWalletJob[wallet][id]=true;walletJobs[wallet].push(id);}
+    }
+    function getPaymentCurrencies(address wallet,uint256 offset,uint256 limit) external view returns(address[] memory result) {
+        require(limit<=100,"Page too large");
+        uint256 count=offset>=paymentCurrencies[wallet].length?0:paymentCurrencies[wallet].length-offset;
+        if(count>limit)count=limit;
+        result=new address[](count);
+        for(uint256 i;i<count;i++)result[i]=paymentCurrencies[wallet][offset+i];
+    }
+    function getWalletJobs(address wallet,uint256 offset,uint256 limit) external view returns(bytes32[] memory result) {
+        require(limit<=100,"Page too large");
+        uint256 count=offset>=walletJobs[wallet].length?0:walletJobs[wallet].length-offset;
+        if(count>limit)count=limit;
+        result=new bytes32[](count);
+        for(uint256 i;i<count;i++)result[i]=walletJobs[wallet][offset+i];
+    }
     function _credit(address currency, address recipient, uint256 amount) private {
         if (currency == address(0)) {
             withdrawable[recipient] += amount;
             totalWithdrawable += amount;
         } else {
+            if(amount>0 && !knownPaymentCurrency[recipient][currency]) {knownPaymentCurrency[recipient][currency]=true;paymentCurrencies[recipient].push(currency);}
             tokenWithdrawable[currency][recipient] += amount;
             tokenTotalWithdrawable[currency] += amount;
         }

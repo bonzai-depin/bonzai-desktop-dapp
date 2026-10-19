@@ -19,6 +19,7 @@ import { mdns } from '@libp2p/mdns';
 import { pipe } from 'it-pipe';
 import { fromString } from 'uint8arrays';
 import { withPacedPeerRouting } from './pacedPeerRouting.js';
+import { secureCertifiedPeerRecords } from './certifiedPeerRecords.js';
 import { multiaddr } from '@multiformats/multiaddr';
 import { peerIdFromString } from '@libp2p/peer-id';
 
@@ -129,6 +130,7 @@ class BonzaiP2PNode {
 
     // Create the node
     this.node = await createLibp2p({
+      start: false,
       addresses: {
         listen: [
           `/ip4/0.0.0.0/tcp/${listenPort}`,
@@ -153,6 +155,8 @@ class BonzaiP2PNode {
         minConnections: 5,
       },
     });
+
+    secureCertifiedPeerRecords(this.node.peerStore);
 
     // Set up event listeners
     this._setupEventListeners();

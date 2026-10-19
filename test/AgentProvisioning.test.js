@@ -128,8 +128,8 @@ describe('Minted worker to paid delivery integration', function () {
   await escrow.connect(f.wallet).acceptJob(id);
   await escrow.connect(f.wallet).submitWork(id, ethers.id('delivered meditation'));
   await escrow.connect(f.other).approveWork(id);
-  expect(await escrow.tokenWithdrawable(await token.getAddress(), f.wallet.address)).to.equal(ETH('97.5'));
-  expect(await basket.totalDeposited(await token.getAddress())).to.equal(ETH('1.25'));
+  expect(await escrow.tokenWithdrawable(await token.getAddress(), f.wallet.address)).to.equal(ETH('70'));
+  expect(await basket.totalDeposited(await token.getAddress())).to.equal(ETH('10'));
   await escrow.connect(f.wallet).withdrawTokenPayments(await token.getAddress(), f.wallet.address);
   expect(await escrow.tokenWithdrawable(await token.getAddress(), f.wallet.address)).to.equal(0);
   expect((await escrow.jobs(id)).status).to.equal(4);

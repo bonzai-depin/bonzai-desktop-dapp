@@ -10,6 +10,10 @@
           <div v-else class="agent-next__slot"><select v-model="slotId" :disabled="busy || !slots.length" :aria-label="$ui('Agent slot')"><option value="">{{ $ui('Select a slot') }}</option><option v-for="slot in slots" :key="slot.tokenId" :value="slot.tokenId">#{{ slot.tokenId }}{{ slot.name ? ' · ' + slot.name : '' }}</option></select>
           <button class="bz-btn bz-btn--secondary" :disabled="busy || !agent" @click="refresh">{{ $ui('Find my slots') }}</button></div>
           <button v-if="slotId" class="bz-btn bz-btn--primary" :disabled="busy" @click="perform(() => attach(slotId))">{{ $ui('Attach slot') }}</button>
+          <button v-if="connected && configured" class="bz-btn bz-btn--ghost" :disabled="busy || !!slotTransaction" @click="reviewSlot">Review New Slot</button>
+          <div v-if="sale" class="agent-slot-review" aria-label="Review agent slot purchase"><p>{{ sale.priceDisplay }} ETH + gas · {{ sale.reserveDisplay }} ETH reserved for liquidity · {{ network }}</p><p>{{ sale.reason || 'One slot will be minted to your connected wallet. Buying a slot does not generate an agent or launch a token.' }}</p><button class="bz-btn bz-btn--primary" :disabled="busy || !!sale.reason || !!slotTransaction" @click="buySlot">Confirm Slot Purchase</button><button class="bz-btn bz-btn--ghost" :disabled="busy" @click="sale = null">Cancel</button></div>
+          <p v-if="slotTransaction" role="status"><a :href="`${explorer}/tx/${slotTransaction}`" target="_blank" rel="noopener noreferrer">View Slot Transaction ↗</a> · {{ slotPending ? 'Confirmation pending. Check your wallet before another purchase.' : 'Slot mint confirmed. Find your slots to attach it.' }}</p>
+          <button v-if="slotPending" class="bz-btn bz-btn--ghost" :disabled="busy" @click="checkSlot">Check Slot Confirmation</button>
           <p v-if="searched && !slots.length">{{ $ui('No available slots in this wallet. You can still start roleplay.') }}</p>
         </template>
       </div></li>
@@ -18,7 +22,7 @@
         <small v-if="ready && !token">{{ $ui('Identity published. You can update it before launching the token.') }}</small>
         <small v-if="token">{{ $ui('Identity is locked after token issuance.') }}</small>
       </div></li>
-      <li><span class="agent-next__number">3</span><div><h3>{{ $ui('Launch token + pool') }}</h3><p>{{ symbol ? '$' + symbol : $ui('Agent token') }} / NVDA · {{ network }}</p><p>{{ $ui('Uses the reserved 1 ETH. 96% of supply in permanently locked liquidity. Trading fee: 1%, split 40% agent wallet / 40% NFT owner / 10% treasury / 10% rewards.') }}</p>
+      <li><span class="agent-next__number">3</span><div><h3>{{ $ui('Launch token + pool') }}</h3><p>{{ symbol ? '$' + symbol : $ui('Agent token') }} / NVDA · {{ network }}</p><p>{{ $ui('Uses the reserved 1 ETH. 96% of supply in permanently locked liquidity. Trading fee: 1%, split 35% agent wallet / 35% NFT owner / 20% treasury / 10% rewards.') }}</p>
         <button v-if="pending" class="bz-btn bz-btn--secondary" :disabled="busy || launching" @click="check(agent)">{{ $ui('Check issuance') }}</button>
         <button v-else-if="!token" class="bz-btn bz-btn--primary" :disabled="busy || !owned || !ready || launching" @click="launch(agent)">{{ launching ? $ui('Waiting for confirmation…') : $ui('Launch token + pool') }}</button>
         <p v-else class="agent-next__success">{{ $ui('Token and pool launched') }}</p>
@@ -30,9 +34,18 @@
   </section>
 </template>
 <script setup>
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
+import { web3Service } from '../services/web3.service.js';
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
+import { readSlotSale, mintAgentSlot } from '../services/agentSlotMint.js';
 import { companionTokenService } from '../services/companionToken.service.js';
 const props = defineProps({agent:Object, network:String,symbol:String, attached:Boolean,owned:Boolean,ready:Boolean,token:String,pending:Boolean,configured:Boolean,launching:Boolean,generating:Boolean,connected:Boolean,connect:Function,attach:Function,publish:Function,launch:Function,check:Function,startRoleplay:Function,loadSlots:{type:Function,default:()=>companionTokenService.getOwnedAgentSlots()}});
+const sale=ref(null),slotTransaction=ref(''),slotPending=ref(false);
+const explorer=CONFIG.networks[ECONOMY_NETWORK_KEY].explorer;
+const reviewSlot=()=>perform(async()=>{if(slotPending.value)throw new Error('Check the submitted transaction before another purchase.');sale.value=await readSlotSale();slotTransaction.value='';});
+const buySlot=()=>perform(async()=>{if(!sale.value || sale.value.reason || slotTransaction.value)return;const account=web3Service.state.walletAddress;try{const result=await mintAgentSlot(sale.value);if(account!==web3Service.state.walletAddress)return;slotTransaction.value=result.transactionHash;sale.value=null;}catch(e){if(account!==web3Service.state.walletAddress)return;if(e.transactionHash){slotTransaction.value=e.transactionHash;slotPending.value=true;}throw e;}});
+const checkSlot=()=>perform(async()=>{const receipt=await (await web3Service.getProvider(ECONOMY_NETWORK_KEY)).getTransactionReceipt(slotTransaction.value);if(!receipt)throw new Error('Still awaiting confirmation. Do not purchase again.');slotPending.value=false;if(Number(receipt.status)===0){slotTransaction.value='';throw new Error('Slot purchase reverted. Review before trying again.');}sale.value=null;slots.value=await props.loadSlots();searched.value=true;});
+watch(()=>web3Service.state.walletAddress,()=>{sale.value=null;slotTransaction.value='';slotPending.value=false;slots.value=[];slotId.value='';searched.value=false;});
 const busy=ref(false),error=ref(''),slots=ref([]),slotId=ref(''),searched=ref(false);
 async function perform(action){busy.value=true;error.value='';try{await action();}catch(e){error.value=e.message;}finally{busy.value=false;}}
 const refresh=()=>perform(async()=>{slots.value=await props.loadSlots();searched.value=true;slotId.value='';});

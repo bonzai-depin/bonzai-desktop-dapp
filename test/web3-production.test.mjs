@@ -73,6 +73,11 @@ test('offline validation never represents a deployment as verified', async () =>
   assert.equal(result.deployedContractsVerified, 0);
 });
 
+test('preflight rejects an unsupported swap encoding before checkout can be released',()=>{
+  assert.ok(productionConfiguration({VITE_UNISWAP_V4_ROUTER_ABI_VERSION:'unknown'}).failures.some(f=>f.includes('ROUTER_ABI_VERSION')));
+  assert.ok(!productionConfiguration({VITE_UNISWAP_V4_ROUTER_ABI_VERSION:'v2'}).failures.some(f=>f.includes('ROUTER_ABI_VERSION')));
+});
+
 test('preflight requires a configured currency basket and verifies USDC denomination and admission', async () => {
   const offline = productionConfiguration({});
   assert(offline.failures.some(message => message.includes('BASKET_REWARDS')));

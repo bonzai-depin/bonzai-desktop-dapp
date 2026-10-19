@@ -214,6 +214,43 @@ export const BonzaiMintPoolABI = [
       {
         "indexed": true,
         "internalType": "uint256",
+        "name": "fromEpoch",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "toEpoch",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint8",
+        "name": "pool",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "providerSide",
+        "type": "bool"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "EmptyAllocationRolled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
         "name": "epochId",
         "type": "uint256"
       },
@@ -456,6 +493,25 @@ export const BonzaiMintPoolABI = [
       }
     ],
     "name": "Registered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "wallet",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      }
+    ],
+    "name": "RewardRecipientSet",
     "type": "event"
   },
   {
@@ -1625,13 +1681,13 @@ export const BonzaiMintPoolABI = [
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "epochId",
+        "name": "",
         "type": "uint256"
       }
     ],
     "name": "recirculateUnclaimed",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "pure",
     "type": "function"
   },
   {
@@ -1728,6 +1784,48 @@ export const BonzaiMintPoolABI = [
   {
     "inputs": [],
     "name": "renounceOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "rewardRecipient",
+    "outputs": [
+      {
+        "internalType": "address payable",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "epochId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint8",
+        "name": "poolIndex",
+        "type": "uint8"
+      },
+      {
+        "internalType": "bool",
+        "name": "providerSide",
+        "type": "bool"
+      }
+    ],
+    "name": "rollEmptyAllocation",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -1862,6 +1960,19 @@ export const BonzaiMintPoolABI = [
   {
     "inputs": [
       {
+        "internalType": "address payable",
+        "name": "recipient",
+        "type": "address"
+      }
+    ],
+    "name": "setRewardRecipient",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "_splitter",
         "type": "address"
@@ -1972,13 +2083,13 @@ export const BonzaiMintPoolABI = [
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "epochId",
+        "name": "",
         "type": "uint256"
       }
     ],
     "name": "sweepUnclaimed",
     "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "pure",
     "type": "function"
   },
   {

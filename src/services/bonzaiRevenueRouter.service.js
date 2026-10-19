@@ -1,4 +1,5 @@
 import { ethers } from 'ethers'
+import { confirmedReceipt } from './transactionReceipt.js'
 import { CONFIG, networkKeyForChainId } from '../config/web3.config.js'
 import { web3Service } from './web3.service.js'
 import { BonzaiRevenueRouterABI } from '../contracts/abi/BonzaiRevenueRouter.abi.js'
@@ -116,7 +117,7 @@ async function registerRoute({ assetId, metadataURI, participants, fallbackWalle
     routeParticipants.map(participant => participant.score),
     routeParticipants.map(participant => participant.role),
   )
-  const receipt = await tx.wait()
+  const receipt = await confirmedReceipt(tx)
   return {
     success: true,
     txHash: receipt.hash,
@@ -151,7 +152,7 @@ async function registerModelRevenueRoute(model, provenance = {}, assetIdOverride
     return {...result, alreadyConfigured:true};
   }
   const tx=await vault.setCreatorRecipients(id,participants.map(p=>p.wallet),participants.map(p=>p.bps));
-  const receipt=await tx.wait();
+  const receipt=await confirmedReceipt(tx);
   return {...result,txHash:receipt.hash};
 }
 
@@ -182,14 +183,14 @@ async function claimable(assetId, wallet = web3Service.state?.walletAddress) {
 async function depositRevenue(assetId, amountEth) {
   const contract = await routerContract(true)
   const tx = await contract.depositRevenue(assetIdFor(assetId), { value: ethers.parseEther(String(amountEth || '0')) })
-  const receipt = await tx.wait()
+  const receipt = await confirmedReceipt(tx)
   return { success: true, txHash: receipt.hash }
 }
 
 async function claim(assetId) {
   const contract = await routerContract(true)
   const tx = await contract.claim(assetIdFor(assetId))
-  const receipt = await tx.wait()
+  const receipt = await confirmedReceipt(tx)
   return { success: true, txHash: receipt.hash }
 }
 
@@ -236,7 +237,7 @@ export async function claimTokenRoyalties(assetId, currency, { expectedWallet = 
   if (amount === 0n) throw new Error('No contributor royalties are available in this currency.')
   const recipient = await assertRoyaltyWallet(contract, expectedWallet)
   const transaction = await contract.claimToken(assetId, currency, recipient, { from: recipient, chainId: Number(config().chainId) })
-  const receipt = await transaction.wait()
+  const receipt = await confirmedReceipt(transaction)
   return { success: true, txHash: receipt.hash, rawAmount: amount.toString(), currency, recipient }
 }
 

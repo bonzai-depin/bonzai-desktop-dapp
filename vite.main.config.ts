@@ -1,8 +1,9 @@
 import './scripts/load-protocol-config.mjs';
+import { privateStorageBuildGuard } from './scripts/private-storage-build-guard.mjs';
 import { defineConfig, loadEnv } from 'vite';
 import { resolve } from 'path';
 import { builtinModules } from 'module';
-import { viteStaticCopy } from "vite-plugin-static-copy";
+import { mainRuntimeAssets } from "./scripts/main-runtime-assets.mjs";
 
 // https://vitejs.dev/config
 const oauthEnv = loadEnv(process.env.NODE_ENV || 'production', process.cwd(), 'BONZAI_');
@@ -22,7 +23,6 @@ export default defineConfig({
     rollupOptions: {
       external: [
         "electron",
-        "node-llama-cpp",
         "ps-tree",
         // Native + extension-loading modules — must resolve at runtime
         // via Electron's require, not via Vite/Rollup bundling.
@@ -45,26 +45,8 @@ export default defineConfig({
     },
   },
   plugins: [
-    viteStaticCopy({
-      targets: [
-        {
-          src: resolve(__dirname, "src/server/{diffuser,hub_publish,inference_serialization,video_enhance,seedvr2_worker}.py"),
-          dest: "",
-        },
-        {
-          src: resolve(__dirname, "src/template.jinja"),
-          dest: "",
-        },
-        // Ship the .sql migrations alongside the bundled main.js so
-        // src/main/db/migrate.js can read them at runtime. The runner
-        // resolves them via __dirname which, post-bundle, points at
-        // .vite/build/.
-        {
-          src: resolve(__dirname, "src/main/db/migrations") + "/*.sql",
-          dest: "migrations",
-        },
-      ],
-    }),
+    privateStorageBuildGuard(),
+    mainRuntimeAssets(),
   ],
   resolve: {
     browserField: false,

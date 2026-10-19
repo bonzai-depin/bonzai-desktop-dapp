@@ -1,4 +1,5 @@
 import './scripts/load-protocol-config.mjs';
+import { privateStorageBuildGuard } from './scripts/private-storage-build-guard.mjs';
 import { defineConfig } from "vite";
 import VuePlugin from "@vitejs/plugin-vue";
 import tsconfigPaths from "vite-tsconfig-paths";
@@ -7,6 +8,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 // https://vitejs.dev/config
 export default defineConfig({
   plugins: [
+    privateStorageBuildGuard(),
     VuePlugin(),
     tsconfigPaths(),
     nodePolyfills({

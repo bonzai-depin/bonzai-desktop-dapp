@@ -8224,6 +8224,7 @@ def update_trained_model_economy(model_id):
     allowed_keys = {
         "nft",
         "fineTuneToken",
+        "tokenLaunchPending",
         "modelRegistry",
         "revenueRoute",
         "marketplace",

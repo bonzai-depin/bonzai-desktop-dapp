@@ -268,7 +268,7 @@ describe("Integration Tests", function () {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("4. Sweep", function () {
-    it("sweepUnclaimed sends only the unclaimed remainder to treasury after epoch N+2", async function () {
+    it("cannot sweep provider liabilities after epoch N+2", async function () {
       const { content, mintPool, user1, treasury } = await loadFixture(deployIntegration);
       await registerUser(mintPool, user1);
       await mintContent(content, user1, CONTENT_TYPE.IMAGE);
@@ -285,11 +285,12 @@ describe("Integration Tests", function () {
       const expectedHolder = poolAmt - expectedProvider;
 
       const treasuryBefore = await ethers.provider.getBalance(treasury.address);
-      await mintPool.sweepUnclaimed(0);
+      await expect(mintPool.sweepUnclaimed(0)).to.be.revertedWith("Earned rewards never expire");
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
       // user1 had 100% of the holder share; only the provider side remains
-      expect(treasuryAfter - treasuryBefore).to.equal(expectedProvider);
+      expect(treasuryAfter - treasuryBefore).to.equal(0);
+      expect(await ethers.provider.getBalance(await mintPool.getAddress())).to.equal(expectedProvider);
     });
   });
 });

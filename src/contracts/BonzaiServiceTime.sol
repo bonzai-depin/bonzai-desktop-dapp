@@ -168,13 +168,11 @@ contract BonzaiServiceTime is Ownable, ReentrancyGuard, Pausable {
     function claimProviderRewards(uint256 epochId, uint8 poolIndex)
         external
         nonReentrant
-        whenNotPaused
     {
         if (claimsPaused) revert ClaimsPaused();
         if (poolIndex >= NUM_POOLS) revert InvalidPipeline();
         if (!mintPool.isEpochFinalized(epochId)) revert EpochNotFinalized();
         if (providerClaimed[epochId][poolIndex][msg.sender]) revert AlreadyClaimed();
-        if (_providerStake(msg.sender) < LVL1_THRESHOLD) revert ProviderBelowLvl1();
 
         uint256 providerTime = providerServiceTime[epochId][poolIndex][msg.sender];
         uint256 totalTime = totalServiceTime[epochId][poolIndex];

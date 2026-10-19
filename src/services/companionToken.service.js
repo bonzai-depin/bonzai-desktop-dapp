@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 import {getLiquidityVault,transactLiquidityFees} from './liquidityVault.service.js';
 import {mintLicenseStatus} from './mintValidation.js';
 // Social-token reads and minted-agent-only reserve issuance.
@@ -160,7 +161,7 @@ async function personalizeAgent(companion) {
   if (!uri || !image) throw new Error('Public metadata upload did not return a URI.');
   await assertLaunchWallet(web3Service, config.chainId, expectedWallet);
   const tx = await contract.personalize(id, uri, name, symbol, image, wallet.address);
-  const receipt = await tx.wait();
+  const receipt = await confirmedReceipt(tx);
   if (Number(receipt.status) !== 1) throw new Error('Agent personalization reverted.');
   return { agentWallet: wallet.address, tokenSymbol: symbol, metadataURI: uri, isBare: false, needsSetup: false };
 }
@@ -213,7 +214,7 @@ async function launchToken(companion, options = {}) {
     submitted = { txHash: tx.hash, tokenLaunchTx: tx.hash, tokenLaunchStatus: 'pending' };
     Object.assign(companion, { tokenLaunchTx: tx.hash, tokenLaunchStatus: 'pending' });
     if (options.onSubmitted) await options.onSubmitted(submitted);
-    const receipt = await tx.wait();
+    const receipt = await confirmedReceipt(tx);
     return await issuanceResult(companion, receipt);
   } catch (error) {
     state.error = error.message;
@@ -308,7 +309,7 @@ async function getTokenInfo(tokenAddress) {
 const LOG_PREFIX = 'CompanionToken';
 const getPoolInfo = (poolId) => _getPoolInfo(poolId, LOG_PREFIX);
 const getUnclaimedFees = (addr, token) => getLiquidityVault(token, 'companion', addr);
-const claimFees = (token, currency) => transactLiquidityFees({token, kind:'companion', action:'claim', currency});
+const claimFees = (token, currency) => transactLiquidityFees({token, kind:'companion', action:'claim', currency, expectedWallet:web3Service.state.walletAddress});
 
 /**
  * Get minimum ETH required for liquidity

@@ -2,7 +2,7 @@
 
 ## Deployment boundary
 
-`BonzaiSmartAgents`, `BonzaiAgentTokenFactory`, and `BonzaiNvdaSwap` implement a new deployment path. They do not upgrade an existing `BonzaiCompanions` collection. Legacy deployment scripts still target the previous collection. The renderer and chat commands no longer offer atomic mint-and-token launches. Reserved token issuance has a separate, fail-closed configuration; do not substitute a legacy contract address. Scheduled-drop minting still requires integration before launch. Owned successor slots are discovered separately from legacy agents and can publish approved metadata before issuance.
+`BonzaiSmartAgents`, `BonzaiAgentTokenFactory`, and `BonzaiNvdaSwap` implement a new deployment path. They do not upgrade an existing `BonzaiCompanions` collection. Legacy deployment scripts still target the previous collection. The renderer and chat commands no longer offer atomic mint-and-token launches. Reserved token issuance has a separate, fail-closed configuration; do not substitute a legacy contract address. The renderer offers a reviewed one-slot direct purchase; scheduling, deployment and external-drop integrations still require verification before launch. Owned successor slots are discovered separately from legacy agents and can publish approved metadata before issuance.
 
 The new collection implements a scheduled **direct mint**, not SeaDrop. OpenSea scheduled-drop integration and Robinhood-chain support remain unverified. No drop has been published or scheduled by this change. Do not advertise these contracts as SeaDrop-compatible.
 
@@ -25,7 +25,7 @@ Before issuing, configure the factory’s liquidity vault with the treasury and 
 - The remaining 1 ETH is withdrawable only to the immutable proceeds recipient. Existing protocol distribution is not implicitly reproduced: use a reviewed proceeds recipient/splitter if distribution is required.
 - Issuance sends the full reserve to the fixed-route adapter. The adapter submits an exact-input 1 ETH purchase and enforces the owner's minimum received NVDA. The purchase route can charge its own swap fee.
 - The social token has a fixed initial supply of one billion, with 18 decimals and no further minting authority. 4% goes to the personalized agent wallet. 96% is budgeted for liquidity against the purchased NVDA. No target dollar market cap is imposed.
-- The social-token pool has a 1% LP fee and zero hook address. Its full-range position is held permanently by the factory’s immutable liquidity vault. See [locked-liquidity accounting](LOCKED_LIQUIDITY.md) for fee collection, the 40/40/10/10 split and reward admission.
+- The social-token pool has a 1% LP fee and zero hook address. Its full-range position is held permanently by the factory’s immutable liquidity vault. See [locked-liquidity accounting](LOCKED_LIQUIDITY.md) for fee collection, the 35/35/20/10 split and reward admission.
 - Finite-range/wei rounding can leave dust; leftover launch tokens and purchased NVDA are sent to the same dead address. They are not given to the creator or an administrator. Thus 96% is the liquidity allocation budget, not a guarantee that every base unit enters the position.
 - The starting price comes from the token/NVDA quantities, respecting currency-address ordering and raw units. Failed conversion, slippage, initialization, position creation or ownership validation reverts the entire issuance and restores the slot reserve.
 - Permanent LP custody prevents the creator withdrawing that position; it does not prevent sales of circulating tokens or remove NVDA issuer/transfer restrictions and market risks.
@@ -54,3 +54,7 @@ A local record must include NFT ID, collection and chain. The service verifies t
 NFT mint receipts and token issuance receipts are separate. `tokenLaunchTx` and `tokenLaunchStatus` are persisted in SQLite extras and the compact recovery journal before confirmation. An uncertain result stays pending and can be checked without another submission. Imported token addresses do not establish minted status or authorize paid company jobs; those jobs verify collection and chain against escrow's configured registry. Local roleplay and company work remain available without minting.
 
 Markets enumerate both configured factories so migration does not remove existing issued tokens. Existing legacy transaction receipt recovery remains available; legacy atomic mint writes and chat commands are retired.
+
+### Direct slot purchase in the renderer
+
+Smart Agents → Review New Slot reads the latest block time, sale window, price, reserve, supply and lifetime wallet allowance. Confirm Slot Purchase sends exactly one slot at the reviewed price and rechecks the signer/terms. It does not personalize an agent or issue its token. A pending receipt blocks another purchase and has a confirmation check; Find My Slots attaches a confirmed unissued slot. The screen retains wallet-free local roleplay. `test/agent-slot-mint.test.mjs` exercises these gates without sending funds.
