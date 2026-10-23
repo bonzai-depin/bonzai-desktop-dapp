@@ -2227,9 +2227,9 @@ export default {
       }
     };
 
-    const generationDraft = useGenerationDraft({ form, mode, videoModel, quality, duration, fps, wanFps, autoEnhance, reusedSampling, uploadedImageBase64, pickedImageName, imageAspectRatio, remoteRatio, remoteResolution });
+    const generationDraft = useGenerationDraft({ form, mode, videoModel, quality, duration, fps, wanFps, autoEnhance, reusedSampling, uploadedImageBase64, useExistingImage, pickedImageName, imageAspectRatio, remoteRatio, remoteResolution });
     const captureVideoDraft = generationDraft.capture;
-    generationDraft.capture = () => ({ ...captureVideoDraft(), uploadedImageBase64: effectiveImage.value });
+    generationDraft.capture = () => ({ ...captureVideoDraft(), uploadedImageBase64: effectiveImage.value, useExistingImage: false });
 
     return {
       generationDraft,

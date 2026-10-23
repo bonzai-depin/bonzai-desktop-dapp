@@ -51,5 +51,12 @@ test('video Reuse restores controls and reference preview across engines, then c
     await page.evaluate(() => window.videoView.handleAction('copy', { _originalIndex: 1, question: 'No reference', model: 'ltx-2', mode: 't2v', quality: '480p' }));
     await page.waitForFunction(() => window.videoView.mode === 't2v' && !window.videoView.hasAnyImage);
     assert.equal(await page.locator('.video-image-picker__image').count(), 0);
+    await page.evaluate(async () => {
+      const draft = window.videoView.generationDraft.capture();
+      window.videoView.uploadedImageBase64 = window.referenceImage;
+      await window.videoView.generationDraft.restore(draft);
+    });
+    assert.equal(await page.evaluate(() => window.videoView.hasAnyImage), false);
+
   } finally { await browser.close(); }
 });

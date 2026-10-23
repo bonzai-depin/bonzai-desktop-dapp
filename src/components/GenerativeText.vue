@@ -2302,7 +2302,7 @@ export default {
       nextTick(() => chatInputRef.value?.focus?.());
     };
 
-    const generationDraft = useGenerationDraft({ form, chatParams, currentModel, attachedImage });
+    const generationDraft = useGenerationDraft({ form, chatParams, currentModel, attachedImage, reasoningEnabled });
     return {
       generationDraft,
       remoteInference,
