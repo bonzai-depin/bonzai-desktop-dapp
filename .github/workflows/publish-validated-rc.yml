@@ -1,9 +1,9 @@
-name: Publish validated unsigned RC
+name: Publish validated unsigned release
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'RC tag, matching the built package (vX.Y.Z-rc.N)'
+        description: 'Tag matching the built package (vX.Y.Z or vX.Y.Z-rc.N)'
         required: true
         type: string
       source_sha:
@@ -22,8 +22,13 @@ on:
         description: 'Successful Linux CUDA and ROCm build run'
         required: true
         type: string
+      allow_stable_release:
+        description: 'Explicitly approve a stable release instead of an RC'
+        required: true
+        default: false
+        type: boolean
       allow_unsigned_macos:
-        description: 'Explicitly approve publishing an unsigned, non-notarized macOS RC'
+        description: 'Explicitly approve publishing an unsigned, non-notarized macOS installer'
         required: true
         default: false
         type: boolean
@@ -46,6 +51,7 @@ jobs:
           MACOS_RUN: ${{ inputs.macos_run }}
           WINDOWS_RUN: ${{ inputs.windows_run }}
           LINUX_RUN: ${{ inputs.linux_run }}
+          ALLOW_STABLE_RELEASE: ${{ inputs.allow_stable_release }}
           ALLOW_UNSIGNED_MACOS: ${{ inputs.allow_unsigned_macos }}
           R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || secrets.R2_PUBLIC_URL }}
         run: python scripts/publish-validated-rc.py
