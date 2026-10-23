@@ -28,6 +28,19 @@ test('video Reuse restores controls and reference preview across engines, then c
     assert.match(await page.evaluate(() => window.visionRequest.prompt), /exact supplied frame/);
     assert.equal(await page.evaluate(() => window.visionRequest.image_base64), await page.evaluate(() => window.referenceImage));
     await page.evaluate(async () => {
+      const { remoteInference } = await import('/src/stores/remoteInference.js');
+      Object.assign(remoteInference, { active: true, connected: true, mediaModels: { vision: 'chosen/vision-model' } });
+      window.electronAPI.inferenceRequest = async (pipeline, params) => {
+        window.remoteVisionRequest = { pipeline, params };
+        return { ok: true, remote: true, result: { text: 'A continuous camera move across the scene.' } };
+      };
+      await window.videoView.createVideoPrompt();
+      Object.assign(remoteInference, { active: false, connected: false, mediaModels: {} });
+    });
+    assert.equal(await page.evaluate(() => window.remoteVisionRequest.pipeline), 'vision');
+    assert.equal(await page.evaluate(() => window.videoView.form.prompt), 'A continuous camera move across the scene.');
+
+    await page.evaluate(async () => {
       window.electronAPI.analyzeLocalImage = () => new Promise(resolve => { window.finishVision = resolve; });
       window.pendingPrompt = window.videoView.createVideoPrompt();
     });
