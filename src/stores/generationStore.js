@@ -4,6 +4,7 @@
  * This allows progress bars to persist when users switch between tabs.
  */
 
+import { userFacingError } from '../services/userFacingError.js';
 import { reactive, readonly } from 'vue';
 import { io } from 'socket.io-client';
 import { getHttpErrorMessage } from '../services/auth.service.js';
@@ -193,7 +194,7 @@ export const ensureGenerationSocket = () => {
     const gen = state[modality];
     if (gen.id && generation_id && gen.id !== generation_id) return;
 
-    gen.error = error || 'Unknown error';
+    gen.error = userFacingError(error);
     gen.stage = 'error';
     gen.active = false;
 
@@ -319,7 +320,7 @@ export const setError = (modality, error, statusCode = null) => {
       finalError = getHttpErrorMessage(statusCode, error);
     }
 
-    state[modality].error = finalError;
+    state[modality].error = userFacingError(finalError);
     state[modality].stage = 'error';
     state[modality].active = false;
     releaseGlobalLock(modality);

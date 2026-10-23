@@ -613,6 +613,7 @@
                       </span>
                       Save Memory
                     </label>
+                    <GenerationDrafts kind="audio" :controller="generationDraft" :disabled="isLoading" />
                     <button
                       class="bz-btn bz-btn--primary fira-sans-condensed-black-italic generate-music-btn"
                       :class="{ 'bz-btn--running': isLoading }"
@@ -721,7 +722,7 @@
                   :disabled="!canGenerateWithAccess"
                   shortcut-hint="⌘⏎"
                   @submit="sendMessage(form.prompt)"
-                />
+                ><template #before-submit><GenerationDrafts kind="audio" :controller="generationDraft" :disabled="isLoading" /></template></GenerativeInput>
 
                 <hr class="mt-5" />
 
@@ -920,6 +921,8 @@
 </template>
 
 <script>
+import GenerationDrafts from "./generative/GenerationDrafts.vue";
+import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
 import { estimateLyricsDuration } from "../shared/lyricsDuration.js";
 import { resolveLLM } from "../skills/flagship.js";
@@ -974,7 +977,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeAudio",
-  components: { RoleplayHistoryToggle, DownloadRequirement,
+  components: { GenerationDrafts, RoleplayHistoryToggle, DownloadRequirement,
     AccessRequirements,
     MintModal,
     BonzaiPulse,
@@ -3074,7 +3077,9 @@ Use singable, genre-appropriate meter and structure tags. Write in ${targetLang}
 
     watch(mode, () => probeCurrentMode(), { immediate: true });
 
+    const generationDraft = useGenerationDraft({ form, mode, selectedModel, language, exaggerationPct, voiceGender, synthesisBase64, synthesisFileName, referenceTranscript, musicAdvanced, musicLyrics, musicDuration, musicCaption, lyricsTheme, musicInstrumental, musicBPM, musicKey, musicTimeSignature, musicSteps, musicGuidance, musicSeed, musicShift, musicQuality, musicSemantic, musicOffload, musicVocalLanguage, customVocalLanguage, songName, selectedGenres, selectedMoods, selectedInstruments, selectedVocals, selectedProduction, lyricsDurationEstimate, durationFromLyrics });
     return {
+      generationDraft,
       remoteMedia, remoteInference,
       includeRoleplay,
       reversedInferences,

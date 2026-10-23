@@ -95,7 +95,7 @@
             "
             shortcut-hint="⌘⏎"
             @submit="sendMessage(form.prompt)"
-          />
+          ><template #before-submit><GenerationDrafts kind="image" :controller="generationDraft" :disabled="isLoading" /></template></GenerativeInput>
         </div>
       </template>
 
@@ -238,6 +238,8 @@
 </template>
 
 <script>
+import GenerationDrafts from "./generative/GenerationDrafts.vue";
+import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
 import RoleplayHistoryToggle from './RoleplayHistoryToggle.vue';
 import {
@@ -321,7 +323,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeImage",
-  components: { RoleplayHistoryToggle, DownloadRequirement,
+  components: { GenerationDrafts, RoleplayHistoryToggle, DownloadRequirement,
     AccessRequirements,
     MintModal,
     BonzaiPulse,
@@ -1840,7 +1842,9 @@ export default {
       }
     };
 
+    const generationDraft = useGenerationDraft({ form, mode, quality, uploadedImageBase64, pickedImageName });
     return {
+      generationDraft,
       remoteMedia, remoteInference,
       includeRoleplay,
       reversedInferences,

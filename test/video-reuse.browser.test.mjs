@@ -11,7 +11,7 @@ test('video Reuse restores controls and reference preview across engines, then c
     await page.goto(new URL('/src/assets/tokens.css', url).href);
     await page.setContent('<div id="fixture"></div>');
     await page.evaluate(async () => {
-      window.electronAPI = { store: { get: async (_k, fallback) => fallback, set: async () => true }, checkModel: async () => false };
+      window.electronAPI = { store: { get: async (_k, fallback) => fallback, set: async () => true }, checkModel: async () => false, analyzeLocalImage: async payload => { window.visionRequest = payload; return 'The subject waves gently as the camera moves closer.'; } };
       const { createApp, h } = await import('/node_modules/.vite/deps/vue.js');
       const { createPinia } = await import('/node_modules/.vite/deps/pinia.js');
       const { createI18nPlugin } = await import('/src/i18n/index.js');
@@ -23,6 +23,21 @@ test('video Reuse restores controls and reference preview across engines, then c
         .use(createPinia()).use(createI18nPlugin()).mount('#fixture');
     });
     await page.waitForFunction(() => window.videoView?.handleAction);
+    await page.evaluate(() => window.videoView.createVideoPrompt());
+    assert.equal(await page.evaluate(() => window.videoView.form.prompt), 'The subject waves gently as the camera moves closer.');
+    assert.match(await page.evaluate(() => window.visionRequest.prompt), /exact supplied frame/);
+    assert.equal(await page.evaluate(() => window.visionRequest.image_base64), await page.evaluate(() => window.referenceImage));
+    await page.evaluate(async () => {
+      window.electronAPI.analyzeLocalImage = () => new Promise(resolve => { window.finishVision = resolve; });
+      window.pendingPrompt = window.videoView.createVideoPrompt();
+    });
+    await page.evaluate(async () => {
+      window.videoView.form.prompt = 'My newer direction';
+      window.finishVision('Stale response');
+      await window.pendingPrompt;
+    });
+    assert.equal(await page.evaluate(() => window.videoView.form.prompt), 'My newer direction');
+
     await page.evaluate(() => window.videoView.handleAction('copy', {
       _originalIndex: 0, question: 'A portrait in motion', generationSettings: {
         engine: 'fast', mode: 'i2v', quality: '720p', duration: 10,

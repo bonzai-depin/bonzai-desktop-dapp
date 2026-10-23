@@ -35,7 +35,7 @@
           <div class="app-activity__stage"><span>{{ $ui(stage(op)) }}</span><span v-if="op.step != null && op.total">{{ op.step }} / {{ op.total }}</span></div>
           <progress v-if="op.status==='running' && op.progress != null" :value="op.progress" max="100" :aria-label="title(op)" />
           <p v-if="op.approvals" class="app-activity__error">{{ op.approvals }} · {{ $ui('Awaiting review') }}</p>
-          <p v-if="op.error" class="app-activity__error">{{ op.error }}</p>
+          <p v-if="op.error" class="app-activity__error">{{ $ui(userFacingError(op.error)) }}</p>
           <div v-if="op.id === 'roleplay:away'" class="heartbeat-settings">
             <label v-for="field in heartbeatFields" :key="field.key">{{ field.label }}<select :value="skills.autonomousConfig[field.key]" :disabled="skills.autonomousMode || skills.isGeneratingAutonomous" @change="changeHeartbeat(field.key, $event)"><option v-for="value in field.values" :key="value" :value="value">{{ value }} {{ field.key === 'maxMessages' ? 'updates' : 'min' }}</option></select></label>
             <p>Private conversation updates. BonzAI must stay open and the device awake. Pause to change the schedule.</p>
@@ -54,6 +54,7 @@
   </section>
 </template>
 <script setup>
+import { userFacingError } from "../services/userFacingError.js";
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import activity, { reportOperation, dismissOperation, startActivityTracking } from '../stores/activityStore.js';
 import { orderOperations, terminal as isTerminal } from '../services/activity/operations.js';

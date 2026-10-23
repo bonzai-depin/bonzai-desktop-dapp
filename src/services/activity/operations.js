@@ -6,7 +6,7 @@ export function mergeOperation(previous, patch, now = Date.now()) {
     finishedAt: terminal(patch.status) ? patch.finishedAt || previous?.finishedAt || now : null };
 }
 export function generationKind(kind = '') {
-  if (/video|wan|ltx|i2v|enhance/i.test(kind)) return 'video';
+  if (/video|wan|ltx|i2v|enhance|minimax|h3/i.test(kind)) return 'video';
   if (/audio|music|voice|tts|kokoro|chatterbox/i.test(kind)) return 'music';
   if (/3d|scene|game/i.test(kind)) return 'game';
   if (/text|llm|chat/i.test(kind)) return 'chat';

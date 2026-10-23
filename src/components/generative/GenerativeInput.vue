@@ -92,6 +92,7 @@
           <span v-if="shortcutHint" class="bz-mono bz-meta bz-gen-input__shortcut">
             {{ shortcutHint }}
           </span>
+          <slot name="before-submit" />
           <button
             type="button"
             class="bz-btn bz-btn--primary bz-gen-input__submit"
@@ -366,6 +367,7 @@ defineExpose({ focus() { taEl.value?.focus(); } });
 /* Toolbar */
 .bz-gen-input__bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--bz-space-3);
@@ -381,6 +383,8 @@ defineExpose({ focus() { taEl.value?.focus(); } });
 
 .bz-gen-input__send {
   display: flex;
+  flex-wrap: wrap;
+  margin-left: auto;
   align-items: center;
   gap: var(--bz-space-3);
 }

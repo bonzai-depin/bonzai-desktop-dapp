@@ -161,7 +161,12 @@
                   shortcut-hint="⌘⏎"
                   @submit="sendMessage(form.prompt)"
                 >
+                  <template #before-submit><GenerationDrafts kind="video" :controller="generationDraft" :disabled="isLoading" /></template>
                   <template #tools>
+                    <button v-if="hasAnyImage" type="button" class="bz-btn bz-btn--sm bz-btn--ghost video-prompt-create" :disabled="isEnhancingPrompt || isLoading" @click="createVideoPrompt">
+                      <span class="material-symbols-outlined" aria-hidden="true">movie_edit</span>{{ $ui(isEnhancingPrompt ? 'Creating prompt…' : 'Create Video Prompt') }}
+                    </button>
+                    <span v-if="promptFeedback" role="status" class="video-prompt-feedback">{{ $ui(promptFeedback) }}</span>
                     <button
                       type="button"
                       class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
@@ -366,6 +371,10 @@
 </template>
 
 <script>
+import GenerationDrafts from "./generative/GenerationDrafts.vue";
+import { useGenerationDraft } from "../composables/useGenerationDraft.js";
+import { videoPromptInstruction } from '../services/videoPrompt.js';
+import { userFacingError } from '../services/userFacingError.js';
 import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
 import RoleplayHistoryToggle from './RoleplayHistoryToggle.vue';
 import {
@@ -446,7 +455,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
-  components: { RoleplayHistoryToggle, DownloadRequirement, AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput, ModeChipBar },
+  components: { GenerationDrafts, RoleplayHistoryToggle, DownloadRequirement, AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput, ModeChipBar },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const { inferenceRequest } = useInferenceRouter();
@@ -1502,6 +1511,37 @@ export default {
         .replace(/<\/?(?:think|thinking|reasoning|analysis|reflection)\b[^>]*>/gi, "")
         .trim();
 
+    const promptFeedback = ref('');
+    const createVideoPrompt = async () => {
+      if (!effectiveImage.value || isEnhancingPrompt.value || isLoading.value) return;
+      const image = effectiveImage.value;
+      const originalPrompt = form.prompt;
+      const originalDuration = duration.value;
+      isEnhancingPrompt.value = true;
+      promptFeedback.value = '';
+      try {
+        const instruction = videoPromptInstruction({ duration: originalDuration, direction: originalPrompt });
+        let response;
+        if (remoteMediaEnabled('vision')) {
+          const routed = await inferenceRequest('vision', { image_base64: image, prompt: instruction });
+          if (!routed?.ok) throw new Error(routed?.error || 'Could not analyze the reference image. Please try again.');
+          response = routed.result;
+        } else {
+          response = await window.electronAPI.analyzeLocalImage({ image_base64: image, prompt: instruction, max_tokens: 650 });
+        }
+        const result = stripReasoningTags(typeof response === 'string' ? response : response?.text || '');
+        if (!result) throw new Error('No video prompt was returned. Please try again.');
+        if (effectiveImage.value !== image || form.prompt !== originalPrompt || duration.value !== originalDuration) {
+          promptFeedback.value = 'Your inputs changed. Create a new prompt from the current scene.';
+          return;
+        }
+        form.prompt = result;
+      } catch (error) {
+        console.warn('[Video] Image prompt failed:', error);
+        promptFeedback.value = userFacingError(error, 'Could not create a video prompt. Please try again.');
+      } finally { isEnhancingPrompt.value = false; }
+    };
+
     const enrichPrompt = async () => {
       const promptText = form.prompt.trim();
       if (!promptText || isEnhancingPrompt.value) return;
@@ -2187,7 +2227,12 @@ export default {
       }
     };
 
+    const generationDraft = useGenerationDraft({ form, mode, videoModel, quality, duration, fps, wanFps, autoEnhance, reusedSampling, uploadedImageBase64, pickedImageName, imageAspectRatio, remoteRatio, remoteResolution });
+    const captureVideoDraft = generationDraft.capture;
+    generationDraft.capture = () => ({ ...captureVideoDraft(), uploadedImageBase64: effectiveImage.value });
+
     return {
+      generationDraft,
       remoteMedia, remoteInference, remoteVideoOptions, remoteRatio, remoteResolution,
       includeRoleplay,
       reversedInferences,
@@ -2230,7 +2275,7 @@ export default {
       generationPctRounded,
       generationPctClamped,
       isEnhancingPrompt,
-      enrichPrompt,
+      enrichPrompt, createVideoPrompt, promptFeedback,
       downloads,
       downloadTaskList,
       onImagePicked,
@@ -2283,6 +2328,9 @@ export default {
 </script>
 
 <style scoped>
+.video-prompt-create{pointer-events:auto}
+.video-prompt-feedback{font-size:var(--bz-size-meta);color:var(--bz-fg-mid);max-width:42ch}
+
 .bz-h3-terms {
   position: fixed;
   inset: 0;

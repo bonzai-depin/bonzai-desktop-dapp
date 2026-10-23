@@ -186,7 +186,7 @@
                   :disabled="isLoading || !isModel"
                   shortcut-hint="⌘⏎"
                   @submit="onSubmit"
-                />
+                ><template #before-submit><GenerationDrafts kind="3d" :controller="generationDraft" :disabled="isLoading" /></template></GenerativeInput>
 
                 <!-- REFINE MODE -->
                 <div
@@ -651,6 +651,8 @@
 </template>
 
 <script>
+import GenerationDrafts from "./generative/GenerationDrafts.vue";
+import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { reportOperation } from "../stores/activityStore.js";
 import {
   ref,
@@ -1409,7 +1411,7 @@ function modelFromResolved(resolved, role) {
 
 export default {
   name: "Generative3D",
-  components: { GameRulesPanel, LevelEditor, ExampleLibrary, DownloadRequirement, ThreeViewer, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
+  components: { GenerationDrafts, GameRulesPanel, LevelEditor, ExampleLibrary, DownloadRequirement, ThreeViewer, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
   setup() {
     const {t} = useI18n();
     // ------------ NFT Minting ---------
@@ -5009,7 +5011,9 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
     // ═══════════════════════════════════════════════════════════════════════
     // RETURN
     // ═══════════════════════════════════════════════════════════════════════
+    const generationDraft = useGenerationDraft({ form, creationMode, objectInputMode, referenceImage, enablePhysics, presentation, currentTime, currentWeather, currentPerformance, reasoningEnabled });
     return {
+      generationDraft,
       isLoading,
       threeViewer,
       lastStatus,

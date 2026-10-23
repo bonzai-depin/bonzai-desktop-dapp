@@ -491,6 +491,7 @@
         </template>
       </dl>
       <p class="bz-train__review-status" role="status">{{ runHint }}</p>
+      <GenerationDrafts :kind="mode === 'tune' ? 'training' : 'uncensor'" :controller="generationDraft" :disabled="training.active || ablPipeline.active" />
       <button v-if="mode === 'tune'" type="button" class="bz-btn bz-btn--primary" :disabled="!canStartTraining" @click="startTuneTraining"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>{{ training.active ? 'Training…' : 'Start training' }}</button>
       <button v-else type="button" class="bz-btn bz-btn--primary" :disabled="!canStartAbliteration" @click="startAbliteration"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>{{ ablPipeline.active ? 'Abliterating…' : 'Start uncensoring' }}</button>
       <small>Local processing. Starting a run may download the publisher’s original model weights.</small>
@@ -656,6 +657,9 @@
 </template>
 
 <script setup>
+import GenerationDrafts from './generative/GenerationDrafts.vue'
+import { useGenerationDraft } from '../composables/useGenerationDraft.js'
+
 import TrainingArtifactCard from './training/TrainingArtifactCard.vue'
 import TokenizationProgress from './TokenizationProgress.vue'
 import HubPublish from './HubPublish.vue'
@@ -1700,6 +1704,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('focus', loadTrainingInfo)
   if (socket) socket.disconnect()
 })
+const generationDraft = useGenerationDraft({ trainingPurpose, trainingTab, hubModelId, jsonlRows, jsonlColumns, jsonlFileName, selectedTarget, tuneConfig, ablitConfig })
 </script>
 
 <style scoped>

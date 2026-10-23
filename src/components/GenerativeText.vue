@@ -304,6 +304,7 @@
             @remove-attachment="removeAttachedImage"
             @run-command="runSlashCommand"
           >
+                  <template #before-submit><GenerationDrafts kind="text" :controller="generationDraft" :disabled="isLoading" /></template>
             <template #tools>
               <button
                 type="button"
@@ -388,6 +389,8 @@
 </template>
 
 <script>
+import GenerationDrafts from "./generative/GenerationDrafts.vue";
+import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { visibleText } from "../shared/visibleText.js";
 import { reportOperation } from "../stores/activityStore.js";
 import { bonzaiCodeBlockPlugin } from "../shared/markdownCode.js";
@@ -538,7 +541,7 @@ import { inspector as generationInspector } from "../services/generationInspecto
 
 export default {
   name: "GenerativeText",
-  components: { DownloadRequirement,
+  components: { GenerationDrafts, DownloadRequirement,
     BzCloseButton,
     VueMarkdown,
     GenerativeImage,
@@ -2299,7 +2302,9 @@ export default {
       nextTick(() => chatInputRef.value?.focus?.());
     };
 
+    const generationDraft = useGenerationDraft({ form, chatParams, currentModel, attachedImage });
     return {
+      generationDraft,
       remoteInference,
       downloadProgress,
       isLoading,

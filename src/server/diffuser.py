@@ -5873,9 +5873,9 @@ def minimax_h3_video():
         })
     except Exception as exc:
         logger.exception("[MiniMax H3] Generation failed; settings=%s", diagnostic_settings)
-        genbus.error(gen_id, str(exc))
-        return jsonify({"error": str(exc), "generation_id": gen_id,
-                        "generation_settings": diagnostic_settings}), 500
+        message = "The video could not be generated. Please try again with a different seed or a shorter clip."
+        genbus.error(gen_id, message)
+        return jsonify({"error": message, "generation_id": gen_id}), 500
     finally:
         pipe = model = state = None
         _release_h3_phase()

@@ -1,0 +1,5 @@
+/** Ground the storyboard in the supplied frame rather than inventing a new scene. */
+export function videoPromptInstruction({ duration = 5, direction = '' } = {}) {
+  const seconds = Math.max(1, Math.min(120, Number(duration) || 5));
+  return `Analyze the reference image and write one production-ready image-to-video prompt for a ${seconds}-second clip. Identify the visible subject, setting, composition, lighting and spatial relationships. Preserve their identity and appearance. Imagine a coherent, physically plausible action with a clear beginning, middle and ending paced to ${seconds} seconds. Describe subject movement, environmental motion and one motivated camera movement. Start from the exact supplied frame; maintain visual continuity and avoid incompatible cuts, new characters or unsupported scene changes. Include a concise chronological storyboard within the prose. Return only the final prompt, without analysis, headings or markdown.${direction.trim() ? `\nUser direction: ${direction.trim()}` : ''}`;
+}
