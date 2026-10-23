@@ -6,7 +6,7 @@ This file defines the working rules for contributors and coding agents in the Bo
 
 - BonzAI is local-first. Models, prompts, generation history, company memory, and credentials remain on the user's device by default.
 - Local inference is free. Staking and protocol assets govern publishing, ownership, markets, and rewards, not access to inference.
-- Company automation uses a one-time workspace license; existing records remain readable/exportable while locked, and demo rehearsals stay accessible. Personal local inference remains free.
+- Local Smart Workflows and personal inference are free. Remote agent services use explicit, separately approved payments; no workspace license is required.
 - Wallet and onchain features are optional. Core creation and company workflows must remain useful without them.
 - The configured economy chain is the source of truth. Do not hard-code a network where `src/config/web3.config.js` already provides it.
 - Features must work across supported operating systems. Do not introduce an MLX-only requirement.

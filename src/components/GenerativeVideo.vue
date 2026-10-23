@@ -39,7 +39,13 @@
           <div class="models__activity--payouts">
             <div class="columns">
               <div class="column is-12">
-                <div class="video-control-stack">
+                <div v-if="remoteMedia" class="video-control-stack">
+                  <div class="video-control-row"><span class="bz-eyebrow">Duration</span><ModeChipBar v-model="duration" :items="remoteVideoOptions.durations.map(value => ({ value, label: `${value}s` }))" compact /></div>
+                  <div class="video-control-row"><span class="bz-eyebrow">Aspect Ratio</span><ModeChipBar v-model="remoteRatio" :items="remoteVideoOptions.ratios.map(value => ({ value, label: value }))" compact /></div>
+                  <div class="video-control-row"><span class="bz-eyebrow">Resolution</span><ModeChipBar v-model="remoteResolution" :items="remoteVideoOptions.resolutions.map(value => ({ value, label: value }))" compact /></div>
+                  <div class="video-control-row"><span class="bz-eyebrow">Mode</span><ModeChipBar v-model="mode" :items="videoModeItems" compact /></div>
+                </div>
+                <div v-else class="video-control-stack">
                   <div class="video-control-row">
                     <span class="bz-eyebrow">{{ $t('create.quality') }}</span>
                     <ModeChipBar v-model="videoModel" :items="videoModelItems" compact />
@@ -79,7 +85,7 @@
                 </div>
 
                 <DownloadRequirement category="video"
-                  v-if="showUpdateCTA || downloads.active"
+                  v-if="!remoteMedia && (showUpdateCTA || downloads.active)"
                   :items="[...readiness.repoDetails, ...readiness.ggufNames]"
                   :active="downloads.active"
                   cancellable
@@ -133,7 +139,8 @@
                 </div>
 
                 <!-- ACCESS REQUIREMENTS -->
-                <AccessRequirements
+                <p v-if="remoteMedia" class="bz-eyebrow">OpenRouter · {{ remoteInference.mediaModels?.video }}</p>
+          <AccessRequirements v-if="!remoteMedia"
                   ref="accessRef"
                   level="LVL4"
                   @access-changed="onAccessChanged"
@@ -150,7 +157,7 @@
                   :submit-label="mode === 't2v' ? 'Generate' : 'Animate'"
                   running-label="Crafting"
                   :running="isLoading"
-                  :disabled="!canGenerate || !hasAccess"
+                  :disabled="!canGenerate || (!remoteMedia && !hasAccess)"
                   shortcut-hint="⌘⏎"
                   @submit="sendMessage(form.prompt)"
                 >
@@ -186,7 +193,8 @@
               </div>
               <div class="level-right">
                 <div class="level-item buttons">
-                  <button
+                  <RoleplayHistoryToggle v-model="includeRoleplay" />
+<button
                     type="button"
                     class="bz-iconbtn"
                     title="Import history"
@@ -223,7 +231,7 @@
               <!-- GENERATION HISTORY HEADER -->
               <div>
                 <div
-                  v-if="inferences && inferences.length"
+                  v-if="reversedInferences.length"
                   ref="masonryGridRef"
                   class="bz-video-masonry"
                   :style="{ '--bz-video-masonry-columns': masonryColumns.length }"
@@ -267,7 +275,6 @@
                       </p>
                       <GenerativeActions
                         :actions="actionsFor(entry.inference)"
-                        icon-only
                         @action="(id) => handleAction(id, entry.inference)"
                       />
                     </div>
@@ -359,6 +366,8 @@
 </template>
 
 <script>
+import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
+import RoleplayHistoryToggle from './RoleplayHistoryToggle.vue';
 import {
   ref,
   reactive,
@@ -437,10 +446,29 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeVideo",
-  components: { DownloadRequirement, AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput, ModeChipBar },
+  components: { RoleplayHistoryToggle, DownloadRequirement, AccessRequirements, MintModal, BonzaiPulse, GenerativeActions, GenerativeInput, ModeChipBar },
   props: { existingImageBase64: { type: String, default: "" } },
   setup(props) {
     const { inferenceRequest } = useInferenceRouter();
+    refreshRemoteInference().catch(() => {});
+    const remoteMedia = computed(() => remoteMediaEnabled('video'));
+    const remoteVideoOptions = reactive({ durations: [], ratios: [], resolutions: [] });
+    const remoteRatio = ref('16:9'), remoteResolution = ref('');
+    onMounted(() => {
+      watch(() => remoteMedia.value && remoteInference.mediaModels?.video, async id => {
+        if (!id) return;
+        try {
+          const item = (await window.electronAPI.openRouter.mediaModels('video')).find(m => m.id === id);
+          if (!item) return;
+          remoteVideoOptions.durations = item.supported_durations || [];
+          remoteVideoOptions.ratios = item.supported_aspect_ratios || [];
+          remoteVideoOptions.resolutions = item.supported_resolutions || [];
+          if (!remoteVideoOptions.durations.includes(duration.value)) duration.value = remoteVideoOptions.durations[0] || 5;
+          if (!remoteVideoOptions.ratios.includes(remoteRatio.value)) remoteRatio.value = remoteVideoOptions.ratios[0] || '16:9';
+          remoteResolution.value = remoteVideoOptions.resolutions[0] || '';
+        } catch (error) { setError('video', error.message); }
+      }, { immediate: true });
+    });
 
     // ------------ NFT Minting ---------
     const mintTarget = ref(null);
@@ -449,8 +477,8 @@ export default {
     const openMint = async (inference) => {
       const request = ++mintSelectionRequest;
       const videoPath = inference.answer?.data?.video_path;
-      let content = null;
-      if (videoPath && window.electronAPI?.readFileAsBase64) {
+      let content = getVideoUrl(inference);
+      if (videoPath && !/^(?:https?:|bonzai-blob:|data:|file:)/i.test(videoPath) && window.electronAPI?.readFileAsBase64) {
         try {
           content = await window.electronAPI.readFileAsBase64(videoPath);
         } catch (e) {
@@ -462,7 +490,7 @@ export default {
         inferenceType: 'video',
         inferenceId: inference.id,
         content,
-        contentType: 'video/mp4',
+        contentType: inference.answer?.data?.mime_type || (/\.webm(?:$|[?#])/i.test(content || videoPath || '') ? 'video/webm' : 'video/mp4'),
         prompt: inference.question,
         generation: recordedMintGeneration(inference, {
           type: inference.question?.startsWith('i2v') ? 'image-to-video' : 'text-to-video',
@@ -583,6 +611,8 @@ export default {
     const pendingDelete = ref(null);
     let pendingDeleteTimer = null;
     // Use shallowRef for inferences - video data is large
+    const includeRoleplay = ref(localStorage.getItem('bonzai:history:roleplay') !== 'false');
+    watch(includeRoleplay, value => { localStorage.setItem('bonzai:history:roleplay', String(value)); displayedCount.value = 12; });
     const inferences = shallowRef([]);
     const hasCopy = shallowRef([]);
     const planReq = reactive({ controller: null, seq: 0 });
@@ -651,7 +681,7 @@ export default {
             _originalIndex: idx,
           };
         })
-        .filter((item) => item && (item.answer?.data?.video_path || item.answer?.data?.video_url));
+        .filter((item) => item && (includeRoleplay.value || item.source !== 'roleplay') && (item.answer?.data?.video_path || item.answer?.data?.video_url));
 
       console.log(`[GenerativeVideo] ${inferences.value.length} total, ${normalized.length} valid`);
       return normalized
@@ -811,13 +841,13 @@ export default {
     };
 
     const canGenerateWithAccess = computed(
-      () => hasAccess.value && !isLoading.value
+      () => (remoteMedia.value || hasAccess.value) && !isLoading.value
     );
 
     // Can generate: for t2v mode, just need access; for i2v/quality mode, also need an image
     const canGenerate = computed(() => {
       if (isLoading.value) return false;
-      if (videoModel.value === "quality") return hasAnyImage.value; // Wan2.2 is always I2V
+      if (!remoteMedia.value && videoModel.value === "quality") return hasAnyImage.value; // Wan2.2 is always I2V
       if (mode.value === "t2v") return true;
       return hasAnyImage.value;
     });
@@ -1557,12 +1587,12 @@ export default {
       if (!promptText) return;
       // For i2v mode, require an image
       if (mode.value === "i2v" && !hasAnyImage.value) return;
-      if (!hasAccess.value) return;
+      if (!remoteMedia.value && !hasAccess.value) return;
       _lastRoutingMode = 'local';
 
       const isQuality = videoModel.value === "quality";
       const isSota = videoModel.value === "sota";
-      if (isSota && !h3TermsAccepted.value) {
+      if (!remoteMedia.value && isSota && !h3TermsAccepted.value) {
         showH3Terms.value = true;
         return;
       }
@@ -1649,7 +1679,7 @@ export default {
 
       Object.assign(payload, reusedSampling.value);
       // Include image for i2v mode (LTX-2) or always for Wan2.2 (I2V only)
-      if (mode.value === "i2v" || isQuality) {
+      if (mode.value === "i2v" || (!remoteMedia.value && isQuality)) {
         payload.image_base64 =
           effectiveImage.value;
       }
@@ -1660,16 +1690,12 @@ export default {
         autoEnhance: autoEnhance.value, imageName: pickedImageName.value,
       };
       const generationPipeline = pipelineForMode();
+      payload.pipeline = generationPipeline;
+      payload.duration = duration.value;
+      if (remoteMedia.value) { payload.aspect_ratio = remoteRatio.value; payload.resolution = remoteResolution.value; }
       const url = `${API_BASE}${endpointForMode()}`;
 
-      // Free GPU memory: unload local LLM + clear cached Flask models
-      try {
-        await window.electronAPI?.unloadModel?.();
-        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
-      } catch (e) {
-        console.warn("[GenerativeVideo] Memory clear:", e.message);
-      }
-
+      // The device coordinator releases idle models only after this request owns the device.
       ensureGenerationSocket();
       startGeneration("video"); // Initialize generation state
       const _genStart = performance.now();
@@ -1681,17 +1707,17 @@ export default {
             ...response.data,
             prompt: promptText,
             mode: generationSettings.mode,
-            engine: isSota ? "sota" : isQuality ? "quality" : "fast",
+            engine: remoteMedia.value ? "openrouter" : isSota ? "sota" : isQuality ? "quality" : "fast",
             quality: generationSettings.quality,
             duration: response.data?.duration || generationSettings.duration,
-            fps: frameRate,
-            frames: response.data?.frames || frames,
-            width: response.data?.width || w,
-            height: response.data?.height || h,
+            fps: response.data?.fps || (remoteMedia.value ? null : frameRate),
+            frames: response.data?.frames || (remoteMedia.value ? null : frames),
+            width: response.data?.width || (remoteMedia.value ? null : w),
+            height: response.data?.height || (remoteMedia.value ? null : h),
           };
 
           // Optional Wan restoration preserves the generated clip's timing.
-          if (isQuality && generationSettings.autoEnhance && finalData.video_path) {
+          if (!remoteMedia.value && isQuality && generationSettings.autoEnhance && finalData.video_path) {
             try {
               const enh = await enhanceVideo({ baseUrl: API_BASE, videoPath: finalData.video_path });
               if (enh?.video_path) {
@@ -1749,7 +1775,8 @@ export default {
               width: finalData.width,
               height: finalData.height,
               elapsed: elapsedMs / 1000,
-              source: 'bonzai',
+              source: response.data.metadata?.source || 'bonzai',
+              model: response.data.model, usage: response.data.metadata?.usage,
               networkMode: _lastRoutingMode,
               enhanced: !!finalData.enhanced,
             },
@@ -1776,7 +1803,7 @@ export default {
       if (data.video_url) return data.video_url;
       // Use streaming endpoint for local file paths
       if (data.video_path) {
-        if (/^https?:\/\//i.test(data.video_path)) return data.video_path;
+        if (/^(?:https?:|bonzai-blob:|data:|file:)/i.test(data.video_path)) return data.video_path;
         // Use the streaming endpoint for local files
         return `${API_BASE}/media/stream?path=${encodeURIComponent(data.video_path)}`;
       }
@@ -2004,7 +2031,16 @@ export default {
         });
     });
 
+    // Merge only roleplay rows so an active generation keeps its live state.
+    const refreshRoleplayHistory = async () => {
+      const rows = await window.electronAPI?.store?.get?.('videoInferences', []);
+      if (!Array.isArray(rows)) return;
+      const merged = new Map(inferences.value.map(row => [row.id, row]));
+      for (const row of rows) if (row.source === 'roleplay') merged.set(row.id, row);
+      inferences.value = [...merged.values()].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+    };
     onMounted(async () => {
+      window.addEventListener('bonzai:roleplay-history-changed', refreshRoleplayHistory);
       ensureGenerationSocket();
       await resumeActiveDownloadIfAny();
       await loadHistory();
@@ -2034,6 +2070,7 @@ export default {
     });
 
     onBeforeUnmount(() => {
+      window.removeEventListener('bonzai:roleplay-history-changed', refreshRoleplayHistory);
       if (downloadsSocket.value?.connected) {
         try {
           downloadsSocket.value.disconnect();
@@ -2105,7 +2142,7 @@ export default {
           title: enhanced ? "Enhanced" : "SeedVR2" },
         { id: "mint",
           icon: minted ? "check_circle" : "token",
-          label: minted ? "Minted" : "Mint",
+          label: minted ? "Tokenized" : "Tokenize",
           variant: minted ? "success" : "default",
           disabled: minted },
         { id: "delete",
@@ -2151,6 +2188,9 @@ export default {
     };
 
     return {
+      remoteMedia, remoteInference, remoteVideoOptions, remoteRatio, remoteResolution,
+      includeRoleplay,
+      reversedInferences,
       mode,
       videoModel,
       showH3Terms,

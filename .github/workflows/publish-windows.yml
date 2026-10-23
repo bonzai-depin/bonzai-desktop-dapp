@@ -96,7 +96,7 @@ jobs:
         with:
           path: |
             bin/windows-x64
-            src/server/scripts/convert_hf_to_gguf.py
+            src/server/scripts
           key: windows-vulkan-v1-${{ env.LLAMA_CPP_REF }}-${{ env.VULKAN_VERSION }}-${{ hashFiles('scripts/build-llama-rpc.js', 'scripts/llama-build-targets.mjs') }}
 
       - name: Build llama.cpp RPC binaries
@@ -111,7 +111,7 @@ jobs:
         with:
           path: |
             bin/windows-x64
-            src/server/scripts/convert_hf_to_gguf.py
+            src/server/scripts
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Verify native GPU package and CPU fallback

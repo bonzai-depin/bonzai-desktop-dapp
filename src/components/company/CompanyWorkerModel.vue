@@ -8,6 +8,7 @@ import { i18n } from '../../i18n/index.js';
 import { useModalAccessibility } from '../../composables/useModalAccessibility.js';
 import BzCloseButton from '../BzCloseButton.vue';
 import './company-design.css';
+import { smartAgentCatalog } from '../../services/smartAgentCatalog.js';
 
 const props = defineProps({ modelValue: { default: null }, roleKey: { type: String, required: true }, roleLabel: String, workerId: String, save: Function, disabled: Boolean });
 const emit = defineEmits(['update:modelValue', 'saved']);
@@ -21,12 +22,13 @@ const selected = computed(() => ranking.value.models.find(m => m.key === selecte
 const alternatives = computed(() => ranking.value.models.filter(m => `${m.name} ${m.filename}`.toLowerCase().includes(query.value.toLowerCase())).slice(0, 80));
 const label = model => model?.name || '';
 const fitLabel = model => ui(!ranking.value.knownHardware ? 'Memory check unavailable' : model.cpuOnly && model.fit.tier === 0 ? 'Fits in memory · runs on CPU' : ['Fits this device', 'Limited memory headroom', 'Uses slower CPU offload', 'Too large for this device'][model.fit.tier]);
-const canApply = computed(() => !loading.value && !busy.value && selected.value && selected.value.checked && selected.value.fit.tier < 3);
+const customAgent = computed(() => smartAgentCatalog.agents.find(agent => agent.id === props.workerId)?.isCustom === true);
+const canApply = computed(() => customAgent.value && !loading.value && !busy.value && selected.value && selected.value.checked && selected.value.fit.tier < 3);
 let controller, unsubscribe, disposed = false, request = 0;
 useModalAccessibility(dialog, { onClose: close });
 
 async function show() {
-  if (props.disabled) return;
+  if (props.disabled || !customAgent.value) return;
   open.value = true; loading.value = true; error.value = ''; advanced.value = false; query.value = ''; selectedKey.value = null;
   hardware.value = null; availability.value = {};
   const id = ++request;
@@ -78,9 +80,9 @@ onBeforeUnmount(() => { disposed=true; ++request; controller?.abort(); unsubscri
 </script>
 
 <template>
-  <button type="button" class="worker-model-control" :disabled="disabled" :aria-label="`${ui('AI model')} · ${roleLabel || roleKey}`" @click="show" data-i18n-skip>
+  <button type="button" class="worker-model-control" :disabled="disabled || !customAgent" :aria-label="`${ui('AI model')} · ${roleLabel || roleKey}`" @click="show" data-i18n-skip>
     <span class="material-symbols-outlined" aria-hidden="true">memory</span>
-    <span><small>{{ ui('AI model') }}</small><strong>{{ current ? label(current) : modelValue ? formatModelLabel(modelValue) : ui('Choose for this role') }}</strong></span>
+    <span><small>{{ ui('AI model') }}</small><strong>{{ !customAgent ? ui('Shared app model') : current ? label(current) : modelValue ? formatModelLabel(modelValue) : ui('Choose for this role') }}</strong></span>
     <span class="material-symbols-outlined worker-model-control__arrow" aria-hidden="true">chevron_right</span>
   </button>
   <Teleport to="body">

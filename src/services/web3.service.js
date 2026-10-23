@@ -214,6 +214,9 @@ const initAppKit = () => {
     themeMode: 'dark',
     themeVariables: {
       '--w3m-accent': '#10b981',
+      // Wallet selection/signing must remain above tokenization (10003) and
+      // its waiting-for-signature overlay (99999). AppKit owns this layer.
+      '--w3m-z-index': 100100,
     },
   });
 
@@ -234,6 +237,20 @@ export const ensureWalletProvider = async (opts = {}) => {
     throw new Error("Wallet provider requires a browser-like environment.");
   }
 
+  // Load the core connection UI before AppKit starts its background injection.
+  // A missing development chunk must surface here instead of leaving Connect pending.
+  if (!auto) {
+    try {
+      await Promise.all([
+        import('@reown/appkit-scaffold-ui'),
+        import('@reown/appkit-scaffold-ui/w3m-modal'),
+        import('@reown/appkit-scaffold-ui/send'),
+        import('@reown/appkit-scaffold-ui/receive'),
+      ]);
+    } catch {
+      throw new Error('Wallet connection could not load. Save your work and reopen BonzAI, then try again.');
+    }
+  }
   // Initialize AppKit (singleton)
   const modal = initAppKit();
 

@@ -10,6 +10,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/server"))
 from inference_serialization import install_inference_serialization
 
 class InferenceSerializationTests(unittest.TestCase):
+    def test_qwen_alias_uses_the_same_device_lease_as_turbo(self):
+        app = Flask(__name__)
+        install_inference_serialization(app)
+        app.add_url_rule('/image/qwen-2.1', 'qwen', lambda: {'ok': True}, methods=['POST'])
+        with patch('inference_serialization.device_lease') as lease, app.test_client() as client:
+            self.assertEqual(client.post('/image/qwen-2.1').status_code, 200)
+            lease.assert_called_once()
+
     def test_request_timing_preserves_media_duration_and_reports_failures(self):
         app = Flask(__name__)
         install_inference_serialization(app)
@@ -143,6 +151,69 @@ class InferenceSerializationTests(unittest.TestCase):
             with app.test_client() as client:
                 self.assertEqual(client.post('/image/turbo').status_code, 200)
         self.assertEqual(events, ['clear', 'lease', 'image', 'release'])
+
+    def test_queue_announces_wait_before_loading_and_finishes_after_failure(self):
+        app = Flask(__name__)
+        events = []
+        install_inference_serialization(app, on_acquired=lambda path: events.append('load'),
+            on_queue=lambda event: events.append(event['stage']))
+        @app.post('/audio/music')
+        def music():
+            events.append('inference')
+            return {'error': 'Not enough free memory'}, 503
+        with app.test_client() as client:
+            self.assertEqual(client.post('/audio/music').status_code, 503)
+        self.assertEqual(events, ['queued', 'load', 'running', 'inference', 'finished'])
+
+    def test_progress_transport_failure_never_strands_the_device(self):
+        app = Flask(__name__)
+        def fail(_event):
+            raise RuntimeError('socket disconnected')
+        install_inference_serialization(app, on_queue=fail)
+        @app.post('/audio/music')
+        def music():
+            return {'ok': True}
+        with patch.object(app.logger, 'exception'), app.test_client() as client:
+            self.assertEqual(client.post('/audio/music').status_code, 200)
+            self.assertEqual(client.post('/audio/music').status_code, 200)
+        self.assertEqual(app.extensions['bonzai_inference_queue'](), [])
+
+    def test_standalone_queue_is_fifo(self):
+        from inference_serialization import FairDeviceLock
+        lock = FairDeviceLock()
+        lock.acquire()
+        order = []
+        def worker(index):
+            with lock:
+                order.append(index)
+        workers = []
+        for index in range(3):
+            thread = threading.Thread(target=worker, args=(index,))
+            workers.append(thread)
+            thread.start()
+            deadline = time.monotonic() + 2
+            while len(lock.waiting) < index + 1 and time.monotonic() < deadline:
+                time.sleep(.001)
+            self.assertEqual(len(lock.waiting), index + 1)
+        lock.release()
+        for thread in workers:
+            thread.join(2)
+        self.assertEqual(order, [0, 1, 2])
+
+    def test_training_queue_is_visible_before_acquisition_and_on_reconnect(self):
+        app = Flask(__name__)
+        events = []
+        run = install_inference_serialization(app, on_queue=lambda event: events.append(event.copy()))
+        def train():
+            snapshot = app.extensions['bonzai_inference_queue']()
+            self.assertEqual(len(snapshot), 1)
+            self.assertEqual(snapshot[0]['stage'], 'running')
+            self.assertTrue(snapshot[0]['background'])
+            raise ValueError('failed')
+        with self.assertRaises(ValueError):
+            run(train, '/training/start')
+        self.assertEqual([e['stage'] for e in events], ['queued', 'running', 'failed'])
+        self.assertEqual(app.extensions['bonzai_inference_queue'](), [])
 
     def test_failed_inference_releases_device_for_next_request(self):
         app = Flask(__name__)

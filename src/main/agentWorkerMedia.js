@@ -8,7 +8,7 @@ const mimeExt = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp',
 const MODEL_CONFIG = /^(?:config|adapter_config|tokenizer|tokenizer_config|special_tokens_map|generation_config|vocab|model_index|preprocessor_config|processor_config|scheduler_config|feature_extractor_config)\.json$/;
 const MODEL_INDEX = /^(?:model\.safetensors|pytorch_model\.bin)\.index\.json$/;
 const MODEL_WEIGHT = /(?:\.safetensors|\.gguf)$|^(?:pytorch_model(?:-\d+-of-\d+)?|adapter_model)\.bin$/i;
-function modelArtifact(name) {
+export function modelArtifact(name) {
   return MODEL_WEIGHT.test(name) || MODEL_CONFIG.test(name) || MODEL_INDEX.test(name)
     || ['merges.txt', 'tokenizer.model', 'spiece.model', 'vocab.txt'].includes(name);
 }
@@ -16,6 +16,13 @@ function modelArtifact(name) {
 export function createWorkerMedia({ blobs, roots, trainedRoot }) {
   return {
     async prepare(output, meta) {
+      if (output?.meta?.licensedOriginal && ['text','3d'].includes(output.pipeline)) {
+        const bytes=Buffer.from(output.payload,'utf8');
+        if (!bytes.length || bytes.length>1024*1024) throw new Error('Text delivery exceeds 1 MiB.');
+        const ext=output.pipeline==='3d'?'js':'txt',mimeType=output.pipeline==='3d'?'text/javascript':'text/plain';
+        const stored=await blobs.write(bytes,ext,{...meta,source:'smart-agent-worker',mimeType});
+        return {pipeline:output.pipeline,artifacts:[{id:stored.id,sha256:stored.id,ext,mimeType,size:bytes.length,pipeline:output.pipeline}]};
+      }
       if (output?.pipeline === 'fineTune') {
         const id = output.meta?.modelId;
         if (!trainedRoot || typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(id)) throw new Error('Invalid trained model identity.');
@@ -55,7 +62,7 @@ export function createWorkerMedia({ blobs, roots, trainedRoot }) {
         };
         await walk(folder);
         if (!artifacts.some(a => /\.(?:safetensors|gguf|bin)$/i.test(a.name))) throw new Error('Training produced no weights.');
-        return { pipeline: 'fineTune', text: 'Training completed. Download the model files together to use this model.', artifacts };
+        return { pipeline: 'fineTune', text: output.meta.licensedOriginal ? 'Licensed model files are ready. Download the complete bundle.' : 'Training completed. Download the model files together to use this model.', artifacts };
       }
       if (Array.isArray(output?.artifacts)) {
         if (output.artifacts.length > 12) throw new Error('Too many delivery artifacts.');
@@ -63,10 +70,10 @@ export function createWorkerMedia({ blobs, roots, trainedRoot }) {
         for (const item of output.artifacts) {
           const prepared = await this.prepare(item, meta);
           if (prepared.text) result.text += `\n${prepared.text}`;
-          result.artifacts.push(...prepared.artifacts);
+          result.artifacts.push(...prepared.artifacts.map(artifact => ({ ...artifact, pipeline: artifact.pipeline || prepared.pipeline })));
         }
         if (Buffer.byteLength(result.text) > 1024 * 1024) throw new Error('Text delivery exceeds 1 MiB.');
-        if (result.artifacts.reduce((sum, a) => sum + a.size, 0) > LIMIT) throw new Error('Delivery exceeds 128 MiB.');
+        if (result.artifacts.reduce((sum, a) => sum + a.size, 0) > (output.artifacts.some(a => a.pipeline === 'fineTune') ? 32 * 1024 ** 3 : LIMIT)) throw new Error('Delivery exceeds its size limit.');
         return result;
       }
       const payload = output?.payload ?? output?.text;

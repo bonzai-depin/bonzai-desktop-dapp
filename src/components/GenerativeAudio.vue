@@ -73,7 +73,8 @@
                 </div>
 
                 <!-- ACCESS REQUIREMENTS -->
-                <AccessRequirements
+                <p v-if="remoteMedia" class="bz-eyebrow">OpenRouter · {{ remoteInference.mediaModels?.speech }}</p>
+          <AccessRequirements v-if="!remoteMedia"
                   ref="accessRef"
                   level="LVL2"
                   @access-changed="onAccessChanged"
@@ -81,7 +82,7 @@
                 />
 
                 <DownloadRequirement v-if="mode === 'music' && !lyricsModelReady"
-                  category="text" :items="[{ category: 'text', size: '2.8 GB' }]"
+                  category="text" :items="[{ category: 'text', size: '5.97 GB' }]"
                   :active="lyricsDownloading" :progress="lyricsDownloadProgress"
                   :error="lyricsDownloadError" title="Lyrics writer" @download="downloadLyricsModel" />
                 <!-- MUSIC MODE INPUTS -->
@@ -154,7 +155,7 @@
                             !lyricsModelReady
                               ? 'Download the lyrics writer above first'
                               : lyricsTheme.trim()
-                                ? 'Generate lyrics using Qwen3.5 4B MTP'
+                                ? 'Generate lyrics using Qwen3.5 9B MTP'
                                 : 'Enter a theme first'
                           "
                         >
@@ -272,6 +273,7 @@
                           <input id="audio-musicDuration"
                             type="range"
                             v-model.number="musicDuration"
+                            @input="durationFromLyrics = false"
                             min="10"
                             max="300"
                             step="10"
@@ -279,6 +281,7 @@
                           />
                         </div>
                       </div>
+
 
                       <!-- BPM -->
                       <div class="param-item">
@@ -346,6 +349,8 @@
                         </div>
                       </div>
                     </div>
+
+                      <p v-if="durationFromLyrics" class="music-duration-estimate">{{ $ui('Estimated from lyrics and BPM') }} · {{ lyricsDurationEstimate }}s<span v-if="lyricsDurationEstimate > 300"> · {{ $ui('Track limit: 300s. Shorten the lyrics or increase BPM.') }}</span></p>
 
                     <!-- Advanced Parameters -->
                     <div v-if="musicAdvanced" class="params-grid mt-3 advanced-params">
@@ -679,7 +684,7 @@
                 </div>
 
                 <DownloadRequirement category="audio"
-                  v-if="(showUpdateCTA && readiness.currentMode === mode) || downloads.active"
+                  v-if="!remoteMedia && ((showUpdateCTA && readiness.currentMode === mode) || downloads.active)"
                   :items="[...readiness.repoDetails, ...readiness.ggufNames]"
                   :active="downloads.active"
                   cancellable
@@ -734,7 +739,8 @@
                   </div>
                   <div class="level-right">
                     <div class="level-item buttons">
-                      <button
+                      <RoleplayHistoryToggle v-model="includeRoleplay" />
+<button
                         type="button"
                         class="bz-iconbtn"
                         title="Import history"
@@ -773,7 +779,7 @@
                 </div>
 
                 <!-- RESULTS -->
-                <ol class="chat" v-if="inferences.length">
+                <ol class="chat" v-if="reversedInferences.length">
                   <li
                     v-for="(inference, displayIndex) in paginatedInferences"
                     :key="inference.id || inference._originalIndex"
@@ -835,7 +841,7 @@
                         </div>
                         <audio
                           :ref="(el) => setAudioRef(audioElementId(inference), el)"
-                          :src="fileUrl(inference.answer.data.audio_path)"
+                          :src="inference.answer.data.audio_url || fileUrl(inference.answer.data.audio_path)"
                           class="audio-player-native"
                           preload="metadata"
                           @timeupdate="(event) => onAudioTimeUpdate(inference, event)"
@@ -914,6 +920,11 @@
 </template>
 
 <script>
+import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
+import { estimateLyricsDuration } from "../shared/lyricsDuration.js";
+import { resolveLLM } from "../skills/flagship.js";
+import { visibleText } from "../shared/visibleText.js";
+import RoleplayHistoryToggle from './RoleplayHistoryToggle.vue';
 import {
   ref,
   shallowRef,
@@ -963,7 +974,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeAudio",
-  components: { DownloadRequirement,
+  components: { RoleplayHistoryToggle, DownloadRequirement,
     AccessRequirements,
     MintModal,
     BonzaiPulse,
@@ -974,6 +985,8 @@ export default {
   },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
+    refreshRemoteInference().catch(() => {});
+    const remoteMedia = computed(() => remoteMediaEnabled('speech') && mode.value !== 'music');
     const { t, locale } = useI18n();
     const audioModeItems = [
       { value: "tts", label: "Text to Speech", icon: "record_voice_over" },
@@ -1094,6 +1107,12 @@ export default {
     // Music mode refs
     const musicLyrics = ref("");
     const musicDuration = ref(60);
+    const lyricsDurationEstimate = ref(0);
+    const durationFromLyrics = ref(false);
+    const updateLyricsDuration = () => {
+      lyricsDurationEstimate.value = estimateLyricsDuration(musicLyrics.value, musicBPM.value, Number(musicTimeSignature.value.split("/")[0]) * 4 / Number(musicTimeSignature.value.split("/")[1]));
+      musicDuration.value = Math.max(10, Math.min(300, Math.ceil(lyricsDurationEstimate.value / 10) * 10));
+    };
     const musicCaption = ref("");
     const lyricsTheme = ref("");
     const musicInstrumental = ref(false);
@@ -1241,6 +1260,8 @@ export default {
     const form = reactive({ prompt: "" });
     // Use shallowRef for inferences — avoids Vue Proxy wrapping that
     // breaks Electron IPC structured clone serialization on persist.
+    const includeRoleplay = ref(localStorage.getItem('bonzai:history:roleplay') !== 'false');
+    watch(includeRoleplay, value => { localStorage.setItem('bonzai:history:roleplay', String(value)); displayedCount.value = 12; });
     const inferences = shallowRef([]);
     const hasCopy = shallowRef([]);
     const promptInput = ref(null);
@@ -1320,7 +1341,7 @@ export default {
             _originalIndex: idx,
           };
         })
-        .filter((item) => item && item.answer?.data?.audio_path);
+        .filter((item) => item && (includeRoleplay.value || item.source !== 'roleplay') && item.answer?.data?.audio_path);
 
       console.log(
         `[GenerativeAudio] ${inferences.value.length} total, ${normalized.length} valid`,
@@ -1335,7 +1356,7 @@ export default {
 
     // Check if there are more items to load
     const hasMore = computed(
-      () => displayedCount.value < inferences.value.length,
+      () => displayedCount.value < reversedInferences.value.length,
     );
 
     // Load more items
@@ -1345,7 +1366,7 @@ export default {
       setTimeout(() => {
         displayedCount.value = Math.min(
           displayedCount.value + ITEMS_PER_PAGE,
-          inferences.value.length,
+          reversedInferences.value.length,
         );
         isLoadingMore.value = false;
       }, 100);
@@ -1406,7 +1427,7 @@ export default {
       hasAccess.value = val;
     };
     const canGenerateWithAccess = computed(() => {
-      return canGenerate.value && hasAccess.value;
+      return canGenerate.value && (remoteMedia.value || hasAccess.value);
     });
 
     // Supported languages (23 languages) - for Multilingual model
@@ -1501,7 +1522,7 @@ export default {
     );
 
     const canGenerate = computed(() => {
-      if (!readiness.ok || readiness.authRequired || generation.active)
+      if ((!remoteMedia.value && (!readiness.ok || readiness.authRequired)) || generation.value.active)
         return false;
       // Clone mode requires voice reference AND transcript
       if (
@@ -1681,10 +1702,13 @@ export default {
 
     // Watch BPM and Key changes to auto-rebuild caption
     watch(musicBPM, () => {
+      if (durationFromLyrics.value) updateLyricsDuration();
       if (mode.value === "music") {
         buildCaptionFromSelections();
       }
     });
+
+    watch(musicTimeSignature, () => { if (durationFromLyrics.value) updateLyricsDuration(); });
 
     watch(musicKey, () => {
       if (mode.value === "music") {
@@ -1712,18 +1736,9 @@ export default {
     // ------------ LLM lyrics generation -----
     const lyricsError = ref("");
 
-    // Default LLM for lyrics generation — 4B MTP is the sweet spot for creative writing
-    const LYRICS_LLM = {
-      modelname: "Qwen3.5 4B MTP",
-      filename: "qwen3.5-4b-ud-q4_k_xl.gguf",
-      url: "https://huggingface.co/unsloth/Qwen3.5-4B-MTP-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf",
-      filesizeBytes: 2.8e9,
-      parameters: 4000000000,
-      context: 8192,
-      specType: "draft-mtp",
-      specDraftNMax: 2,
-      mtp: true,
-    };
+    // Use the shared catalog so downloads and inference use the same artifact.
+    const lyricsSpec = resolveLLM("qwen3_5_9b", "q4");
+    const LYRICS_LLM = { ...lyricsSpec, modelname: lyricsSpec.name, context: 8192 };
 
     // Check if lyrics LLM is downloaded. Also subscribe to download progress
     // events so the readiness flag flips automatically once the user pulls
@@ -1762,28 +1777,6 @@ export default {
       }
     });
 
-    const ensureLLMLoaded = async () => {
-      if (!window.electronAPI?.loadModel) {
-        throw new Error("LLM API not available");
-      }
-
-      await checkLyricsModel();
-      if (!lyricsModelReady.value) {
-        throw new Error(`Lyrics model not downloaded. Download "${LYRICS_LLM.modelname}" from the Chat tab first.`);
-      }
-
-      // Check if this model is already loaded
-      const modelInfo = await window.electronAPI.getModelInfo?.();
-      if (modelInfo?.loaded && modelInfo.modelName?.includes?.("qwen3.5-4b")) {
-        return;
-      }
-
-      // Load the lyrics LLM
-      console.log("[GenerativeAudio] Loading lyrics LLM...");
-      await window.electronAPI.loadModel(LYRICS_LLM);
-      console.log("[GenerativeAudio] Lyrics LLM loaded");
-    };
-
     // Language code to full name mapping for lyrics generation
     const VOCAL_LANGUAGE_NAMES = {
       en: "English",
@@ -1814,9 +1807,6 @@ export default {
       isGeneratingLyrics.value = true;
 
       try {
-        // Ensure LLM is loaded before generating
-        await ensureLLMLoaded();
-
         // Build context from caption/style selections
         const styleContext =
           musicCaption.value.trim() ||
@@ -1836,9 +1826,17 @@ export default {
 
         const systemPrompt = `You are a professional songwriter who writes compelling, emotionally resonant lyrics.${languageInstruction}
 
+CRAFT REQUIREMENTS:
+- Give the narrator a specific perspective, concrete sensory details, and an emotional conflict.
+- Develop the story across verses; the second verse must reveal something new.
+- Build a distinctive, repeatable chorus hook whose meaning deepens as the song progresses.
+- Use internal rhyme, slant rhyme, and varied phrasing when natural. Avoid forced rhymes, stock imagery, and generic filler.
+- Let a bridge change the perspective or stakes. Match diction, rhythmic density, and structure to the requested genre.
+- Honor the user's concept, constraints, and language before generic structure suggestions.
+
 CRITICAL FORMATTING RULES:
 1. Use structure tags on their own line: [intro], [verse], [pre-chorus], [chorus], [bridge], [outro], [instrumental], [build], [drop], [breakdown]
-2. Keep lines to 6-10 syllables each (this is crucial for the music model)
+2. Write singable phrases with consistent stress and breath length within each section. Adapt meter to the genre and language; do not force every line into the same syllable count.
 3. Use natural line breaks - one phrase per line
 4. Leave blank lines between sections
 5. For instrumental sections, write "(instrumental)" or "(guitar solo)" etc.
@@ -1866,16 +1864,18 @@ The song should have:
 - Optionally a bridge
 - An outro
 
-Remember: 6-10 syllables per line, use all appropriate structure tags. Write in ${targetLang}.`;
+Use singable, genre-appropriate meter and structure tags. Write in ${targetLang}.`;
 
         const fullPrompt = `${systemPrompt}\n\n${userMsg}`;
 
         // Use the local LLM via Electron IPC (node-llama-cpp)
-        // maxTokens capped to prevent repetition loops
-        const result = await window.electronAPI.chat(fullPrompt, { maxTokens: 512 });
+        // Allow a complete developed song while keeping output bounded.
+        const result = await window.electronAPI.chat(fullPrompt, { maxTokens: 2048, model: LYRICS_LLM, localOnly: true, isolated: true, taskLabel: 'Generating lyrics' });
 
         if (result && typeof result === "string") {
-          musicLyrics.value = result.trim();
+          musicLyrics.value = visibleText(result);
+          durationFromLyrics.value = true;
+          updateLyricsDuration();
         } else {
           lyricsError.value =
             "LLM returned empty response. Make sure a model is loaded.";
@@ -1917,7 +1917,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         if (params) {
           songName.value = inference.songName || "";
           musicCaption.value = params.caption || "";
-          musicLyrics.value = params.lyrics || "";
+          musicLyrics.value = visibleText(params.lyrics);
           lyricsTheme.value = params.lyricsTheme || "";
           musicDuration.value = params.duration || 60;
           musicBPM.value = params.bpm || 120;
@@ -2550,7 +2550,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           prompt: captionText,
           lyrics: musicInstrumental.value
             ? undefined
-            : musicLyrics.value.trim() || undefined,
+            : visibleText(musicLyrics.value) || undefined,
           quality: "quality",
           duration: musicDuration.value,
           bpm: musicBPM.value,
@@ -2591,16 +2591,45 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         };
       }
 
+      // Keep queued results tied to their submitted settings, even if the form changes.
+      const submittedMode = mode.value;
+      const submittedLanguage = language.value;
+      const submittedVoiceGender = voiceGender.value;
+      const submittedFormPrompt = form.prompt;
+      const submittedMusic = {
+        // Store all music parameters for restoration
+        ...(mode.value === "music" && {
+          songName: songName.value.trim() || null,
+          musicParams: {
+            quality: musicQuality.value,
+            caption: musicCaption.value,
+            lyrics: visibleText(musicLyrics.value),
+            lyricsTheme: lyricsTheme.value,
+            duration: musicDuration.value,
+            bpm: musicBPM.value,
+            key: musicKey.value,
+            timeSignature: musicTimeSignature.value,
+            steps: musicSteps.value,
+            guidance: musicGuidance.value,
+            seed: musicSeed.value,
+            shift: musicShift.value,
+            instrumental: musicInstrumental.value,
+            vocalLanguage: musicVocalLanguage.value,
+            customVocalLanguage: customVocalLanguage.value,
+            semantic: musicSemantic.value,
+            offload: musicOffload.value,
+            genres: [...selectedGenres.value],
+            moods: [...selectedMoods.value],
+            instruments: [...selectedInstruments.value],
+            vocals: [...selectedVocals.value],
+            production: [...selectedProduction.value],
+          },
+        }),
+      };
+
       const url = `${API_BASE}${endpointForMode()}`;
 
-      // Free GPU memory: unload local LLM + clear cached Flask models
-      try {
-        await window.electronAPI?.unloadModel?.();
-        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
-      } catch (e) {
-        console.warn("[GenerativeAudio] Memory clear:", e.message);
-      }
-
+      // The device coordinator releases idle models only after this request owns the device.
       ensureGenerationSocket();
       startGeneration("audio"); // Initialize generation state
       const _genStart = performance.now();
@@ -2628,43 +2657,16 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
               data: normalizedData,
             },
             id: uuid(),
-            language: language.value,
-            model:
-              mode.value === "music"
+            language: submittedLanguage,
+            model: response.data.model || (
+              submittedMode === "music"
                 ? "ace-step-v1.5-xl-turbo-diffusers"
-                : "chatterbox-multilingual-v3",
-            hasClone: mode.value === "clone",
-            isMusic: mode.value === "music",
-            voiceGender: voiceGender.value,
+                : "chatterbox-multilingual-v3"),
+            hasClone: submittedMode === "clone",
+            isMusic: submittedMode === "music",
+            voiceGender: submittedVoiceGender,
             elapsedMs,
-            // Store all music parameters for restoration
-            ...(mode.value === "music" && {
-              songName: songName.value.trim() || null,
-              musicParams: {
-                quality: musicQuality.value,
-                caption: musicCaption.value,
-                lyrics: musicLyrics.value,
-                lyricsTheme: lyricsTheme.value,
-                duration: musicDuration.value,
-                bpm: musicBPM.value,
-                key: musicKey.value,
-                timeSignature: musicTimeSignature.value,
-                steps: musicSteps.value,
-                guidance: musicGuidance.value,
-                seed: musicSeed.value,
-                shift: musicShift.value,
-                instrumental: musicInstrumental.value,
-                vocalLanguage: musicVocalLanguage.value,
-                customVocalLanguage: customVocalLanguage.value,
-                semantic: musicSemantic.value,
-                offload: musicOffload.value,
-                genres: [...selectedGenres.value],
-                moods: [...selectedMoods.value],
-                instruments: [...selectedInstruments.value],
-                vocals: [...selectedVocals.value],
-                production: [...selectedProduction.value],
-              },
-            }),
+            ...submittedMusic,
             networkMode: _lastRoutingMode,
           };
 
@@ -2676,17 +2678,18 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
           // Save to unified inference store with performance metadata
           addAudioInference(prompt, audioPath, {
             pipeline:
-              mode.value === "music"
+              submittedMode === "music"
                 ? "music"
-                : mode.value === "clone"
+                : submittedMode === "clone"
                   ? "audio_quality"
                   : "audio_turbo",
             elapsed: elapsedMs / 1000,
-            source: "bonzai",
+            source: response.data.metadata?.source || "bonzai",
+            model: response.data.model, usage: response.data.metadata?.usage,
             networkMode: _lastRoutingMode,
           });
 
-          form.prompt = "";
+          if (form.prompt === submittedFormPrompt) form.prompt = "";
           // Reset to first page to show the new result
           resetToFirstPage();
         } else {
@@ -2760,7 +2763,11 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         }
 
         stopGeneration("audio");
-        setError("audio", res?.data?.error, res.status);
+        if (res.data?.code === 'insufficient_memory') {
+          setError("audio", "Not enough free memory for this music request. Close other apps or try a shorter track.");
+        } else {
+          setError("audio", res?.data?.error, res.status);
+        }
       } catch (err) {
         stopGeneration("audio");
         setError("audio", err?.message || "Network error");
@@ -2792,7 +2799,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     // Convert local path to streaming URL
     const fileUrl = (p) => {
       if (!p) return "";
-      if (/^https?:\/\//i.test(p)) return p;
+      if (/^(?:https?:|bonzai-blob:|data:|file:)/i.test(p)) return p;
       return `${API_BASE}/media/stream?path=${encodeURIComponent(p)}`;
     };
 
@@ -2913,9 +2920,10 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         { id: "download", icon: "save", label: "Download", variant: "primary", disabled: !hasAudio },
         { id: "restore",  icon: "content_copy", label: "Reuse",
           title: "Restore all parameters from this generation", variant: "default" },
+        ...(inference.musicParams || inference.isMusic || inference.type === 'music' || inference.mode === 'music' ? [{ id: 'music-video', icon: 'music_video', label: 'Music Video', disabled: !hasAudio }] : []),
         { id: "mint",
           icon: minted ? "check_circle" : "token",
-          label: minted ? "Minted" : "Mint",
+          label: minted ? "Tokenized" : "Tokenize",
           variant: minted ? "success" : "default",
           disabled: minted },
         { id: "delete", icon: "delete", label: "Delete", variant: "destructive",
@@ -2927,6 +2935,11 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
         case "inspect":  openInspector(inference); break;
         case "download": downloadAudio(inference._originalIndex); break;
         case "restore":  restoreFromHistory(inference); break;
+        case 'music-video': window.dispatchEvent(new CustomEvent('bonzai:run-agent-workflow', { detail: {
+          skillId: 'music-video-forge-v1.0.0', inputs: { soundtrack: inference.answer.data.audio_path,
+            brief: [inference.songName || inference.musicParams?.title, inference.question, inference.musicParams?.lyrics].filter(Boolean).join('\n\n') || 'Create a music video for this song.',
+            duration: inference.musicParams?.duration || 30 }, sourceId: inference.id,
+        } })); break;
         case "mint":     openMint(inference); break;
         case "delete":   requestDeleteAudio(inference); break;
       }
@@ -2994,7 +3007,16 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     });
 
     // ------------ lifecycle ----------------
+    // Merge only roleplay rows so an active generation keeps its live state.
+    const refreshRoleplayHistory = async () => {
+      const rows = await window.electronAPI?.store?.get?.('audioInferences', []);
+      if (!Array.isArray(rows)) return;
+      const merged = new Map(inferences.value.map(row => [row.id, row]));
+      for (const row of rows) if (row.source === 'roleplay') merged.set(row.id, row);
+      inferences.value = [...merged.values()].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+    };
     onMounted(async () => {
+      window.addEventListener('bonzai:roleplay-history-changed', refreshRoleplayHistory);
       ensureGenerationSocket();
       await resumeActiveDownloadIfAny();
       try {
@@ -3026,6 +3048,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     });
 
     onBeforeUnmount(() => {
+      window.removeEventListener('bonzai:roleplay-history-changed', refreshRoleplayHistory);
       unsubscribeLyricsDownload?.();
       if (downloadsSocket.value?.connected) {
         try {
@@ -3052,6 +3075,9 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
     watch(mode, () => probeCurrentMode(), { immediate: true });
 
     return {
+      remoteMedia, remoteInference,
+      includeRoleplay,
+      reversedInferences,
       selectedModel,
       musicAdvanced,
       mode,
@@ -3119,7 +3145,7 @@ Remember: 6-10 syllables per line, use all appropriate structure tags. Write in 
       voiceGender,
       // Music mode
       musicLyrics,
-      musicDuration,
+      musicDuration, lyricsDurationEstimate, durationFromLyrics,
       musicCaption,
       lyricsTheme,
       musicInstrumental,
@@ -4677,4 +4703,5 @@ input.music-toggle[type="checkbox"]:checked + label {
 .audio-history-head { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
 .audio-history-head h2 { margin:0; text-align:left; }
 .audio-history-head .buttons { display:flex; gap:8px; }
+.music-duration-estimate { margin: 8px 0 0; color: var(--bz-text-muted); font-family: inherit; font-size: 12px; line-height: 1.5; text-align: left; }
 </style>

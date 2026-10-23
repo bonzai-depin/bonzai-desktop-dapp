@@ -11,7 +11,6 @@ export function operationError(error, locale = 'en') {
 export function operationText(source, locale = "en", params = {}) {
   const key = copy.keys[String(source).trim().replace(/\s+/g, " ")];
   const en = copy.en[key] ?? String(source);
-  if (/\bmint\b/i.test(en)) return en;
   const text =
     locale === "fr"
       ? (copy.fr[key] ?? reviewedCatalogOverrides.fr?.[en] ?? generated.fr?.[en] ?? source)

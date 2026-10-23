@@ -52,7 +52,9 @@ test('GMAO daily navigation opens Today, Schedule and Clients directly and keeps
   });
   const nav=page.getByRole('navigation',{name:'Team workspace'});
   await nav.waitFor();assert.equal(await nav.getByRole('button').count(),17);
-  assert.equal(await page.getByRole('heading',{name:'Today',exact:true}).count(),1,'opening the team lands on Today');
+  await nav.getByRole('button',{name:'Getting started',exact:true}).waitFor();
+  await nav.getByRole('button',{name:'Today',exact:true}).click();
+  assert.equal(await page.getByRole('heading',{name:'Today',exact:true}).count(),1,'Today opens the operational cockpit');
   assert.equal(await nav.getByRole('button',{name:'Today',exact:true}).getAttribute('aria-current'),'page');
   for (const label of ['Operations settings','Team settings']) {
     const button = nav.getByRole('button', { name: label, exact: true });

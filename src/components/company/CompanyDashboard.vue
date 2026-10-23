@@ -10,6 +10,7 @@
         <button v-for="view in primaryViews.filter(view => !view.utility)" :key="view.key" type="button" :class="{ 'company-view-nav__settings': view.iconOnly }" :aria-label="view.iconOnly ? $ui(view.label) : undefined" :title="view.iconOnly ? $ui(view.label) : undefined" :aria-current="activeSection === view.section ? 'page' : undefined" @click="openChannel(view)">
           <span class="material-symbols-outlined" aria-hidden="true">{{ view.icon }}</span><span v-if="!view.iconOnly">{{ $ui(view.label) }}</span><span v-if="view.badge" class="bz-metric">{{ view.badge }}</span>
         </button>
+      <button type="button" class="company-market-link" :aria-current="active === 'market' ? 'page' : undefined" @click="active = 'market'"><span class="material-symbols-outlined" aria-hidden="true">person_search</span>{{ $ui('Agent Market') }}</button>
       </div>
       <div class="company-view-nav__team" :style="teamDockStyle" @mouseenter="showCommandLabel('Team')" @mouseleave="hoveredCommand = ''" role="group" :aria-label="$ui('Team views')">
         <button v-for="view in primaryViews.filter(view => view.utility)" @mouseenter="showCommandLabel(view.label)" :key="view.key" type="button" :class="{ 'company-view-nav__icon': view.iconOnly }" :aria-label="view.iconOnly ? $ui(view.label) : undefined" :aria-current="activeSection === view.section ? 'page' : undefined" @click="hoveredCommand = ''; openChannel(view)">
@@ -27,6 +28,7 @@
         </div>
       </div>
       <CompanyTeamStatus :health="automationHealth" :members="filledRoles.length" :playing="charter.status === 'active'" :fullscreen="isFullscreen" @toggle-execution="toggleExecution" @toggle-fullscreen="isFullscreen = !isFullscreen">
+        <button v-if="active !== 'market'" type="button" class="bz-btn bz-btn--ghost company-hire" @click="active = 'market'"><span class="material-symbols-outlined" aria-hidden="true">person_search</span>{{ $ui('Hire a Smart Agent') }}</button>
         <template v-if="active === 'charter'">
           <button type="button" class="bz-iconbtn" :title="$ui('Export team')" :aria-label="$ui('Export team')" @click="exportCompany"><span class="material-symbols-outlined" aria-hidden="true">download</span></button>
           <button type="button" class="bz-iconbtn bz-iconbtn--danger" :title="$ui('Delete team')" :aria-label="$ui('Delete team')" @click="$emit('delete-company')"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button>
@@ -113,6 +115,10 @@
       />
       <div v-else-if="active === 'gmao' && !state.gmaoRefreshError" class="panel empty">{{ $ui("Initialisation du référentiel GMAO…") }}</div>
 
+      <div v-else-if="active === 'market'" class="team-agent-market">
+        <AgentWorkersPanel :company-id="charter.id" @request-agent-action="requestAgentJobAction" />
+        <SmartAgentJobsPanel :company-id="charter.id" :charter="charter" @request-agent-action="requestAgentJobAction" />
+      </div>
       <!-- ─── Workflow team ─── -->
       <div v-else-if="active === 'org'" class="team-members">
         <div class="section-head section-head--stack">
@@ -120,6 +126,7 @@
             <span class="team-section-count"><b class="bz-metric">{{ filledRoles.length }}</b> {{ $ui('Members') }}</span>
           </div>
           <div class="section-head__actions">
+          <button class="bz-btn bz-btn--primary" @click="active = 'market'"><span class="material-symbols-outlined" aria-hidden="true">person_search</span>{{ $ui('Hire a Smart Agent') }}</button>
           <button
             class="bz-btn bz-btn--primary"
             @click="openRoleEdit(availableRoleOptions[0]?.key)"
@@ -128,8 +135,7 @@
             <span class="material-symbols-outlined" aria-hidden="true">person_add</span>{{ $ui("Add teammate") }}</button>
           </div>
         </div>
-        <AgentWorkersPanel :company-id="charter.id" @request-agent-action="requestAgentJobAction" />
-        <SmartAgentJobsPanel :company-id="charter.id" :charter="charter" @request-agent-action="requestAgentJobAction" />
+        <CompanyHiredSpecialists :company-id="charter.id" @open-market="active = 'market'" />
         <div v-if="filledRoles.length" class="org-grid">
           <div
             v-for="roleKey in filledRoles"
@@ -156,6 +162,7 @@
                 {{ companionName(charter.roles[roleKey].companion) }}<small class="org-card__team">{{ charter.name }}</small>
               </div>
             </div>
+            <button v-if="companionList.find(agent => agent.id === charter.roles[roleKey].companion)?.tokenAddress" type="button" class="bz-btn bz-btn--ghost" @click.stop="hireAgent = companionList.find(agent => agent.id === charter.roles[roleKey].companion)"><span class="material-symbols-outlined" aria-hidden="true">handshake</span>{{ $ui('Hire agent') }}</button>
             <CompanyWorkerModel :model-value="charter.roles[roleKey].llm" :role-key="roleKey" :role-label="roleDisplayName(roleKey)" :worker-id="charter.roles[roleKey].companion" :save="key => saveWorkerModel(roleKey, key)" @saved="refreshModelAvailability" />
             <div
               v-if="roleConnectorCount(roleKey) > 0"
@@ -891,29 +898,14 @@
           <CompanyWorkerModel v-model="editDraft.llm" :role-key="editingRoleKey" :role-label="roleDisplayName(editingRoleKey)" :worker-id="editDraft.companion" />
         </div>
 
-        <div v-if="roleConnectorOptions.length" class="field">
-          <label class="label fira-sans-condensed-black-italic">Existing integrations</label>
+        <div class="field">
+          <label class="label">{{ $ui('Shared team connectors') }}</label>
+          <p class="muted">{{ $ui('Every agent can use this team’s connectors. External actions still require their configured approvals.') }}</p>
           <div class="connector-checks">
-            <label
-              v-for="connector in roleConnectorOptions"
-              :key="connector.kind"
-              class="connector-check"
-              :class="{
-                'is-on': editDraft.connectors.includes(connector.kind),
-                'needs-auth': connector.status && connector.status !== 'active',
-              }"
-            >
-              <input
-                type="checkbox"
-                :checked="editDraft.connectors.includes(connector.kind)"
-                @change="toggleRoleConnector(connector.kind, $event.target.checked)"
-              />
+            <span v-for="connector in roleConnectorOptions" :key="connector.kind" class="connector-check">
               <span class="material-symbols-outlined" aria-hidden="true">{{ connector.icon }}</span>
-              <span class="connector-check__copy">
-                <strong>{{ connector.name }}</strong>
-                <small>{{ connector.status ? connector.status.replace('_', ' ') : 'not connected' }}</small>
-              </span>
-            </label>
+              <span class="connector-check__copy"><strong>{{ connector.name }}</strong><small>{{ $ui(connector.status) }}</small></span>
+            </span>
           </div>
         </div>
 
@@ -1164,6 +1156,7 @@
 </template>
 
 <script>
+import CompanyHiredSpecialists from "./CompanyHiredSpecialists.vue";
 import CompanyWorkflowStudio from "./CompanyWorkflowStudio.vue";
 import CompanyTeamStatus from "./CompanyTeamStatus.vue";
 import { isAutonomousWorkflowTask } from "../../shared/companyAutomation.js";
@@ -1216,7 +1209,8 @@ import { buildWorkspaceBlueprint, hydrateWorkspaceChannels } from "../../service
 
 export default {
   name: "CompanyDashboard",
-  components: { CompanyTeamStatus, DownloadRequirement, CompanyWorkflowStudio, CompanyWorkerModel, CompanyToday, CompanyOperationalFiles, CompanySales, CompanyGettingStarted, CompanyGrants, CompanyBilling, CompanyPurchasing, CompanyInbox, CompanyDeliverableLibrary, CompanyMarkdown, CompanyQuestion, CompanyMission,
+  components: {
+    CompanyHiredSpecialists, CompanyTeamStatus, DownloadRequirement, CompanyWorkflowStudio, CompanyWorkerModel, CompanyToday, CompanyOperationalFiles, CompanySales, CompanyGettingStarted, CompanyGrants, CompanyBilling, CompanyPurchasing, CompanyInbox, CompanyDeliverableLibrary, CompanyMarkdown, CompanyQuestion, CompanyMission,
     CompanyWorkflowProgress, CompanyTaskReview, AgentWorkersPanel, SmartAgentJobsPanel, SmartAgentHireModal, BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyArtifactPreview, CompanyConnectors, CompanyLiveFeed, CompanyGoalRoom, CompanyGmao },
   props: {
     charter: { type: Object, required: true },
@@ -1473,28 +1467,10 @@ export default {
         }))
         .sort((a, b) => a.params - b.params || a.label.localeCompare(b.label)),
     );
-    // Existing integration permissions stay editable, but they are not agent skills.
-    const roleConnectorOptions = computed(() => {
-      const previous = props.charter.roles?.[editingRoleKey.value];
-      if (previous?.companion !== editDraft.companion) return [];
-      const installed = new Map((displayState.value.connectors || []).map((conn) => [conn.kind, conn]));
-      const configured = new Set([...(previous.connectors || []), ...connectorsForSkills(previous.grantedSkills)]);
-      return [...configured].map((kind) => ({
-        kind, name: connectorLabel(kind), icon: connectorIcon(kind),
-        status: installed.get(kind)?.status || "not_connected",
-      }));
-    });
-
-    function roleConnectorCount(roleKey) {
-      const direct = props.charter.roles?.[roleKey]?.connectors;
-      if (Array.isArray(direct) && direct.length) return new Set(direct).size;
-      const skills = props.charter.roles?.[roleKey]?.grantedSkills || [];
-      const connectors = new Set();
-      for (const sid of skills) {
-        for (const kind of SKILL_MANIFESTS[sid]?.requiredConnectors || []) connectors.add(kind);
-      }
-      return connectors.size;
-    }
+    const roleConnectorOptions = computed(() => (displayState.value.connectors || []).map(connector => ({
+      kind: connector.kind, name: connectorLabel(connector.kind), icon: connectorIcon(connector.kind), status: connector.status || 'not_connected',
+    })));
+    function roleConnectorCount() { return roleConnectorOptions.value.length; }
     function connectorsForSkills(skillIds) {
       const out = new Set();
       for (const sid of skillIds || []) {
@@ -1561,6 +1537,7 @@ export default {
       // Read the current prop at apply time, after any download has completed.
       const next = JSON.parse(JSON.stringify(props.charter));
       if (!next.roles?.[roleKey]?.companion) throw new Error("This teammate is no longer assigned to this role.");
+      if (!smartAgentCatalog.agents.find(agent => agent.id === next.roles[roleKey].companion)?.isCustom) throw new Error('Custom models are available for custom agents only.');
       next.roles[roleKey].llm = key;
       await store.update(next);
     }
@@ -1592,7 +1569,7 @@ export default {
             type: "companion-hire",
             companionId: editDraft.companion,
           };
-          if (editDraft.llm) next.roles[roleKey].llm = editDraft.llm;
+          if (editDraft.llm && selectedSmartAgent.value?.isCustom) next.roles[roleKey].llm = editDraft.llm;
           else delete next.roles[roleKey].llm;
           if (editDraft.gateway) next.roles[roleKey].gateway = editDraft.gateway;
           else delete next.roles[roleKey].gateway;
@@ -1959,7 +1936,6 @@ export default {
       refreshRuntime();
       runtimeTimer = setInterval(refreshRuntime, 2000);
       runtimeUnsubscribe = window.electronAPI?.onModelChanged?.(() => refreshRuntime());
-      refreshModelAvailability();
       document.addEventListener("visibilitychange", onVisibilityChange);
     });
     onUnmounted(() => {
@@ -1985,7 +1961,7 @@ export default {
     const domainViews = computed(() => domainWorkspaceViews(subtabs.value));
     const selectedDomain = computed(() => active.value === 'issues' ? domainViews.value.find(view => view.key === activeChannel.value) : null);
     const activeSection = computed(() => selectedDomain.value?.key || workspaceSection(active.value, gmaoView.value, hasMaintenance.value));
-    const currentChannel = computed(() => selectedDomain.value || (active.value === 'gmao' ? maintenanceDestination(gmaoView.value)
+    const currentChannel = computed(() => (active.value === 'market' ? {icon:'person_search',label:'Agent Market'} : null) || selectedDomain.value || (active.value === 'gmao' ? maintenanceDestination(gmaoView.value)
       : primaryViews.value.find(view => view.value === active.value) || workspaceViews.find(view => view.value === active.value) || workspaceViews[0]));
     function openChannel(channel) {
       const destination = channel.value === 'gmao' ? maintenanceDestination(channel.focus) : channel;
@@ -2073,8 +2049,12 @@ export default {
       row?.focus({preventScroll:true});
     }
     watch(() => [props.charter.id, props.initialView, props.initialResultId, hasMaintenance.value], ([id, view, resultId], previous) => {
+      if (previous && id === previous[0] && view === previous[1] && resultId === previous[2]) return;
       if (id !== previous?.[0]) gmaoClientId.value = '';
-      openChannelByKey(view);
+      const welcomeKey = `bonzai:workflow-welcome:${id}`;
+      const firstVisit = !localStorage.getItem(welcomeKey);
+      openChannelByKey(view || (firstVisit ? 'getting-started' : ''));
+      if (firstVisit) localStorage.setItem(welcomeKey, 'seen');
       if (resultId) expandedWorkResults.add(resultId);
     }, { immediate: true });
 
@@ -2257,7 +2237,7 @@ export default {
     const missingRoleModels = computed(() => {
       const seen = new Set();
       return Object.values(props.charter.roles || {})
-        .map((role) => role?.llm)
+        .filter(role => smartAgentCatalog.agents.find(agent => agent.id === role?.companion)?.isCustom).map((role) => role?.llm)
         .filter((key) => key && modelNeedsDownload(key) && !seen.has(key) && seen.add(key))
         .map((key) => ({ key, label: llmLabel(key) }));
     });
@@ -2285,12 +2265,19 @@ export default {
     }
     async function refreshModelAvailability() {
       if (!window.electronAPI?.checkModel) return;
-      const used = [...new Set(Object.values(props.charter.roles || {}).map((role) => role?.llm).filter(Boolean))];
+      const used = [...new Set(Object.values(props.charter.roles || {}).filter(role => smartAgentCatalog.agents.find(agent => agent.id === role?.companion)?.isCustom).map((role) => role?.llm).filter(Boolean))];
       await Promise.all(used.map(async (key) => {
         const spec = modelSpec(key);
         if (spec?.filename) modelAvailability[spec.filename] = await window.electronAPI.checkModel(spec.filename);
       }));
     }
+    // The roster loads asynchronously. Recheck when custom-agent assignments
+    // resolve or change, including when this dashboard is reused for another team.
+    watch(() => JSON.stringify(Object.values(props.charter.roles || {})
+      .filter(role => smartAgentCatalog.agents.some(agent => agent.id === role?.companion && agent.isCustom))
+      .map(role => role.llm).filter(Boolean)), () => {
+      refreshModelAvailability().catch(error => { roleDownloadError.value = error.message || 'Model availability could not be checked'; });
+    }, { immediate: true });
     async function downloadRoleModel(llmKey) {
       const spec = modelSpec(llmKey);
       if (!spec?.url || !spec?.filename || modelDownloading[llmKey] != null) return;

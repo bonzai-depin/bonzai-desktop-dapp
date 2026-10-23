@@ -18,7 +18,7 @@ export function validateOperationalBackup(tables) {
   for(const row of rows('company_intake_actions')){
     requireRef('company_intake_sources',row.source_id,'intake source');
     for(const receipt of JSON.parse(row.result||'[]')){
-      const table={client:'gmao_clients',site:'gmao_sites',equipment:'gmao_assets',work_order:'gmao_work_orders',invoice:'company_billing_invoices',grant:'company_grants_records',sales:'company_sales_records',task:'issues',proforma:'purchasing_records',part:'purchasing_records'}[receipt.type];
+      const table={maintenance_document:'gmao_case_records',client:'gmao_clients',site:'gmao_sites',equipment:'gmao_assets',work_order:'gmao_work_orders',invoice:'company_billing_invoices',grant:'company_grants_records',sales:'company_sales_records',task:'issues',proforma:'purchasing_records',part:'purchasing_records'}[receipt.type];
       if(!table)throw new Error('Backup contains an unknown intake record.');
       // Deleted business records may have historical receipts, but cannot point into another team.
       const target=rows(table).find(r=>r.id===receipt.id);
@@ -59,6 +59,17 @@ export function validateOperationalBackup(tables) {
       if (site?.client_id !== row.client_id)
         throw new Error("Backup invoice mixes customer work orders.");
     }
+  }
+  for (const row of [...rows('gmao_case_records'),...rows('gmao_case_events')]) {
+    const check = value => {
+      if(!value || typeof value !== 'object') return;
+      for(const [key,item] of Object.entries(value)) {
+        const table={assetId:'gmao_assets',donorAssetId:'gmao_assets',recipientAssetId:'gmao_assets',sourceId:'company_intake_sources',siteId:'gmao_sites',workOrderId:'gmao_work_orders',documentId:'gmao_documents',followupDocumentId:'gmao_documents',contractId:'gmao_service_contracts',stockMovementId:'purchasing_records'}[key];
+        if(table && item) requireRef(table,item,'casework.'+key);
+        else if(typeof item==='object')check(item);
+      }
+    };
+    check(data(row));
   }
   for (const row of rows("gmao_maintenance_records")) {
     const value = data(row);

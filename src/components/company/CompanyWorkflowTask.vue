@@ -3,11 +3,12 @@
     <div class="company-workflow-overlay company-screen" @click.self="!busy && $emit('close')" @keydown.esc="!busy && $emit('close')">
       <section ref="dialog" class="company-workflow-dialog" role="dialog" aria-modal="true" aria-labelledby="company-workflow-title" tabindex="-1">
         <header>
-          <div><p class="bz-eyebrow">{{ charter.name }} · {{ $ui('New task') }}</p><h2 id="company-workflow-title" class="bz-h2">{{ skill.name }}</h2></div>
+          <div><p class="bz-eyebrow">{{ charter.name }} · {{ $ui('New task') }}</p><h2 id="company-workflow-title" class="bz-h2 fira-sans-condensed-black-italic">{{ skill.name }}</h2></div>
           <button class="bz-iconbtn" :disabled="busy" :aria-label="$ui('Close')" @click="$emit('close')"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
         </header>
-        <p class="company-workflow-note">{{ $ui(mode === 'interactive' ? 'Choose your inputs in the next screen. The resulting files are saved with this task, ready to review and use.' : 'Describe the result you want. The team will run this task after you approve its execution.') }}</p>
-        <div class="workflow-task-summary">
+        <ul v-if="skill.execution?.managesGeneration" class="production-outputs"><li v-for="output in presentation.deliverables" :key="output"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>{{ $ui(output) }}</li></ul>
+        <p v-else class="company-workflow-note">{{ $ui(mode === 'interactive' ? 'Choose your inputs in the next screen. The resulting files are saved with this task, ready to review and use.' : 'Describe the result you want. The team will run this task after you approve its execution.') }}</p>
+        <div v-if="!skill.execution?.managesGeneration" class="workflow-task-summary">
           <section><h3>{{ $ui('What you provide') }}</h3><p>{{ $ui(presentation.firstValue) }}</p><div v-if="inputLabels.length" class="workflow-input-labels"><span v-for="label in inputLabels" :key="label">{{ $ui(label) }}</span></div></section>
           <section><h3>{{ $ui('What you get') }}</h3><ul><li v-for="output in presentation.deliverables" :key="output"><span class="material-symbols-outlined" aria-hidden="true">check</span>{{ $ui(output) }}</li></ul></section>
         </div>
@@ -16,7 +17,8 @@
         <p v-if="mode === 'network'" class="company-workflow-note">{{ $ui('This task retrieves external market data. Review its inputs before approving the network request.') }}</p>
         <p v-if="mode === 'interactive' && !canSaveResults" class="company-workflow-note" role="status">{{ $ui(WORKFLOW_BRIDGE_MESSAGE) }}</p>
         <button v-if="mode === 'interactive'" class="bz-btn bz-btn--primary" :disabled="busy || !canSaveResults || !assignedWorker" @click="openInteractive">{{ $ui(busy ? 'Creating task…' : 'Start task') }}</button>
-        <SkillRunner v-else ref="runner" :skill="skill" :action-label="$ui('Queue task')" @execute="queue" />
+        <SkillRunner v-else ref="runner" :skill="skill" :initial-inputs="initialInputs" :action-label="$ui('Queue task')" @execute="queue" />
+        <p v-if="skill.execution?.managesGeneration" class="production-approval-note">{{ $ui('Review the execution request to start. Finished files are saved in this team’s Results.') }}</p>
         <p v-if="error" role="alert">{{ $ui(error) }}</p>
       </section>
     </div>
@@ -27,12 +29,13 @@ import "./company-design.css";
 import { workflowTeamPresets } from "../../services/company/workflowTeams.js";
 import { ref, computed, onMounted } from 'vue'
 import SkillRunner from '../skills/SkillRunner.vue'
-import { createIssue } from '../../services/company.service.js'
+import { createIssue, tickRoleNow } from '../../services/company.service.js'
+import { validateProduction } from '../../services/company/mediaProduction.js'
 import { createTaskExecution } from '../../services/company/taskExecution.js'
 import { companyWorkflowMode } from '../../services/company/workflowExecution.js'
 import { workflowBridgeReady, WORKFLOW_BRIDGE_MESSAGE } from '../../services/company/workflowRecovery.js'
 import { useModalAccessibility } from '../../composables/useModalAccessibility.js'
-const props = defineProps({ charter: Object, roleKey: String, skill: Object })
+const props = defineProps({ charter: Object, roleKey: String, skill: Object, initialInputs: { type: Object, default: () => ({}) } })
 const emit = defineEmits(['close', 'queued'])
 const runner = ref(null), dialog = ref(null), busy = ref(false), error = ref(''), taskName = ref('')
 const assignedWorker = computed(() => props.charter?.roles?.[props.roleKey]?.companion)
@@ -46,9 +49,22 @@ async function queue({ inputs }) {
   if (!assignedWorker.value) { error.value = 'Choose a worker before starting a task.'; return }
   busy.value = true; error.value = ''
   try {
+    if (props.skill.execution?.managesGeneration) {
+      validateProduction(props.skill.id, inputs);
+      const prepare = window.electronAPI?.mediaProduction?.prepare;
+      if (!prepare) throw new Error('Restart BonzAI to enable media production.');
+      // Store large attachments as local files once, not in every task journal update.
+      if (inputs.soundtrack) inputs.soundtrack = (await prepare({ source: inputs.soundtrack, kind: 'audio' })).path;
+      if (inputs.panels) {
+        const paths = [];
+        for (const source of inputs.panels) paths.push((await prepare({ source, kind: 'image' })).path);
+        inputs.panels = paths;
+      }
+    }
     const issue = await createIssue(props.charter.id, { title: taskName.value || props.skill.name, description: `Run ${props.skill.name} and review the saved deliverable.`, assigneeRole: props.roleKey, assigneeCompanion: assignedWorker.value,
       execution: createTaskExecution([{ type: 'runWorkflow', workflowId: props.skill.id, inputs }]) })
     runner.value?.setExecutionResult({ queued: true, taskId: issue.id, message: 'Task queued. Review its execution request in the workspace.' })
+    void tickRoleNow(props.charter.id, props.roleKey).catch(() => {});
     emit('queued')
   } catch (cause) { error.value = cause.message; runner.value?.setExecutionResult({ success: false, error: cause.message }) }
   finally { busy.value = false }
@@ -89,6 +105,10 @@ onMounted(() => dialog.value?.focus())
 .workflow-input-labels span { color: var(--bz-fg-mid); font-size: 12px; border-bottom: 1px solid var(--bz-border); padding-bottom: 3px; }
 .workflow-task-name { display: grid; gap: var(--bz-space-2); margin-bottom: var(--bz-space-5); font-size: 14px; }
 .workflow-task-name input { width: 100%; min-width: 0; }
+.production-outputs{display:flex;gap:12px 24px;flex-wrap:wrap;list-style:none;padding:0;margin:0 0 24px}
+.production-outputs li{display:flex;gap:8px;align-items:center;color:var(--bz-fg-mid);font-size:13px}
+.production-outputs .material-symbols-outlined{color:var(--bz-accent);font-size:18px}
+.production-approval-note{text-align:center;color:var(--bz-fg-mid);margin:16px 0 0;font-size:13px!important}
 @media (max-width: 600px) { .workflow-task-summary { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .company-workflow-overlay { padding: var(--bz-space-3); } .company-workflow-dialog { padding: var(--bz-space-5); max-height: calc(100dvh - 24px); } }
 @media (prefers-reduced-motion: reduce) { .company-workflow-dialog { animation: none; } }

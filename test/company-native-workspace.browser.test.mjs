@@ -25,7 +25,7 @@ test('one labelled navigation, inline owner answers, and preserved team identity
       const state=reactive({...store.state,audit:[{id:'saved-quote',issueId:'quote',ts:Date.now(),kind:'issue',role:'CEO',status:'executed',note:'Saved quote draft for the Lyon workshop.'},{id:'supplier-check',ts:Date.now()-12000,kind:'action',role:'COO',status:'queued',note:'Waiting for supplier confirmation.'}],goals:[],approvals:[],catalog:[],issues:[{id:'quote',title:'Prepare the ventilation quote',assigneeRole:'CEO',status:'blocked',priority:'normal',description:'Confirm the customer site.',execution:{version:1,steps:[],agent:{status:'waiting_owner',wait:{question:'Which site should receive this quote?'}}}}]});
       window.fixture={state,charter,answers:[],fail:true,i18n,saves:[]};store.refreshActive=async()=>{};
       store.update=async next=>{if(window.fixture.saveFailure)throw new Error('Mission storage unavailable');window.fixture.saves.push(next);Object.assign(charter,next);};
-      createApp({render:()=>h(View,{charter,state})}).use(createI18nPlugin()).mount('#app');
+      createApp({render:()=>h(View,{charter,state,initialView:'overview'})}).use(createI18nPlugin()).mount('#app');
     });
     const nav=page.getByRole('navigation',{name:'Team workspace'});
     await nav.waitFor();assert.equal(await page.locator('.company-workspace-nav').count(),0);

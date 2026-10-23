@@ -319,7 +319,10 @@ function copyBinaries(rpcTarget) {
   const converterDir = path.join(ROOT, "src", "server", "scripts");
   fs.mkdirSync(converterDir, { recursive: true });
   fs.copyFileSync(converter, path.join(converterDir, "convert_hf_to_gguf.py"));
-  console.log(`  convert_hf_to_gguf.py → ${converterDir}`);
+  for (const name of ['conversion', 'gguf-py']) {
+    fs.cpSync(path.join(SRC_DIR, name), path.join(converterDir, name), { recursive: true });
+  }
+  console.log(`  convert_hf_to_gguf.py and conversion modules → ${converterDir}`);
 }
 
 function verify() {
@@ -397,7 +400,7 @@ const shaMatches = requestedSha && prevMarker?.sha === requestedSha;
 const sourceMatches = requestedSha ? shaMatches : refMatches;
 const configurationMatches = buildConfigurationMatches(prevMarker, cmakeFlags);
 
-if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && fs.existsSync(quantizeBin) && fs.existsSync(converterScript) && !shouldClean && sourceMatches && configurationMatches) {
+if (fs.existsSync(rpcBin) && fs.existsSync(serverBin) && fs.existsSync(quantizeBin) && fs.existsSync(converterScript) && fs.existsSync(path.join(path.dirname(converterScript), "conversion", "__init__.py")) && !shouldClean && sourceMatches && configurationMatches) {
   verify();
   console.log(`Binaries already built from ref '${requestedRef}' (${prevMarker.sha?.slice(0, 12)}).`);
   console.log("Use --clean to force a rebuild, or change --ref to bump the source.");

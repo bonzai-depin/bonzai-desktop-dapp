@@ -2,6 +2,7 @@ import { COMPANY_OPERATIONS } from "../../shared/companyOperations.js";
 import { operationalInputHints } from "./operationalToolInputs.js";
 
 const namespaces = {
+  casework: 'gmaoCasework',
   intake: 'companyIntake',
   sales: "companySales",
   grants: "companyGrants",
@@ -165,7 +166,7 @@ export const OPERATIONAL_MANIFESTS = Object.fromEntries(
             : prefix === "purchasing"
               ? "Purchasing operations"
               : "Contract maintenance",
-        category: prefix === "records" ? "maintenance" : prefix,
+        category: ["records","casework"].includes(prefix) ? "maintenance" : prefix,
         requiredConnectors: [],
         suggestedRoles:
           prefix === "records" ? ["CEO", "CFO", "DocumentController", "PurchasingManager", "MaintenanceContractManager"] : prefix === "billing"

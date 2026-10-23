@@ -1,3 +1,4 @@
+import { workOrderIntakePayload } from "../../../src/services/company/gmaoPresentation.js";
 import assert from "node:assert/strict";
 import { get } from "./connection.js";
 import * as companies from "../../../src/main/db/repos/companies.js";
@@ -111,6 +112,23 @@ assert.throws(
     }),
   /preuve/,
 );
+// UI intake must not inherit purchasing or field-completion defaults.
+const editorIntake = workOrderIntakePayload({
+  siteId: site.id, assetId: "", title: "New WO from shared editor",
+  priority: "P2", description: "Reception air conditioning stopped",
+  clientOiNumber: "OI-INTAKE", requestKey: "ui-intake",
+  receivedAt: new Date().toISOString(),
+  status: "requested", repairMode: "with_quote", resolved: true,
+  outcome: "resolved", quoteStatus: "accepted", result: "stale field data",
+});
+const createdFromEditor = gmao.createWorkOrder(company, editorIntake);
+assert.equal(createdFromEditor.status, "reported");
+assert.equal(createdFromEditor.repairMode, "none");
+assert.equal(createdFromEditor.title, "New WO from shared editor");
+assert.equal(createdFromEditor.assetId, null);
+assert.equal(gmao.getWorkOrder(company, createdFromEditor.id).id, createdFromEditor.id);
+assert.equal(gmao.createWorkOrder(company, editorIntake).id, createdFromEditor.id);
+
 const wo = gmao.createWorkOrder(company, {
   siteId: site.id,
   assetId: split.id,

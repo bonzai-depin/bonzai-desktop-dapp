@@ -1,4 +1,6 @@
 import { ethers } from 'ethers';
+import { prepareServicePackage } from './agentServiceAssets.js';
+import { validateServiceOffer } from './agentServiceOffer.js';
 import { web3Service } from './web3.service.js';
 import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js';
 import { workerKey, workerGrantMessage, workerCallMessage, verifyWorkerGrant } from './agentWorkerProtocol.js';
@@ -8,7 +10,7 @@ async function ownerSigner() {
   await web3Service.switchNetwork(ECONOMY_NETWORK_KEY);
   return (await web3Service.getBrowserProvider()).getSigner();
 }
-export async function publishWorker(agent, capabilities, workflows = [], defaults = {}, targetPeerId = null) {
+export async function publishWorker(agent, capabilities, workflows = [], defaults = {}, targetPeerId = null, service = null) {
   const peer = await window.electronAPI.p2pLocalPeerId();
   if (!peer?.peerId) throw new Error('Start the peer network first.');
   const ref = { chainId: Number(agent.chainId), collection: agent.contractAddress, tokenId: String(agent.tokenId) };
@@ -20,10 +22,12 @@ export async function publishWorker(agent, capabilities, workflows = [], default
   const { companyWorkflowMode } = await import('./company/workflowExecution.js');
   const catalog = await getAvailableAgentWorkflows();
   const headless = workflows.filter(id => catalog.some(w => w.id === id && (id === 'meditation-forge-v1.0.0' || companyWorkflowMode(w) !== 'interactive')));
-  const grant = { version: 1, ...ref, epoch: identity.epoch, peerId: targetPeerId || peer.peerId, name: agent.name,
+  const bundle = service ? await prepareServicePackage(service, identity.owner) : null;
+  const grant = { ...(bundle ? { offer:bundle.offer } : {}), version: 1, ...ref, epoch: identity.epoch, peerId: targetPeerId || peer.peerId, name: agent.name,
     capabilities, workflows: headless, expiresAt: Date.now() + 7 * 86400000 };
+  if (bundle) validateServiceOffer(bundle.offer, grant);
   const descriptor = { grant, signature: await signer.signMessage(workerGrantMessage(grant)) };
-  if (!targetPeerId || targetPeerId === peer.peerId) await window.electronAPI.agentWorkerPublish(descriptor, { agentId: agent.id, defaults });
+  if (!targetPeerId || targetPeerId === peer.peerId) await window.electronAPI.agentWorkerPublish(descriptor, { agentId: agent.id, defaults, ...(bundle ? { assets:bundle.bindings } : {}) });
   return descriptor;
 }
 export async function discoverWorkers() {

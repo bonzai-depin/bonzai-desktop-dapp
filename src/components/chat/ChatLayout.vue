@@ -173,8 +173,9 @@ function isFresh(message) {
 }
 
 watch(
-  () => props.messages?.length,
+  () => [props.messages?.length, props.messages?.at(-1)?.content, props.messages?.at(-1)?.thinking, props.messages?.at(-1)?.answer?.text],
   () => scrollToBottom(false),
+  { flush: "post" },
 );
 onMounted(() => scrollToBottom(true));
 </script>

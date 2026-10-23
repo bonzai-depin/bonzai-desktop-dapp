@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const url = process.env.BONZAI_UI_URL;
-test('companion carousel browses with arrows without committing selection and preserves the existing choose action', {skip: !url, timeout:60000}, async()=>{
+test('companion and scenario carousels select immediately with pointer and keyboard', {skip: !url, timeout:60000}, async()=>{
  const browser=await chromium.launch({headless:true,channel:'chrome'});
  try {
   const page=await browser.newPage({viewport:{width:1280,height:1000}});
@@ -34,13 +34,12 @@ test('companion carousel browses with arrows without committing selection and pr
   const second=await portraits.nth(1).getAttribute('aria-label');
   assert.notEqual(first,second);
   assert.equal(await portraits.nth(1).getAttribute('aria-pressed'),'true');
-  assert.deepEqual(await page.evaluate(()=>window.chosen),[]);
+  await page.waitForFunction(()=>window.chosen.length === 1);
   await portraits.nth(1).focus();
   await page.keyboard.press('ArrowLeft');
   await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-pressed')==='true');
   assert.equal(await portraits.first().getAttribute('aria-pressed'),'true');
-  await selector.getByRole('button',{name:'Choose companion',exact:true}).click();
-  assert.equal((await page.evaluate(()=>window.chosen)).length,1);
+  await page.waitForFunction(()=>window.chosen.length === 2);
   await selector.getByRole('button',{name:'Selected',exact:true}).waitFor();
   assert.equal(await selector.locator('.companion-workflow-skills').count(), 0);
   assert.ok(await selector.locator('canvas').evaluate(el => el.getBoundingClientRect().width) > 300);
@@ -48,7 +47,6 @@ test('companion carousel browses with arrows without committing selection and pr
   assert.equal(await stages.locator('.scenario-card').count(), 1);
   await stages.getByRole('button', {name:'Next scenario', exact:true}).click();
   assert.equal(await stages.locator('.stage-tile').nth(1).getAttribute('aria-pressed'), 'true');
-  await stages.getByRole('button', {name:'Choose stage', exact:true}).click();
   await stages.getByRole('button', {name:'Selected stage', exact:true}).waitFor();
   const ratings = page.locator('button.content-level-option');
   await ratings.nth(1).click();

@@ -1,3 +1,4 @@
+import { saveRoleplayMediaHistory } from './roleplayMediaHistory.js';
 /**
  * Renderer-side adapter over the SQLite-backed roleplay data layer.
  *
@@ -343,11 +344,13 @@ export async function loadSessions() {
           legacy,
         });
       }
+      void saveRoleplayMediaHistory(out).catch(error => console.warn('[roleplay] History projection:', error.message));
       return out;
     } catch (err) { _warnOnce(err); }
   }
   // Legacy fallback — read electron-store
   const stored = await window.electronAPI?.store?.get?.(SESSIONS_KEY, {});
+  void saveRoleplayMediaHistory(stored || {}).catch(error => console.warn('[roleplay] History projection:', error.message));
   return stored || {};
 }
 
@@ -363,6 +366,8 @@ export async function loadSessions() {
  * parsed back to refs so re-saves are no-ops on disk.
  */
 export async function saveSessions(plainSessions) {
+  // History projection must never block durable conversation persistence.
+  void saveRoleplayMediaHistory(plainSessions).catch(error => console.warn('[roleplay] Media history could not be updated:', error.message));
   const api = _api()?.roleplay;
   const blobsApi = _api()?.blobs;
   if (!api || !blobsApi) {

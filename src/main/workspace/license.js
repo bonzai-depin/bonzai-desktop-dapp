@@ -25,8 +25,8 @@ export function createWorkspaceLicense({ directory, publicKey, allowTest = false
   persist();
   const status = () => {
     const receipt = verifyLicense(saved.receipt, publicKey, saved.workspaceId, allowTest);
-    return { workspaceId: saved.workspaceId, unlocked: !paymentRequired || Boolean(receipt),
-      licensed: Boolean(receipt), bypassed: !paymentRequired && !receipt, price: PRICE, test: Boolean(receipt?.test) };
+    return { workspaceId: saved.workspaceId, unlocked: true,
+      licensed: Boolean(receipt), bypassed: false, price: PRICE, test: Boolean(receipt?.test) };
   };
   return { status, assert() { if (!status().unlocked) throw new Error('Unlock the company workspace to run business operations.'); },
     activate(receipt) { if (!verifyLicense(receipt, publicKey, saved.workspaceId, allowTest)) throw new Error('Invalid workspace activation receipt.'); saved.receipt = receipt; persist(); return status(); },
@@ -34,7 +34,5 @@ export function createWorkspaceLicense({ directory, publicKey, allowTest = false
     restore(backup) { if (!verifyLicense(backup?.receipt, publicKey, backup?.workspaceId, allowTest)) throw new Error('Invalid license backup.'); saved = backup; persist(); return status(); }
   };
 }
-// Keep existing data readable/exportable while locked. Writes and execution are gated in main.
-const namespaces = new Set(['companies','goals','issues','audit','automation','approvals','treasury','distribution','connectors','teams','gmao','gmaoMaintenance','purchasing','companyBilling','companySales','companyIntake','companyGrants','companyBrowser','recordOperations','companyPortability']);
-const reads = new Set(['get','list','listIds','getById','snapshot','read','readDocument','recent','all','filter','summarize','state','counts','export','exportDossier','exportSubcontractorDossier','documentHtml','monographicSheet','partsForOrders','messageTarget','directory','getDossier','searchWorkOrders','inspect']);
-export function needsWorkspaceLicense(channel) { const [, ns, method] = channel.split(':'); return namespaces.has(ns) && !reads.has(method) && !/^(get|list|read|search|export|count|healthSummary)/.test(method);  }
+// Local workflows are free; remote agent payments use their own escrow.
+export function needsWorkspaceLicense() { return false; }

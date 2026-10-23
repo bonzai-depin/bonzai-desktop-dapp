@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newTrack, sceneChapter, reduceJourney, hearts, journeyContext, validateQuestPlan, loadJourneys, saveJourney, importJourneys } from '../src/services/roleplayJourney.js';
+import { newTrack, sceneChapter, reduceJourney, hearts, journeyContext, validateQuestPlan, loadJourneys, saveJourney, importJourneys, expandSceneChapter, validateJourney } from '../src/services/roleplayJourney.js';
 const companion = { id: 'sakura', name: 'Sakura', personality: 'Curious, creative' };
 const scene = { id: 'gallery', name: 'Midnight gallery', metadata: { activities: ['lighting tests', 'an exhibition'], narrativeHooks: ['A sculpture does not fit'] } };
 function track() { const t = newTrack('sakura', 'Our story', 'one'); t.scenes.gallery = sceneChapter(scene, companion); return t; }
 function turns(t, suffix = '') { for (let i = 0; i < 2; i++) t = reduceJourney(t, { type: 'turn', sceneId: 'gallery', id: `turn${suffix}${i}`, user: 'I move the sculpture into the new alcove.', assistant: 'We adjust the lights and the sculpture fits beautifully.' }); return t; }
 function completion(id = 'arrival') { return { type: 'complete', id: `q:${id}`, sceneId: 'gallery', questId: id, evidence: [{role:'user',quote:'I move the sculpture into the new alcove.'},{role:'assistant',quote:'We adjust the lights and the sculpture fits beautifully.'}], memory:'We found a place for the sculpture.' }; }
-test('scene objectives use its real activities and hooks', () => { const c = sceneChapter(scene, companion); assert.match(c.quests[1].objective,/lighting tests/); assert.match(c.quests[2].objective,/sculpture does not fit/); assert.equal(c.quests.length,6); });
+test('scene objectives use its real activities and hooks', () => { const c = sceneChapter(scene, companion); assert.match(c.quests[1].objective,/lighting tests/); assert.match(c.quests[2].objective,/sculpture does not fit/); assert.equal(c.quests.length,18); });
 test('chatting alone earns nothing, grounded completion rewards once', () => { let t=turns(track()); assert.equal(t.points,0); t=reduceJourney(t,completion()); assert.equal(t.points,15); assert.equal(t.coins,40); assert.deepEqual(reduceJourney(t,completion()),t); assert.equal(t.journal.length,1); });
 test('unearned, out-of-order, fabricated, or reused evidence cannot unlock quests', () => { assert.throws(()=>reduceJourney(track(),completion())); let t=turns(track()); assert.throws(()=>reduceJourney(t,completion('challenge'))); const bad=completion();bad.evidence[0].quote='I did a completely different thing.';assert.throws(()=>reduceJourney(t,bad));t=reduceJourney(t,completion());assert.throws(()=>reduceJourney(t,completion('discovery'))); });
 test('gifts require funds and inventory and cannot be farmed',()=>{let t=track();assert.throws(()=>reduceJourney(t,{type:'give',id:'a',sceneId:'gallery',giftId:'tea'}));t=reduceJourney(t,{type:'buy',id:'b',sceneId:'gallery',giftId:'tea'});assert.equal(t.coins,22);t=reduceJourney(t,{type:'give',id:'c',sceneId:'gallery',giftId:'tea',affinity:true});assert.equal(t.points,3);assert.equal(t.inventory.tea,0);t=reduceJourney(t,{type:'buy',id:'d',sceneId:'gallery',giftId:'tea'});assert.throws(()=>reduceJourney(t,{type:'give',id:'e',sceneId:'gallery',giftId:'tea'}));assert.throws(()=>reduceJourney(t,{type:'buy',id:'f',sceneId:'gallery',giftId:'record'}));});
@@ -15,3 +15,16 @@ test('model plans cannot alter reward amounts or inject arbitrary quest ids',()=
 test('local journal persists all tracks and rejects corrupt data without overwrite',async()=>{const data=new Map();globalThis.localStorage={getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v)};await Promise.all([saveJourney(track()),saveJourney(newTrack('other','Another','two'))]);assert.equal((await loadJourneys()).tracks.length,2);data.set('roleplayJourneysV1','{"version":99}');await assert.rejects(()=>saveJourney(track()));assert.equal(data.get('roleplayJourneysV1'),'{"version":99}');delete globalThis.localStorage;});
 
 test('session journal imports preserve existing progress and reject altered rewards', async()=>{const data=new Map();globalThis.localStorage={getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v)};const existing=turns(track());await saveJourney(existing);await importJourneys([track()]);assert.equal((await loadJourneys()).tracks[0].scenes.gallery.turns.length,2);const bad=track();bad.id='bad';bad.scenes.gallery.quests[0].points=999;await assert.rejects(()=>importJourneys([bad]));assert.equal((await loadJourneys()).tracks.length,1);delete globalThis.localStorage;});
+
+test('existing chapters gain twelve quests without changing earned progress or personalized originals', () => {
+ const t=reduceJourney(turns(track()),completion());
+ const legacy={...t.scenes.gallery,quests:t.scenes.gallery.quests.slice(0,6)};
+ const upgraded=expandSceneChapter(legacy,scene,companion);
+ assert.equal(upgraded.quests.length,18);
+ assert.deepEqual(upgraded.quests.slice(0,6),legacy.quests);
+ assert.deepEqual(upgraded.completed,legacy.completed);
+ assert.equal(new Set(upgraded.quests.map(q=>q.id)).size,18);
+ assert.deepEqual(expandSceneChapter(upgraded,scene,companion),upgraded);
+ validateJourney({...t,scenes:{gallery:legacy}});
+ validateJourney({...t,scenes:{gallery:upgraded}});
+});

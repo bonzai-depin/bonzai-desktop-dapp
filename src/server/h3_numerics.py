@@ -5,6 +5,8 @@ outputs into a seemingly successful video.
 """
 import math
 import types
+from collections.abc import Mapping
+from dataclasses import fields, is_dataclass
 
 import torch
 from torch import nn
@@ -14,6 +16,12 @@ def require_finite(value, stage):
     if isinstance(value, torch.Tensor):
         if not bool(torch.isfinite(value).all()):
             raise RuntimeError(f"MiniMax H3 numerical failure in {stage} ({value.dtype}, {tuple(value.shape)})")
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            require_finite(item, f"{stage}.{key}")
+    elif is_dataclass(value) and not isinstance(value, type):
+        for field in fields(value):
+            require_finite(getattr(value, field.name), f"{stage}.{field.name}")
     elif isinstance(value, (tuple, list)):
         for index, item in enumerate(value):
             require_finite(item, f"{stage}[{index}]")
@@ -52,7 +60,7 @@ def stabilize_norms(model):
             module.forward = types.MethodType(_stable_rms_forward, module)
 
 
-def watch_transformer(model):
+def watch_transformer(model, detailed=False):
     """Locate the first failing block instead of spending all steps on NaNs."""
     step = [0]
 
@@ -64,6 +72,20 @@ def watch_transformer(model):
 
     model.register_forward_pre_hook(before, with_kwargs=True)
     for name, module in model.named_modules():
+        # Opt-in: these checks synchronize accelerators, so keep the normal
+        # path at block granularity. Inputs matter: quantization can otherwise
+        # turn non-finite activations into finite integers and hide the origin.
+        if detailed and name.startswith("transformer_blocks.") and name.count(".") >= 2:
+            def before_part(_module, args, kwargs, label=name):
+                require_finite(args, f"denoising step {step[0]}, {label} inputs")
+                # Attention masks may legitimately contain -inf.
+                for key, value in kwargs.items():
+                    if "mask" not in key:
+                        require_finite(value, f"denoising step {step[0]}, {label} input {key}")
+            def after_part(_module, _args, output, label=name):
+                require_finite(output, f"denoising step {step[0]}, {label} output")
+            module.register_forward_pre_hook(before_part, with_kwargs=True)
+            module.register_forward_hook(after_part)
         if name in {"context_embedder", "norm_out"} or (
             name.startswith("transformer_blocks.") and name.count(".") == 1
         ):

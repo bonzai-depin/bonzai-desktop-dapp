@@ -16,3 +16,7 @@ test('errors stay prominent while idle teams and completed work remain quiet',()
  const rows=[{id:'idle',status:'monitoring'},{id:'done',status:'completed'},{id:'run',status:'running'},{id:'error',status:'failed'}];
  assert.deepEqual(orderOperations(rows).map(o=>o.id),['error','run','idle','done']);
 });
+test('waiting user requests appear oldest first',()=>{
+ const rows=[{id:'new',status:'queued',startedAt:20,updatedAt:20},{id:'old',status:'queued',startedAt:10,updatedAt:10}];
+ assert.deepEqual(orderOperations(rows).map(row=>row.id),['old','new']);
+});

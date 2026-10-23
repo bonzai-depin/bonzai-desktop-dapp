@@ -16,9 +16,9 @@
  * either a result or "fall back to local fetch" (the same signal main returns
  * when it has no remote providers ready).
  *
- * Remote inference is FREE — providers earn from BonzaiMintPool at epoch end
- * via BonzaiServiceTime.recordServiceTime, not per-request. No payment
- * envelope, no x402 header, nothing extra to send from the renderer.
+ * OpenRouter uses the user's funded account and explicit media selections.
+ * Provider errors are surfaced; only an explicit local-route response permits
+ * local fallback, so a failed paid request cannot silently start another engine.
  */
 
 // Endpoints we know how to route. Anything not in this table is left to the
@@ -31,10 +31,15 @@
 // + provider eligibility checks treat it as part of the video pool until the
 // contract is updated.
 const ENDPOINT_TO_PIPELINE = Object.freeze({
+  '/image/image/turbo': 'image_turbo_edit',
+  '/audio/quality/design': 'audio_quality',
+  '/audio/quality/clone': 'audio_quality',
   '/image/turbo':            'image_turbo',
   '/image/quality':          'image_quality',
   '/image/advanced':         'image_advanced',
   '/image/standard':         'image_standard',
+  '/image/qwen-2.1':          'image_standard',
+  '/image/image/standard':    'image_standard',
   '/audio/turbo':            'audio_turbo',
   '/audio/quality/persona':  'audio_quality',
   '/audio/music':            'music',
@@ -95,6 +100,7 @@ export async function routeFlaskRequest(endpoint, payload) {
   try {
     response = await ipc(pipeline, payload);
   } catch (err) {
+    if ((await window.electronAPI?.openRouter?.status?.())?.active) throw err;
     console.warn(`[InferenceRouter] IPC failed for ${endpoint}; using local fallback:`, err?.message);
     return { handled: false, reason: 'ipc-error' };
   }
@@ -106,7 +112,7 @@ export async function routeFlaskRequest(endpoint, payload) {
   // consumer mode has no eligible providers. The renderer's existing
   // localhost path handles that uniformly.
   if (response.useLocal === true || response.ok === false) {
-    if (response.error && response.code === 'no_providers') {
+    if (response.error && ['no_providers', 'openrouter_error'].includes(response.code)) {
       // User explicitly picked consumer mode but has nothing selected —
       // surface this so the renderer can show actionable feedback rather
       // than silently doing local inference.

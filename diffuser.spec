@@ -25,6 +25,7 @@ for package in packages:
 # rather than adding individual missing distributions after each frozen build.
 for distribution in ['torch', 'torchvision', 'torchaudio', 'transformers', 'diffusers', 'accelerate', 'peft']:
     package_data += copy_metadata(distribution, recursive=True)
+package_data += [('src/server/scripts', 'scripts')] if Path('src/server/scripts').is_dir() else []
 local_imports = [p.stem for p in Path('src/server').glob('*.py') if p.stem != 'diffuser']
 
 a = Analysis(

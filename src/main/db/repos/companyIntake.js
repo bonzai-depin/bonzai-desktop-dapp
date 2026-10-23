@@ -61,6 +61,7 @@ export function snapshot(id, { limit = 50, offset = 0, query = "" } = {}) {
     skip = Math.max(0, Number(offset) || 0),
     search = String(query).slice(0, 250);
   return {
+    batches: db().prepare('SELECT id,data FROM company_intake_batches WHERE company_id=? ORDER BY created_at DESC LIMIT 10').all(id).map(r=>({...JSON.parse(r.data),id:r.id})),
     sources: db()
       .prepare(
         "SELECT id,name,status,cursor,error,created_at AS createdAt,updated_at AS updatedAt FROM company_intake_sources WHERE company_id=? AND instr(lower(name),lower(?))>0 ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
@@ -91,6 +92,7 @@ export function readSource(id, { id: key }) {
     cursor: r.cursor,
     error: r.error,
     chunkCount: r.data.chunks.length,
+    pages: r.data.pages || [],
     metadata: r.data.metadata || {},
     blobId: r.data.blobId,
     ext: r.data.ext,
@@ -137,10 +139,9 @@ export const ingest = transaction((id, input = {}) => {
     .slice(0, 250);
   if (!name) throw new Error("Source name is required.");
   // Byte hash when available; text hash deduplicates pasted/re-delivered messages.
-  const fingerprint = hash(
-    input.blobId ||
-      JSON.stringify([input.connectorId || "", input.messageId || "", chunks]),
-  );
+  const identity = input.blobId || JSON.stringify([input.connectorId || "", input.messageId || "", chunks]);
+  // An archive and a current request have different effects. Keep legacy current hashes.
+  const fingerprint = hash(input.mode === 'historical' ? JSON.stringify(['historical', identity]) : identity);
   const old = db()
     .prepare(
       "SELECT id FROM company_intake_sources WHERE company_id=? AND fingerprint=?",
@@ -155,6 +156,9 @@ export const ingest = transaction((id, input = {}) => {
   const key = randomUUID(),
     now = Date.now();
   const metadata = {
+    mode: input.mode === 'historical' ? 'historical' : 'current',
+    batchId: String(input.batchId || '').slice(0,100),
+    relativePath: String(input.relativePath || '').slice(0,1000),
     channel: input.channel === "email" ? "email" : "file",
     sender: String(input.sender || "").slice(0, 300),
     messageId: String(input.messageId || "").slice(0, 300),
@@ -225,6 +229,7 @@ export const claim = transaction((id) => {
     ext: data.ext,
     chunk: analysisText(id, data, row.cursor),
     tableChunk: data.chunks[row.cursor],
+    pages: data.pages || [],
     metadata: data.metadata,
     context: intakeContext(id, analysisText(id, data, row.cursor)),
   };
@@ -248,6 +253,13 @@ export const renew = transaction((id, input) => {
     .prepare("UPDATE company_intake_sources SET lease_until=? WHERE id=?")
     .run(Date.now() + 12 * 60000, s.id);
   return { ok: true };
+});
+export const checkpoint = transaction((id,input)=>{
+  const s=assertLease(id,input), p=input.page;
+  if(s.data.extracted!==false || !p || !Number.isInteger(p.page) || p.page<1 || p.page>40 || typeof p.text!=='string' || p.text.length>200000 || !['text','ocr'].includes(p.method)) throw new Error('Page extraite invalide.');
+  const pages=[...(s.data.pages||[]).filter(v=>v.page!==p.page),{page:p.page,total:p.total,text:p.text,method:p.method}].sort((a,b)=>a.page-b.page);
+  db().prepare('UPDATE company_intake_sources SET data=?,updated_at=? WHERE id=?').run(JSON.stringify({...s.data,pages}),Date.now(),s.id);
+  return {ok:true};
 });
 export const extracted = transaction((id, input) => {
   const s = assertLease(id, input);
@@ -334,7 +346,8 @@ export const finish = transaction((id, input) => {
         key = randomUUID();
       const supported =
         data.evidence.trim().length >= 8 && text.includes(data.evidence);
-      const error = !supported
+      const error = s.data.metadata?.mode === 'historical' && !['maintenance_document','site','client','equipment'].includes(data.type)
+        ? 'Une archive ne peut pas déclencher une opération courante.' : !supported
         ? "Extracted evidence does not match the source."
         : mapped
           ? null
@@ -352,7 +365,7 @@ export const finish = transaction((id, input) => {
           error,
           Date.now(),
         );
-      if (!error && data.confidence >= 0.9) apply(id, { id: key, data }, s);
+      if (!error && data.confidence >= 0.9 && data.type !== 'maintenance_document' && s.data.metadata?.mode !== 'historical') apply(id, { id: key, data }, s);
     });
   db()
     .prepare(
@@ -390,6 +403,20 @@ export const retry = transaction((id, { id: key }) => {
     .run(key);
   return { ok: true };
 });
+export const prepareArchive = transaction((id, {id:key}) => {
+  const source=read(id,key);
+  if(source.status==='processing') throw new Error('Attendez la fin de l’analyse en cours.');
+  if(!source.data.blobId) throw new Error('Joignez le document original avant la saisie.');
+  const existing=actions(id,key).find(a=>a.data.type==='maintenance_document' && a.status!=='dismissed');
+  if(!existing) {
+    const ordinal=db().prepare('SELECT COALESCE(MAX(ordinal),-1)+1 n FROM company_intake_actions WHERE source_id=?').get(key).n;
+    const action=sanitizeIntakeAction({type:'maintenance_document',confidence:0,evidence:'Saisie manuelle à vérifier sur le document original.',data:{title:source.name,site:'',references:[],equipment:[],visits:[],parts:[],fluids:[],blockers:[],signatures:[]}});
+    db().prepare('INSERT INTO company_intake_actions(id,company_id,source_id,ordinal,data,created_at) VALUES(?,?,?,?,?,?)').run(randomUUID(),id,key,ordinal,JSON.stringify(action),Date.now());
+  }
+  db().prepare("UPDATE company_intake_sources SET status='review',cursor=?,lease=NULL,lease_until=NULL,error=NULL,updated_at=? WHERE id=?").run(source.data.chunks.length,Date.now(),key);
+  event(id,key,'manual_review',source.name);
+  return readSource(id,{id:key});
+});
 export const review = transaction((id, input) => {
   company(id);
   const row = db()
@@ -410,6 +437,7 @@ export const review = transaction((id, input) => {
   else {
     if (input.confirmed !== true)
       throw new Error("Confirm the extracted fields.");
+    if(s.data.metadata?.mode === 'historical' && !['maintenance_document','site','client','equipment'].includes(a.data.type)) throw new Error('Cette archive ne peut pas créer une opération courante.');
     const data = sanitizeIntakeAction({
       ...a.data,
       data: input.data || a.data.data,

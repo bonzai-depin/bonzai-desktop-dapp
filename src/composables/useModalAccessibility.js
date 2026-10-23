@@ -10,6 +10,24 @@ const visible = element => !element.disabled && element.tabIndex >= 0
   && !element.closest('[inert]') && element.getClientRects().length > 0
 const focusables = dialog => [...dialog.querySelectorAll(selector)].filter(visible)
 
+// Raise the backdrop, not just the panel inside its stacking context. Dialogs
+// are teleported to body; their CSS layers historically range from 250–10003.
+// Keep application dialogs below the wallet SDK and signature-waiting layer.
+function acquireLayer(element) {
+  let layer = element
+  for (let node = element; node && node !== document.body; node = node.parentElement) {
+    if (getComputedStyle(node).position === 'fixed') layer = node
+  }
+  const value = layer.style.getPropertyValue('z-index')
+  const priority = layer.style.getPropertyPriority('z-index')
+  const zIndex = Math.max(10010, ...dialogs.map(dialog => dialog.zIndex + 1))
+  layer.style.setProperty('z-index', String(zIndex))
+  return { zIndex, restoreLayer: () => {
+    if (value) layer.style.setProperty('z-index', value, priority)
+    else layer.style.removeProperty('z-index')
+  } }
+}
+
 function restoreBackground() {
   for (const [element, state] of isolated) {
     element.inert = state.inert
@@ -57,7 +75,7 @@ export function useModalAccessibility(dialogRef, { onClose, initialFocus } = {})
     const outgoing = dialogs.at(-1)
     const previous = document.activeElement === document.body && outgoing && !outgoing.element.isConnected
       ? outgoing.previous : document.activeElement
-    const entry = { element, previous }
+    const entry = { element, previous, ...acquireLayer(element) }
     dialogs.push(entry)
     element.setAttribute('tabindex', '-1')
     const focusFirst = () => (initialFocus?.value || focusables(element)[0] || element).focus({ preventScroll: true })
@@ -92,6 +110,7 @@ export function useModalAccessibility(dialogRef, { onClose, initialFocus } = {})
     release = () => {
       const wasTop = dialogs.at(-1) === entry
       dialogs.splice(dialogs.indexOf(entry), 1)
+      entry.restoreLayer()
       document.removeEventListener('keydown', onKey, true)
       document.removeEventListener('focusin', onFocus)
       isolateBackground()

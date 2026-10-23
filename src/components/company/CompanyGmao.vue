@@ -713,6 +713,9 @@
           </button>
         </div>
       </template>
+      <CompanySiteAliases v-if="view === 'clients'" :company-id="store.state.activeId" :sites="data.sites" />
+      <CompanyPricingVersions v-if="view === 'clients'" :company-id="store.state.activeId" :contracts="data.serviceContracts" @changed="store.refreshActive()" />
+      <CompanyCasework v-if="view === 'documents' && !reviewQueue" :company-id="store.state.activeId" />
       <template v-if="view === 'documents' || reviewQueue">
         <div class="ops-section-head">
           <div>
@@ -725,6 +728,7 @@
             >{{ ui("Importer") }}<input
               class="ops-file"
               type="file"
+              multiple
               accept=".docx,.pdf,.png,.jpg,.jpeg,.txt,.md,.csv,.tsv,.xls,.xlsx,.xlsm"
               :disabled="busy"
               @change="importIntake"
@@ -784,6 +788,7 @@
         </p>
         <CompanyWorkflowProgress :stages="processFor(selected).stages" />
         <span class="ops-process-state" :class="'process-' + processFor(selected).code">{{ ui(processFor(selected).label) }}</span>
+        <CompanyCasework :company-id="store.state.activeId" :work-order-id="selected.id" :documents="documentsFor(selected.id)" :assets="data.assets" :readonly="['completed','cancelled'].includes(selected.status)" />
         <CompanyMaintenanceControls :company-id="store.state.activeId" :work-order-id="selected.id" embedded @changed="store.refreshActive()" @open-task="$emit('open-task', $event)" />
         <CompanyRecordFlow :company-id="store.state.activeId" kind="workOrder" :record-id="selected.id" :revision="selected.updatedAt" @prepare-invoice="$emit('prepare-invoice',$event)" @open-invoice="$emit('open-invoice',$event)" @open-task="$emit('open-task',$event)" />
         <div class="ops-dossier-next">
@@ -1177,7 +1182,8 @@
               <option value="waiting">{{ ui("En attente, intervention en cours") }}</option>
               <option value="repair">{{ ui("Réparation / pièces nécessaires") }}</option>
             </select></label
-          ><label v-if="form.outcome === 'repair'"
+          ><MaintenanceFactFields v-if="form.outcome==='waiting'" class="full" kind="blocker" :model-value="form.blocker||{}" @update:model-value="form.blocker=$event" />
+          <label v-if="form.outcome === 'repair'"
             >{{ ui("Circuit réparation") }}<select v-model="form.repairMode">
               <option value="with_quote">{{ ui("Devis client requis") }}</option>
               <option value="without_quote">{{ ui("Selon contrat, sans devis") }}</option>
@@ -1336,7 +1342,7 @@
           >{{ ui("Préparer le devis client à partir de cette proforma") }}</button></template
         >
         <template v-if="['quote', 'invoice'].includes(editor.type)"
-          ><label v-if="editor.type === 'quote' && quotePricingProfile && form.quoteType === 'outside_bpu'">{{ ui('Contract equipment category') }}<select v-model="form.pricingCategory" required><option value="">{{ ui('Select a category') }}</option><option v-for="rule in pricingRules" :key="rule.id" :value="rule.id">{{ ui(rule.label) }}</option></select></label><label v-if="editor.type === 'quote'"
+          ><template v-if="editor.type==='quote' && quotePricingProfile?.id==='contract' && form.quoteType==='outside_bpu'"><label v-for="[key,label] in [['parts','pièces'],['labor','main-d’œuvre'],['travel','déplacement'],['access','accès / levage']]" :key="key" v-show="!(key==='parts' && form.partsFromEvidence)">{{ui('Justificatif')}} · {{ui(label)}}<input v-model="form[key+'Evidence']" :placeholder="ui('Document, référence ou relevé validé')" /></label></template><label v-if="editor.type === 'quote'"><input v-model="form.partsFromEvidence" type="checkbox" />{{ui('Reprendre les pièces du dossier · hors fourniture client')}}</label><label v-if="editor.type === 'quote'">{{ui('Date d’application du tarif')}}<input v-model="form.pricingDate" type="date" :placeholder="ui('Date de réception par défaut')" /></label><label v-if="editor.type === 'quote' && quotePricingProfile && form.quoteType === 'outside_bpu'">{{ ui('Contract equipment category') }}<select v-model="form.pricingCategory" required><option value="">{{ ui('Select a category') }}</option><option v-for="rule in pricingRules" :key="rule.id" :value="rule.id">{{ ui(rule.label) }}</option></select></label><label v-if="editor.type === 'quote'"
             >{{ ui("Méthode") }}<select v-model="form.quoteType">
               <option value="bpu">{{ ui("Pièces + main-d’œuvre") }}</option>
               <option value="outside_bpu">{{ ui("Franchise contractuelle + coefficient") }}</option>
@@ -1346,6 +1352,7 @@
             >{{ editor.type === "quote" ? ui("Pièces HT (€)") : ui("Montant HT (€)")
             }}<input
               v-model.number="form.parts"
+              :disabled="editor.type==='quote' && form.partsFromEvidence"
               type="number"
               min="0"
               step="0.01"
@@ -1363,7 +1370,7 @@
                 type="number"
                 min="0"
                 step="0.01" /></label
-            ><label>{{ ui("Heures de main-d’œuvre") }}<input v-model.number="form.laborHours" type="number" min="0" step="0.25" /></label><label v-if="form.quoteType !== 'bpu'"
+            ><label>{{ui('Accès / levage HT (€)')}}<input v-model.number="form.access" type="number" min="0" step="0.01" /></label><label>{{ ui("Heures de main-d’œuvre") }}<input v-model.number="form.laborHours" type="number" min="0" step="0.25" /></label><label v-if="form.quoteType !== 'bpu'"
               >{{ ui("Coefficient contractuel") }}<input
                 v-model.number="form.coefficient"
                 type="number"
@@ -1388,7 +1395,7 @@
             ><strong class="bz-metric">{{
               quotePreview.error ? ui("À vérifier") : money(quotePreview.totalCents)
             }}</strong>
-          </div></template
+          </div><p v-if="quotePreview.error" class="full" role="alert">{{quotePreview.error}}</p></template
         >
         <template v-if="editor.type === 'quoteReview'"
           ><div class="ops-dossier-next full">
@@ -1695,6 +1702,10 @@
   </section>
 </template>
 <script setup>
+import MaintenanceFactFields from './MaintenanceFactFields.vue';
+import CompanySiteAliases from './CompanySiteAliases.vue';
+import CompanyPricingVersions from './CompanyPricingVersions.vue';
+import CompanyCasework from './CompanyCasework.vue';
 import "./company-design.css";
 import { useCompanyDraft } from "../../services/company/viewDrafts.js";
 import CompanyRoutePlanner from "./CompanyRoutePlanner.vue";
@@ -1714,6 +1725,7 @@ import CompanyPdfSignature from "./CompanyPdfSignature.vue";
 import { interventionProgress, GAS_CONTRACT_TERMS, calculateGasContractQuote, gasProfileApplies } from "../../services/company/gmaoProcess.js";
 import GmaoDialog from "./GmaoDialog.vue";
 import {
+  workOrderIntakePayload,
   statusLabel as rawStatusLabel,
   statusTone,
   nextAction as rawNextAction,
@@ -2237,6 +2249,10 @@ function edit(type, row = {}) {
       ? JSON.parse(JSON.stringify(row.items))
       : [{ label: row.description || "", quantity: 1, received: 0 }];
   }
+  if(type==='quote' && (data.value.casework?.records||[]).some(r=>r.kind==='pricing' && r.contractId===contract?.id)) {
+    form.quoteType='outside_bpu';
+    for(const k of ['parts','labor','travel','access','laborHours']) form[k]=row[k] ?? '';
+  }
   if (type === "invoice") {
     const q = data.value.quotes.find((q) => q.workOrderId === wo?.id);
     form.parts = Number(q?.subtotalCents || 0) / 100;
@@ -2297,17 +2313,32 @@ const titles = {
 };
 const editorTitle = computed(() => editor.value?.type === "process" ? processActionLabel(editor.value.step) : titles[editor.value?.type] || ui("Dossier"));
 const pricingAsset = computed(() => data.value.assets.find(a => a.id === woFor(editor.value || {})?.assetId));
-const pricingRules = computed(() => CCTP_PRICING_RULES.filter(rule => rule.section === pricingAsset.value?.technicalSection && (!rule.domain || rule.domain === pricingAsset.value?.domainCode)));
+const pricingRules = computed(() => (quotePricingProfile.value?.rules || CCTP_PRICING_RULES).filter(rule => rule.section === pricingAsset.value?.technicalSection && (!rule.domain || rule.domain === pricingAsset.value?.domainCode)));
 const quotePricingProfile = computed(() => {
   const wo = woFor(editor.value || {}), site = data.value.sites.find(s => s.id === wo?.siteId);
-  return data.value.serviceContracts.find(c => c.id === site?.serviceContractId)?.settings?.pricingProfile;
+  const date=form.pricingDate || (wo?.reportedAt ? new Date(wo.reportedAt).toISOString().slice(0,10) : '');
+  const versions=(data.value.casework?.records||[]).filter(r=>r.kind==='pricing' && r.contractId===site?.serviceContractId);
+  return versions.length ? versions.find(r=>r.profile.effectiveFrom<=date && date<=r.profile.effectiveUntil)?.profile : data.value.serviceContracts.find(c => c.id === site?.serviceContractId)?.settings?.pricingProfile;
 });
 const quotePreview = computed(() => {
-  const raw = {quoteType:editor.value?.type === 'invoice' ? 'bpu' : form.quoteType, partsCents:Math.round(Number(form.parts||0)*100), laborCents:Math.round(Number(form.labor||0)*100), travelCents:Math.round(Number(form.travel||0)*100), accessCents:Math.round(Number(form.access||0)*100), franchiseCents:Math.round(Number(form.franchise||0)*100), laborHours:form.laborHours, coefficient:form.coefficient, vatRate:form.vatRate};
+  const raw = {partsFromEvidence:form.partsFromEvidence===true,quoteType:editor.value?.type === 'invoice' ? 'bpu' : form.quoteType, partsCents:Math.round(Number(form.parts||0)*100), laborCents:Math.round(Number(form.labor||0)*100), travelCents:Math.round(Number(form.travel||0)*100), accessCents:Math.round(Number(form.access||0)*100), franchiseCents:Math.round(Number(form.franchise||0)*100), laborHours:form.laborHours, coefficient:form.coefficient, vatRate:form.vatRate};
   const wo = woFor(editor.value || {}), site = data.value.sites.find(s => s.id === wo?.siteId), asset = data.value.assets.find(a => a.id === wo?.assetId);
   const profile = data.value.serviceContracts.find(c => c.id === site?.serviceContractId)?.settings?.gasFranchise;
+  if(form.partsFromEvidence) {
+    const parts=(data.value.casework?.records||[]).filter(r=>r.kind==='part' && r.workOrderId===wo?.id && r.origin!=='customer_supplied');
+    if(parts.some(r=>r.unitCostCents==null))return {error:ui('Certains coûts de pièces restent inconnus.')};
+    raw.partsCents=parts.reduce((n,r)=>n+Math.round(r.quantity*r.unitCostCents),0);
+  }
   raw.pricingCategory = form.pricingCategory;
-  try { return gasProfileApplies(profile, asset, raw.quoteType) ? calculateGasContractQuote(raw,profile) : quotePricingProfile.value && raw.quoteType === 'outside_bpu' && asset?.domainCode !== 'REG' ? calculateContractQuote(raw, quotePricingProfile.value, asset) : calculateQuote(raw); }
+  raw.pricingDate=form.pricingDate || (wo?.reportedAt ? new Date(wo.reportedAt).toISOString().slice(0,10) : '');
+  try {
+    if(raw.quoteType==='outside_bpu' && quotePricingProfile.value?.id==='contract') {
+      for(const k of ['parts','labor','travel','access','laborHours']) if((k!=='parts'||!form.partsFromEvidence) && (form[k]==null || form[k]==='')) throw new Error('Renseignez chaque coût et les heures, y compris les postes nuls.');
+      return calculateContractQuote(raw,quotePricingProfile.value,asset);
+    }
+    const hasVersions=(data.value.casework?.records||[]).some(r=>r.kind==='pricing' && r.contractId===site?.serviceContractId);
+    if(hasVersions && !quotePricingProfile.value) throw new Error('Aucun profil tarifaire validé pour la date de cette intervention.');
+    return gasProfileApplies(profile, asset, raw.quoteType) ? calculateGasContractQuote(raw,profile) : quotePricingProfile.value && raw.quoteType === 'outside_bpu' && asset?.domainCode !== 'REG' ? calculateContractQuote(raw, quotePricingProfile.value, asset) : calculateQuote(raw); }
   catch(error) { return {...raw, error:error.message}; }
 });
 const submitLabel = computed(() => {
@@ -2360,11 +2391,7 @@ async function submitEditor() {
             endsAt: f.endsAt ? new Date(f.endsAt).getTime() : null,
           });
         case "workOrder":
-          return store.createGmaoWorkOrder({
-            ...f,
-            receivedAt: new Date(f.receivedAt).getTime(),
-            assetId: f.assetId || null,
-          });
+          return store.createGmaoWorkOrder(workOrderIntakePayload(f));
         case "schedule": {
           const w = woFor(e);
           const payload = {
@@ -2382,6 +2409,7 @@ async function submitEditor() {
           return store.recordGmaoAttachmentSheet(e.workOrderId, {
             ...f,
             resolved: f.outcome === "resolved", waiting: f.outcome === "waiting",
+            blocker: f.outcome === 'waiting' ? f.blocker : undefined,
             startedAt: new Date(f.startedAt).getTime(),
             endedAt: new Date(f.endedAt).getTime(),
             measurements: String(f.measurements || "")
@@ -2414,6 +2442,9 @@ async function submitEditor() {
           return store.createGmaoQuote(e.workOrderId, {
             ...quotePreview.value,
             laborHours: form.laborHours,
+            pricingDate: form.pricingDate || undefined,
+            partsFromEvidence: form.partsFromEvidence===true,
+            costEvidence:{parts:form.partsEvidence,labor:form.laborEvidence,travel:form.travelEvidence,access:form.accessEvidence},
             procurementId: f.procurementId || null,
             useCatalog: false,
           });
@@ -2554,16 +2585,12 @@ function openWorkOrder(id) {
 }
 defineExpose({ openReview, importIntake, openWorkOrder });
 async function importIntake(event) {
-  const file = event.target.files?.[0];
-  if (file) {
-    const d = await act(
-      () => importIntakeFile(store.state.activeId, file),
-      ui("Document saved. The team will process it in the background."),
-    );
-    if (d) emit("open-intake");
-  }
-  event.target.value = "";
+  const files=[...(event.target.files||[])];event.target.value='';
+  const batchId=crypto.randomUUID();
+  for(const file of files) await act(()=>importIntakeFile(store.state.activeId,file,{batchId}),ui('Document saved. The team will process it in the background.'));
+  if(files.length)emit('open-intake');
 }
+
 async function generate(kind, workOrderId, recordId) {
   const doc = await act(
     () => store.generateGmaoDocument({ kind, workOrderId, recordId }),

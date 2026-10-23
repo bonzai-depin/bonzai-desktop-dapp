@@ -86,19 +86,23 @@
         </aside>
       </div>
 
-      <section v-if="activeHandoff" ref="runtimeSection" class="workflow-studio__runtime" :aria-label="$ui('Task workspace')" tabindex="-1">
+      <MediaProductionProgress v-if="MEDIA_WORKFLOW_IDS.includes(workflowId) && tasks.length" ref="productionProgress" :company-id="charter.id" :workflow-id="workflowId" :tasks="tasks" @review="$emit('open-view', 'deliverables')" @review-task="$emit('open-view', 'issues')" @refresh="$emit('refresh')" />
+      <section v-if="activeHandoff && !MEDIA_WORKFLOW_IDS.includes(workflowId)" ref="runtimeSection" class="workflow-studio__runtime" :aria-label="$ui('Task workspace')" tabindex="-1">
         <SmartAgent :key="`${activeHandoff.issueId}:${skill.id}`" :company-workflow-id="skill.id" :company-task="activeHandoff" @task-result-saved="$emit('refresh')" />
       </section>
-      <CompanyWorkflowTask v-if="showTask" :charter="charter" :role-key="roleKey" :skill="skill" @close="showTask = false" @queued="queued" />
+      <CompanyWorkflowTask v-if="showTask" :charter="charter" :role-key="roleKey" :skill="skill" :initial-inputs="workflowInputDraft?.skillId === skill.id ? workflowInputDraft.inputs : {}" @close="showTask = false; workflowInputDraft = null" @queued="queued" />
     </template>
   </section>
 </template>
 <script setup>
+import MediaProductionProgress from './MediaProductionProgress.vue';
+import { MEDIA_WORKFLOW_IDS } from '../../skills/mediaProduction.js';
 import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue';
 import { useI18n } from '../../i18n/index.js';
 import { getAvailableAgentWorkflows } from '../../services/agentWorkflows.js';
+import { agentModelOverride } from '../../services/company/teamCapabilities.js';
 import { smartAgentCatalog } from '../../services/smartAgentCatalog.js';
-import { companyWorkflowHandoff, setCompanyWorkflowHandoff } from '../../services/company/workflowHandoff.js';
+import { workflowInputDraft, companyWorkflowHandoff, setCompanyWorkflowHandoff } from '../../services/company/workflowHandoff.js';
 import { workflowTeamPresets } from '../../services/company/workflowTeams.js';
 import { templatePresentation } from '../../services/company/templateCatalog.js';
 import { isAutonomousWorkflowTask } from '../../shared/companyAutomation.js';
@@ -110,6 +114,7 @@ const emit = defineEmits(['open-view', 'refresh']);
 const { locale } = useI18n();
 const catalog = ref([]), loading = ref(true), error = ref(''), showTask = ref(false), roleKey = ref('');
 const runtimeSection = ref(null);
+const productionProgress = ref(null);
 const showWorkspace = ref(false);
 const teamHandoff = computed(() => companyWorkflowHandoff.value?.companyId === props.charter.id ? companyWorkflowHandoff.value : null);
 const workflowId = computed(() => teamHandoff.value?.skillId || props.charter.workspace?.executionWorkflowId);
@@ -126,7 +131,7 @@ const activeHandoff = computed(() => {
   const goal = (props.state.goals || []).find(item => item.id === issue?.goalId);
   if (isAutonomousWorkflowTask(props.charter, issue, goal)) return null;
   const role = props.charter.roles?.[issue?.assigneeRole];
-  return { ...teamHandoff.value, llm: role?.llm || null };
+  return { ...teamHandoff.value, llm: agentModelOverride(props.charter, issue.assigneeRole, smartAgentCatalog.agents) };
 });
 const workers = computed(() => Object.entries(props.charter.roles || {}).filter(([, role]) => role.companion).map(([key, role]) => {
   const agent = typeof role.companion === 'object' ? role.companion : smartAgentCatalog.agents.find(item => item.id === role.companion);
@@ -172,14 +177,19 @@ async function load() {
   finally { if (version === loadVersion) loading.value = false; }
 }
 async function openTask(task) {
-  if (needsInteractiveInput(task)) {
+  if (taskStatus(task).label === 'Awaiting approval') emit('open-view', 'approvals');
+  else if (MEDIA_WORKFLOW_IDS.includes(workflowId.value)) await productionProgress.value?.selectTask(task.id);
+  else if (needsInteractiveInput(task)) {
     setCompanyWorkflowHandoff({ companyId: props.charter.id, issueId: task.id, skillId: workflowId.value, agentId: task.assigneeCompanion });
     await focusTask();
   }
   else emit('open-view', taskStatus(task).label === 'Awaiting approval' ? 'approvals' : 'issues');
 }
-function queued() { showTask.value = false; emit('refresh'); }
+function queued() { workflowInputDraft.value = null; showTask.value = false; emit('refresh'); }
 watch(workflowId, load, { immediate: true });
+watch([skill, selectedWorker, workflowInputDraft], () => {
+  if (skill.value && selectedWorker.value && workflowInputDraft.value?.skillId === skill.value.id) showTask.value = true;
+}, { immediate: true });
 const pendingNewTask = ref(false);
 const pendingTaskFocus = ref(false);
 watch([skill, selectedWorker], () => { if (pendingNewTask.value && skill.value && selectedWorker.value) { showTask.value = true; pendingNewTask.value = false; } });

@@ -1,3 +1,4 @@
+import { MEDIA_TEAM_ROLES } from '../../skills/mediaProduction.js';
 import { TEMPLATE_GROUPS } from './templateCatalog.js';
 
 // Workflow IDs remain stable: saved inputs, histories and worker execution still
@@ -7,6 +8,9 @@ export const ROLEPLAY_WORKFLOW_ID = 'roleplay-companion-v1.0.0';
 // These describe actual outputs, not new capabilities or automatic permission
 // grants. The installed catalog remains the source of availability and execution.
 const WORKFLOW_OUTCOMES = {
+  'podcast-studio': { category: 'media', icon: 'podcasts', outcome: 'A complete illustrated podcast episode', deliverables: ['Narration', 'Episode script and notes', 'Cover illustration'], firstValue: 'Paste source content or a topic, choose a narrator and an approximate duration.', review: 'Listen to the full episode and review its cover and notes before sharing.' },
+  'music-video-forge': { category: 'media', icon: 'music_video', outcome: 'A finished music video covering the complete song', deliverables: ['Assembled music video', 'Soundtrack', 'Storyboard, illustrations and H3 clips'], firstValue: 'Describe your song and visual direction, or bring a song from your music history.', review: 'Review the assembled film and soundtrack. Shots run sequentially and completed stages are saved for retry.' },
+  'manga-to-anime': { category: 'media', icon: 'movie', outcome: 'Your manga panels animated as one anime sequence', deliverables: ['Assembled anime video', 'Ordered H3 shots', 'Storyboard'], firstValue: 'Add manga panels in story order and describe the scene.', review: 'Review character consistency, movement and the final sequence before sharing.' },
   'meditation-forge': {
     category: 'wellness', icon: 'spa', outcome: 'A guided meditation ready to listen to',
     frOutcome: 'Une méditation guidée prête à écouter',
@@ -129,7 +133,7 @@ export function workflowTeamPresets(catalog = []) {
     return {
       id: skill.id, executionWorkflowId: skill.id, title: skill.name || skill.id,
       category, icon: presentation?.icon || TEMPLATE_GROUPS.find(group => group.id === category).icon,
-      templateId: 'business_ops_team', summary: skill.description || '', pain: '',
+      templateId: MEDIA_TEAM_ROLES[skill.id] ? skill.id : 'business_ops_team', summary: skill.description || '', pain: '',
       outcome: skill.name || skill.id,
       firstValue: 'Create a task, assign a worker, and review the saved result.',
       review: 'Review inputs, approvals and deliverables in the team workspace.',

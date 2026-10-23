@@ -22,6 +22,7 @@ export function useInferenceRouter() {
     const started = performance.now();
     const response = await window.electronAPI.inferenceRequest(pipeline, params);
     if (!response) return response;
+    if (response.code === 'openrouter_error') throw new Error(response.error);
     const elapsedMs = Math.round(performance.now() - started);
     // Include remote execution/transport, retaining the provider's own timing
     // when supplied. A useLocal response is only routing, not a generation.

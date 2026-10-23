@@ -83,7 +83,7 @@ test("v1 upgrade adds sourcing and purchasing finance without regranting revoked
     },
   };
   const upgraded = operationalCharter(old);
-  assert.equal(upgraded.operationalVersion, 3);
+  assert.equal(upgraded.operationalVersion, 4);
   assert.deepEqual(upgraded.roles.PurchasingManager.grantedSkills, [
     "skill.brave_supplier_search", "skill.local_records",
   ]);
@@ -93,13 +93,13 @@ test("v1 upgrade adds sourcing and purchasing finance without regranting revoked
   assert.deepEqual(upgraded.roles.PaymentsSpecialist.grantedSkills, [
     "skill.local_purchasing",
   ]);
-  assert.deepEqual(upgraded.roles.DocumentController.grantedSkills, ["skill.local_records"]);
+  assert.deepEqual(upgraded.roles.DocumentController.grantedSkills, ["skill.local_records", "skill.local_casework"]);
   upgraded.roles.PurchasingManager.grantedSkills = [];
   upgraded.roles.CFO.grantedSkills = [];
   assert.equal(
     operationalCharter(upgraded),
     upgraded,
-    "v3 preserves explicit revocation",
+    "v4 preserves explicit revocation",
   );
   const noPurchasing = operationalCharter({
     operationalVersion: 1,
@@ -186,4 +186,14 @@ test("an uncertain Chorus result cannot complete the agent’s task step", async
   } finally {
     delete globalThis.window;
   }
+});
+
+test('casework migration preserves revoked existing tools and requires approval for evidence writes',()=>{
+  const upgraded=operationalCharter({operationalVersion:3,roles:{DocumentController:{grantedSkills:[]},CFO:{grantedSkills:[]}}});
+  assert.deepEqual(upgraded.roles.DocumentController.grantedSkills,['skill.local_casework']);
+  assert.deepEqual(upgraded.roles.CFO.grantedSkills,[]);
+  upgraded.roles.DocumentController.grantedSkills=[];
+  assert.deepEqual(operationalCharter(upgraded).roles.DocumentController.grantedSkills,[]);
+  for(const method of ['saveRecord','resolveBlocker','resolveFluidFollowup','savePricingVersion'])assert.equal(requiresOwnerApproval({type:'casework.'+method}),true);
+  assert.equal(OPERATIONAL_ACTIONS['casework.assetHistory'].read,true);
 });

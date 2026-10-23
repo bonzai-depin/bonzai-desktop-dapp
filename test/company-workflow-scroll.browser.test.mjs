@@ -58,7 +58,7 @@ test('workflow production keeps one page scroll and reachable controls when an i
         { id: 'done', title: 'Approved introduction', status: 'done', execution: { steps: steps('completed') } },
       ], catalog: [{ id:'result-1', title:'Approved introduction', pipeline:'text', meta:{workflowId:'test-scenes'} }, { id:'unrelated',title:'Another workflow result',meta:{workflowId:'different-workflow'}}] });
       window.fixture = { state, navigation: [] };
-      createApp({ render: () => h(View, { charter, state, onOpenView: value => window.fixture.navigation.push(value) }) }).use(createI18nPlugin()).mount('#app');
+      createApp({ render: () => h(View, { charter, state, initialView: 'studio', onOpenView: value => window.fixture.navigation.push(value) }) }).use(createI18nPlugin()).mount('#app');
     });
     await page.getByRole('heading', { name: 'Scene production' }).waitFor();
     assert.deepEqual(await page.locator('.workflow-studio__counts dd').allTextContents(), ['1', '2', '1']);

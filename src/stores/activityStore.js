@@ -13,9 +13,41 @@ let dispose = null;
 export function startActivityTracking() {
   if (dispose) return dispose;
   const socket = ensureGenerationSocket();
+  let tracking = true;
+  const coordinatorEvent = record => {
+    // Python already supplies richer media progress through genbus.
+    if (!tracking || record.kind === 'media') return;
+    const id = record.activityId || `inference:${record.id}`;
+    if ((state.operations[id]?.coordinatorRevision || 0) > record.revision) return;
+    reportOperation({ ...record, id, coordinatorRevision: record.revision, source: 'inference', mode: 'chat',
+      title: record.title || (record.kind === 'workflow' ? 'Workflow inference' : 'Generating text'),
+      stage: record.status === 'queued' ? 'Waiting for the device' : record.status,
+      progress: null, location: 'On this device' });
+  };
+  const stopCoordinator = window.electronAPI?.onInferenceQueueChanged?.(coordinatorEvent);
+  window.electronAPI?.inferenceQueueSnapshot?.().then(records => records.forEach(coordinatorEvent)).catch(() => {});
+  const queueEvent = event => {
+    const id = `queue:${event.id}`;
+    if (event.background) {
+      reportOperation({ id, source: 'local-worker', title: event.path.includes('abliteration') ? 'Uncensoring model' : 'Training model',
+        status: event.stage, stage: event.stage === 'queued' ? 'Waiting for the device' : event.stage,
+        progress: null, location: 'On this device' });
+      return;
+    }
+    if (event.stage !== 'queued') { delete state.operations[id]; return; }
+    const media = event.path === '/audio/music' ? 'music' : event.path?.split('/')[1] || 'generation';
+    reportOperation({ id, source: 'queue', title: `Queued ${media}`, status: 'queued',
+      stage: 'Waiting for the device', progress: null, location: 'On this device' });
+  };
   const handlers = {
+    inference_queue: queueEvent,
+    inference_queue_snapshot: events => {
+      const seen = new Set(events.map(event => `queue:${event.id}`));
+      for (const op of Object.values(state.operations)) if (op.source === 'queue' && !seen.has(op.id)) delete state.operations[op.id];
+      events.forEach(queueEvent);
+    },
     connect: () => { state.connected = true; },
-    disconnect: () => { state.connected = false; Object.values(state.operations).filter(o=>o.source==='generation'&&!terminal(o.status)).forEach(o=>reportOperation({id:o.id,stage:'Reconnecting',status:'interrupted'})); },
+    disconnect: () => { state.connected = false; Object.values(state.operations).filter(o=>['generation','queue'].includes(o.source)&&!terminal(o.status)).forEach(o=>reportOperation({id:o.id,stage:'Reconnecting',status:'interrupted'})); },
     gen_started: e => reportOperation(generationPatch(e)),
     gen_progress: e => {
       const id = `generation:${e.generation_id}`;
@@ -84,7 +116,7 @@ export function startActivityTracking() {
     timer = setTimeout(poll,4000);
   };
   poll();
-  dispose = () => { stopped=true;clearTimeout(timer);stopBenchmark?.();stopDownload?.();Object.entries(handlers).forEach(([event,fn])=>socket.off(event,fn));dispose=null; };
+  dispose = () => { tracking=false;stopCoordinator?.();stopped=true;clearTimeout(timer);stopBenchmark?.();stopDownload?.();Object.entries(handlers).forEach(([event,fn])=>socket.off(event,fn));dispose=null; };
   return dispose;
 }
 export default { state: readonly(state), reportOperation, dismissOperation, startActivityTracking };

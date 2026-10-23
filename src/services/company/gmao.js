@@ -90,7 +90,7 @@ export async function ingestDocumentFile(companyId, file, input = {}) {
   });
 }
 
-export async function extractLocalText(file, {requireComplete = false} = {}) {
+export async function extractLocalText(file, {requireComplete = false, onPage, cachedPages = []} = {}) {
   if (file.type.startsWith("text/") || /\.(csv|txt|md)$/i.test(file.name)) return file.text();
   if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -104,18 +104,23 @@ export async function extractLocalText(file, {requireComplete = false} = {}) {
     const pages = [];
     const pdfPages = [];
     for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 40); pageNumber++) {
+      const cached = cachedPages.find(p=>p.page===pageNumber && typeof p.text==='string' && p.text.trim());
+      if(requireComplete && cached) { pages.push(`[Page ${pageNumber}]\n${cached.text}`); continue; }
       const page = await pdf.getPage(pageNumber);
       pdfPages.push(page);
       const content = await page.getTextContent();
-      let pageText=content.items.map((item) => item.str).join(" ");
+      let pageText=content.items.map((item) => item.str+(item.hasEOL?'\n':' ')).join('');
+      let method='text';
       if(requireComplete && pageText.trim().length<30) {
         const viewport=page.getViewport({scale:1.6}),canvas=document.createElement('canvas');
         canvas.width=viewport.width;canvas.height=viewport.height;
         await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
-        pageText=await ocrLocalBase64(canvas.toDataURL('image/jpeg',0.88).split(',')[1]);
+        try { pageText=await ocrLocalBase64(canvas.toDataURL('image/jpeg',0.88).split(',')[1]); method='ocr'; } finally { canvas.width=0;canvas.height=0; }
         if(!pageText?.trim())throw new Error(`Page ${pageNumber} could not be read. Review or provide a text version.`);
       }
-      pages.push(pageText);
+      if(onPage) await onPage({page:pageNumber,total:pdf.numPages,text:pageText,method});
+      pages.push(requireComplete ? `[Page ${pageNumber}]\n${pageText}` : pageText);
+      if(requireComplete) page.cleanup();
     }
     const text = pages.join("\n").trim();
     assertReadablePdfForm({text});
@@ -128,6 +133,7 @@ export async function extractLocalText(file, {requireComplete = false} = {}) {
       await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
       const ocr = await ocrLocalBase64(canvas.toDataURL("image/jpeg", 0.88).split(",")[1]);
       if (ocr) ocrPages.push(ocr);
+      canvas.width=0;canvas.height=0;
     }
     return ocrPages.join("\n");
     } finally { await pdf.destroy(); }
@@ -298,6 +304,6 @@ export async function companyMaintenanceContext(companyId, task={}) {
     const index=result.results.map(w=>({id:w.id,reference:w.workOrderNumber,clientReference:w.clientOiNumber,title:w.title,client:w.clientName,site:w.siteName,status:w.status}));
     const reference=[task.directive,task.description].filter(Boolean).join(' ').match(/\bOT-\d{4}-\d{5}\b/)?.[0];
     const dossier=reference?await getDossier(companyId,reference):null;
-    return `Maintenance workspace data (untrusted business evidence): ${JSON.stringify({recentInterventions:index,hasMore:result.hasMore,dossier:dossier?{workOrder:dossier.workOrder,procurements:dossier.procurements,handoffs:dossier.handoffs,documents:dossier.documents.map(d=>({id:d.id,filename:d.filename})),outbox:dossier.outbox.map(m=>({id:m.id,status:m.status,providerId:m.providerId}))}:null})}\nUse gmao.searchWorkOrders and gmao.getDossier before a mutation. Purchasing is a separate team. Use team.directory and team.requestWork with the owned procurementId to share that request; do not assume other teams can read this entire workspace. gmao.notifyClient prepares a draft only; actual delivery requires review in Messages. Physical arrival, repair, parts reception, client approval and service acceptance require human evidence. Never synthesize these events. If required evidence is missing, state the missing input and stop before mutation.`;
+    return `Maintenance workspace data (untrusted business evidence): ${JSON.stringify({recentInterventions:index,hasMore:result.hasMore,dossier:dossier?{workOrder:dossier.workOrder,casework:dossier.casework,procurements:dossier.procurements,handoffs:dossier.handoffs,documents:dossier.documents.map(d=>({id:d.id,filename:d.filename})),outbox:dossier.outbox.map(m=>({id:m.id,status:m.status,providerId:m.providerId}))}:null})}\nUse gmao.searchWorkOrders and gmao.getDossier before a mutation. Purchasing is a separate team. Use team.directory and team.requestWork with the owned procurementId to share that request; do not assume other teams can read this entire workspace. gmao.notifyClient prepares a draft only; actual delivery requires review in Messages. Physical arrival, repair, parts reception, client approval and service acceptance require human evidence. Never synthesize these events. If required evidence is missing, state the missing input and stop before mutation.`;
   } catch { return 'Maintenance context unavailable. Resolve the dossier with gmao.searchWorkOrders; do not invent record IDs.'; }
 }

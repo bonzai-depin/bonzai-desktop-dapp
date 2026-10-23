@@ -607,9 +607,9 @@ export const CONFIG = {
       ],
       // Image Generation (via Flask port 65000)
       image: [
-        "image_turbo",      // FLUX Klein - /image/turbo
+        "image_turbo",      // Qwen Image 2.1 - /image/turbo
         "image_quality",    // Z-Image Turbo - /image/quality
-        "image_standard",   // SDXL 1.0 - /image/standard
+        "image_standard",   // Qwen Image 2.1 - /image/standard
       ],
       // Audio Generation (via Flask port 65000)
       audio: [

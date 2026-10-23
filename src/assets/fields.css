@@ -20,3 +20,25 @@
 input:is([type=date], [type=datetime-local], [type=time]) { color-scheme: dark; }
 :is([data-theme=light], [data-theme=mistral], [data-theme=warm], [data-theme=papergrid], [data-theme=popcanvas]) input:is([type=date], [type=datetime-local], [type=time]) { color-scheme: light; }
 input:is([type=date], [type=datetime-local])::-webkit-calendar-picker-indicator { pointer-events: none; opacity: .8; }
+
+/* A consistent inset for native select chevrons, including compact controls. */
+select:not([multiple]):not([size]) {
+  appearance:none; padding-inline-end:2.75rem !important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b98a5' stroke-width='1.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 14px center; background-size:16px;
+}
+.select:not(.is-multiple)::after { display:none; }
+
+/* Shared motion for checkbox switches, their knobs, and ARIA switch controls. */
+@media (prefers-reduced-motion: no-preference) {
+ :is(input[type=checkbox], [role=switch], .slider, .toggle-slider, [class$="__track"], [class$="__track"] > span),
+ :is(input[type=checkbox], [role=switch], .slider, .toggle-slider)::before,
+ :is(input[type=checkbox], [role=switch], .slider, .toggle-slider)::after {
+  transition: transform 180ms ease, left 180ms ease, background-color 180ms ease, border-color 180ms ease, opacity 180ms ease !important;
+ }
+}
+@media (prefers-reduced-motion: reduce) {
+ :is(input[type=checkbox], [role=switch], .slider, .toggle-slider, [class$="__track"], [class$="__track"] > span),
+ :is(input[type=checkbox], [role=switch], .slider, .toggle-slider)::before,
+ :is(input[type=checkbox], [role=switch], .slider, .toggle-slider)::after { transition:none !important; }
+}

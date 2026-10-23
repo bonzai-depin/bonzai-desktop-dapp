@@ -162,3 +162,19 @@ test('launch recovery cannot treat unrelated logs or unknown confirmation as a n
   assert.equal(result.tokenId, '0');
   assert.equal(result.tokenAddress, token);
 });
+
+test('licensed knowledge informs media without being read verbatim or routed to an external provider', async () => {
+  const calls=[]; let released=0;
+  const output=await executeCreation({pipeline:'audio',prompt:'Explain compressor checks in one short paragraph.'},{localOnly:true,instructions:'PRIVATE SOURCE: long proprietary manual'},mock({
+    chat:async(prompt,options)=>{calls.push({prompt,options});return '<think>internal</think>Check pressure before replacing the compressor.';},
+    request:async(endpoint,payload,options)=>{calls.push({endpoint,payload,options});return {audio_base64:'YXVkaW8='};},release:()=>released++,
+  }));
+  assert.match(calls[0].prompt,/PRIVATE SOURCE/);assert.equal(calls[0].options.localOnly,true);
+  assert.equal(calls[1].payload.text,'Check pressure before replacing the compressor.');assert.doesNotMatch(JSON.stringify(calls[1].payload),/PRIVATE SOURCE|think/);assert.equal(calls[1].options.localOnly,true);
+  assert.equal(output.pipeline,'audio');assert.equal(released,1);
+});
+test('private model selection survives creation routing and cannot fall back after failure',async()=>{
+  const model={binding:{id:'original'},asset:{digest:'fixed'}};let requests=0,releases=0;
+  await assert.rejects(()=>executeCreation({pipeline:'3d',prompt:'Build a room'},{localOnly:true,serviceModel:model},mock({chat:async(_,options)=>{assert.equal(options.serviceModel,model);assert.equal(options.localOnly,true);throw new Error('Original changed');},request:async()=>{requests++;},release:()=>releases++})),/Original changed/);
+  assert.equal(requests,0);assert.equal(releases,1);
+});

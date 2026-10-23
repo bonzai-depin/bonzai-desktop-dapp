@@ -103,3 +103,20 @@ test('company 3D assets use Qwen3.8 Q4 K XL by default while preserving original
   assert.equal(options.llmModel, `llm_${DEFAULT_3D_LLM_ID}_${DEFAULT_3D_LLM_TIER}`);
   assert.equal(options.llmModel, 'llm_qwen3_8_27b_low_q4'); assert.equal(artifact.meta.format, 'javascript');
 });
+
+
+test('failure and in-flight receipts cannot unlock downstream subtasks just because they have an ID', async () => {
+  for (const status of ['failed', 'error', 'cancelled', 'canceled', 'rejected', 'unsupported', 'pending', 'queued', 'running', 'processing', 'unknown']) {
+    let dispatched = 0;
+    const fixture = runtime([{ type: 'external.task' }, { type: 'publishContent' }], { dispatch: async () => { dispatched++; return { id: 'provider-job', status }; } });
+    const state = await runTaskExecution(fixture.options);
+    assert.equal(executionOutcome(state), 'blocked', status);
+    assert.equal(state.steps[1].status, 'planned', status);
+    await runTaskExecution({ ...fixture.options, execution: state });
+    assert.equal(dispatched, 1, `${status}: no blind retry of a possible external effect`);
+  }
+  for (const result of [{ id: 'receipt', isError: true }, { id: 'receipt', error: 'Provider rejected input' }]) {
+    const fixture = runtime([{ type: 'tool' }], { dispatch: async () => result });
+    assert.equal(executionOutcome(await runTaskExecution(fixture.options)), 'blocked');
+  }
+});

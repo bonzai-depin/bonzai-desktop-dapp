@@ -72,30 +72,20 @@
                   <BonzaiPulse variant="dot" />
                   {{ stream.phase || 'Initializing' }}
                 </span>
-                <p v-if="stream.subtitle" class="three-progress-card__subtitle">
-                  {{ stream.subtitle }}
-                </p>
               </div>
-              <span class="three-progress-card__pct">{{ formatGenerationTime(generationElapsed) }}</span>
+              <span class="three-progress-card__pct bz-metric">{{ formatGenerationTime(generationElapsed) }}</span>
             </div>
             <BonzaiPulse variant="strip" />
             <div class="three-progress-card__meta">
               <span>
                   {{ stream.tokenCount ? 'Receiving response…' : 'Preparing this stage…' }}
               </span>
-              <span>{{ formatGenerationTime(stream.elapsedMs) }} in this stage</span>
+              <span><span class="bz-metric">{{ formatGenerationTime(stream.elapsedMs) }}</span> in this stage</span>
               <span
                   v-if="stream.prefillMs > 200"
                   title="Time to the first response, including queueing and prompt processing"
                 >
-                  first response {{ (stream.prefillMs / 1000).toFixed(1) }}s
-              </span>
-            </div>
-
-            <div class="three-progress-card__tip" :title="stream.tip">
-              <BonzaiPulse variant="dot" />
-              <span>
-                {{ stream.tip || 'Preparing the 3D scene...' }}
+                  first response <span class="bz-metric">{{ (stream.prefillMs / 1000).toFixed(1) }}s</span>
               </span>
             </div>
 
@@ -127,6 +117,7 @@
                   @download="downloadAllModels"
                 />
 
+                <p class="three-model-label">{{ currentModel.modelname }}</p>
                 <div class="bz-3d-mode" role="group" aria-label="Creation type">
                   <button
                     type="button"
@@ -153,10 +144,10 @@
 
                 <div v-if="creationMode === 'object'" class="object-input-mode" role="group" aria-label="Object input">
                   <button type="button" :class="{ 'is-selected': objectInputMode === 'prompt' }" :aria-pressed="objectInputMode === 'prompt'" @click="objectInputMode = 'prompt'; removeReferenceImage()">
-                    <span class="material-symbols-outlined">text_fields</span>Prompt
+                    <span class="material-symbols-outlined" aria-hidden="true">text_fields</span>Prompt
                   </button>
                   <button type="button" :class="{ 'is-selected': objectInputMode === 'image' }" :aria-pressed="objectInputMode === 'image'" @click="objectInputMode = 'image'">
-                    <span class="material-symbols-outlined">add_photo_alternate</span>Prompt + image
+                    <span class="material-symbols-outlined" aria-hidden="true">add_photo_alternate</span>Prompt + image
                   </button>
                 </div>
 
@@ -182,8 +173,8 @@
 
                 <GenerativeInput
                   v-model="form.prompt"
-                  :min-height="64"
-                  :max-height="96"
+                  :min-height="120"
+                  :max-height="280"
                   :placeholder="creationMode === 'game' ? 'Describe the game loop, controls and objective...' : creationMode === 'level'
                       ? 'Describe a traversable environment or level...'
                     : objectInputMode === 'image'
@@ -192,7 +183,7 @@
                   :submit-label="creationMode === 'game' ? 'Generate game' : creationMode === 'level' ? 'Generate level' : objectInputMode === 'image' ? 'Reconstruct object' : 'Generate object'"
                   running-label="Building"
                   :running="isLoading"
-                  :disabled="!canSubmitWithAccess || !isModel"
+                  :disabled="isLoading || !isModel"
                   shortcut-hint="⌘⏎"
                   @submit="onSubmit"
                 />
@@ -232,7 +223,7 @@
           <section v-if="workspaceTab === 'generate'" class="bz-3d-advanced mt-5" aria-label="Scene controls">
             <div class="environment-controls bz-3d-environment">
             <div class="bz-3d-control-group">
-              <div class="bz-3d-control-head"><span class="material-symbols-outlined">view_in_ar</span><span>Presentation</span></div>
+              <div class="bz-3d-control-head"><span class="material-symbols-outlined" aria-hidden="true">view_in_ar</span><span>Presentation</span></div>
               <div class="bz-3d-selector" role="group" aria-label="Presentation">
                 <button v-for="mode in ['studio', 'environment']" :key="mode" type="button" class="bz-3d-option" :class="{ 'is-selected': presentation === mode }" :aria-pressed="presentation === mode" @click="presentation = mode">
                   {{ mode === 'studio' ? 'Studio' : 'Environment' }}
@@ -241,7 +232,7 @@
             </div>
             <div class="bz-3d-control-group bz-3d-control-group--lighting">
               <div class="bz-3d-control-head">
-                <span class="material-symbols-outlined">wb_sunny</span>
+                <span class="material-symbols-outlined" aria-hidden="true">wb_sunny</span>
                 <span>Lighting</span>
               </div>
               <div class="bz-3d-selector" role="group" aria-label="Lighting preset">
@@ -254,7 +245,7 @@
                   @click="setTimeOfDay(preset.id)"
                   :title="preset.label"
                 >
-                  <span class="material-symbols-outlined">{{ preset.class }}</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">{{ preset.class }}</span>
                   <span>{{ preset.label }}</span>
                 </button>
               </div>
@@ -262,7 +253,7 @@
 
             <div class="bz-3d-control-group bz-3d-control-group--weather">
               <div class="bz-3d-control-head">
-                <span class="material-symbols-outlined">cloud</span>
+                <span class="material-symbols-outlined" aria-hidden="true">cloud</span>
                 <span>Weather</span>
               </div>
               <div class="bz-3d-selector" role="group" aria-label="Weather preset">
@@ -275,7 +266,7 @@
                   @click="presentation = 'environment'; setWeather(weather.id)"
                   :title="weather.label"
                 >
-                  <span class="material-symbols-outlined">{{ weather.class }}</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">{{ weather.class }}</span>
                   <span>{{ weather.label }}</span>
                 </button>
               </div>
@@ -283,7 +274,7 @@
 
             <div class="bz-3d-control-group bz-3d-control-group--performance">
               <div class="bz-3d-control-head">
-                <span class="material-symbols-outlined">speed</span>
+                <span class="material-symbols-outlined" aria-hidden="true">speed</span>
                 <span>Performance</span>
               </div>
               <div class="bz-3d-selector" role="group" aria-label="Performance preset">
@@ -296,7 +287,7 @@
                   @click="setPerformance(preset.id)"
                   :title="preset.label"
                 >
-                  <span class="material-symbols-outlined">{{ preset.class }}</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">{{ preset.class }}</span>
                   <span>{{ preset.label }}</span>
                 </button>
               </div>
@@ -306,54 +297,29 @@
 
           </div>
           <!-- VIEWER -->
-          <div class="viewer-container" :class="{ 'is-build': workspaceTab === 'build' }">
+          <div class="viewer-container" :class="{ 'is-build': workspaceTab === 'build', 'is-editing': workspaceTab === 'build' && buildEditorReady && !isPlaytesting }">
             <section v-if="workspaceTab === 'build' && buildEditorReady && !isPlaytesting" class="build-director" aria-label="Level editor" @click.stop>
               <div class="build-director__levels">
                 <input v-model="gameProject.title" :disabled="editorBusy" class="build-director__title" aria-label="Game title" placeholder="Untitled game" />
                 <div class="build-level-tabs" role="tablist" aria-label="Levels">
                   <button v-for="(level, index) in orderedProjectLevels" :key="level.id" type="button" :class="{ 'is-active': forgeLevelId === level.id }" :disabled="editorBusy" @click="selectBuildLevel(level.id)">
-                    <span class="build-level-tabs__index">{{ index + 1 }}</span>{{ level.title }}
+                    <span class="build-level-tabs__index">{{ index + 1 }}</span>{{ levelLabel(level,index) }}
                   </button>
                   <button class="build-level-tabs__add" type="button" title="Generate a level" :disabled="editorBusy" @click="createLevelFromBuild"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
                 </div>
                 <div v-if="activeLevel" class="build-director__order build-director__actions">
-                  <button type="button" title="Move level earlier" :disabled="editorBusy" @click="moveActiveLevel(-1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span></button>
-                  <button type="button" title="Move level later" :disabled="editorBusy" @click="moveActiveLevel(1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button>
-                  <button type="button" title="Remove level" :disabled="editorBusy" @click="removeActiveLevel"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
-                  <button class="build-action" type="button" :disabled="editorBusy || !canTokenizeProject" @click="startPlaytest"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>Playtest</button>
-                  <button class="build-action is-publish" type="button" :disabled="editorBusy || !canTokenizeProject" @click="tokenizeGameProject"><span class="material-symbols-outlined" aria-hidden="true">publish</span>Publish</button>
+                  <details class="build-level-menu"><summary aria-label="Level options" title="Level options"><span class="material-symbols-outlined" aria-hidden="true">settings</span></summary><div>
+                    <button type="button" :disabled="editorBusy" @click="moveActiveLevel(-1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>Move earlier</button>
+                    <button type="button" :disabled="editorBusy" @click="moveActiveLevel(1)"><span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>Move later</button>
+                    <button type="button" :disabled="editorBusy" @click="removeActiveLevel"><span class="material-symbols-outlined" aria-hidden="true">delete</span>Remove level</button>
+                  </div></details>
+                  <button class="bz-btn bz-btn--primary build-play-button" type="button" :disabled="editorBusy || !canPlaytest" @click="startPlaytest"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>Playtest</button>
+                  <button class="build-action is-publish" type="button" :title="canTokenizeProject ? 'Publish game' : 'Complete your level’s Rules & Goals before publishing'" :disabled="editorBusy || !canTokenizeProject" @click="tokenizeGameProject"><span class="material-symbols-outlined" aria-hidden="true">publish</span>Publish</button>
                 </div>
               </div>
-              <details class="build-gameplay"><summary>{{ $t('levelEditor.gameplay') }}</summary>
-              <div v-if="activeLevel" class="build-marker-fields">
-                <fieldset v-for="type in ['start','finish']" :key="type" :disabled="editorBusy">
-                  <legend>{{ $t(`levelEditor.${type}`) }}</legend>
-                  <label v-for="axis in ['x','y','z']" :key="axis">{{ axis.toUpperCase() }}<input type="number" step="0.25" :aria-label="`${$t(`levelEditor.${type}`)} ${axis.toUpperCase()}`" :value="(type==='start'?activeLevel.entry:activeLevel.exits[0]?.position)?.[axis] || 0" @change="commitLevelMarker(type,axis,$event.target.value)" /></label>
-                </fieldset>
-              </div>
-              <form class="gameplay-command" @submit.prevent="updateGameplayWithAI">
-                <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-                <textarea v-model="gameplayInstruction" rows="1" :disabled="gameplayUpdating" placeholder="Describe the game rules, challenge, or change you want..." aria-label="Describe gameplay"></textarea>
-                <button type="submit" :disabled="gameplayUpdating || !gameplayInstruction.trim()">
-                  <BonzaiPulse v-if="gameplayUpdating" variant="dot" />
-                  <span v-else class="material-symbols-outlined">arrow_upward</span>
-                  <span>{{ gameplayUpdating ? 'Designing' : 'Apply' }}</span>
-                </button>
-              </form>
-              <div v-if="activeLevel" class="clear-conditions">
-                <span class="clear-conditions__label">Clear when</span>
-                <button v-for="condition in activeLevel.clearConditions || []" :key="condition.id" type="button" :title="`Remove: ${condition.label}`" @click="deleteClearCondition(condition.id)">
-                  <span class="material-symbols-outlined" aria-hidden="true">{{ clearConditionIcon(condition.type) }}</span>
-                  {{ condition.label }}
-                  <span class="material-symbols-outlined" aria-hidden="true">close</span>
-                </button>
-                <span v-if="!activeLevel.clearConditions?.length" class="clear-conditions__empty">Ask BonzAI to define the win condition.</span>
-                <span v-else-if="activeLevel.clearConditions.length > 1" class="clear-conditions__mode">{{ activeLevel.clearMode === 'any' ? 'Any' : 'All' }}</span>
-              </div>
-              <div class="gameplay-suggestions" aria-label="Gameplay suggestions">
-                <button v-for="suggestion in gameplaySuggestions" :key="suggestion" type="button" @click="gameplayInstruction = suggestion">{{ suggestion }}</button>
-              </div>
-              </details>
+
+
+
             </section>
             <section v-if="workspaceTab === 'build' && !buildEditorReady" class="build-workflow" aria-label="Start game build" @click.stop>
               <div class="level-entry">
@@ -365,8 +331,11 @@
               </div>
             </section>
             <div v-if="workspaceTab === 'build' && isPlaytesting" class="playtest-bar" @click.stop>
-              <button type="button" @click="stopPlaytest"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>Edit</button>
+              <button type="button" @click="stopPlaytest"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>Back to Build</button>
               <strong>{{ gameProject.title }}</strong>
+              <button type="button" @click="threeViewer?._activeEngine?.GAME?.active?.restart()"><span class="material-symbols-outlined" aria-hidden="true">restart_alt</span>Restart</button>
+              <div class="playtest-camera" role="group" aria-label="Camera view"><button v-for="view in ['third','first']" :key="view" type="button" :aria-pressed="playtestCamera===view" @click="setPlaytestCamera(view)">{{view==='first'?'First person':'Third person'}}</button></div>
+              <span class="playtest-controls">WASD / arrows · Move &nbsp; Drag · Look &nbsp; Shift · Sprint &nbsp; E / Space · Interact &nbsp; Esc · Pause</span>
               <select v-model="agentCompanionId" aria-label="Companion player"><option v-for="companion in agentCompanions" :key="companion.id" :value="companion.id">{{ companion.name }}</option></select>
               <button type="button" @click="startCompanionPlay"><span class="material-symbols-outlined" aria-hidden="true">smart_toy</span>Let {{ agentCompanionName }} play</button>
             </div>
@@ -391,20 +360,35 @@
               <p v-if="workspaceTab === 'build' && projectStatus" class="build-status">{{ projectStatus }}</p>
             </div>
 
-          </div>
-          <DownloadRequirement v-if="workspaceTab==='build' && buildEditorReady && !isPlaytesting && (needsDownload || downloads.active)"
-            category="3d" :items="missingRequiredModels" :active="downloads.active" cancellable
-            :cancelling="isCancellingDownloads" @cancel="cancelActiveDownloads"
-            :progress="downloads.total_progress || downloads.progress || 0" :tasks="downloadTaskList"
-            :error="downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''" @download="downloadAllModels" />
           <LevelEditor v-if="workspaceTab==='build' && buildEditorReady && !isPlaytesting" ref="levelEditor"
-            :viewer="threeViewer" :revision="editorRevision" :assets="buildObjectLibrary" :busy="editorBusy"
+            v-model:panel="buildPanel" :viewer="threeViewer" :revision="editorRevision" :assets="buildObjectLibrary" :busy="editorBusy"
             :model-ready="!needsDownload && !downloads.active"
             :generating="editingBusy" @cancel-generation="cancelLevelRegeneration"
             :can-undo="editUndo.length>0" :can-redo="editRedo.length>0" :message="projectStatus"
-            @selection="selectedPlacementId=$event?.target?.placementId || ''" @transform="commitLevelTransform"
+            @selection="levelEditorSelection=$event; selectedPlacementId=$event?.target?.placementId || ''" @transform="commitLevelTransform"
             @place="placeEditorAsset" @regenerate="regenerateLevelSelection" @save="saveEditedLevel"
             @undo="undoLevelEdit" @redo="redoLevelEdit">
+            <template #rules>
+              <GameRulesPanel v-if="activeLevel && buildPanel==='rules'" :level="activeLevel" :busy="editorBusy" :selection="levelEditorSelection" @add="addEditorObjective" @remove="deleteClearCondition" @mode="setEditorClearMode" @marker="setEditorMarker" @rename="renameEditorLevel">
+              <template #markers>
+              <div v-if="activeLevel" class="build-marker-fields">
+                <fieldset v-for="type in ['start','finish']" :key="type" :disabled="editorBusy">
+                  <legend>{{ $t(`levelEditor.${type}`) }}</legend>
+                  <label v-for="axis in ['x','y','z']" :key="axis">{{ axis.toUpperCase() }}<input type="number" step="0.25" :aria-label="`${$t(`levelEditor.${type}`)} ${axis.toUpperCase()}`" :value="(type==='start'?activeLevel.entry:activeLevel.exits[0]?.position)?.[axis] || 0" @change="commitLevelMarker(type,axis,$event.target.value)" /></label>
+                </fieldset>
+              </div>
+              </template>
+              <form class="gameplay-command" @submit.prevent="updateGameplayWithAI">
+                <label for="gameplay-design"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span> Design with AI</label>
+                <textarea id="gameplay-design" v-model="gameplayInstruction" rows="6" :disabled="gameplayUpdating" placeholder="Describe the game rules, challenge, or change you want..." aria-label="Describe gameplay"></textarea>
+                <button type="submit" :disabled="gameplayUpdating || !gameplayInstruction.trim()">
+                  <BonzaiPulse v-if="gameplayUpdating" variant="dot" />
+                  <span v-else class="material-symbols-outlined">arrow_upward</span>
+                  <span>{{ gameplayUpdating ? 'Designing' : 'Apply' }}</span>
+                </button>
+              </form>
+              </GameRulesPanel>
+            </template>
             <template #selection>
               <details v-if="selectedPlacement" class="build-gameplay"><summary>{{ $t('levelEditor.gameplay') }}</summary>
                 <label class="build-field"><span>{{ $t('levelEditor.role') }}</span><select :value="selectedPlacement.role" :disabled="editorBusy" @change="commitSelectedPlacement($event.target.value)"><option v-for="role in objectRoles" :key="role.id" :value="role.id">{{role.label}}</option></select></label>
@@ -417,6 +401,13 @@
               <button v-if="selectedPlacement" type="button" class="bz-btn bz-btn--ghost" :disabled="editorBusy" @click="deleteSelectedPlacement">{{ $t('levelEditor.remove') }}</button>
             </template>
           </LevelEditor>
+          </div>
+          <DownloadRequirement v-if="workspaceTab==='build' && buildEditorReady && !isPlaytesting && (needsDownload || downloads.active)"
+            category="3d" :items="missingRequiredModels" :active="downloads.active" cancellable
+            :cancelling="isCancellingDownloads" @cancel="cancelActiveDownloads"
+            :progress="downloads.total_progress || downloads.progress || 0" :tasks="downloadTaskList"
+            :error="downloads.status === 'failed' ? $t('rcDownloads.downloadFailed') : ''" @download="downloadAllModels" />
+
 
           <!-- GENERATION HISTORY HEADER -->
           <div v-if="objectInferences.length > 0 && workspaceTab === 'generate'" class="level mb-4 mt-5">
@@ -441,7 +432,7 @@
                   aria-label="Import history"
                   @click="importHistory()"
                 >
-                  <span class="material-symbols-outlined">upload</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">upload</span>
                 </button>
                 <button
                   type="button"
@@ -451,7 +442,7 @@
                   @click="exportHistory()"
                   :disabled="objectInferences.length === 0"
                 >
-                  <span class="material-symbols-outlined">download</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">download</span>
                 </button>
                 <button
                   type="button"
@@ -460,7 +451,7 @@
                   aria-label="Clear history"
                   @click="clearHistory()"
                 >
-                  <span class="material-symbols-outlined">ink_eraser</span>
+                  <span class="material-symbols-outlined" aria-hidden="true">ink_eraser</span>
                 </button>
               </div>
             </div>
@@ -585,7 +576,7 @@
             :disabled="screenshotModal.currentIndex <= 0"
             @click="navigateScreenshot(-1)"
           >
-            <span class="material-symbols-outlined">chevron_left</span>
+            <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
           </button>
           <span class="nav-indicator">
             {{ screenshotModal.currentIndex + 1 }} /
@@ -599,7 +590,7 @@
             "
             @click="navigateScreenshot(1)"
           >
-            <span class="material-symbols-outlined">chevron_right</span>
+            <span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>
           </button>
         </div>
       </div>
@@ -686,6 +677,9 @@ import BonzaiPulse from "./BonzaiPulse.vue";
 import { cancelLocalDownloads } from '../services/downloadCancellation.js';
 import DownloadRequirement from "./DownloadRequirement.vue";
 import BzCloseButton from "./BzCloseButton.vue";
+import { userFacingError } from '../services/userFacingError.js';
+import { remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
+import GameRulesPanel from "./gen3d/GameRulesPanel.vue";
 import GenerativeInput from "./generative/GenerativeInput.vue";
 import GenerativeActions from "./generative/GenerativeActions.vue";
 import { requestOpenNetworkModal } from "../services/level.service.js";
@@ -706,6 +700,7 @@ import {
   moveLevel,
   placeObject,
   removePlacement,
+  addClearCondition,
   removeClearCondition,
   removeLevel,
   setLevelMarker,
@@ -1414,7 +1409,7 @@ function modelFromResolved(resolved, role) {
 
 export default {
   name: "Generative3D",
-  components: { LevelEditor, ExampleLibrary, DownloadRequirement, ThreeViewer, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
+  components: { GameRulesPanel, LevelEditor, ExampleLibrary, DownloadRequirement, ThreeViewer, MintModal, BonzaiPulse, BzCloseButton, GenerativeInput, GenerativeActions },
   setup() {
     const {t} = useI18n();
     // ------------ NFT Minting ---------
@@ -1434,6 +1429,7 @@ export default {
           model: item.model || "",
           timestamp: item.timestamp,
           threeCode: item.code,
+          thumbnail: historyThumbnail(item),
           projectManifest: item.projectManifest || null,
           levelProject: item.levelProject || null,
           tokensPerSecond: item.tokensPerSecond || null,
@@ -1614,6 +1610,10 @@ export default {
     const selectedBuildObjectLibraryIds = ref([]);
     const buildEditorReady = ref(gameProject.value.levels.length > 0);
     const isPlaytesting = ref(false);
+    const buildPanel = ref("build");
+    const levelEditorSelection = ref(null);
+    const canPlaytest = computed(() => validateGameProject(gameProject.value, { requireClearConditions: false }).ok);
+    const levelLabel = (level,index) => level.title?.length > 80 ? `Level ${index + 1}` : level.title || `Level ${index + 1}`;
     const gameplaySuggestions = [
       "Collect 5 relics before time runs out",
       "Turn this into a boss level",
@@ -2375,9 +2375,9 @@ export default {
 
     const reasoningEnabled = ref(false);
 
-    const currentModel = computed(() => codeModel.value);
+    const currentModel = computed(() => remoteInference.active ? { modelname: remoteInference.model, filename: remoteInference.model } : codeModel.value);
     const missingRequiredModels = computed(() =>
-      requiredModelFiles.value.filter((model) =>
+      remoteInference.active ? [] : requiredModelFiles.value.filter((model) =>
         model.roles.some((role) => !modelAvailability[role.toLowerCase()]),
       ),
     );
@@ -2683,7 +2683,7 @@ OUTPUT RAW JAVASCRIPT:`;
         typeof window?.electronAPI?.onChatToken === "function";
 
       const extraOpts = { isolated: true, returnMetadata: true };
-      if (window.electronAPI.completionBudget) {
+      if (!remoteInference.active && window.electronAPI.completionBudget) {
         const budget = await window.electronAPI.completionBudget(prompt, options.maxTokens || 2048);
         if (options.maxTokens >= 8192 && budget.maxTokens < 4096) throw new Error(`Only ${budget.maxTokens} output tokens fit in the loaded ${budget.context}-token context. Try a shorter scene description or a smaller model.`);
         options = { ...options, maxTokens: budget.maxTokens };
@@ -2934,7 +2934,7 @@ OUTPUT RAW JAVASCRIPT:`;
         forgeObjectId.value = asset.id;
         projectStatus.value = `${asset.title} selected. Drag it onto the level to place it.`;
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -2989,7 +2989,7 @@ OUTPUT RAW JAVASCRIPT:`;
         buildTool.value = "select";
         projectStatus.value = `${asset.title} selected. Click the level or drag it to place copies.`;
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -3040,7 +3040,7 @@ OUTPUT RAW JAVASCRIPT:`;
         workspaceTab.value = "build";
         projectStatus.value = `${marker === "start" ? "Start" : "Finish"} placed at ${formatVector(position)}.`;
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -3064,7 +3064,7 @@ OUTPUT RAW JAVASCRIPT:`;
         });
         projectStatus.value = "Object placed. Its transform is now part of the game manifest.";
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -3126,7 +3126,7 @@ OUTPUT RAW JAVASCRIPT:`;
         interactionTargetId.value = "";
         projectStatus.value = "Interaction added.";
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -3139,15 +3139,7 @@ OUTPUT RAW JAVASCRIPT:`;
       custom: "bolt",
     }[type] || "check_circle");
 
-    const deleteClearCondition = (conditionId) => {
-      if (!activeLevel.value) return;
-      try {
-        removeClearCondition(gameProject.value, activeLevel.value.id, conditionId);
-        projectStatus.value = "Clear condition removed.";
-      } catch (error) {
-        projectStatus.value = error.message;
-      }
-    };
+    const deleteClearCondition = conditionId => editLevel((project,level)=>removeClearCondition(project,level.id,conditionId), {render:false});
 
     const toggleBuildObject = (libraryId) => {
       const selected = selectedBuildObjectLibraryIds.value;
@@ -3179,7 +3171,7 @@ OUTPUT RAW JAVASCRIPT:`;
         const applied = await updateGameplayWithAI();
         if (applied) buildEditorReady.value = true;
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -3270,12 +3262,21 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       else await selectBuildLevel(forgeLevelId.value);
     };
 
+    const playtestCamera = ref('third');
+    const setPlaytestCamera = mode => {
+      playtestCamera.value = mode;
+      threeViewer.value?._activeEngine?.GAME?.active?.setCameraMode(mode);
+    };
     const startPlaytest = async () => {
+      if (editorBusy.value || !canPlaytest.value) return;
+      isPlaytesting.value = true;
+      await nextTick();
       try {
         await previewGameProject();
-        isPlaytesting.value = true;
       } catch {
-        // Project status explains which level is incomplete.
+        isPlaytesting.value = false;
+        await nextTick();
+        await selectBuildLevel(forgeLevelId.value);
       }
     };
 
@@ -3290,7 +3291,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         threeViewer.value?.startAgenticPlay(agentCompanionId.value);
         projectStatus.value = `${agentCompanionName.value} is now playing autonomously.`;
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -3319,12 +3320,12 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       gameProject.value=next;
       projectStatus.value=t('levelEditor.savedLocally');
     };
-    const editLevel = async mutate => {
+    const editLevel = async (mutate, { render = true } = {}) => {
       if(editorBusy.value || !activeLevel.value)return;
       const before=cloneProject(gameProject.value),next=cloneProject(before);
       try {
         mutate(next,next.levels.find(level=>level.id===forgeLevelId.value));
-        await previewLevelEditor(true,next);
+        if (render) await previewLevelEditor(true,next);
         finishLevelEdit(before,next);
       } catch(error) {
         try{await previewLevelEditor(true,before);}catch{}
@@ -3334,7 +3335,14 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     const commitLevelTransform = selection => editLevel((project,level)=>{
       if(selection.target.placementId)updatePlacement(project,level.id,selection.target.placementId,selection.transform);
       else setLevelPartEdit(level,{target:selection.target,transform:selection.transform});
-    });
+    }, { render: false });
+    const addEditorObjective = condition => editLevel((project,level)=>addClearCondition(project,level.id,condition), {render:false});
+    const setEditorClearMode = mode => editLevel((_project,level)=>{level.clearMode=mode==='any'?'any':'all';}, {render:false});
+    const renameEditorLevel = title => editLevel((_project,level)=>{level.title=String(title).trim().slice(0,80)||'Untitled level';}, {render:false});
+    const setEditorMarker = type => {
+      const position=levelEditor.value?.getMarkerPosition();
+      if(position) return editLevel((project,level)=>setLevelMarker(project,level.id,type,position));
+    };
     const commitLevelMarker = (type,axis,value) => editLevel((project,level)=>{
       const coordinate=Number(value);if(!Number.isFinite(coordinate))throw new Error('Invalid marker position');
       const position={x:0,y:0,z:0,...(type==='start'?level.entry:level.exits[0]?.position),[axis]:coordinate};
@@ -3444,11 +3452,12 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         if (!gameVerdict.ok) throw new Error(gameVerdict.reason);
         await threeViewer.value?.applyModuleCode(code, "replace");
         restoreViewerEnvironmentControls();
+        setPlaytestCamera(playtestCamera.value);
         lastGeneratedCode.value = userCode;
         projectStatus.value = `${gameProject.value.title} is running as an ordered, playable game.`;
         return { code, userCode };
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
         throw error;
       }
     };
@@ -3489,7 +3498,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         });
         openMint(record);
       } catch (error) {
-        projectStatus.value = error.message;
+        projectStatus.value = userFacingError(error);
       }
     };
 
@@ -3762,7 +3771,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         { id: "inspect", icon: "info", label: "", variant: "default", title: "Inspect generation metadata" },
         { id: "copy", icon: hasCopy[item._originalIndex] ? "check" : "content_copy", label: hasCopy[item._originalIndex] ? "Copied" : "Reuse", variant: "default", title: "Copy prompt into composer" },
         { id: "glb", icon: "download", label: "GLB", variant: "default", title: "Export 3D model (.glb)", disabled: glbExportBusy.value || isLoading.value || !item?.success || !item?.code },
-        { id: "mint", icon: minted ? "check_circle" : "token", label: minted ? "Minted" : "Mint", variant: minted ? "success" : "default", disabled: minted },
+        { id: "mint", icon: minted ? "check_circle" : "token", label: minted ? "Tokenized" : "Tokenize", variant: minted ? "success" : "default", disabled: minted },
         { id: "load", icon: "visibility", label: "Load", variant: "primary", disabled: !item?.success, title: "Load this scene" },
         { id: "retry", icon: "autorenew", label: "Retry", variant: "default", disabled: isLoading.value, title: "Regenerate with the same prompt" },
         { id: "delete", icon: "delete", label: "Delete", variant: "destructive", title: "Remove this result" },
@@ -3948,6 +3957,8 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
     // MODEL LOADING
     // ═══════════════════════════════════════════════════════════════════════
     const loadModelForGenerationRaw = async (targetModel = codeModel.value) => {
+      await refreshRemoteInference();
+      if (remoteInference.active) { lastStatus.value = `Using ${remoteInference.model}`; return; }
       if (loadedModelFilename.value === targetModel.filename) {
         const runtime = await window.electronAPI.llamaRuntimeStatus?.();
         if (runtime?.running && runtime.modelName === targetModel.filename) return;
@@ -4434,7 +4445,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
         },
         repair: async ({ code: candidate, error, failures }) => {
           const repaired = await callLLM(buildSceneRepair({ mode: creationMode.value, code: candidate, brief,
-            error: `${error.message}\nErrors encountered: ${failures.join('; ')}` }),
+            error: `${error.message}\nRuntime location: ${String(error.stack || "").split("\n").slice(1, 5).join("\n")}\nErrors encountered: ${failures.join('; ')}` }),
             { maxTokens: 2048, temperature: 0.15, thoughtTokens: 0, enableThinking: false },
             ({ tokenCount, elapsedMs }) => { stream.tokenCount = tokenCount; stream.elapsedMs = elapsedMs; });
           return applySceneEdits(candidate, stripThinkBlocks(repaired.text));
@@ -4808,7 +4819,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       } catch (e) {
         reportOperation({id:activityId,status:"failed",stage:"Failed",error:e.message});
         console.error("❌ Generation error:", e);
-        lastStatus.value = "❌ Failed: " + e.message;
+        lastStatus.value = userFacingError(e);
         try {
           await addObjectInference(submittedPrompt, (e.generatedCode || lastAttemptedCode) ? normalizeLLMCode(e.generatedCode || lastAttemptedCode) : "", {
             elapsedMs: Math.round(performance.now() - generationStarted),
@@ -4930,7 +4941,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
         catch (restoreError) { console.error('Could not restore previous scene',restoreError); }
         reportOperation({id:activityId,status:"failed",stage:"Failed",error:e.message});
         console.error("Refine error:", e);
-        lastStatus.value = "Refine failed: " + e.message;
+        lastStatus.value = userFacingError(e);
       } finally {
         if(activeGenerationTrace)await finishGenerationTrace('failed');
         _endStream();
@@ -4942,6 +4953,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
     // LIFECYCLE
     // ═══════════════════════════════════════════════════════════════════════
     onMounted(async () => {
+      await refreshRemoteInference();
       // Load object inferences from shared store
       await loadObjectInferences();
 
@@ -5074,7 +5086,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       selectedBuildLevelLibraryId,
       selectedBuildObjectLibraryIds,
       buildEditorReady,
-      isPlaytesting,
+      isPlaytesting, levelEditorSelection, buildPanel, canPlaytest, levelLabel, addEditorObjective, setEditorClearMode, renameEditorLevel, setEditorMarker,
       historyLevelLibrary,
       historyObjectLibrary,
       canStartBuildWorkflow,
@@ -5108,6 +5120,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       toggleBuildObject,
       startBuildWorkflow,
       removeActiveLevel,
+      playtestCamera, setPlaytestCamera,
       startPlaytest,
       stopPlaytest,
       previewGameProject,
@@ -5186,11 +5199,19 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
 <style scoped>
 /* Keep editing controls compact so the canvas remains in the working viewport. */
 .three-controls-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:16px; align-items:stretch; }
-.three-controls-layout > * { min-width:0; margin:0 !important; max-height:32vh; overflow:auto; scrollbar-gutter:stable; }
-.three-controls-layout .models__activity--payouts { padding:12px !important; }
+.three-controls-layout, .three-controls-layout * { box-sizing:border-box; }
+.three-controls-layout > * { min-width:0; margin:0 !important; min-height:340px; overflow:visible; scrollbar-gutter:stable; }
+.three-controls-layout .models__activity--payouts { padding:16px !important; }
 .three-controls-layout :deep(.bz-gen-input) { padding:10px; gap:8px; }
-.three-controls-layout :deep(textarea) { min-height:64px !important; max-height:96px; }
-.three-controls-layout .environment-controls.bz-3d-environment { padding:16px !important; gap:12px; grid-template-columns:1fr; }
+.three-model-label { margin:0 0 12px; color:var(--bz-fg-mid); font-size:12px; overflow-wrap:anywhere; }
+.three-controls-layout .models__activity--payouts > .columns { margin:0; flex:1; min-height:0; }
+.three-controls-layout .models__activity--payouts { display:flex; flex-direction:column; }
+.three-controls-layout .models__activity--payouts > .columns > .column { padding:0; display:flex; flex-direction:column; gap:12px; }
+.three-controls-layout :deep(.bz-gen-input) { flex:1; display:flex; flex-direction:column; min-height:180px; }
+.three-controls-layout :deep(.bz-gen-input__shell) { flex:1; display:flex; flex-direction:column; }
+.three-controls-layout :deep(textarea) { flex:1; min-height:120px !important; max-height:none; }
+.three-controls-layout .bz-3d-mode, .three-controls-layout .object-input-mode { margin:0; flex-wrap:wrap; gap:4px; }
+.three-controls-layout .environment-controls.bz-3d-environment { height:100%; align-content:start; padding:16px !important; gap:12px; grid-template-columns:1fr; }
 .three-controls-layout .bz-3d-control-group { display:grid; grid-template-columns:100px minmax(0,1fr); align-items:start; gap:10px; }
 .three-controls-layout .bz-3d-control-head { font-size:11px; padding-top:10px; }
 .three-controls-layout .bz-3d-option { font-size:12px; }
@@ -5198,9 +5219,10 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
 .three-controls-layout .bz-3d-option { min-height:34px; padding:7px 10px; flex:1 0 auto; }
 .three-controls-layout + .viewer-container:not(.is-build) { height:clamp(280px,51vh,800px); aspect-ratio:auto; margin:16px 0; position:sticky; top:0; z-index:2; }
 @media(max-width:760px) {
- .three-controls-layout { grid-template-columns:1fr; max-height:40vh; overflow:auto; }
- .three-controls-layout > * { max-height:none; overflow:visible; }
- .three-controls-layout .bz-3d-control-group { grid-template-columns:80px minmax(0,1fr); }
+ .three-controls-layout { grid-template-columns:1fr; }
+ .three-controls-layout > * { height:auto; max-height:none; overflow:visible; }
+ .three-controls-layout .bz-3d-control-group { grid-template-columns:1fr; gap:8px; }
+ .three-controls-layout .bz-3d-control-head { padding-top:0; }
  .three-controls-layout + .viewer-container:not(.is-build) { height:42vh; min-height:240px; }
 }
 .three-workspace-tabs {
@@ -8049,20 +8071,59 @@ ol.chat .history-item:not(:first-child) hr {
 </style>
 
 <style scoped>
-/* Let the settings establish the row height; the prompt fills its peer panel. */
-.three-controls-layout > * { max-height: none; overflow: visible; }
-.three-controls-layout > .columns { display:flex; margin:0; }
-.three-controls-layout > .columns > .column { display:flex; flex-direction:column; padding:0; }
-.three-controls-layout .models__activity--payouts { flex:1; display:flex; flex-direction:column; }
-.three-controls-layout :deep(.bz-gen-input) { flex:1; min-height:160px; }
-.three-controls-layout :deep(.bz-gen-input__shell) { flex:1; }
-.three-controls-layout :deep(textarea) { flex:1; max-height:none; height:auto !important; min-height:80px !important; }
-@media (max-width: 900px) {
-  .three-controls-layout { max-height:none; overflow:visible; }
-}
+.three-progress-card__preview-body { background: var(--bz-canvas) !important; color: var(--bz-fg) !important; font-family: var(--bz-font-mono, monospace); border: 1px solid var(--bz-border); padding: 16px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.three-progress-card__pct { font-family: var(--bz-font-metric) !important; }
 </style>
 
 <style scoped>
-.three-controls-layout .models__activity--payouts > .columns { display:flex; flex:1; margin:0; }
-.three-controls-layout .models__activity--payouts > .columns > .column { display:flex; flex-direction:column; flex:1; }
+.build-director__levels { display: grid!important; grid-template-columns: minmax(120px,180px) minmax(0,1fr) auto; gap: 16px; align-items: center; }
+.build-level-tabs { min-width: 0; overflow: auto; }
+.build-level-tabs button { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.build-director__actions { flex-shrink: 0; gap: 8px; border: 0; }
+.build-level-tabs button { font-size: 12px; border-radius: 6px; }
+.build-director__order .build-action.is-publish { background: transparent; color: var(--bz-fg-mid); border: 1px solid var(--bz-border); font-size: 12px; border-radius: 6px; }
+.build-director__order .build-play-button { width: auto; flex: none; background: var(--bz-accent); color: var(--bz-on-accent); border-color: var(--bz-accent); border-radius: 6px; min-height: 42px; padding: 10px 20px!important; font-size: 14px!important; white-space: nowrap; }
+.build-level-menu { position: relative; }
+.build-level-menu summary { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 6px; cursor: pointer; list-style: none; color: var(--bz-fg-mid); }
+.build-level-menu summary::-webkit-details-marker { display: none; }
+.build-level-menu[open] summary { background: var(--bz-accent-soft); }
+.build-level-menu>div { position: absolute; top: 42px; right: 0; z-index: 20; min-width: 160px; padding: 6px; border: 1px solid var(--bz-border); border-radius: 8px; background: var(--bz-panel); }
+.build-director__order .build-level-menu button { display: flex; justify-content: flex-start; gap: 8px; width: 100%; padding: 8px; border: 0; font-size: 12px; }
+.viewer-container.is-build.is-editing {
+  display: grid;
+  grid-template-columns: minmax(0,1fr);
+  height: max(620px, calc(100dvh - 300px));
+  grid-template-rows: auto auto minmax(260px,1fr) auto auto;
+  grid-template-areas: "director" "tools" "viewport" "assets" "status";
+  gap: 0;
+  background: var(--bz-panel);
+  border: 1px solid var(--bz-border);
+}
+.viewer-container.is-build.is-editing .build-director { grid-area: director; padding: 12px 16px; overflow: visible; z-index: 3; }
+.viewer-container.is-build.is-editing .viewer-wrapper { grid-area: viewport; height: 100%; min-width: 0; min-height: 0; width: 100%; overflow: hidden; }
+.playtest-camera { display: flex; gap: 4px; }
+.playtest-camera button { border: 1px solid var(--bz-border); border-radius: 6px; padding: 8px 12px; }
+.playtest-camera [aria-pressed="true"] { color: var(--bz-accent); background: var(--bz-accent-soft); border-color: var(--bz-accent); }
+.playtest-controls { font-size: 12px; color: var(--bz-fg-mid); }
+.playtest-bar { position: static; flex: none; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--bz-border); border-radius: 0; box-shadow: none; }
+.playtest-bar>button:first-child { background: var(--bz-accent); color: var(--bz-bg); padding: 10px 16px; border-radius: 8px; }
+.build-marker-fields { display: grid; gap: 12px; }
+.build-marker-fields fieldset { flex-wrap: wrap; }
+.build-marker-fields input { max-width: 64px; }
+.gameplay-command { margin-top: 16px; display: grid; grid-template-columns: minmax(0,1fr); gap: 12px; }
+.gameplay-command textarea { width: 100%; min-height: 160px; max-height: 420px; resize: vertical; padding: 14px; font-size: 14px; line-height: 1.6; }
+.gameplay-command>button { justify-self: end; }
+.gameplay-command>label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+@media(max-width:1100px) {
+  .build-director__levels { grid-template-columns: 1fr auto; }
+  .build-level-tabs { grid-row: 2; grid-column: 1/-1; }
+
+}
+@media(max-width:760px) {
+  .viewer-container.is-build.is-editing { height: auto; grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto 540px auto auto; grid-template-areas: "director" "tools" "viewport" "assets" "status"; }
+  .build-director__levels { gap: 8px; }
+  .build-director__order { grid-column: auto!important; }
+  .build-director__title { min-width: 0; width: 100%; }
+  .build-director__order { flex-wrap: wrap; }
+}
 </style>

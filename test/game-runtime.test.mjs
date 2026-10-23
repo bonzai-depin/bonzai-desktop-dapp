@@ -163,3 +163,49 @@ test("level clear groups support alternate conditions and advance the campaign",
   game.score(19);
   assert.equal(game.phase, "won");
 });
+
+test('playtest owns a framed camera, supports both views and restores editor controls', () => {
+  let update;
+  const events = new EventTarget(), canvas = new EventTarget();
+  const camera = new THREE.PerspectiveCamera(60, 1, .1, 1000);
+  camera.position.set(500, 100, 500);
+  const controls = { enabled: true, autoRotate: true, target: new THREE.Vector3() };
+  const runtime = createGameRuntime({ THREE, camera, controls, eventTarget: events,
+    renderer: { domElement: canvas }, addUpdateCallback: cb => { update = cb; } });
+  const game = runtime.create({ title: 'Camera test' });
+  const player = new THREE.Group(); player.position.set(10, 0, -10);
+  game.player(player, { speed: 4 }); game.start();
+  assert.ok(camera.position.distanceTo(player.position) < 8);
+  assert.equal(controls.enabled, false);
+  assert.equal(controls.autoRotate, false);
+  const target = player.position.clone().add(new THREE.Vector3(0, 1.35, 0));
+  assert.ok(camera.getWorldDirection(new THREE.Vector3()).dot(target.sub(camera.position).normalize()) > .999);
+  game.setCameraMode('first');
+  assert.equal(player.visible, false);
+  assert.ok(Math.abs(camera.position.y - 1.35) < .001);
+  const pointer = (type, props) => { const e = new Event(type); Object.assign(e, props); canvas.dispatchEvent(e); };
+  pointer('pointerdown', { pointerId: 1, button: 0 });
+  pointer('pointermove', { pointerId: 1, movementX: 100, movementY: 0 });
+  events.dispatchEvent(keyEvent('keydown', 'KeyW'));
+  update({deltaTime:.1,time:1});
+  assert.ok(player.position.x > 10, 'forward follows the direction the player is looking');
+  assert.ok(player.position.z < -10);
+  game.setCameraMode('third'); assert.equal(player.visible, true);
+  game.dispose(); assert.equal(controls.enabled, true); assert.equal(controls.autoRotate, true);
+});
+
+test('a placed player survives level changes and first-person restart stays unobstructed', () => {
+  const runtime=createGameRuntime({THREE,addUpdateCallback(){}});
+  const game=runtime.create({title:'Two levels'});
+  const first=new THREE.Group(),second=new THREE.Group(),player=new THREE.Group();
+  first.add(player);game.player(player);
+  game.level('first',first,{entry:new THREE.Vector3(1,0,1)});
+  game.level('second',second,{entry:new THREE.Vector3(4,0,4)});
+  game.goToLevel('first');game.start();game.setCameraMode('first');
+  game.goToLevel('second');
+  assert.equal(first.visible,false);assert.equal(player.parent,second);
+  assert.deepEqual(player.position.toArray(),[4,0,4]);
+  game.restart();
+  assert.equal(player.parent,first);assert.equal(player.visible,false);
+  runtime.dispose();
+});

@@ -1,6 +1,7 @@
 /** Source facts enter existing domain validators; imports cannot bypass evidence gates. */
 import { createHash } from "node:crypto";
 import { get } from "../connection.js";
+import * as casework from './gmaoCasework.js';
 import * as gmao from "./gmao.js";
 import * as operations from "./gmaoOperations.js";
 import * as purchasing from "./purchasing.js";
@@ -84,7 +85,9 @@ export function intakeContext(id, text = "") {
       "name",
       "address",
       "client_id",
+      "trigram",
     ]),
+    siteAliases: casework.snapshot(id).records.filter(r=>r.kind==='site_alias').map(r=>({siteId:r.siteId,alias:r.alias})),
     workOrders: relevant(sqlRows("gmao_work_orders", id), [
       "work_order_number",
       "client_oi_number",
@@ -102,6 +105,11 @@ export function applyIntakeRecord(id, action, source, reviewed = false) {
     proof = `intake:${source.id}`,
     output = [];
   switch (action.type) {
+    case "maintenance_document": {
+      if (!reviewed) throw new Error("Les archives terrain exigent une vérification humaine.");
+      output.push(ref("maintenance_document", casework.importHistory(id, {data:d,sourceId:source.id,actionId:source.actionId,confirmed:true,targetRecordId:d.targetRecordId})));
+      break;
+    }
     case "client": {
       required(d.name, "Client name");
       if (d.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email))
@@ -158,7 +166,7 @@ export function applyIntakeRecord(id, action, source, reviewed = false) {
       break;
     }
     case "equipment": {
-      const site = exact(sqlRows("gmao_sites", id), "name", d.site, "Site");
+      const site = casework.resolveSite(id,d.site) || exact(sqlRows("gmao_sites", id), "name", d.site, "Site");
       if (!d.serialNumber && !d.assetCode)
         throw new Error(
           "Equipment serial number or asset code is required to prevent duplicates.",
@@ -192,7 +200,8 @@ export function applyIntakeRecord(id, action, source, reviewed = false) {
       break;
     }
     case "work_order": {
-      const site = exact(sqlRows("gmao_sites", id), "name", d.site, "Site"),
+      if(d.reference && !/\d/.test(d.reference)) throw new Error('Renseignez un numéro de référence, pas le libellé du champ.');
+      const site = casework.resolveSite(id,d.site) || exact(sqlRows("gmao_sites", id), "name", d.site, "Site"),
         status = d.status || "reported";
       if (!["reported", "triaged", "assigned"].includes(status))
         throw new Error(
@@ -209,12 +218,15 @@ export function applyIntakeRecord(id, action, source, reviewed = false) {
         );
       if (d.priority && !["P0", "P1", "P2", "P3"].includes(d.priority))
         throw new Error("Invalid priority.");
-      const old = d.reference
+      const typed = d.referenceType && d.referenceIssuer && d.referenceYear ? {type:d.referenceType,value:d.reference,issuer:d.referenceIssuer,year:d.referenceYear}:null;
+      const matched = typed ? casework.findMatches(id,{siteId:site.id,references:[typed]}):[];
+      if(matched.some(m=>!m.workOrderId)) throw new Error('Cette référence appartient à une archive ; vérifiez avant de créer une nouvelle intervention.');
+      const old = typed ? (matched.length ? sqlRows('gmao_work_orders',id).find(r=>r.id===matched[0].workOrderId):null) : d.reference
         ? unique(
             sqlRows("gmao_work_orders", id),
             (r) =>
-              norm(r.client_oi_number) === norm(d.reference) ||
-              norm(r.work_order_number) === norm(d.reference),
+              r.site_id === site.id && (norm(r.client_oi_number) === norm(d.reference) ||
+              norm(r.work_order_number) === norm(d.reference)),
             "work order",
           )
         : scheduledAt
@@ -256,6 +268,7 @@ export function applyIntakeRecord(id, action, source, reviewed = false) {
           title: required(d.title, "Work order title"),
           description: d.description,
           clientOiNumber: d.reference,
+          receivedAt: date(d.receivedAt) || undefined,
           type: d.type || "corrective",
           priority: d.priority || "P2",
           scheduledAt,
@@ -263,6 +276,7 @@ export function applyIntakeRecord(id, action, source, reviewed = false) {
           assigneeHuman: d.technician,
           requestKey: `${proof}:${source.actionId}`,
         });
+      if(typed && !matched.length) casework.saveRecord(id,{kind:'reference',workOrderId:row.id,data:typed});
       if (status !== "reported" && row.status === "reported")
         row = gmao.transitionWorkOrder(id, row.id, "triaged", { note: proof });
       if (status === "assigned" && row.status === "triaged")
@@ -657,6 +671,7 @@ export function applyIntakeRecord(id, action, source, reviewed = false) {
 
 /** Read through saved intake receipts, not arbitrary table names or other teams' IDs. */
 export function intakeRecord(id, r) {
+  if (r.type === 'maintenance_document') return casework.snapshot(id).records.find(x=>x.id===r.id) || null;
   const tables = {
     client: "gmao_clients",
     site: "gmao_sites",

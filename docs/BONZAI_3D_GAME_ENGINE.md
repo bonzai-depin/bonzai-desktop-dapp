@@ -741,3 +741,16 @@ API, remote downloads or credentials are needed. GLB export embeds the used maps
 See [material provenance](../src/assets/materials/README.md) and reproduce with
 `node scripts/fetch-material-library.mjs`. This improves surface fidelity; geometry,
 lighting and intentional art direction still determine the final result.
+
+### Editor and playtest camera
+
+Scene objects and Rules & Goals open a dismissible right overlay inside the full
+viewport. Selection opens the object inspector; AI design inputs have room for
+multiline briefs. Transform edits keep the existing scene and camera mounted.
+
+Playtest uses an independent player camera with first- and third-person modes.
+WASD/arrows move relative to the view, dragging looks around, Shift sprints,
+E/Space interacts, and Escape pauses. Restart resets the run; Back to Build
+restores editing. Orbit controls and the studio ground are disabled during play.
+The default controller remains grounded; jumping and rigid-body physics require
+a custom controller using the physics API.

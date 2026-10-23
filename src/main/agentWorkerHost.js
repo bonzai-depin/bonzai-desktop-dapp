@@ -82,11 +82,11 @@ export function createAgentWorkerHost({ store, journal, peerId, mode, resolveIde
       // Return a durable ticket immediately; long media generation never relies on a held stream.
       void (async () => {
         try {
-          const output = await run(record.binding, call);
+          const output = await run({ ...record.binding, ...(grant.offer ? { offer:grant.offer } : {}) }, call);
           if (output?.status === 'requires_input') { save(id, { ...execution, status: 'requires_input', error: output.error }); return; }
           if (output?.ok === false) throw new Error(output.error || 'Worker execution failed.');
           const result = await media.prepare(output, { sourceId: id });
-          save(id, { ...execution, status: 'completed', result });
+          save(id, { ...execution, status: 'completed', result: { ...result, ...(grant.offer ? { serviceReceipt: { offerHash:grant.offer.hash, assets:grant.offer.assets, citations:output.serviceCitations || [], verification:'provider-declared' } } : {}) } });
         } catch (error) { save(id, { ...execution, status: 'failed', error: error.message }); }
         finally { busy = false; }
       })().catch(error => console.error('[worker] Could not persist execution outcome:', error.message));

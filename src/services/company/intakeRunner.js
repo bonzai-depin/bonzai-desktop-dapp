@@ -1,3 +1,5 @@
+import { agentModelOverride } from './teamCapabilities.js';
+import { smartAgentCatalog } from '../smartAgentCatalog.js';
 import { intakePrompt } from "../../shared/companyIntake.js";
 import { syncIntakeMailboxes } from "./mailIntake.js";
 import { extractIntakeFile } from "./intakeFiles.js";
@@ -41,6 +43,7 @@ export async function processIntake(
               md: "text/plain",
             }[job.ext] || "",
         }),
+        { cachedPages:job.pages || [], onPage: api.checkpoint ? page=>api.checkpoint(charter.id,{id:job.id,lease:job.lease,page}) : undefined },
       );
       const current = await run.check();
       if (!current.ok) throw new Error(current.reason);
@@ -57,7 +60,7 @@ export async function processIntake(
             timeoutMs: 30 * 60000,
             enableThinking: false,
             llmModel:
-              charter.roles?.DocumentController?.llm || charter.roles?.CEO?.llm,
+              agentModelOverride(charter, charter.roles?.DocumentController ? 'DocumentController' : 'CEO', smartAgentCatalog.agents),
             executionMode: charter.execution,
             streamContext: {
               companyId: charter.id,

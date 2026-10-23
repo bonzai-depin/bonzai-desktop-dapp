@@ -1,5 +1,5 @@
 <template>
-  <CompanyWorkspaceAccess @choose-template="openWizard">
+  <CompanyWorkspaceAccess ref="workflowHome" @choose-template="openWizard">
   <div class="bz-tab-shell company-tab company-screen">
     <div class="models__deployment-install company-shell bz-page-content">
       <p v-if="rosterLoadError" class="bz-notice bz-notice--danger" role="alert">{{ rosterLoadError }}</p>
@@ -41,6 +41,7 @@
         <div class="company-toolbar" :aria-label="$ui('Smart Workflows')">
           <div class="company-toolbar__left">
             <div class="company-team-nav" aria-label="Team navigation">
+              <button class="bz-btn bz-btn--ghost" @click="workflowHome?.showHome()"><span class="material-symbols-outlined" aria-hidden="true">home</span>{{ $ui("Workflows home") }}</button>
               <button
                 class="company-switcher__chip company-switcher__chip--all"
                 :class="{ 'is-active': teamView === 'all' }"
@@ -155,8 +156,9 @@
 </template>
 
 <script>
-import { pendingCompanyWorkflow } from "../services/company/workflowHandoff.js";
-import { findWorkflowTeam } from "../services/company/workflowTeams.js";
+import { pendingCompanyWorkflow, workflowInputDraft } from "../services/company/workflowHandoff.js";
+import { ensureWorkflowTeam } from "../services/company/ensureWorkflowTeam.js";
+import { getAvailableAgentWorkflows } from "../services/agentWorkflows.js";
 import "./company/company-design.css";
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { loadSmartAgents } from "../services/smartAgentCatalog.js";
@@ -173,6 +175,7 @@ export default {
   components: { CompanyWorkspaceAccess, CompanyForm, CompanyDashboard, CompanyIntakeWizard, CompanyAllTeamsRoom, CompanyConversationOnboarding },
   props: { activityTarget: { type: Object, default: null } },
   setup(props) {
+    const workflowHome = ref(null);
     const store = companyStore;
     const rosterLoadError = ref('');
     const showForm = ref(false);
@@ -184,15 +187,15 @@ export default {
       const target = pendingCompanyWorkflow.value;
       if (!initialized.value || !target) return;
       pendingCompanyWorkflow.value = null;
-      const team = findWorkflowTeam(store.state.companies, target);
-      if (team) {
+      try {
+        const team = await ensureWorkflowTeam(target, {
+          companies: () => store.state.companies,
+          catalog: getAvailableAgentWorkflows,
+          form: (...args) => store.formFromTemplate(...args),
+        });
         showWizard.value = false;
-        await openTeam(team.id, "studio");
-      } else if (!target.companyId) {
-        wizardWorkflowId.value = target.skillId;
-        wizardTemplateId.value = '';
-        showWizard.value = true;
-      } else { rosterLoadError.value = "This team is no longer available."; }
+        await openTeam(team.id, target.view || "studio");
+      } catch (error) { rosterLoadError.value = error.message; }
     }
     watch(pendingCompanyWorkflow, () => { void consumeWorkflowTarget(); });
     const importInput = ref(null);
@@ -266,7 +269,7 @@ export default {
     async function onWizardDone(/* charterId */) {
       showWizard.value = false;
       teamView.value = "team";
-      teamTargetView.value = store.activeCompany.value?.workspace?.executionWorkflowId ? "studio" : "";
+      teamTargetView.value = workflowInputDraft.value?.skillId === store.activeCompany.value?.workspace?.executionWorkflowId ? "studio" : "";
       teamTargetResultId.value = "";
       // setActive already happened inside formFromTemplate.
     }
@@ -294,6 +297,7 @@ export default {
       }
     }, { immediate: true });
     async function openTeam(id, view = "", resultId = "") {
+      workflowHome.value?.showWorkspace();
       teamTargetView.value = view;
       teamTargetResultId.value = resultId;
       teamView.value = "team";
@@ -355,7 +359,7 @@ export default {
     }
 
     return {
-      store, rosterLoadError, active, showForm, showWizard,
+      workflowHome, store, rosterLoadError, active, showForm, showWizard,
       wizardWorkflowId, wizardTemplateId, openForm, openWizard, openNewTeam, onFormed, onEdit, onWizardDone, onConversationDone, onWizardCancel,
       triggerImport, onImportFile, importInput, companyName,
       pendingDeleteCompany, requestDeleteCompany, dismissDeleteCompany, confirmDeleteCompany,

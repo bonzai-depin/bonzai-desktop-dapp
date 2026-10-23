@@ -790,7 +790,7 @@ export const useSkillStore = defineStore('skill', () => {
         };
 
         allSessions[session.sessionKey] = plainSession;
-        await window.electronAPI.store.set(STORAGE_KEY, allSessions);
+        await (await import('../services/roleplayStore.service.js')).saveSessions(allSessions);
       }
     } catch (e) {
       console.error('[SkillStore] Failed to save autonomous session:', e);
@@ -820,18 +820,8 @@ export const useSkillStore = defineStore('skill', () => {
     const session = autonomousSession.value;
     if (!session.companion || !session.scenario) return;
 
-    // Auth tokens may expire while system is idle/sleeping. Never request wallet
-    // signatures automatically -- that would break autonomous mode.
-    if (!isAuthenticated()) {
-      try {
-        await refreshToken();
-      } catch (refreshError) {
-        window.dispatchEvent(new CustomEvent('auth:needs-reauth'));
-        isGeneratingAutonomous.value = false;
-        return;
-      }
-    }
-
+    // Local roleplay needs no wallet session. Remote routing owns its auth
+    // and payment checks; never block the local heartbeat on a wallet login.
     isGeneratingAutonomous.value = true;
     lastHeartbeatAt.value = Date.now();
     const msgNum = autonomousMessageCount.value + 1;
@@ -1028,7 +1018,10 @@ REQUIREMENTS:
    */
   const syncAutonomousHistory = (history, sceneState, backgroundImage = null, backgroundHistory = null) => {
     if (autonomousSession.value.sessionKey) {
-      autonomousSession.value.history = [...history];
+      // A foreground save must not discard a heartbeat completed concurrently.
+      const merged = new Map(autonomousSession.value.history.map(message => [message.id, message]));
+      for (const message of history) merged.set(message.id, message);
+      autonomousSession.value.history = [...merged.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
       if (sceneState) {
         autonomousSession.value.sceneState = { ...sceneState };
       }

@@ -127,6 +127,58 @@ export function createGameRuntime({
     let startLevelId = null;
     let hud = null;
 
+    let cameraMode = 'third', yaw = 0, pitch = 0, lookPointer = null;
+    const canvas = renderer?.domElement;
+    const previousControls = controls ? { enabled: controls.enabled, autoRotate: controls.autoRotate } : null;
+    const cameraRay = new THREE.Raycaster();
+    const onPointerDown = event => {
+      if (phase !== 'running' || event.button !== 0) return;
+      lookPointer = event.pointerId;
+      canvas?.setPointerCapture?.(lookPointer);
+      canvas?.focus?.({ preventScroll: true });
+    };
+    const onPointerMove = event => {
+      if (lookPointer !== event.pointerId || phase !== 'running') return;
+      yaw -= (event.movementX || 0) * .004;
+      pitch = clamp(pitch - (event.movementY || 0) * .004, -.9, .9);
+      updateCamera(0, true);
+    };
+    const onPointerUp = () => {
+      if (lookPointer != null && canvas?.hasPointerCapture?.(lookPointer)) canvas.releasePointerCapture(lookPointer);
+      lookPointer = null;
+    };
+    canvas?.addEventListener?.('pointerdown', onPointerDown);
+    canvas?.addEventListener?.('pointermove', onPointerMove);
+    canvas?.addEventListener?.('pointerup', onPointerUp);
+    canvas?.addEventListener?.('pointercancel', onPointerUp);
+
+    function updateCamera(dt = 0, immediate = false) {
+      const player = actors.get('player');
+      if (!camera || !player || player.camera === false) return;
+      if (controls) { controls.enabled = false; controls.autoRotate = false; }
+      player.object.updateWorldMatrix(true, false);
+      const target = player.object.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, player.eyeHeight ?? 1.35, 0));
+      const rotation = new THREE.Euler(pitch, yaw, 0, 'YXZ');
+      if (cameraMode === 'first') {
+        camera.position.copy(target);
+        camera.lookAt(target.clone().add(new THREE.Vector3(0, 0, -1).applyEuler(rotation)));
+      } else {
+        const offset = (player.cameraOffset || new THREE.Vector3(0, 1.8, 5.5)).clone().applyEuler(rotation);
+        const distance = offset.length();
+        cameraRay.set(target, offset.clone().normalize());
+        cameraRay.far = distance;
+        const meshes = [...collisions.solids.values()].filter(solid => !solid.levelId || solid.levelId === session.activeLevelId).map(solid => solid.object);
+        const hit = cameraRay.intersectObjects(meshes, true)[0];
+        if (hit) offset.setLength(Math.max(.25, hit.distance - .2));
+        camera.position.lerp(target.clone().add(offset), immediate ? 1 : clamp(dt * 10, 0, 1));
+        camera.lookAt(target);
+      }
+      controls?.target?.copy(target);
+      camera.near = .05;
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
+    }
+
     const emit = (type, detail = {}) => {
       for (const listener of listeners.get(type) || []) listener(detail, session);
       for (const listener of listeners.get("*") || []) listener({ type, ...detail }, session);
@@ -134,6 +186,8 @@ export function createGameRuntime({
 
     const onKeyDown = (event) => {
       if(event.target?.closest?.('input, textarea, select, [contenteditable="true"]'))return;
+      if (phase !== "running" && phase !== "paused") return;
+      if (Object.values(inputMap).some(codes => codes.includes(event.code))) event.preventDefault?.();
       const fresh = !pressed.has(event.code);
       if (fresh) justPressed.add(event.code);
       pressed.add(event.code);
@@ -143,7 +197,7 @@ export function createGameRuntime({
       }
     };
     const onKeyUp = (event) => pressed.delete(event.code);
-    const onBlur = () => { pressed.clear(); justPressed.clear(); };
+    const onBlur = () => { pressed.clear(); justPressed.clear(); onPointerUp(); };
     eventTarget?.addEventListener?.("keydown", onKeyDown);
     eventTarget?.addEventListener?.("keyup", onKeyUp);
     eventTarget?.addEventListener?.("blur", onBlur);
@@ -282,7 +336,7 @@ export function createGameRuntime({
             Number(actionDown("right")) - Number(actionDown("left")),
             0,
             Number(actionDown("backward")) - Number(actionDown("forward")),
-          );
+          ).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
         }
         if (move.lengthSq()) {
           move.normalize().multiplyScalar((player.speed ?? 3) * (actionDown("sprint") ? player.sprintMultiplier || 1.75 : 1) * dt);
@@ -303,12 +357,7 @@ export function createGameRuntime({
             .sort((a, b) => a.distance - b.distance)[0]?.actor;
           if (target) session.interact("player", target.id);
         }
-        if (camera && player.camera !== false) {
-          const target = player.object.getWorldPosition(new THREE.Vector3());
-          const offset = player.cameraOffset || new THREE.Vector3(0, 3.2, 5.5);
-          camera.position.lerp(target.clone().add(offset), clamp(dt * 5, 0, 1));
-          controls?.target?.lerp(target.clone().add(new THREE.Vector3(0, 0.8, 0)), clamp(dt * 7, 0, 1));
-        }
+        updateCamera(dt);
       }
 
       for (const trigger of triggers.values()) {
@@ -381,14 +430,25 @@ export function createGameRuntime({
         phase = "running";
         startedAt = now();
         startLevelId = session.activeLevelId;
+        updateCamera(0, true);
         hud ||= createHud();
         syncHud(spec.startMessage || "");
         emit("start", { startedAt });
         return session;
       },
+      get cameraMode() { return cameraMode; },
+      setCameraMode(mode) {
+        if (!['first', 'third'].includes(mode)) throw Error('Unknown camera mode');
+        cameraMode = mode;
+        const player = actors.get('player');
+        if (player) player.object.visible = mode === 'first' ? false : player.spawnVisible;
+        updateCamera(0, true);
+      },
+      framePlayer() { updateCamera(0, true); },
       pause() {
         if (phase !== "running") return;
         phase = "paused";
+        onBlur();
         syncHud("Paused");
         emit("pause");
       },
@@ -419,6 +479,7 @@ export function createGameRuntime({
         for(const trigger of triggers.values())trigger.fired=false;
         if(startLevelId)session.goToLevel(startLevelId);
         phase = "running";
+        session.setCameraMode(cameraMode);
         syncHud();
         emit("restart");
       },
@@ -485,8 +546,13 @@ export function createGameRuntime({
         if (!next) throw new Error(`Unknown game level ${id}`);
         for (const level of levels.values()) level.object.visible = level.id === id;
         const player = actors.get("player");
-        if (player && next.entry) player.object.position.copy(next.entry);
+        if (player) {
+          // A player placed in level one must not disappear with that level.
+          if (player.object.parent !== next.object) next.object.attach(player.object);
+          if (next.entry) player.object.position.copy(next.entry);
+        }
         session.activeLevelId = id;
+        updateCamera(0, true);
         emit("level-change", { id, level: next });
         return next;
       },
@@ -554,6 +620,14 @@ export function createGameRuntime({
         eventTarget?.removeEventListener?.("keydown", onKeyDown);
         eventTarget?.removeEventListener?.("keyup", onKeyUp);
         eventTarget?.removeEventListener?.("blur", onBlur);
+        onPointerUp();
+        canvas?.removeEventListener?.('pointerdown', onPointerDown);
+        canvas?.removeEventListener?.('pointermove', onPointerMove);
+        canvas?.removeEventListener?.('pointerup', onPointerUp);
+        canvas?.removeEventListener?.('pointercancel', onPointerUp);
+        if (controls && previousControls) Object.assign(controls, previousControls);
+        const player = actors.get('player');
+        if (player) player.object.visible = player.spawnVisible;
         hud?.remove();
         listeners.clear();
         actors.clear();

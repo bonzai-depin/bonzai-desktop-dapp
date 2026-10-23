@@ -20,6 +20,7 @@ export function collectWorkerOutputs(value) {
 /** Compact evidence commits the full text without exceeding escrow packet limits. */
 export function workerDeliveryEvidence(run) {
   return { version: 1, requestId: run.id || run.requestId, jobId: run.jobId,
+    serviceReceipt: run.result?.serviceReceipt || null,
     textHash: ethers.keccak256(ethers.toUtf8Bytes(String(run.result?.text || ''))),
     artifacts: (run.result?.artifacts || []).map(({id,sha256,ext,size,mimeType}) => ({id,sha256,ext,size,mimeType})) };
 }

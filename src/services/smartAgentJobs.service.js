@@ -1,4 +1,6 @@
 import { ethers } from 'ethers';
+import { verifyWorkerGrant } from './agentWorkerProtocol.js';
+import { verifyServiceAssetOwner } from './agentServiceAssets.js';
 import { assertNoPendingPayment } from './transactionJournal.js';
 import { confirmedReceipt } from './transactionReceipt.js';
 import { acquireWorkflowTokens } from './workflowCheckout.js';
@@ -49,7 +51,18 @@ export async function fetchSmartAgentQuote(agent) {
   const [owner, wallet, decimals, symbol] = await Promise.all([identity.ownerOf(agent.tokenId), identity.getAgentWallet(agent.tokenId), token.decimals(), token.symbol()]);
   const precision = Number(decimals);
   if (!Number.isInteger(precision) || precision < 0 || precision > 36) throw new Error('Unsupported social-token precision.');
-  return { tokenId: String(agent.tokenId), tokenAddress, decimals: precision, symbol: String(symbol).slice(0, 32), worker: wallet !== ethers.ZeroAddress ? wallet : owner, owner, arbitrator, platformBps: Number(platformBps), treasuryBps: Number(treasuryBps), holderBps: Number(holderBps), contributionBps: Number(contributionBps), acceptWindow: Number(acceptWindow), deliveryWindow: Number(deliveryWindow), reviewWindow: Number(reviewWindow), disputeWindow: Number(disputeWindow), routeAssetId: agent.routeAssetId || ethers.ZeroHash, escrow: config().jobEscrowAddress, chainId: config().chainId };
+  let serviceOffer;
+  if (agent.offer) {
+    const { resolveWorkerIdentity, verifyWorkerSignature } = await import('./agentWorkerRuntime.js');
+    const health = await window.electronAPI.p2pHealth(agent.peerId);
+    const descriptor = health?.workers?.find(w => String(w.grant.tokenId) === String(agent.tokenId) && w.grant.collection.toLowerCase() === agent.contractAddress.toLowerCase());
+    if (!descriptor) throw new Error('This provider is offline. Reconnect before hiring.');
+    const { grant } = await verifyWorkerGrant(descriptor, resolveWorkerIdentity, agent.peerId, Date.now(), verifyWorkerSignature);
+    if (grant.offer?.hash !== agent.offer.hash) throw new Error('The provider updated this offer. Refresh the market before hiring.');
+    serviceOffer = grant.offer;
+    await Promise.all(serviceOffer.assets.map(asset => verifyServiceAssetOwner(asset, owner)));
+  }
+  return { ...(serviceOffer ? {serviceOffer} : {}), tokenId: String(agent.tokenId), tokenAddress, decimals: precision, symbol: String(symbol).slice(0, 32), worker: wallet !== ethers.ZeroAddress ? wallet : owner, owner, arbitrator, platformBps: Number(platformBps), treasuryBps: Number(treasuryBps), holderBps: Number(holderBps), contributionBps: Number(contributionBps), acceptWindow: Number(acceptWindow), deliveryWindow: Number(deliveryWindow), reviewWindow: Number(reviewWindow), disputeWindow: Number(disputeWindow), routeAssetId: agent.routeAssetId || ethers.ZeroHash, escrow: config().jobEscrowAddress, chainId: config().chainId };
 }
 
 export async function listSmartAgentJobs(companyId, wallet = web3Service.state.walletAddress) {

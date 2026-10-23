@@ -2,7 +2,8 @@
 
 BonzAI uses request-local placement optimizations without changing checkpoint,
 LoRA strength, scheduler, CFG, resolution, or frame count. The policy selects
-placement; it does not reject a job based on available memory.
+placement without silently lowering output settings. Music additionally rejects
+requests when the conservative host-memory budget cannot fit them.
 
 ## Shared behavior
 
@@ -31,7 +32,7 @@ or fuse a request-owned streamed model.
   release the last one before VAE decoding. Release prompt/image encoders after
   their embeddings are produced. Keep the VAE on its execution device with
   spatial tiling to preserve temporal cache behavior.
-- **Klein / Z-Image:** adaptive placement, bounded GGUF projections where
+- **Qwen Image 2.1 / Z-Image:** adaptive placement, bounded GGUF projections where
   applicable, release encoders when denoising starts and denoiser before decode.
   Safetensors Z-Image uses ordinary layer offloading, not GGUF conversion.
 - **LTX-2:** leaf offloading compatible with bounded GGUF bases, release
@@ -40,8 +41,35 @@ or fuse a request-owned streamed model.
 - **SDXL:** encode prompts before loading the denoiser onto the accelerator;
   release the base before loading the refiner, retaining the shared VAE and
   second text encoder. Use tiled decode and leaf offloading on constrained GPUs.
-- **ACE-Step:** adaptive CPU offloading by default; an explicit API `offload`
-  boolean still overrides it. Keep the same-family cache for repeated requests.
+- **ACE-Step:** constrained Apple Silicon devices keep BF16 safetensors weights
+  file-backed on CPU and transfer denoiser leaves onto Metal as needed. Small
+  encoders stay usable for direct buffer/embedding reads and are released when
+  denoising starts; the denoiser is released before waveform decoding.
+  Metal command queue is synchronized and its unused cache cleared at each
+  denoiser block, so in-flight transfers cannot retain many blocks' weights.
+  This trades some throughput for bounded residency. The checkpoint, sample
+  rate, requested duration and sampling settings stay the same.
+  Oobleck decoding uses overlapping 256-latent-frame tiles (64-frame overlap).
+  Tiling can change numerical results at tile boundaries.
+  Admission first clears idle allocations, then checks physical capacity for
+  weights plus workspace. The streamed path requires available RAM for workspace
+  (`2 + duration / 120` GiB with bounded attention and tiled decoding), 2 GiB staging and a 12% host reserve (3–8 GiB), rather
+  than requiring the whole checkpoint to be free again. CPU/CUDA retain resident
+  admission. These estimates are guards, not peak-memory guarantees. Checks at
+  model, denoiser-block and decoder-tile boundaries retain the host reserve;
+  macOS critical pressure also aborts. A transient macOS warning alone does not
+  abort while the reserve is available. Music weights, tensors and hooks are
+  released after success or failure.
+- **MPS:** set allocator high/low watermarks to 1.0/0.8 before importing torch;
+  video requests must never disable the high watermark. Before music weights
+  load, an additional allocator ceiling uses available RAM minus the host reserve
+  plus existing Metal allocations. Setting it after CPU mapping incorrectly
+  double-counted the checkpoint. The ceiling is restored after each request.
+  CPU offload still uses the same physical RAM on Apple Silicon.
+- **Queue ownership:** creation views submit directly; they must not unload the
+  LLM or clear caches before obtaining the shared device lease. Media requests
+  report queued/running state over the generation socket. Standalone Python uses
+  a FIFO device lock. Health and download status stay responsive while waiting.
 - **TTS / vision / OCR:** the existing serialized request lock protects cache
   eviction. Preserve the requested family's cached model and small voice
   reference cache; release other idle model families before work begins.
@@ -105,8 +133,43 @@ app server. It did not use the original failing image/prompt/seed or an unchange
 baseline, so it validates this test case rather than establishing the original
 failure's cause. Restart BonzAI after pending work ends to activate the changes.
 
-The broader non-H3 placement optimizations remain implementation-only: no
-inference, benchmarks or builds have validated those changes yet.
+ACE-Step music was validated on 2026-10-22 on a 32 GiB M1 Max using the local
+XL Turbo BF16 checkpoint. The former admission check rejected a 60-second song
+with about 12 GiB available because it demanded 17.16 GiB. The streamed policy
+admits that request with the same checkpoint and sampling settings. A 10-second
+smoke test passed, followed by a 60-second request with lyrics, eight steps,
+CFG 1, shift 3 and seed 12345. The latter produced finite, non-silent stereo
+48 kHz audio in 58.28 seconds. Minimum sampled available memory was 5.23 GiB;
+peak sampled Metal allocation was 3.16 GiB and system-wide swap growth 0.69 GiB.
+macOS reported normal/warning pressure, never critical. Those counters do not
+represent total process/device residency, and swap includes other applications.
+An earlier attempt was stopped by the smoke-test watchdog when swap grew over
+1 GiB; block-level Metal synchronization was added before the successful run.
+
+The test used the exact production loader in an isolated process holding the
+running desktop's device lease, without restarting the user's app or starting
+another media server. Outputs and measurements are under
+`.cache/music-validation/60s-8steps/`. This validates the default one-minute
+request, not every duration or a performance comparison against the old engine.
+Restart BonzAI after pending work ends to activate backend changes.
+Lightweight regressions: `python -m unittest discover -s test -p
+test_inference_budget.py` and `python -m unittest discover -s test -p
+test_music_memory.py`.
+
+On 2026-10-23, a monitored 180-second, eight-step vocal generation completed
+in 114.8 seconds on the same 32 GiB M1 Max. The streamed Metal path now tiles
+ACE-Step attention queries (256 at a time), retaining all keys and original
+masks. Numerical regression coverage compares tiled and original grouped
+attention with a sliding mask. Peak Metal allocation was 3.19 GiB; minimum
+host available memory was 5.12 GiB. System swap grew by 1.73 GiB; pressure
+was normal/warning, never critical. This is one hardware validation, not a
+promise of zero swap or admission under arbitrary competing app loads.
+Artifacts: `.cache/music-validation/180s-8steps/`. Restart the Python backend
+to apply placement changes. Existing admission and critical-pressure guards
+remain enabled.
+
+Other non-H3/non-music placement optimizations remain implementation-only:
+inference and cross-platform builds have not validated those changes yet.
 
 ### H3 adapter selection
 
@@ -138,3 +201,127 @@ Lightweight validation: `node --test test/local-inference-coordinator.test.mjs`
 and `python -m unittest discover -s test -p test_inference_serialization.py`.
 These tests use no inference models. Full roleplay memory profiling remains a
 separate hardware validation step.
+
+## Qwen Image 2.1 Standard, Turbo and editing
+
+`/image/standard` (also `/image/qwen-2.1`) and `/image/image/standard` use
+the Qwen Image 2.1 Q4_K_M transformer.
+The official `Qwen/Qwen-Image-2.1` processor, Qwen3-VL text encoder, VAE,
+scheduler and transformer configuration are required; the unquantized
+transformer weights are excluded from downloads. Local GGUF filenames stay
+lowercase; Hugging Face's remote filename uses `Q4_K_M`.
+
+The Standard preset is 25 steps, true CFG 4, ER-SDE with a beta sigma schedule, and
+`qwen-image-2.1-lora.safetensors` at strength 1. The adapter is published under
+`models/` in the configured R2 bucket; `r2_models.py` records its size and SHA-256.
+Packed BF16 normalization weights are decoded before Qwen reads them directly;
+quantized linear weights remain packed. On supported Apple Silicon systems,
+native BF16 avoids a full FP16 encoder copy. On constrained accelerators the
+encoder uses sequential offloading that retains its original CPU weights; on
+Metal, block boundaries drain outstanding transfers. This avoids allocating a
+new CPU copy of each encoder layer when offloading after reference encoding.
+Reference conditioning uses the
+requested image area up to the upstream 1024-side default, rather than
+upscaling small edit inputs to that default.
+
+Fused gate/up adapter tensors are split into Diffusers projections without
+changing their matrix update. Adapters are applied without fusing quantized
+base weights. Both generation and editing use the same preset and record the
+actual sampling settings in generation metadata.
+
+The checkpoint declares `qwen-research`; do not substitute Apache/MIT metadata
+or infer commercial publishing permission. Existing Klein generation records
+retain their original license identity.
+
+Regression checks: `python -m unittest discover -s test -p 'test_qwen_image*.py'`
+and `node --test test/roleplay-media-pipelines.test.mjs test/mint-validation.test.mjs`.
+Real generation/editing and packaged CUDA/ROCm builds require separate hardware
+validation; the unit tests do not establish image quality or peak memory.
+
+M1 Max / 32 GB smoke validation: 256×256 text-to-image and reference editing
+both completed with 25 steps, CFG 4, ER-SDE/beta and LoRA strength 1. Visual
+inspection confirmed a red teapot and an edit to cobalt blue preserving the
+table and framing. Generation measured 807 s inference / 66 s loading; editing
+802 s / 66 s. These are individual smoke runs, not throughput benchmarks.
+Editing was validated after replacing encoder group offloading with sequential
+offloading; the earlier placement hit the validation watchdog's memory floor.
+Larger image sizes and CUDA/ROCm execution have not been hardware-validated by
+these runs. The preset is substantially slower than a distilled low-step mode
+on this hardware; do not promise interactive generation latency.
+
+Turbo uses `unsloth/Qwen-Image-2.1-Turbo-GGUF` Q4_K_M at 8 steps / CFG 1,
+with the official Euler scheduler and eight `sample_sigmas` from the Turbo
+model index, passed explicitly at call time for the pinned Diffusers version.
+Do not replace that distilled schedule with Standard’s ER-SDE/beta.
+Routes `/image/turbo`, `/image/image/turbo`, and the legacy Klein route/manifest
+aliases use Turbo. Negative prompting is inactive at CFG 1. Each variant
+downloads its own official processor, encoder and VAE, excluding full-precision
+transformer weights. Turbo components are repackaged differently; they are not
+assumed interchangeable with Standard. The old SDXL endpoint is `/image/sdxl`.
+
+LoRA compatibility: all 448 tensors after fused gate/up conversion resolve to
+Turbo modules with matching dimensions. Architecture parameters match Standard
+(the config’s Diffusers version differs). The adapter metadata says
+`qwen_image_2`, not Turbo-specific training; structural compatibility does not
+certify visual quality or preservation of Turbo distillation. Strength remains 1;
+`use_lora: false` supports comparison without the adapter.
+
+Upstream reference: https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo
+
+Turbo M1 Max / 32 GB smoke validation (256×256, seed 42, adapter strength 1):
+text-to-image completed in 156.829 s inference / 10.778 s loading; reference
+editing completed in 151.822 s inference / 8.068 s loading. Both used eight
+steps, CFG 1, the official Euler/sigma schedule, and the device coordinator
+lease with a low-memory watchdog. The generated red teapot was successfully
+edited to blue while retaining its composition. This establishes loading and
+basic generation/edit compatibility, not adapter quality across all prompts,
+larger-resolution memory safety, or CUDA/ROCm validation.
+
+### Queued text requests and activity
+
+The desktop coordinator publishes request IDs, monotonically increasing revisions,
+queued/running/terminal states and a snapshot through `inference-queue-changed`
+and `inference-queue-snapshot`. The activity store subscribes before retrieving
+its snapshot and ignores older revisions. Python media retains its existing
+queue/progress events; coordinator media records are excluded to avoid duplicates.
+No prompts or model credentials are included in activity events.
+
+`runLLMRequest` holds one lease across model selection/loading, completion and
+history updates. Lyrics and shared roleplay helpers submit their model with the
+completion instead of issuing separate load and chat calls. The selected model
+is copied before waiting. Isolated requests preserve the interactive chat history.
+An arriving media request waits until the whole text request completes; it cannot
+suspend the model between loading and completion. Interactive requests retain
+FIFO order at equal priority; existing background aging remains in effect.
+
+Regression checks: `node --test test/local-inference-coordinator.test.mjs
+test/llm-request-lease.test.mjs test/activity-operations.test.mjs` and
+`BONZAI_UI_URL=http://localhost:5173 node --test test/application-activity.browser.test.mjs`.
+
+Training and uncensoring workers publish queue records before acquiring the same
+lease; their running records survive a queue snapshot/reconnect. Their failures
+must propagate as a false worker result or an exception, never a successful
+Activity completion. Finger-frame analysis and composition also use the device
+queue. User-submitted training uses interactive priority; autonomous workflow
+inference retains background priority.
+
+Local streaming requests register cancellation before waiting. Registering another
+request never aborts an existing one, and completion removes only its own
+controller. Remote chat bypasses the device lease and can run concurrently with
+local work. A queued local request retains its local routing even if the user
+changes inference source while it waits.
+
+After changing Electron main/preload, run `npm run build:main` and
+`npm run build:preload` before restarting Electron. Restarting `electron .`
+without rebuilding continues to load the old `.vite/build` code.
+
+Music admission validation (32 GiB M1 Max, 290 seconds, 8 steps): the previous
+streamed estimate required 12.67 GiB available and rejected a 10.77 GiB snapshot
+before loading. The tiled/streamed estimate requires 10.26 GiB instead. A monitored
+full-length run produced 290 seconds of finite, non-silent stereo audio at 48 kHz
+in 179.4 seconds; peak Metal allocation was 3.22 GiB, minimum available memory
+5.19 GiB, and maximum observed swap growth 0.64 GiB. An earlier test stopped at
+its 2 GiB swap-growth watchdog during loading; the successful repeat retained
+that same watchdog. This validates this duration/settings with the smoke-test
+lyrics, not every lyric length, background workload, or device. Resident-mode
+admission, the host reserve, and critical-pressure guards remain unchanged.

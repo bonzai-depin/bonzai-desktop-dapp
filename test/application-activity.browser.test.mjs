@@ -21,7 +21,7 @@ test('global activity survives navigation, reconnects truthfully and controls aw
  await page.evaluate(async()=>{
   const {createApp,h,reactive}=await import('/node_modules/.vite/deps/vue.js');
   window.fixtureSkills=reactive({autonomousMode:true,isGeneratingAutonomous:false,autonomousMessageCount:2,autonomousConfig:{idleTimeout:5,messageInterval:15,maxMessages:12},lastActiveTime:Date.now(),lastHeartbeatAt:Date.now(),autonomousSession:{sessionKey:'sakura',settings:{},companion:{name:'Sakura'}},toggleAutonomousMode(value){this.autonomousMode=value}});
-  window.electronAPI={getActiveDownloads:async()=>[],onDownloadProgress:callback=>{window.emitDownload=data=>callback(null,data);return()=>{}}};
+  window.electronAPI={inferenceQueueSnapshot:async()=>[],onInferenceQueueChanged:callback=>{window.emitInference=callback;return()=>{}},getActiveDownloads:async()=>[],onDownloadProgress:callback=>{window.emitDownload=data=>callback(null,data);return()=>{}}};
   const {default:Bar}=await import('/src/components/ApplicationActivityBar.vue');
   window.fixtureServer=reactive({type:'starting'});window.openedMode=null;
   const app=createApp({render:()=>h('div',{},[h(Bar,{server:window.fixtureServer,onOpenMode:mode=>window.openedMode=mode}),h('div',{style:'padding:32px;color:white'},'Current workspace')])});
@@ -29,6 +29,17 @@ test('global activity survives navigation, reconnects truthfully and controls aw
  });
  await page.getByRole('button',{name:/Local AI/}).click();
  assert.match(await page.locator('#application-activity-panel').innerText(),/Starting BonzAI/);
+ await page.evaluate(()=>window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'queued',revision:1,startedAt:Date.now(),updatedAt:Date.now()}));
+ const lyrics = page.locator('[data-operation-id="inference:lyrics"]');
+ assert.match(await lyrics.innerText(), /Generating lyrics/);
+ assert.match(await lyrics.innerText(), /Waiting for the device/);
+ await page.evaluate(()=>{
+  window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'running',revision:2,startedAt:Date.now(),updatedAt:Date.now()});
+  window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'queued',revision:1,startedAt:Date.now(),updatedAt:Date.now()});
+ });
+ assert.doesNotMatch(await lyrics.innerText(), /Waiting for the device/);
+ await page.evaluate(()=>window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'completed',revision:3,startedAt:Date.now(),updatedAt:Date.now()}));
+
  await page.evaluate(()=>{window.fixtureServer.type='ready';window.fireGeneration('gen_started',{generation_id:'video1',kind:'wan_video'});window.fireGeneration('gen_progress',{generation_id:'video1',stage:'denoising',step:3,total:4,pct:75});});
  assert.match(await page.locator('.app-activity__strip').innerText(),/75%/);
  await page.screenshot({path:'/tmp/bonzai-activity-running.png'});

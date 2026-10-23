@@ -81,6 +81,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getLoadedModel: () => ipcRenderer.invoke("model-get-loaded"),
   completionBudget: (prompt, maxTokens) => ipcRenderer.invoke('model-completion-budget', { prompt, maxTokens }),
   llamaRuntimeStatus: () => ipcRenderer.invoke("llama-runtime-status"),
+  inferenceQueueSnapshot: () => ipcRenderer.invoke('inference-queue-snapshot'),
+  onInferenceQueueChanged: callback => {
+    const handler = (_event, record) => callback(record);
+    ipcRenderer.on('inference-queue-changed', handler);
+    return () => ipcRenderer.removeListener('inference-queue-changed', handler);
+  },
   localExecutionStatus: () => ipcRenderer.invoke("local-execution-status"),
   broadcastModelState: () => ipcRenderer.invoke("broadcast-model-state"),
   llamaGetRpcPeers: () => ipcRenderer.invoke("llama-get-rpc-peers"),
@@ -91,6 +97,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     const handler = (_event, model) => cb(model);
     ipcRenderer.on("model-changed", handler);
     return () => ipcRenderer.removeListener("model-changed", handler);
+  },
+  openRouter: {
+    status: () => ipcRenderer.invoke('openrouter:status'),
+    models: () => ipcRenderer.invoke('openrouter:models'),
+    mediaModels: category => ipcRenderer.invoke('openrouter:media-models', category),
+    videoJobs: () => ipcRenderer.invoke('openrouter:video-jobs'),
+    resumeVideo: id => ipcRenderer.invoke('openrouter:resume-video', id),
+    account: () => ipcRenderer.invoke('openrouter:account'),
+    connect: key => ipcRenderer.invoke('openrouter:connect', key),
+    configure: input => ipcRenderer.invoke('openrouter:configure', input),
+    disconnect: () => ipcRenderer.invoke('openrouter:disconnect'),
+    onChanged: cb => { const h = (_event, state) => cb(state); ipcRenderer.on('openrouter:changed', h); return () => ipcRenderer.removeListener('openrouter:changed', h); },
   },
   chat: (userMessage, options = {}) => ipcRenderer.invoke("model-chat", { message: userMessage, ...options }),
   resetChat: () => ipcRenderer.invoke("model-reset-chat"),
@@ -516,9 +534,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * tagged with `streamId` so concurrent ticks (or Generative Text) do
    * not interleave.
    */
-  zhcChatStream: ({ streamId, prompt, temperature, maxTokens, enableThinking }) =>
+  zhcChatStream: ({ streamId, prompt, temperature, maxTokens, enableThinking, model }) =>
     ipcRenderer.invoke("zhc-chat-stream", {
-      streamId, message: prompt, temperature, maxTokens, enableThinking, isolated: true,
+      streamId, message: prompt, temperature, maxTokens, enableThinking, model, isolated: true,
     }),
   /**
    * Subscribe to ZHC stream tokens. The callback receives `{ streamId, chunk }`.
@@ -638,6 +656,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("agent-save-audio", defaultName, sourcePath),
   saveVideo: (defaultName, sourcePath) =>
     ipcRenderer.invoke("agent-save-video", defaultName, sourcePath),
+  mediaProduction: {
+    prepare: (input) => ipcRenderer.invoke('media-production:prepare', input),
+    probe: (source) => ipcRenderer.invoke('media-production:probe', source),
+    compose: (input) => ipcRenderer.invoke('media-production:compose', input),
+  },
   exportMeditationVideo: (payload) =>
     ipcRenderer.invoke("meditation-export-video", payload),
   // File existence check (for media validation)
@@ -758,6 +781,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("p2p-inference", { peerId, request }),
   agentWorkerPublish: (descriptor, binding) => ipcRenderer.invoke('agent-worker-publish', descriptor, binding),
   agentWorkerUnpublish: key => ipcRenderer.invoke('agent-worker-unpublish', key),
+  agentServiceAssets: () => ipcRenderer.invoke('agent-service-assets'),
+  agentServiceAssetInspect: (id) => ipcRenderer.invoke('agent-service-asset-inspect', id),
+  agentServiceAssetUse: (binding,asset,prompt) => ipcRenderer.invoke('agent-service-asset-use', binding,asset,prompt),
   agentWorkerRuns: () => ipcRenderer.invoke('agent-worker-runs'),
   agentWorkerPeers: () => ipcRenderer.invoke('agent-worker-peers'),
   agentWorkerStoreMedia: (artifact, base64) => ipcRenderer.invoke('agent-worker-store-media', artifact, base64),

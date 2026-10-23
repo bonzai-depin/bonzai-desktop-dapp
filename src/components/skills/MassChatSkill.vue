@@ -281,7 +281,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import VueMarkdown from "vue-markdown-render";
 import { listAllLLMs } from "../../skills/flagship.js";
-import { canStartGeneration, startGeneration, stopGeneration } from "../../stores/generationStore.js";
+import { startGeneration, stopGeneration } from "../../stores/generationStore.js";
 
 const PROMPT_LIBRARY_KEY = "bonzai.mass-chat.library";
 const VOTE_KEY = "bonzai.mass-chat.votes";
@@ -502,7 +502,7 @@ export default {
     const runMassChat = async () => {
       if (isRunning.value || !prompt.value.trim() || selectedModels.value.length === 0) return;
       runError.value = '';
-      if (!canStartGeneration() || !startGeneration('text')) {
+      if (!startGeneration('text')) {
         runError.value = 'Another creation is running. Try again when the device is available.';
         emit('status-update', runError.value);
         return;

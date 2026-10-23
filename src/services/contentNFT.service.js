@@ -7,7 +7,7 @@ import {buildMintGLBViewer} from './mintGLBViewer.js';
  * 4 stages: upload content → upload metadata → mint on-chain → update store.
  */
 
-import { mintLicenseStatus, mintMediaBytes, validateMintFormat } from './mintValidation.js';
+import { mintLicenseStatus, resolveMintMediaBytes, validateMintFormat } from './mintValidation.js';
 import { ethers } from 'ethers';
 import { exportCodeGLB, uploadGLBArtifact } from '../components/gen3d/glbExport.js';
 import { storageService } from './storage.service.js';
@@ -22,22 +22,8 @@ import {
 } from './bonzaiUtility.service.js';
 import { CONTENT_TYPE_MAP, COLLECTIBLES_CLONE_ABI } from '../constants/index.js';
 
-// Branded fallback images per content type (Vite asset imports → bundled URLs)
-import brandTextUrl from '../assets/bonzai_chat.webp';
-import brandImageUrl from '../assets/bonzai_image.webp';
-import brandAudioUrl from '../assets/bonzai_music.webp';
-import brandVideoUrl from '../assets/bonzai_video.webp';
-import brand3DUrl from '../assets/bonzai_3d.webp';
-import logoUrl from '../assets/bonzai_logo-full.png';
-
-const BRAND_IMAGE_URLS = {
-  text:     brandTextUrl,
-  image:    brandImageUrl,
-  audio:    brandAudioUrl,
-  video:    brandVideoUrl,
-  object:   brand3DUrl,
-  training: brandTextUrl,
-};
+import { renderNFTCover } from './nftArtwork.js';
+import { buildAudioPlayer, buildVideoPlayer } from './nftMediaPlayer.js';
 
 function hasNsfwSignal(value) {
   return /\b(nsfw|adult|explicit|porn|erotic|nude|nudity|sex|sexual|gore)\b/i.test(String(value || ''));
@@ -127,142 +113,6 @@ let _cachedCollectionAddress = null;
 let _cachedCollectionOwner = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BRANDED THUMBNAIL GENERATOR (blurred bg + logo + optional text snippet)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Load an image from a URL and return an HTMLImageElement.
- */
-function loadImage(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-/**
- * Generate a branded 512x512 NFT thumbnail with:
- * - 50% blurred background image
- * - BonzAI logo centered in the upper half
- * - Optional text snippet in the lower half (for text content)
- *
- * @param {string} inferenceType - 'text', 'audio', 'video', 'object'
- * @param {string} [textContent] - Raw text content (for text NFTs)
- * @returns {Promise<Uint8Array>} PNG image data
- */
-async function generateBrandedThumbnail(inferenceType, textContent, customBgUrl) {
-  const SIZE = 512;
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d');
-
-  // Draw background — custom AI-generated (no blur) or static brand image (blurred)
-  const bgUrl = customBgUrl || BRAND_IMAGE_URLS[inferenceType] || BRAND_IMAGE_URLS.text;
-  const shouldBlur = !customBgUrl;
-  try {
-    const bgImg = await loadImage(bgUrl);
-    if (shouldBlur) ctx.filter = 'blur(12px)';
-    // Cover algorithm: scale to fill + center crop, with extra margin for blur edges
-    const imgRatio = bgImg.width / bgImg.height;
-    const blurMargin = shouldBlur ? 1.1 : 1.0; // extra scale only needed for blur edges
-    let dw, dh;
-    if (imgRatio > 1) {
-      // Landscape image: fit height, crop width
-      dh = SIZE * blurMargin;
-      dw = dh * imgRatio;
-    } else {
-      // Portrait/square image: fit width, crop height
-      dw = SIZE * blurMargin;
-      dh = dw / imgRatio;
-    }
-    const dx = (SIZE - dw) / 2;
-    const dy = (SIZE - dh) / 2;
-    ctx.drawImage(bgImg, dx, dy, dw, dh);
-    ctx.filter = 'none';
-  } catch {
-    // Fallback: dark gradient
-    const grad = ctx.createLinearGradient(0, 0, 0, SIZE);
-    grad.addColorStop(0, '#1a1a2e');
-    grad.addColorStop(1, '#0a0a1a');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, SIZE, SIZE);
-  }
-
-  // Darken overlay for contrast
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-  ctx.fillRect(0, 0, SIZE, SIZE);
-
-  // Draw logo in upper half — 50% of canvas height, centered
-  try {
-    const logo = await loadImage(logoUrl);
-    const logoMaxH = SIZE * 0.5;
-    const logoRatio = logo.width / logo.height;
-    let logoW = logoMaxH * logoRatio;
-    let logoH = logoMaxH;
-    // Clamp width to 80% of canvas
-    if (logoW > SIZE * 0.8) {
-      logoW = SIZE * 0.8;
-      logoH = logoW / logoRatio;
-    }
-    const logoX = (SIZE - logoW) / 2;
-    const logoY = (SIZE / 2 - logoH) / 2; // center in upper half
-    ctx.drawImage(logo, logoX, logoY, logoW, logoH);
-  } catch {
-    // Logo failed to load — skip
-  }
-
-  // For text content: add text snippet in lower half
-  if (inferenceType === 'text' && textContent) {
-    const clean = textContent.replace(/[#*_`~\[\]]/g, '').trim();
-    const snippet = clean.length > 100 ? clean.substring(0, 100) + '...' : clean;
-    if (snippet) {
-      // Bottom gradient for readability
-      const grad = ctx.createLinearGradient(0, SIZE * 0.45, 0, SIZE);
-      grad.addColorStop(0, 'rgba(0,0,0,0)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.7)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, SIZE * 0.45, SIZE, SIZE * 0.55);
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.font = '28px system-ui, -apple-system, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-
-      // Word-wrap text into lines
-      const maxW = SIZE - 60;
-      const lineHeight = 40;
-      const words = snippet.split(/\s+/);
-      const lines = [];
-      let line = '';
-      for (const word of words) {
-        const test = line ? `${line} ${word}` : word;
-        if (ctx.measureText(test).width > maxW && line) {
-          lines.push(line);
-          line = word;
-        } else {
-          line = test;
-        }
-      }
-      if (line) lines.push(line);
-
-      // Position text at top of bottom half (matching preview: top:50% + 8px padding)
-      const startY = SIZE / 2 + 8;
-      for (let i = 0; i < lines.length; i++) {
-        ctx.fillText(lines[i], SIZE / 2, startY + i * lineHeight, maxW);
-      }
-    }
-  }
-
-  // Convert canvas to PNG Uint8Array
-  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // MAIN MINT FLOW
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -304,7 +154,7 @@ export async function mintContent({
     if (!title?.trim()) throw new Error('Enter a title before minting.');
     if (!(inferenceType in CONTENT_TYPE_MAP)) throw new Error('Unsupported media type.');
     validateMintFormat(inferenceType, contentType);
-    const contentBytes = mintMediaBytes(content, contentType);
+    const contentBytes = await resolveMintMediaBytes(content, contentType);
     if (!CONFIG.contentNFT?.economy?.factoryAddress) throw new Error('Mint is not configured on the selected network yet.');
     // ─── Level gate: check if user can mint this content type ────────
     await checkAllLevels();
@@ -437,15 +287,15 @@ export async function mintContent({
     let mediaPlayerReceipt = null;
     const modelSlug = toModelSlug(generation.model);
 
-    if (!contentType.startsWith('image/')) {
-      // Upload branded thumbnail (blurred bg + logo + text snippet) or custom thumbnail
+    if (!contentType.startsWith('image/') || generation.nftArtwork?.themeId) {
+      // Publish the same artwork shown in the tokenization review.
       try {
         onProgress('upload', 'Generating thumbnail...', 32);
         let thumbBuf;
         let thumbMime = 'image/png';
-        // Always route through branded pipeline (shade + logo) — custom bg or static fallback
+        // Images remain original; other types use an identifiable collection cover.
         const textContent = inferenceType === 'text' ? (typeof content === 'string' ? content : '') : null;
-        thumbBuf = await generateBrandedThumbnail(inferenceType, textContent, customThumbnail || undefined);
+        thumbBuf = await renderNFTCover({ inferenceType, textContent, generation, title, customThumbnail });
         onProgress('upload', 'Uploading thumbnail...', 34);
         brandedImageReceipt = await storageService.uploadContent({
           data: thumbBuf,
@@ -454,7 +304,7 @@ export async function mintContent({
           attribution,
         });
       } catch (e) {
-        console.warn('[ContentNFT] Branded thumbnail generation/upload failed:', e);
+        throw new Error('The token artwork could not be published. Please retry before tokenizing.');
       }
     }
 
@@ -481,7 +331,7 @@ export async function mintContent({
     if (!contentType.startsWith('image/')) {
       if (contentType.startsWith('audio/')) {
         onProgress('upload', 'Uploading audio player...', 36);
-        const playerHtml = buildAudioPlayer(contentReceipt.gatewayUrl, brandedImageReceipt?.gatewayUrl, title || prompt);
+        const playerHtml = buildAudioPlayer(contentReceipt.gatewayUrl || contentReceipt.url, brandedImageReceipt?.gatewayUrl || brandedImageReceipt?.url, title || prompt);
         const playerBuf = new TextEncoder().encode(playerHtml);
         mediaPlayerReceipt = await storageService.uploadContent({
           data: playerBuf,
@@ -491,7 +341,7 @@ export async function mintContent({
         });
       } else if (contentType.startsWith('video/')) {
         onProgress('upload', 'Uploading video player...', 36);
-        const playerHtml = buildVideoPlayer(contentReceipt.gatewayUrl, brandedImageReceipt?.gatewayUrl, title || prompt);
+        const playerHtml = buildVideoPlayer(contentReceipt.gatewayUrl || contentReceipt.url, brandedImageReceipt?.gatewayUrl || brandedImageReceipt?.url, title || prompt);
         const playerBuf = new TextEncoder().encode(playerHtml);
         mediaPlayerReceipt = await storageService.uploadContent({
           data: playerBuf,
@@ -517,7 +367,7 @@ export async function mintContent({
         : undefined;
 
     // image priority: actual image content > branded fallback
-    const imageUrl = contentType.startsWith('image/')
+    const imageUrl = contentType.startsWith('image/') && !generation.nftArtwork?.themeId
       ? contentReceipt.url
       : brandedImageReceipt?.url || undefined;
 
@@ -565,6 +415,7 @@ export async function mintContent({
         { trait_type: 'Content Safety', value: contentSafety.nsfw ? 'NSFW' : 'SFW' },
       ],
       properties: {
+        nftArtwork: generation.nftArtwork || null,
         ...(glbArtifact ? {
           model: glbArtifact,
           files: [glbArtifact, { uri: contentReceipt.url, type: 'application/javascript', name: 'source.js' },
@@ -610,9 +461,7 @@ export async function mintContent({
     };
 
     // Fallback: if no image and no animation, use content URL directly
-    if (!metadata.image && !metadata.animation_url) {
-      metadata.image = contentReceipt.url;
-    }
+    if (!/^(ipfs|ar):\/\//.test(metadata.image || '')) throw new Error('The token artwork needs a permanent storage URI.');
 
     const metadataReceipt = await storageService.uploadMetadata(metadata, {
       type: 'metadata',
@@ -861,7 +710,7 @@ function extractUserCode(fullCode) {
  * @returns {string} Complete HTML page string
  */
 function buildInteractive3DViewer(userCode, posterUrl) {
-  const posterHtml = posterUrl ? `<div class="poster" id="poster" style="background:url('${posterUrl}') center/cover no-repeat #1a1a2e;"><div class="play-btn"></div></div>` : '';
+  const posterHtml = posterUrl ? `<div class="poster" id="poster" style="background:url('${posterUrl}') center/cover no-repeat #1a1a2e;"></div>` : '';
   const hasPoster = !!posterUrl;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -881,6 +730,7 @@ canvas{display:block;width:100%;height:100%}
 </head>
 <body>
 ${posterHtml}
+<button id="play-toggle" aria-label="Play preview" style="position:absolute;right:16px;bottom:16px;z-index:20;width:44px;height:44px;border-radius:50%;background:#172332;color:white;border:1px solid #ffffff55;cursor:pointer">▶</button>
 <script type="importmap">
 {
   "imports": {
@@ -893,6 +743,7 @@ ${posterHtml}
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+let playing = false, resumeScene, frame;
 function initScene() {
 
 // ── Scene setup (matches ThreeViewer.vue "day" preset) ──
@@ -1223,10 +1074,12 @@ if (!box.isEmpty()) {
 
 // Animation loop
 function animate() {
-  requestAnimationFrame(animate);
+  if (!playing) return;
+  frame = requestAnimationFrame(animate);
   controls.update();
   renderer.render(scene, camera);
 }
+resumeScene = animate;
 animate();
 
 window.addEventListener('resize', () => {
@@ -1236,100 +1089,17 @@ window.addEventListener('resize', () => {
 });
 } // end initScene
 
-const hasPoster = ${hasPoster};
-if (hasPoster) {
-  document.getElementById('poster').addEventListener('click', function() {
-    this.style.display = 'none';
-    initScene();
-  });
-} else {
-  initScene();
-}
+const toggle = document.getElementById('play-toggle');
+toggle.addEventListener('click', () => {
+  playing = !playing;
+  if (!playing) cancelAnimationFrame(frame);
+  const poster = document.getElementById('poster');
+  if (poster) poster.style.display = playing ? 'none' : 'flex';
+  toggle.textContent = playing ? '■' : '▶';
+  toggle.setAttribute('aria-label', playing ? 'Stop preview' : 'Play preview');
+  if (playing) { if (resumeScene) resumeScene(); else initScene(); }
+});
 <` + `/script>
-</body>
-</html>`;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AUDIO / VIDEO HTML PLAYERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Build a self-contained HTML page with a branded background image and an
- * HTML5 audio player overlay. Fully covers the viewport.
- */
-function buildAudioPlayer(audioUrl, bgImageUrl, titleText) {
-  const safeTitle = (titleText || 'BonzAI Audio').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const bgCss = bgImageUrl
-    ? `background:url('${bgImageUrl}') center/cover no-repeat #111;`
-    : 'background:#111;';
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${safeTitle}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{width:100vw;height:100vw;max-height:100vh;${bgCss}display:flex;flex-direction:column;align-items:center;justify-content:flex-end;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}
-.poster{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding-top:25px;cursor:pointer;z-index:10}
-.play-btn{width:72px;height:72px;background:rgba(255,255,255,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:transform 0.2s,background 0.2s}
-.play-btn:hover{transform:scale(1.1);background:rgba(255,255,255,0.25)}
-.play-btn::after{content:'';border-style:solid;border-width:14px 0 14px 24px;border-color:transparent transparent transparent #fff;margin-left:4px}
-.player{position:relative;z-index:1;width:100%;padding:24px 32px 32px;background:linear-gradient(transparent,rgba(0,0,0,0.85));display:flex;flex-direction:column;align-items:center;gap:12px;display:none}
-audio{width:min(90%,480px);height:40px;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.4))}
-</style>
-</head>
-<body>
-<div class="poster" id="poster"><div class="play-btn"></div></div>
-<div class="player" id="player">
-  <audio controls loop preload="auto" src="${audioUrl}"></audio>
-</div>
-<script>
-document.getElementById('poster').addEventListener('click',function(){
-  this.style.display='none';
-  var p=document.getElementById('player');p.style.display='flex';
-  p.querySelector('audio').play();
-});
-<\/script>
-</body>
-</html>`;
-}
-
-/**
- * Build a self-contained HTML page with a full-cover HTML5 video player.
- * Falls back to a branded poster image while loading.
- */
-function buildVideoPlayer(videoUrl, posterUrl, titleText) {
-  const safeTitle = (titleText || 'BonzAI Video').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const posterBg = posterUrl
-    ? `background:url('${posterUrl}') center/cover no-repeat #000;`
-    : 'background:#000;';
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${safeTitle}</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{width:100vw;height:100vh;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
-video{width:100%;height:100%;object-fit:cover;display:none}
-.poster{position:absolute;inset:0;${posterBg}display:flex;align-items:center;justify-content:center;padding-top:25px;cursor:pointer;z-index:10}
-.play-btn{width:72px;height:72px;background:rgba(255,255,255,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:transform 0.2s,background 0.2s}
-.play-btn:hover{transform:scale(1.1);background:rgba(255,255,255,0.25)}
-.play-btn::after{content:'';border-style:solid;border-width:14px 0 14px 24px;border-color:transparent transparent transparent #fff;margin-left:4px}
-</style>
-</head>
-<body>
-<div class="poster" id="poster"><div class="play-btn"></div></div>
-<video id="vid" controls loop playsinline preload="auto" src="${videoUrl}"></video>
-<script>
-document.getElementById('poster').addEventListener('click',function(){
-  this.style.display='none';
-  var v=document.getElementById('vid');v.style.display='block';v.play();
-});
-<\/script>
 </body>
 </html>`;
 }

@@ -1,3 +1,6 @@
+import { teamSkillIds, agentModelOverride } from './teamCapabilities.js';
+import { list as listTeamConnectors } from './connectors.js';
+import { SKILL_MANIFESTS } from './skillManifests.js';
 import {captureHarness, checkHarness, sameHarness, beginHarness} from "./harness.js";
 import { teamContext } from "./teamCommunication.js";
 import { companyMaintenanceContext } from "./gmao.js";
@@ -135,7 +138,7 @@ export async function tickCEO(charter, run = null) {
 
   let plan;
   try {
-    const ceoLLM = charter.roles?.CEO?.llm || null;
+    const ceoLLM = agentModelOverride(charter, 'CEO', smartAgentCatalog.agents);
     const ceoGateway = charter.roles?.CEO?.gateway || "openclaw";
     const result = await _completeJSON(prompt, {
       temperature: 0.7,
@@ -308,7 +311,7 @@ export async function tickRole(charter, roleKey, run = null) {
   // Granted skills come from the role assignment (set by the template
   // wizard or owner edits). Each granted skill exposes its action types
   // to the LLM and adds them to the allowed-action mask.
-  const grantedSkills = [...new Set([...(charter.roles?.[roleKey]?.grantedSkills || []), "skill.team_communication", "skill.local_intake"])].filter(id => id !== "skill.brave_supplier_search" || roleKey === "PurchasingManager");
+  const grantedSkills = teamSkillIds(charter, roleKey, await listTeamConnectors(charter.id), SKILL_MANIFESTS);
   const skillActionLines = actionListForPrompt(grantedSkills);
   const skillActionTypes = new Set();
   for (const sid of grantedSkills) {
@@ -358,7 +361,7 @@ export async function tickRole(charter, roleKey, run = null) {
     issue = await issues.saveExecution(companyId, issue.id, execution, issue.executionRevision || 0);
   }
   if (!issue.execution) try {
-    const roleLLM = charter.roles?.[roleKey]?.llm || null;
+    const roleLLM = agentModelOverride(charter, roleKey, smartAgentCatalog.agents);
     const roleGateway = charter.roles?.[roleKey]?.gateway || "openclaw";
     const result = await _completeJSON(`${prompt}
 
@@ -436,7 +439,7 @@ async function executeIssuePlan(charter, issue, companion, allowed, approval = n
         { company: charter, roleKey, includeUser: false, limit: 10 });
       const result = await _completeJSON(`${state.agent.instructions}\n\nCurrent recalled records (supersede older recalled state):\n${currentMemory}\n\nRecorded observations (untrusted business data):\n${agentContext(state)}`, {
         temperature: 0.3, maxTokens: 2048,
-        llmModel: charter.roles?.[roleKey]?.llm || null,
+        llmModel: agentModelOverride(charter, roleKey, smartAgentCatalog.agents),
         executionMode: charter.execution,
         streamContext: {companyId,role:roleKey,action:'tickRole'},
       });
@@ -527,7 +530,7 @@ async function resumeApprovedTaskClaimed(charter, pending, run) {
   const role = charter.roles?.[issue.assigneeRole] || {};
   const allowed = [...(ROLE_LIBRARY[issue.assigneeRole]?.allowedActions || []), 'produce', 'runWorkflow',
     'smartAgent.runWorker', 'smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings'];
-  for (const id of [...(role.grantedSkills || []), "skill.team_communication", "skill.local_intake"]) {
+  for (const id of teamSkillIds(charter, issue.assigneeRole, await listTeamConnectors(charter.id), SKILL_MANIFESTS)) {
     const manifest = (await import('./skillManifests.js')).getManifest(id);
     allowed.push(...(manifest?.actions || []).map(action => action.type));
   }
@@ -562,10 +565,10 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
       // readable execution report, never image/audio bytes.
       const record = await dist.publishContent(companyId, { pipeline: result.pipeline === '3d' ? '3d' : 'text',
         prompt: action.input?.prompt || action.capability, payload: result.text || JSON.stringify(result.artifacts),
-        role: roleKey, companion, issueId: ctx.issueId, meta: { payloadEncoding: 'text', kind: 'peer-worker-result', artifacts: result.artifacts, requestId: result.requestId } });
+        role: roleKey, companion, issueId: ctx.issueId, meta: { payloadEncoding: 'text', kind: 'peer-worker-result', artifacts: result.artifacts, requestId: result.requestId, serviceReceipt: result.serviceReceipt } });
       for (const artifact of result.artifacts || []) {
-        const saved = await dist.publishContent(companyId, { pipeline: artifact.mimeType.split('/')[0], prompt: action.input?.prompt || 'Worker delivery', blobId: artifact.id, blobExt: artifact.ext,
-          role: roleKey, companion, issueId: ctx.issueId, meta: { kind: 'peer-worker-media', requestId: result.requestId } });
+        const saved = await dist.publishContent(companyId, { pipeline: artifact.pipeline || (artifact.mimeType.startsWith('application/') ? 'fineTune' : artifact.mimeType.startsWith('model/') ? '3d' : artifact.mimeType.split('/')[0]), prompt: action.input?.prompt || 'Worker delivery', blobId: artifact.id, blobExt: artifact.ext,
+          role: roleKey, companion, issueId: ctx.issueId, meta: { kind: 'peer-worker-media', requestId: result.requestId, serviceReceipt: result.serviceReceipt } });
         if (!saved) throw new Error('Worker media could not be saved to company deliverables.');
       }
       if (!record) throw new Error('Worker result could not be saved to company deliverables.');
@@ -592,7 +595,7 @@ export async function dispatchAction(charter, roleKey, companion, action, ctx = 
       const agent = smartAgentCatalog.agents.find(item => item.id === companion);
       const creation = await executeCreation({ ...action, pipeline: action.pipeline || ROLE_LIBRARY[roleKey]?.pipeline || "text" }, {
         approved: Boolean(ctx.pendingId),
-        llm: charter.roles?.[roleKey]?.llm,
+        llm: agentModelOverride(charter, roleKey, smartAgentCatalog.agents),
         instructions: [agent?.instructions, paperasseGuide(charter, roleKey), charter.template?.id?.startsWith("paperasse_") ? charter.mission : "", action.source ? `Source data for this task:\n${JSON.stringify(action.source)}` : ''].filter(Boolean).join('\n\n'),
         companyId, role: roleKey, agentId: companion,
       });
@@ -942,7 +945,7 @@ export async function _completeJSON(prompt, opts = {}) {
   // PARALLEL mode: try the multi-instance pool. If unavailable (older
   // builds without the pool IPC, or insufficient memory budget), the
   // pool throws and we fall through to single-instance.
-  if (opts.executionMode?.llm?.mode === "parallel" && opts.llmModel
+  if (!(await window.electronAPI?.openRouter?.status?.())?.active && opts.executionMode?.llm?.mode === "parallel" && opts.llmModel
       && typeof window.electronAPI?.poolChat === "function") {
     try {
       const res = await _withTimeout(window.electronAPI.poolChat({

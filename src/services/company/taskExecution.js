@@ -113,14 +113,16 @@ export async function runTaskExecution({ execution, save, gate, dispatch, canRun
         step.status = 'requires_input';
         step.error = output.error || output.message || 'Open the workflow workspace to provide the required input.';
         step.safeToRevise = false;
-      } else if (!output || output.ok === false || output.success === false) {
+      } else if (['unknown', 'running', 'queued', 'processing', 'pending'].includes(output?.status)) {
+        step.status = 'unknown';
+        step.error = output.error || output.message || 'The action has not confirmed its outcome. Check its receipt before continuing.';
+        step.safeToRevise = false;
+      } else if (!output || output.ok === false || output.success === false || output.isError === true || output.error || ['failed', 'error', 'cancelled', 'canceled', 'rejected', 'unsupported'].includes(output.status)) {
         step.status = output?.status === 'unsupported' ? 'unsupported' : 'failed';
         step.error = output?.error || 'No result was returned.';
         step.safeToRevise = output?.beforeDispatch === true;
       } else if (output.simulated || output.status === 'simulated') {
         step.status = 'simulated'; step.error = 'Simulation only; no business action was performed.';
-      } else if (output.status === 'pending') {
-        step.status = 'failed'; step.error = output.message || 'More input or outcome verification is required.';
       } else if (!(output.id || output.contentId || output.externalId || output.txHash || output.receipt || output.status === 'completed')) {
         step.status = 'failed'; step.error = 'The action returned no verifiable result.';
       } else step.status = 'completed';

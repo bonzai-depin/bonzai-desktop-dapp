@@ -17,10 +17,19 @@ from __future__ import annotations
 import os
 import sys
 
+# Bound Metal allocations before importing torch. Zero disables its safety guard.
+os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "1.0"
+os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.8"
+
 # CI checks the actual frozen runtime without starting services or loading models.
 if __name__ == "__main__" and "--bonzai-runtime-check" in sys.argv:
     from runtime_check import main as _runtime_check
     _runtime_check()
+    sys.exit(0)
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--bonzai-convert-hf":
+    from training_tools import run_converter
+    run_converter()
     sys.exit(0)
 
 # A frozen executable cannot launch Python source with sys.executable. Enter
@@ -99,7 +108,6 @@ from diffusers import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
     GGUFQuantizationConfig,
-    Flux2KleinPipeline,
     ZImagePipeline,
     ZImageTransformer2DModel,
     LTX2Pipeline,
@@ -189,7 +197,15 @@ FLUX_KLEIN_9B_GGUF_NAME = "flux-2-klein-9b-q4_k_m.gguf"
 FLUX_KLEIN_9B_GGUF_URL = "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf"
 FLUX_KLEIN_9B_LORA_NAME = "flux-2-klein-9b-lora.safetensors"
 FLUX_KLEIN_9B_LORA_EXTRA_NAME = "flux-2-klein-9b-lora-extra.safetensors"
-FLUX_KLEIN_9B_LOCK = threading.Lock()
+QWEN_IMAGE_21_LOCK = threading.Lock()
+QWEN_IMAGE_21_REPO = "Qwen/Qwen-Image-2.1"
+QWEN_IMAGE_21_GGUF_NAME = "qwen-image-2.1-q4_k_m.gguf"
+QWEN_IMAGE_21_GGUF_URL = "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q4_K_M.gguf"
+QWEN_IMAGE_21_TURBO_REPO = "Qwen/Qwen-Image-2.1-Turbo"
+QWEN_IMAGE_21_TURBO_GGUF_NAME = "qwen-image-2.1-turbo-q4_k_m.gguf"
+QWEN_IMAGE_21_TURBO_GGUF_URL = "https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K_M.gguf"
+QWEN_IMAGE_21_LORA_NAME = "qwen-image-2.1-lora.safetensors"
+
 
 
 Z_REPO = "Tongyi-MAI/Z-Image-Turbo"
@@ -562,7 +578,8 @@ from performance_capture import install_performance_capture
 install_performance_capture(app, runtime=lambda: {"torch": str(torch.__version__), "cuda": torch.version.cuda, "hip": torch.version.hip})
 from inference_serialization import install_inference_serialization
 from inference_memory import release_idle_caches
-_run_device_background = install_inference_serialization(app, lambda path: release_idle_caches(globals(), path))
+_run_device_background = install_inference_serialization(app, lambda path: release_idle_caches(globals(), path),
+    on_queue=lambda event: socket_emit("inference_queue", event, "/generation"))
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "bonzai-secret-key")
 CORS(app, supports_credentials=True, resources={
     r"/*": {
@@ -1236,7 +1253,7 @@ class GenerationTracker:
             self._started[gid] = time.perf_counter()
             self._meta[gid] = {"generation_id": gid, "kind": kind, "ts": time.time(), "stage": "starting", "status": "running"}
         socket_emit("gen_started", {"generation_id": gid, "kind": kind, "meta": meta or {}}, "/generation")
-        socket_emit("gen_progress", {"generation_id": gid, "stage": "queued", "step": 0, "total": 1, "pct": 0}, "/generation")
+        socket_emit("gen_progress", {"generation_id": gid, "stage": "loading", "step": 0, "total": 1, "pct": 0}, "/generation")
         return gid
 
     def progress(self, generation_id: str, stage: str, step: int, total: int):
@@ -1315,11 +1332,13 @@ def dl_disconnect():
 def gen_connect():
     emit("connected", _json_sanitize({"message": "Connected to generation progress"}))
     emit("gen_snapshot", genbus.snapshot())
+    emit("inference_queue_snapshot", app.extensions["bonzai_inference_queue"]())
 
 
 @socketio.on("activity_snapshot", namespace="/generation")
 def activity_snapshot():
     emit("gen_snapshot", genbus.snapshot())
+    emit("inference_queue_snapshot", app.extensions["bonzai_inference_queue"]())
 
 
 @socketio.on("disconnect", namespace="/generation")
@@ -1545,6 +1564,11 @@ def _sdxl_patterns() -> List[str]:
 def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
     if repo_id in (SDXL_BASE_REPO, SDXL_REFINER_REPO):
         return _sdxl_patterns()
+    if repo_id == QWEN_IMAGE_21_TURBO_REPO:
+        return ["model_index.json", "scheduler/**", "transformer/config.json", "processor/**", "text_encoder/**", "vae/**"]
+    if repo_id == QWEN_IMAGE_21_REPO:
+        return ["model_index.json", "scheduler/**", "processor/**", "text_encoder/**",
+                "vae/**", "transformer/config.json"]
     if repo_id == FLUX_KLEIN_9B_REPO:
         return ["model_index.json", "scheduler/**", "tokenizer/**", "text_encoder/**",
                 "vae/**", "transformer/config.json"]
@@ -1605,6 +1629,17 @@ def allow_patterns_for_repo(repo_id: str) -> Optional[List[str]]:
 
 
 REPO_SPECS = {
+    QWEN_IMAGE_21_TURBO_REPO: {
+        "must_files": ["model_index.json", "scheduler/scheduler_config.json", "transformer/config.json",
+                       "text_encoder/config.json", "vae/config.json", "processor/processor_config.json"],
+        "must_tokenizers": ["processor"], "must_weight_dirs": ["text_encoder", "vae"],
+    },
+    QWEN_IMAGE_21_REPO: {
+        "must_files": ["model_index.json", "transformer/config.json", "vae/config.json",
+                       "text_encoder/config.json", "scheduler/scheduler_config.json", "processor/preprocessor_config.json"],
+        "must_tokenizers": ["processor"],
+        "must_weight_dirs": ["vae", "text_encoder"],
+    },
     FLUX_KLEIN_9B_REPO: {
         "must_files": ["model_index.json", "transformer/config.json", "vae/config.json",
                        "text_encoder/config.json", "scheduler/scheduler_config.json"],
@@ -1975,8 +2010,8 @@ def _sf(name, url):
 def _plan_for(pipeline: str) -> Dict[str, Any]:
     """
     Pipeline naming convention:
-    - image_standard: SDXL Turbo + refiner
-    - image_turbo: FLUX Klein (fast generation, i2i)
+    - image_standard: Qwen Image 2.1; image_turbo: Qwen Image 2.1 Turbo
+    - image_turbo: Qwen Image 2.1 (generation and editing)
     - image_quality: Z-Image-Turbo (high quality)
     - audio_turbo: Kokoro TTS
     - audio_quality: Chatterbox Multilingual V3
@@ -1991,12 +2026,15 @@ def _plan_for(pipeline: str) -> Dict[str, Any]:
         return {"repos_to_fetch": [], "single_files": [model_file(pipeline[6:])]}
 
     # Image pipelines
-    if pipeline in ("flux_klein_9b_gguf", "image_turbo", "flux_klein"):
-        return {"repos_to_fetch": [FLUX_KLEIN_9B_REPO],
-                "single_files": [_sf(FLUX_KLEIN_9B_GGUF_NAME, FLUX_KLEIN_9B_GGUF_URL),
-                                 _sf(FLUX_KLEIN_9B_LORA_NAME, ""),
-                                 _sf(FLUX_KLEIN_9B_LORA_EXTRA_NAME, "")]}
-    if pipeline in ("image_standard", "sdxl"):
+    if pipeline in ("qwen_image_21", "image_standard"):
+        return {"repos_to_fetch": [QWEN_IMAGE_21_REPO],
+                "single_files": [_sf(QWEN_IMAGE_21_GGUF_NAME, QWEN_IMAGE_21_GGUF_URL),
+                                 _sf(QWEN_IMAGE_21_LORA_NAME, "")]}
+    if pipeline in ("qwen_image_21_turbo", "image_turbo", "flux_klein_9b_gguf", "flux_klein"):
+        return {"repos_to_fetch": [QWEN_IMAGE_21_TURBO_REPO],
+                "single_files": [_sf(QWEN_IMAGE_21_TURBO_GGUF_NAME, QWEN_IMAGE_21_TURBO_GGUF_URL),
+                                 _sf(QWEN_IMAGE_21_LORA_NAME, "")]}
+    if pipeline == "sdxl":
         return {"repos_to_fetch": [SDXL_BASE_REPO, SDXL_REFINER_REPO], "single_files": [_sf(SDXL_LORA_NAME, SDXL_LORA_URL)]}
     if pipeline in ("image_quality", "image_advanced", "z_image_turbo"):
         return {"repos_to_fetch": [Z_REPO], "single_files": [_sf(Z_GGUF_NAME, Z_GGUF_URL)]}
@@ -3151,7 +3189,7 @@ def _image_negative_prompt(data):
     return ", ".join(unique.values())
 
 
-@app.route("/image/standard", methods=["POST"])
+@app.route("/image/sdxl", methods=["POST"])
 def image_standard_sdxl():
     import logging as _logging
     _logging.getLogger("transformers.tokenization_utils_base").setLevel(_logging.ERROR)
@@ -3182,7 +3220,7 @@ def image_standard_sdxl():
             return jsonify(_json_sanitize(started["json"])), started["http_status"]
         return guard
 
-    gen_id = genbus.new("sdxl_standard", {"endpoint": "/image/standard", "prompt": prompt})
+    gen_id = genbus.new("sdxl_standard", {"endpoint": "/image/sdxl", "prompt": prompt})
 
     base = refiner = compel_base = compel_ref = shared_encoder = shared_vae = None
     try:
@@ -3583,12 +3621,13 @@ def z_image_quality():
 
 
 # =============================================================================
-# REST API: IMAGE GENERATION - FLUX KLEIN 9B GGUF (TURBO)
+# REST API: QWEN IMAGE 2.1 GGUF GENERATION AND EDITING
 # =============================================================================
 
-@app.route("/image/experimental/klein-9b", methods=["POST"])
-def image_experimental_klein_9b(edit=False):
-    """Shared local Q4_K_M Turbo generation and reference-image editing."""
+@app.route("/image/qwen-2.1", methods=["POST"])
+@app.route("/image/standard", methods=["POST"])
+def image_qwen_21(edit=False, turbo=False):
+    """Shared local Q4_K_M Standard/Turbo generation and reference-image editing."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "A JSON object is required"}), 400
@@ -3599,15 +3638,15 @@ def image_experimental_klein_9b(edit=False):
         use_lora = data.get("use_lora", True)
         if not isinstance(use_lora, bool):
             raise ValueError("use_lora must be a boolean")
-        lora_scale = float(data.get("lora_scale", 1.0))
-        if not math.isfinite(lora_scale) or not 0 <= lora_scale <= 2:
-            raise ValueError("lora_scale must be between 0 and 2")
+        lora_scale = 1.0
         width, height = int(data.get("width", 768)), int(data.get("height", 768))
-        steps, seed = int(data.get("steps", 4)), int(data.get("seed", 0))
+        steps, cfg = (8, 1.0) if turbo else (25, 4.0)
+        seed = int(data.get("seed", 0))
+        model_name = QWEN_IMAGE_21_TURBO_GGUF_NAME if turbo else QWEN_IMAGE_21_GGUF_NAME
         if any(n < 256 or n > 4096 or n % 16 for n in (width, height)):
             raise ValueError("Width and height must be multiples of 16 between 256 and 4096")
-        if not 1 <= steps <= 20 or not 0 <= seed < 2**63:
-            raise ValueError("Steps must be 1–20; seed must be 0–2^63-1")
+        if not 0 <= seed < 2**63:
+            raise ValueError("Seed must be 0–2^63-1")
         if "auto_download" in data and not isinstance(data["auto_download"], bool):
             raise ValueError("auto_download must be a boolean")
     except (TypeError, ValueError, OverflowError) as error:
@@ -3616,118 +3655,139 @@ def image_experimental_klein_9b(edit=False):
     image_url = data.get("image_url", "")
     if edit and (not isinstance(image_b64, str) or not isinstance(image_url, str) or not (image_b64.strip() or image_url.strip())):
         return jsonify({"error": "Provide image_base64 or image_url for editing"}), 400
-    if not FLUX_KLEIN_9B_LOCK.acquire(blocking=False):
-        return jsonify({"error": "A Turbo image generation is already running"}), 409
+    if not QWEN_IMAGE_21_LOCK.acquire(blocking=False):
+        return jsonify({"error": "An image generation is already running"}), 409
     pipe = transformer = None
-    adapter_handles = []
     gen_id = None
     try:
-        guard = _ensure_files_present_or_start("flux_klein_9b_gguf", auto_download=data.get("auto_download", False))
+        guard = _ensure_files_present_or_start("image_turbo" if turbo else "image_standard", auto_download=data.get("auto_download", False))
         if guard:
             return guard
         # Lazy import keeps existing image endpoints usable on older installations.
-        from diffusers import Flux2Transformer2DModel
+        from diffusers import QwenImage21Transformer2DModel, QwenImage21Pipeline
         device = DeviceManager.get_device()
         # CPU float32 is portable, including processors without bf16 support.
         # CUDA also covers AMD ROCm; use bf16 only when the runtime supports it.
         dtype = torch.float32
         if device.type == "mps":
-            dtype = torch.float16
+            # Preserve native BF16 encoder weights (and their file-backed storage).
+            dtype = torch.bfloat16 if torch.backends.mps.is_macos_or_newer(14, 0) else torch.float32
         elif device.type == "cuda":
             dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        endpoint = "/image/image/turbo" if edit else "/image/turbo"
-        gen_id = genbus.new("image_turbo", {"endpoint": endpoint})
+        mode = "turbo" if turbo else "standard"
+        endpoint = f"/image/{'image/' if edit else ''}{mode}"
+        gen_id = genbus.new(f"image_{mode}", {"endpoint": endpoint})
         started = time.monotonic()
-        genbus.progress(gen_id, "loading", 0, 3)
-        root = repo_local_dir(FLUX_KLEIN_9B_REPO)
-        transformer = Flux2Transformer2DModel.from_single_file(
-            str(MODEL_DIR / FLUX_KLEIN_9B_GGUF_NAME),
+        genbus.progress(gen_id, "loading", 0, steps + 2)
+        root = repo_local_dir(QWEN_IMAGE_21_TURBO_REPO if turbo else QWEN_IMAGE_21_REPO)
+        transformer = QwenImage21Transformer2DModel.from_single_file(
+            str(MODEL_DIR / model_name),
             config=str(root), subfolder="transformer",
             quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
             torch_dtype=dtype, local_files_only=True,
         )
-        pipe = Flux2KleinPipeline.from_pretrained(
+        from qwen_image_gguf import prepare_qwen_gguf
+        prepare_qwen_gguf(transformer, dtype)
+        pipe = QwenImage21Pipeline.from_pretrained(
             str(root), transformer=transformer, torch_dtype=dtype, local_files_only=True,
         )
         applied_loras = []
-        adapter_names = []
-        if use_lora and lora_scale > 0:
-            from klein_adapters import load_klein_adapter
-            candidates = [(MODEL_DIR / filename, adapter) for filename, adapter in
-                          [(FLUX_KLEIN_9B_LORA_NAME, "klein_local"),
-                           (FLUX_KLEIN_9B_LORA_EXTRA_NAME, "klein_extra")]
-                          if (MODEL_DIR / filename).exists()]
-            if len(candidates) == 2:
-                lora_scale = 0.5
-            for lora_path, adapter in candidates:
-                if not _is_valid_safetensors(lora_path):
-                    raise ValueError(f"Invalid LoRA file: {lora_path.name}")
-                handles, peft_adapter = load_klein_adapter(pipe, lora_path, adapter, lora_scale)
-                adapter_handles.extend(handles)
-                applied_loras.append(lora_path.name)
-                if peft_adapter:
-                    adapter_names.append(adapter)
-            if adapter_names:
-                pipe.set_adapters(adapter_names, adapter_weights=[lora_scale] * len(adapter_names))
+        if use_lora:
+            lora_path = MODEL_DIR / QWEN_IMAGE_21_LORA_NAME
+            if not _is_valid_safetensors(lora_path):
+                raise ValueError("The Qwen Image adapter needs to be downloaded again.")
+            from safetensors.torch import load_file
+            from qwen_image_lora import convert_qwen_image_lora
+            weights = convert_qwen_image_lora(load_file(str(lora_path)))
+            pipe.load_lora_weights(weights, adapter_name="qwen_image_21")
+            pipe.set_adapters(["qwen_image_21"], adapter_weights=[1.0])
+            applied_loras.append(lora_path.name)
+        from qwen_image_scheduler import qwen_scheduler
+        sampling = {}
+        if turbo:
+            from diffusers import FlowMatchEulerDiscreteScheduler
+            turbo_root = repo_local_dir(QWEN_IMAGE_21_TURBO_REPO)
+            pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                str(turbo_root), subfolder="scheduler", local_files_only=True)
+            sigmas = json.loads((turbo_root / "model_index.json").read_text())["sample_sigmas"]
+            if len(sigmas) != 8:
+                raise ValueError("The Turbo sampling configuration needs to be downloaded again.")
+            sampling["sigmas"] = sigmas
+        else:
+            pipe.scheduler = qwen_scheduler(pipe.scheduler.config, seed)
         lora_applied = bool(applied_loras)
         pipe.vae.enable_slicing()
         pipe.vae.enable_tiling()
         from inference_memory import configure_pipeline, release_on_first_forward, release_before_decode
-        configure_pipeline(pipe, device, MODEL_DIR / FLUX_KLEIN_9B_GGUF_NAME)
+        from qwen_image_memory import configure_qwen_pipeline
+        configure_qwen_pipeline(pipe, device, MODEL_DIR / model_name)
         release_on_first_forward(pipe, ("text_encoder",), device)
         release_before_decode(pipe, ("transformer",), device)
         transformer = None
         loaded = time.monotonic()
-        genbus.progress(gen_id, "generating", 1, 3)
+        genbus.progress(gen_id, "generating", 1, steps + 2)
+        def report_step(_pipe, index, _timestep, tensors):
+            genbus.progress(gen_id, "generating", index + 2, steps + 2)
+            return tensors
+
         conditioning = {}
         if edit:
             conditioning["image"] = load_image(image_url).convert("RGB") if image_url else _img_b64_to_pil(image_b64)
         image = pipe(prompt=prompt.strip(), width=width, height=height,
-                     num_inference_steps=steps, guidance_scale=1.0,
+                     output_resolution=min(1024, max(256, math.isqrt(width * height))),
+                     num_inference_steps=steps, true_cfg_scale=cfg,
+                     negative_prompt=(_image_negative_prompt(data) or "") if cfg > 1 else None,
                      generator=torch.Generator(device="cpu").manual_seed(seed),
-                     **conditioning).images[0]
+                     callback_on_step_end=report_step, callback_on_step_end_tensor_inputs=[],
+                     **sampling, **conditioning).images[0]
         generated = time.monotonic()
-        genbus.progress(gen_id, "finalizing", 2, 3)
-        out_path = FILES_DIR / f"image_klein_9b_{gen_id}.webp"
+        genbus.progress(gen_id, "finalizing", steps + 1, steps + 2)
+        out_path = FILES_DIR / f"image_qwen_21_{gen_id}.webp"
         image.save(str(out_path), format="WEBP", quality=90)
         result = {"prompt": prompt.strip(), **image_webp_payload(image, encode_image_to_webp(image)),
                   "image_path": str(out_path), "generation_id": gen_id,
                   "generation_websocket_url": generation_url(), "seed": seed,
-                  "model": FLUX_KLEIN_9B_GGUF_NAME, "device": device.type,
+                  "model": model_name, "device": device.type,
                   "negative_prompt": _image_negative_prompt(data),
-                  "negative_prompt_applied": False,
+                  "negative_prompt_applied": cfg > 1, "steps": steps, "cfg": cfg,
+                  "sampler": "euler" if turbo else "er_sde",
+                  "scheduler": "qwen_turbo" if turbo else "beta",
                   "lora": applied_loras[0] if lora_applied else None,
                   "loras": applied_loras,
                   "lora_scale": lora_scale if lora_applied else 0,
                   "load_seconds": round(loaded - started, 3),
                   "inference_seconds": round(generated - loaded, 3)}
-        genbus.progress(gen_id, "complete", 3, 3)
+        genbus.progress(gen_id, "complete", steps + 2, steps + 2)
         genbus.finish(gen_id, {"ok": True})
         return jsonify(_json_sanitize(result)), 201
     except Exception as error:
-        logger.exception("Klein 9B Turbo generation failed")
+        logger.exception("Qwen Image 2.1 generation failed")
         if gen_id:
             genbus.error(gen_id, str(error))
         return jsonify({"error": str(error)}), 500
     finally:
-        for handle in adapter_handles:
-            handle.remove()
         del pipe, transformer
         try:
             gc.collect()
             DeviceManager.free_memory()
         finally:
-            FLUX_KLEIN_9B_LOCK.release()
+            QWEN_IMAGE_21_LOCK.release()
 
 
+@app.route("/image/experimental/klein-9b", methods=["POST"])
 @app.route("/image/turbo", methods=["POST"])
-def image_turbo_flux_klein():
-    return image_experimental_klein_9b()
+def image_turbo_qwen():
+    return image_qwen_21(turbo=True)
 
 
 @app.route("/image/image/turbo", methods=["POST"])
-def image_turbo_flux_klein_i2i():
-    return image_experimental_klein_9b(edit=True)
+def image_turbo_qwen_i2i():
+    return image_qwen_21(edit=True, turbo=True)
+
+
+@app.route("/image/image/standard", methods=["POST"])
+def image_standard_qwen_i2i():
+    return image_qwen_21(edit=True)
 
 
 # ACE-Step v1.5 Diffusers pipeline cache
@@ -4508,12 +4568,12 @@ def audio_quality_voices():
 # ACE-STEP MUSIC GENERATION
 # =============================================================================
 
-def _load_ace_step_diffusers(offload_to_cpu=None):
+def _load_ace_step_diffusers(offload_to_cpu=None, stream_weights=False):
     """Load the official ACE-Step 1.5 XL Turbo Diffusers pipeline."""
     global _ace_step_pipeline, _ace_step_offload
     with _ace_step_lock:
         from inference_memory import constrained
-        requested_offload = constrained(DeviceManager.get_device()) if offload_to_cpu is None else bool(offload_to_cpu)
+        requested_offload = 'streamed' if stream_weights else (constrained(DeviceManager.get_device()) or bool(offload_to_cpu))
         if _ace_step_pipeline is not None and _ace_step_offload == requested_offload:
             return _ace_step_pipeline
         if _ace_step_pipeline is not None:
@@ -4530,6 +4590,11 @@ def _load_ace_step_diffusers(offload_to_cpu=None):
 
         device = DeviceManager.get_device()
         dtype = torch.bfloat16 if device.type in ("cuda", "mps") else torch.float32
+        from inference_budget import configure_music_device_budget
+        from music_memory import configure_music_decode, configure_streamed_music
+        # Decide the Metal ceiling before mmap-backed CPU weights change the
+        # OS page counters; they are not a second resident GPU checkpoint.
+        configure_music_device_budget(torch, device)
         logger.info("[ACE-Step] Loading official Diffusers pipeline on %s", device)
         pipe = AceStepPipeline.from_pretrained(
             local_dir,
@@ -4537,7 +4602,10 @@ def _load_ace_step_diffusers(offload_to_cpu=None):
             local_files_only=True,
             low_cpu_mem_usage=True,
         )
-        if requested_offload and device.type in ("cuda", "mps"):
+        configure_music_decode(pipe)
+        if stream_weights:
+            configure_streamed_music(pipe, device)
+        elif requested_offload and device.type in ("cuda", "mps"):
             pipe.enable_model_cpu_offload(device=device)
         else:
             pipe.to(device)
@@ -4568,6 +4636,7 @@ def audio_music():
         semantic (bool): Accepted for compatibility; the official pipeline uses DiT conditioning.
         auto_download (bool): Auto-download model if missing (default false)
     """
+    global _ace_step_pipeline, _ace_step_offload
     data = request.get_json(force=True, silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     if not prompt:
@@ -4615,11 +4684,22 @@ def audio_music():
 
     gen_id = genbus.new("ace_step_music", {"endpoint": "/audio/music", "prompt": prompt[:100]})
 
+    pipe = result = audio = None
+    memory_hooks = []
     try:
+        from inference_budget import check_music_budget, watch_pipeline_memory
+        from inference_memory import constrained
+        device = DeviceManager.get_device()
         gc.collect()
         DeviceManager.free_memory()
+        stream_weights = device.type == "mps" and constrained(device)
+        check_music_budget(repo_local_dir(ACE_STEP_REPO), duration,
+                           weight_multiplier=2 if device.type == "cpu" else 1,
+                           stream_weights=stream_weights, device=device)
 
-        pipe = _load_ace_step_diffusers(offload_to_cpu=offload_to_cpu)
+        pipe = _load_ace_step_diffusers(offload_to_cpu=offload_to_cpu, stream_weights=stream_weights)
+
+        memory_hooks = watch_pipeline_memory(pipe, device)
 
         import random as _rng
         actual_seed = seed if seed >= 0 else _rng.randint(0, 2**31 - 1)
@@ -4627,23 +4707,25 @@ def audio_music():
         genbus.progress(gen_id, "generating (ACE-Step XL Turbo)", 2, 10)
         generator_device = "cpu" if DeviceManager.get_device().type == "mps" else DeviceManager.get_device().type
         generator = torch.Generator(device=generator_device).manual_seed(actual_seed)
-        result = pipe(
-            prompt=prompt,
-            lyrics="" if instrumental else lyrics,
-            audio_duration=float(duration),
-            vocal_language=vocal_language,
-            num_inference_steps=steps,
-            guidance_scale=1.0,
-            shift=shift,
-            generator=generator,
-            bpm=bpm,
-            keyscale=keyscale or None,
-            timesignature=(time_signature.split("/")[0] if time_signature else None),
-        )
+        with torch.inference_mode():
+            result = pipe(
+                prompt=prompt,
+                lyrics="" if instrumental else lyrics,
+                audio_duration=float(duration),
+                vocal_language=vocal_language,
+                num_inference_steps=steps,
+                guidance_scale=1.0,
+                shift=shift,
+                generator=generator,
+                bpm=bpm,
+                keyscale=keyscale or None,
+                timesignature=(time_signature.split("/")[0] if time_signature else None),
+            )
 
         audio = result.audios[0]
         if torch.is_tensor(audio):
             audio = audio.detach().float().cpu().numpy()
+        result = None
         audio = np.asarray(audio, dtype=np.float32)
         if audio.ndim == 2:
             audio = audio.T
@@ -4671,10 +4753,23 @@ def audio_music():
 
     except Exception as e:
         logger.exception("ACE-Step v1.5 music generation failed")
-        genbus.error(gen_id, str(e))
-        return jsonify({"error": str(e)}), 500
+        memory_limited = isinstance(e, MemoryError) or "out of memory" in str(e).lower()
+        message = "Not enough free memory for this music request. Close other apps or try a shorter track." if memory_limited else "Music generation could not finish. Please try again."
+        genbus.error(gen_id, message)
+        return jsonify({"error": message, "code": "insufficient_memory" if memory_limited else "generation_failed"}), 503
     finally:
+        # Release references before reclaiming; empty_cache alone cannot free live weights.
+        for hook in memory_hooks:
+            hook.remove()
+        memory_hooks.clear()
+        hook = None
+        pipe = result = audio = None
+        _ace_step_pipeline = None
+        _ace_step_offload = None
+        gc.collect()
         DeviceManager.free_memory()
+        if DeviceManager.get_device().type == "mps":
+            torch.mps.set_per_process_memory_fraction(1.0)
 
 
 @app.route("/audio/info", methods=["GET"])
@@ -4871,7 +4966,7 @@ def ltx2_gguf_video():
         if device.type == "mps":
             os.environ["DIFFUSERS_ATTENTION_BACKEND"] = "eager"
             # Allow PyTorch MPS to use swap when GPU memory is full (prevents OOM crash)
-            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "1.0"
 
         # Select dtype based on device
         # Note: MPS needs bfloat16 to avoid black screen (float16 causes NaN)
@@ -5475,7 +5570,7 @@ def minimax_h3_video():
             "error": "MiniMax H3 supports 4 to 8 inference steps with the current samplers"
         }), 400
     steps = requested_steps
-    seed = int(data.get("seed") or secrets.randbelow(2**31))
+    seed = int(data["seed"]) if data.get("seed") is not None else secrets.randbelow(2**31)
     hybrid_checkpoint = (MODEL_DIR / MINIMAX_H3_HYBRID_NAME).is_file()
     default_sampler = "euler" if hybrid_checkpoint else MINIMAX_H3_SAMPLER
     requested_sampler = str(data.get("sampler", default_sampler)).strip().lower()
@@ -5527,8 +5622,17 @@ def minimax_h3_video():
         # including image URLs and reused generation parameters.
         width, height = _h3_image_canvas(width, height, *first_image.size)
 
+    diagnostic_settings = {
+        "seed": seed, "width": width, "height": height, "frames": num_frames,
+        "steps": steps, "sampler": requested_sampler, "schedule": requested_schedule,
+        "checkpoint": MINIMAX_H3_HYBRID_NAME if hybrid_checkpoint else MINIMAX_H3_TRANSFORMER_NAME,
+        "device": str(device), "dtype": str(transformer_compute_dtype),
+        "image_conditioned": first_image is not None,
+        "detailed_numerics": data.get("numerical_diagnostics") is True,
+    }
+    logger.info("[MiniMax H3] Generation settings: %s", diagnostic_settings)
     gen_id = genbus.new("minimax_h3", {
-        "endpoint": "/video/sota", "w": width, "h": height, "frames": num_frames,
+        "endpoint": "/video/sota", "w": width, "h": height, **diagnostic_settings,
     })
     pipe = model = state = None
     h3_lora_modules = 0
@@ -5631,7 +5735,7 @@ def minimax_h3_video():
         genbus.progress(gen_id, "preparing video and audio", 2, progress_total)
         model = load_h3_transformer(transformer_path, transformer_compute_dtype)
         stabilize_norms(model)
-        watch_transformer(model)
+        watch_transformer(model, detailed=diagnostic_settings["detailed_numerics"])
         # Hybrid checkpoint already contains merged adapters; do not stack the legacy preset.
         if not hybrid_checkpoint:
             installed = load_h3_lora(
@@ -5768,9 +5872,10 @@ def minimax_h3_video():
             "loras": h3_applied_loras,
         })
     except Exception as exc:
-        logger.exception("[MiniMax H3] Generation failed")
+        logger.exception("[MiniMax H3] Generation failed; settings=%s", diagnostic_settings)
         genbus.error(gen_id, str(exc))
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": str(exc), "generation_id": gen_id,
+                        "generation_settings": diagnostic_settings}), 500
     finally:
         pipe = model = state = None
         _release_h3_phase()
@@ -5846,7 +5951,7 @@ def wan_i2v_video():
             torch.mps.empty_cache()
 
         if device.type == "mps":
-            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "1.0"
 
         # bfloat16 for transformer compute — avoids float16 NaN on MPS
         # and halves memory vs float32. VAE decodes separately in float32.
@@ -6098,7 +6203,7 @@ def wan_i2v_video_test():
             torch.mps.empty_cache()
 
         if device.type == "mps":
-            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+            os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "1.0"
 
         model_dtype = torch.bfloat16
 
@@ -7158,6 +7263,7 @@ def start_llm_finetuning():
                 "training_id": training_id,
                 "error": str(e),
             }), namespace="/training")
+            return False
         finally:
             DeviceManager.free_memory()
     
@@ -7573,6 +7679,7 @@ def start_sdxl_lora_training():
                 "training_id": training_id,
                 "error": str(e),
             }), namespace="/training")
+            return False
         finally:
             DeviceManager.free_memory()
     
@@ -7699,6 +7806,7 @@ def start_audio_lora_training():
                 "training_id": training_id,
                 "error": str(e),
             }), namespace="/training")
+            return False
 
     threading.Thread(target=lambda: _run_device_background(_train_worker, "/training/start"), daemon=True).start()
 
@@ -7840,6 +7948,7 @@ def start_video_lora_training():
                 "training_id": training_id,
                 "error": str(e),
             }), namespace="/training")
+            return False
 
     threading.Thread(target=lambda: _run_device_background(_train_worker, "/training/start"), daemon=True).start()
 
@@ -7881,39 +7990,13 @@ ABLIT_MODEL_INFO = [
 
 
 def _find_convert_script():
-    """Locate convert_hf_to_gguf.py — bundled in src/server/scripts/ or llama.cpp clone."""
-    candidates = [
-        Path(__file__).parent / "scripts" / "convert_hf_to_gguf.py",
-        MODEL_DIR / "bin" / "convert_hf_to_gguf.py",
-        Path.home() / "llama.cpp" / "convert_hf_to_gguf.py",
-    ]
-    for p in candidates:
-        if p.exists():
-            return str(p)
-    return None
+    from training_tools import find_converter
+    return find_converter(MODEL_DIR, Path(__file__).parent)
 
 
 def _find_quantize_binary():
-    """Locate llama-quantize binary (same directory as llama-server)."""
-    bin_dir = USER_BIN_DIR
-    candidates = [
-        bin_dir / "llama-quantize",
-        bin_dir / "quantize",
-    ]
-    # Also check platform-specific app bundle path
-    if platform.system() == "Darwin":
-        app_bin = (Path(__file__).parent.parent.parent / "bin" / "darwin-arm64")
-        candidates += [app_bin / "llama-quantize", app_bin / "quantize"]
-    elif platform.system() == "Linux":
-        app_bin = (Path(__file__).parent.parent.parent / "bin" / "linux-x64")
-        candidates += [app_bin / "llama-quantize", app_bin / "quantize"]
-
-    for p in candidates:
-        if p.exists():
-            return str(p)
-    # Fallback: check PATH
-    which = shutil.which("llama-quantize") or shutil.which("quantize")
-    return which
+    from training_tools import find_quantizer
+    return find_quantizer(MODEL_DIR, Path(__file__).parent)
 
 
 @app.route("/training/abliterate/start", methods=["POST"])
@@ -7949,6 +8032,11 @@ def start_abliteration():
     if quantization not in valid_quants:
         return jsonify({"error": f"Invalid quantization: {quantization}", "valid": list(valid_quants)}), 400
 
+    if not _find_convert_script():
+        return jsonify({"error": "The GGUF converter is missing. Repair the local training runtime."}), 503
+    if quantization != "F16" and not _find_quantize_binary():
+        return jsonify({"error": "llama-quantize is missing. Repair the local training runtime or choose F16."}), 503
+
     training_id = hashlib.md5(f"ablit_{base_model}_{method}_{time.time()}".encode()).hexdigest()[:16]
     output_dir = MODEL_DIR / "trained" / training_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -7983,13 +8071,24 @@ def start_abliteration():
                 except Exception:
                     pass
 
+            current_stage = "summon"
+            current_progress = 0
+
+            def on_log(message):
+                # Probe batches used to be invisible between stage start/end.
+                emit_progress(current_stage, current_progress, str(message))
+
             def on_stage(result):
                 """OBLITERATUS stage callback — maps pipeline stages to SocketIO events."""
-                nonlocal quality_metrics
+                nonlocal quality_metrics, current_stage, current_progress
                 stage = result.stage   # "summon", "probe", "distill", "excise", "verify", "rebirth"
+                if stage == "rebirth" and result.status == "running":
+                    from training_export import require_finite_weights
+                    require_finite_weights(pipeline.handle.model)
                 status = result.status  # "running" or "done"
                 lo, hi = STAGE_PCT.get(stage, (0, 100))
                 pct = hi if status == "done" else lo
+                current_stage, current_progress = stage, pct
                 stage_labels = {
                     "summon": "SUMMON", "probe": "PROBE", "distill": "DISTILL",
                     "excise": "EXCISE", "verify": "VERIFY", "rebirth": "REBIRTH",
@@ -8009,6 +8108,8 @@ def start_abliteration():
             logger.info("Abliteration starting: %s method=%s quant=%s", hf_repo, method, quantization)
 
             from obliteratus.abliterate import AbliterationPipeline
+            from abliteration_numerics import stabilize_abliteration
+            stabilize_abliteration(AbliterationPipeline)
 
             abl_dir = str(output_dir / "abliterated_hf")
 
@@ -8018,9 +8119,11 @@ def start_abliteration():
                 output_dir=abl_dir,
                 max_seq_length=512,
                 on_stage=on_stage,
+                on_log=on_log,
             )
 
             pipeline.run()
+            from training_export import run_export_command
 
             # Read quality metrics from saved metadata if not captured via callback
             if not quality_metrics:
@@ -8041,18 +8144,9 @@ def start_abliteration():
             f16_path = str(output_dir / f"{base_model}-abliterated-f16.gguf")
             emit_progress("converting", 0, "Converting HF → GGUF (f16)...")
 
-            convert_cmd = [
-                sys.executable, convert_script,
-                abl_dir,
-                "--outfile", f16_path,
-                "--outtype", "f16",
-            ]
-            result = subprocess.run(
-                convert_cmd,
-                capture_output=True, text=True, timeout=1800,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"GGUF conversion failed: {result.stderr[:500]}")
+            from training_tools import converter_command
+            convert_cmd = converter_command(convert_script, abl_dir, "--outfile", f16_path, "--outtype", "f16")
+            run_export_command(convert_cmd, output_dir / "conversion.log", "GGUF conversion", 1800)
 
             emit_progress("converting", 100, "GGUF conversion complete")
 
@@ -8068,13 +8162,10 @@ def start_abliteration():
                     final_path = str(output_dir / final_name)
                     emit_progress("quantizing", 0, f"Quantizing to {quantization}...")
 
-                    quant_cmd = [quant_bin, f16_path, final_path, quantization]
-                    result = subprocess.run(
-                        quant_cmd,
-                        capture_output=True, text=True, timeout=3600,
-                    )
-                    if result.returncode != 0:
-                        raise RuntimeError(f"Quantization failed: {result.stderr[:500]}")
+                    partial_path = final_path + ".partial"
+                    quant_cmd = [quant_bin, f16_path, partial_path, quantization]
+                    run_export_command(quant_cmd, output_dir / "quantization.log", "Quantization", 3600)
+                    os.replace(partial_path, final_path)
 
                     # Remove intermediate f16 file
                     try:
@@ -8087,6 +8178,10 @@ def start_abliteration():
             else:
                 final_name = f"{base_model}-abliterated-f16.gguf"
                 final_path = f16_path
+
+            # The F16 file is the final artifact when quantization is skipped.
+            if final_path == f16_path:
+                f16_path = None
 
             # ── Cleanup HF abliterated weights ─────────────────────────
             if abl_dir and Path(abl_dir).exists():
@@ -8128,12 +8223,10 @@ def start_abliteration():
                 "training_id": training_id,
                 "error": str(e),
             }), namespace="/training")
+            return False
         finally:
-            # Cleanup on failure
-            if abl_dir and Path(abl_dir).exists():
-                shutil.rmtree(abl_dir, ignore_errors=True)
-            if f16_path and Path(f16_path).exists():
-                os.remove(f16_path)
+            # Preserve completed HF/F16 weights and export logs on failure.
+            # They are not library entries until metadata.json is committed.
             DeviceManager.free_memory()
 
     threading.Thread(target=lambda: _run_device_background(_abliterate_worker, "/abliteration/start"), daemon=True).start()

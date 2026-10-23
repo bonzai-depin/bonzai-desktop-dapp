@@ -286,7 +286,7 @@ onBeforeUnmount(() => { requestId++; clearInterval(clock); });
 .rewards-flow article > .material-symbols-outlined { color: var(--bz-purple-100); font-size: 24px; margin-bottom: 12px; }
 .rewards-flow h3 { font-size: 15px; font-weight: 500; margin-bottom: 8px; }
 .rewards-flow article p { font-size: 13px; color: var(--bz-fg-mid); line-height: 1.65; }
-.rewards-levels, .rewards-basket { padding: var(--bz-space-8) 0; scroll-margin-top: 20px; }
+.rewards-levels, .rewards-basket { padding: var(--bz-space-6) 0; scroll-margin-top: 20px; }
 .rewards-section-heading { align-items: flex-end; margin-bottom: var(--bz-space-5); }
 .rewards-section-heading .bz-eyebrow { color: var(--bz-fg-low); margin-bottom: 10px; }
 .rewards-section-heading h2 { font: 900 italic clamp(24px, 2.5vw, 32px)/1.2 var(--bz-font-metric); }

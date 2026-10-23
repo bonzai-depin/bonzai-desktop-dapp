@@ -23,7 +23,7 @@ class ImageRequirementsTest(unittest.TestCase):
                  isinstance(n, ast.FunctionDef) and n.name in names or
                  isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {'REPO_SPECS', 'DEFAULT_SPEC'} for t in n.targets)]
         # Constants used by unrelated repository specifications.
-        self.env.update(CHATTERBOX_T3_MODEL='t3.safetensors', FLUX_KLEIN_9B_REPO='black-forest-labs/FLUX.2-klein-9B')
+        self.env.update(QWEN_IMAGE_21_TURBO_REPO='Qwen/Qwen-Image-2.1-Turbo', QWEN_IMAGE_21_REPO='Qwen/Qwen-Image-2.1', CHATTERBOX_T3_MODEL='t3.safetensors', FLUX_KLEIN_9B_REPO='black-forest-labs/FLUX.2-klein-9B')
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), 'exec'), self.env)
 
     def write(self, name, data='{}'):

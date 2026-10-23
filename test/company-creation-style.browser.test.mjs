@@ -14,9 +14,9 @@ test('company entry screens preserve setup drafts and keyboard access across the
     await page.route('**/*', route => new URL(route.request().url()).origin === new URL(url).origin ? route.continue() : route.abort());
     await page.goto(`${url}/src/assets/tokens.css`);
     await page.setContent(`<html><head>
-      <link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css">
-      <link rel="stylesheet" href="/src/assets/buttons.css"><link rel="stylesheet" href="/src/assets/fonts/fonts.css">
-      <style>body{margin:0;position:relative;background:var(--bz-canvas);color:var(--bz-fg);font-family:"Fira Sans",sans-serif}*{box-sizing:border-box}</style>
+      <link rel="stylesheet" href="/src/assets/page-layout.css"><link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css">
+      <link rel="stylesheet" href="/src/assets/fields.css"><link rel="stylesheet" href="/src/assets/buttons.css"><link rel="stylesheet" href="/src/assets/fonts/fonts.css">
+      <style>html,body,#app{height:100%;min-height:0}body{margin:0;position:relative;background:var(--bz-canvas);color:var(--bz-fg);font-family:"Fira Sans",sans-serif}*{box-sizing:border-box}</style>
       </head><body><main id="app"></main></body></html>`);
     await page.evaluate(async () => {
       const agents = [{ id: 'fixture-coordinator', name: 'Alex Martin', firstName: 'Alex', familyName: 'Martin', shortBio: 'Coordinates local company work.' }];
@@ -52,12 +52,14 @@ test('company entry screens preserve setup drafts and keyboard access across the
       store.createGoalForCompany = async () => {};
       createApp({ render: () => h(View) }).use(createI18nPlugin()).mount('#app');
     });
+    await page.getByRole('button', { name: 'My workflows', exact: true }).click();
     await page.getByRole('navigation', { name: 'Team workspace' }).waitFor();
     await page.getByRole('button', { name: 'Martin Purchasing', exact: true }).click();
     assert.equal(await page.evaluate(() => window.creationFixture.state.activeId), 'fixture-team-1', 'team switch selects the requested workspace');
-    await page.getByRole('button', { name: 'All teams', exact: true }).click();
-    await page.getByRole('region', { name: 'All teams conversation', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'My workflows', exact: true }).click();
+    await page.getByRole('region', { name: 'My workflows', exact: true }).waitFor();
     assert.equal(await page.locator('.team-portfolio__card').count(),2,'the overview shows every team and its work queues');
+    await page.locator('.all-room__activity > summary').click();
     for(const width of [1440,390]){
       await page.setViewportSize({width,height:1000});
       await page.locator('.all-composer').scrollIntoViewIfNeeded();
@@ -83,7 +85,7 @@ test('company entry screens preserve setup drafts and keyboard access across the
         });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${stage}/${theme}/${width}: no page overflow`);
         if (stage === 'shell' && width === 1440) {
-          const sendVisible = await page.getByRole('button', { name: 'Give instructions', exact: true }).evaluate(button => {
+          const sendVisible = await page.getByRole('button', { name: 'Brief the team', exact: true }).evaluate(button => {
             const box = button.getBoundingClientRect();
             const atCenter = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
             return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight
@@ -92,16 +94,16 @@ test('company entry screens preserve setup drafts and keyboard access across the
           assert.ok(sendVisible, `${theme}: the chat send control is visible without scrolling the company workspace`);
         }
         if (stage === 'context') {
-          const contrast = await page.locator('.conn-tile:not(.is-selected) .conn-tile__name').evaluateAll(labels => labels.map(label => {
+          const contrast = await page.locator('.setup-fields .wiz-field > label').evaluateAll(labels => labels.map(label => {
             const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number)
               .map(value => { value /= 255; return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4; })
               .reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
             const foreground = luminance(getComputedStyle(label).color);
-            const background = luminance(getComputedStyle(label.closest('.conn-tile')).backgroundColor);
-            return { label: label.textContent.trim(), color: getComputedStyle(label).color, background: getComputedStyle(label.closest('.conn-tile')).backgroundColor, ratio: (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05) };
+            const background = luminance(getComputedStyle(label.closest('.wiz')).backgroundColor);
+            return { label: label.textContent.trim(), color: getComputedStyle(label).color, background: getComputedStyle(label.closest('.wiz')).backgroundColor, ratio: (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05) };
           }));
-          assert.ok(contrast.length > 0, 'setup offers optional tools that are not selected');
-          for (const result of contrast) assert.ok(result.ratio >= 4.5, `${theme}/${width}: optional tool ${result.label} is readable (${result.ratio.toFixed(2)} contrast; ${result.color} on ${result.background})`);
+          assert.ok(contrast.length > 0, 'setup fields have readable labels');
+          for (const result of contrast) assert.ok(result.ratio >= 4.5, `${theme}/${width}: field ${result.label} is readable (${result.ratio.toFixed(2)} contrast; ${result.color} on ${result.background})`);
         }
         await page.screenshot({ path: `/tmp/bonzai-company-entry-${stage}-${theme}-${width}.png`, fullPage: false, animations: 'disabled' });
         const overflow = await page.evaluate(() => [...document.querySelectorAll('.company-tab, .wiz')].filter(element => element.scrollWidth > element.clientWidth + 1).map(element => ({class:element.className,width:element.clientWidth,scroll:element.scrollWidth,children:[...element.querySelectorAll('*')].filter(child => child.getBoundingClientRect().right > innerWidth + 1).slice(0,8).map(child => ({tag:child.tagName,class:child.className,width:child.getBoundingClientRect().width,right:child.getBoundingClientRect().right}))})));
@@ -118,72 +120,72 @@ test('company entry screens preserve setup drafts and keyboard access across the
         const ownRing = style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
         const parent = element.closest('label');
         const parentStyle = parent && getComputedStyle(parent);
-        return ownRing || (parentStyle && parentStyle.outlineStyle !== 'none' && parseFloat(parentStyle.outlineWidth) > 0);
+        const focusBorder = style.borderColor;
+        const framed = parseFloat(style.borderWidth) > 0 && style.borderStyle !== 'none';
+        element.blur();
+        const restingBorder = getComputedStyle(element).borderColor;
+        element.focus();
+        return ownRing || (parentStyle && parentStyle.outlineStyle !== 'none' && parseFloat(parentStyle.outlineWidth) > 0)
+          || (framed && focusBorder !== restingBorder);
+
       }), 'the next keyboard control has a visible focus indicator');
     }
+    await page.getByRole('navigation', { name: 'Team workspace' }).getByRole('button', {name:'Chat',exact:true}).click();
     await capture('shell');
     await keyboardFocus(page.getByRole('button', { name: 'Martin Operations', exact: true }));
-    await page.getByRole('button', { name: 'New agentic team', exact: true }).click();
+    await page.getByRole('button', { name: 'New workflow', exact: true }).click();
     const wizard = page.locator('[role="dialog"][aria-labelledby="company-intake-title"]');
     await wizard.waitFor();
     await capture('purpose');
     const catalogBounds = await wizard.boundingBox();
     assert.ok(catalogBounds.width > (page.viewportSize().width - 80), 'template browsing uses the available screen width');
-    assert.equal(await wizard.locator('.workflow-card').count(), 19, 'all existing templates are discoverable without a hidden More button');
+    assert.equal(await wizard.locator('.workflow-card').count(), 31, 'all existing templates are discoverable without a hidden More button');
     await page.evaluate(() => window.creationFixture.i18n.setLocale('fr'));
-    await wizard.getByRole('textbox', { name: 'Rechercher une équipe' }).fill('cloture');
+    await wizard.locator('.template-search input').fill('cloture');
     assert.equal(await wizard.locator('.workflow-card').count(), 1);
     assert.match(await wizard.locator('.workflow-card').innerText(), /Comptabilité et clôture/);
-    await wizard.getByRole('textbox', { name: 'Rechercher une équipe' }).fill('');
+    await wizard.locator('.template-search input').fill('');
     await page.evaluate(() => window.creationFixture.i18n.setLocale('en'));
 
     await wizard.locator('.workflow-card').filter({ hasText: 'Purchasing' }).click();
     await capture('selected');
-    await wizard.getByRole('button', { name: /Next/ }).click();
+    await wizard.getByRole('button', { name: 'Next', exact:true }).click();
     await page.getByLabel('Business name *', { exact: true }).fill('Martin Services');
-    await page.getByText('You approve sensitive actions on this device. AI team members are shown in the next step.', {exact:true}).waitFor();
+    assert.match(await wizard.locator('.setup-note').innerText(), /approve sensitive actions/i);
     await page.getByLabel('How do you handle this work today? (optional)', { exact: true }).fill('Review supplier quotes every Tuesday before placing any order.');
     await capture('context');
-    await wizard.getByRole('button', { name: /Next/ }).click();
-    await page.getByRole('heading', { name: 'Team setup', exact: true }).waitFor();
+    await wizard.getByRole('button', { name: 'Next', exact:true }).click();
+    await wizard.locator('.review-intro h2').waitFor();
+    assert.match(await wizard.locator('.review-intro h2').innerText(), /Martin Services/);
     await capture('review');
-    await wizard.getByRole('button', { name: /Back/ }).click();
+    await wizard.getByRole('button', { name: 'Back', exact:true }).click();
     assert.equal(await page.getByLabel('Business name *', { exact: true }).inputValue(), 'Martin Services');
-    await page.getByText('You approve sensitive actions on this device. AI team members are shown in the next step.', {exact:true}).waitFor();
+    assert.match(await wizard.locator('.setup-note').innerText(), /approve sensitive actions/i);
     assert.match(await page.getByLabel('How do you handle this work today? (optional)', { exact: true }).inputValue(), /every Tuesday/);
-    await wizard.getByRole('button', { name: /Next/ }).click();
+    await wizard.getByRole('button', { name: 'Next', exact:true }).click();
     await wizard.getByRole('button', { name: /Open workspace/ }).click();
     await wizard.getByRole('alert').filter({ hasText: 'Fixture storage is unavailable' }).waitFor();
-    await wizard.getByRole('button', { name: /Back/ }).click();
+    await wizard.getByRole('button', { name: 'Back', exact:true }).click();
     assert.equal(await page.getByLabel('Business name *', { exact: true }).inputValue(), 'Martin Services', 'failed creation preserves the setup draft');
     await page.keyboard.press('Escape');
     await wizard.waitFor({ state: 'detached' });
-    assert.ok(await page.getByRole('button', { name: 'New agentic team', exact: true }).evaluate(element => element === document.activeElement), 'closing the wizard restores focus to its trigger');
+    assert.ok(await page.getByRole('button', { name: 'New workflow', exact: true }).evaluate(element => element === document.activeElement), 'closing the wizard restores focus to its trigger');
     assert.equal(await page.evaluate(() => window.creationFixture.state.companies.length), 2, 'a failed create cannot add a misleading workspace');
 
     await page.evaluate(() => { window.creationFixture.state.companies = []; window.creationFixture.state.activeId = null; });
-    await page.getByRole('heading', { name: 'Build a team for your business', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'What would you like to make happen?', exact: true }).waitFor();
     await capture('onboarding');
-    const brief = 'Prepare a weekly supplier delivery report and flag overdue orders for our owner.';
-    const composer = page.locator('.company-onboarding__composer textarea');
-    await composer.fill(brief);
-    await composer.press('Control+Enter');
-    await page.getByRole('button', { name: /Open this workspace/ }).waitFor();
-    await capture('proposal');
-    await page.getByRole('button', { name: /Open this workspace/ }).click();
-    await page.getByRole('alert').filter({ hasText: 'Fixture storage is unavailable' }).waitFor();
-    assert.ok(await page.getByText(brief, { exact: true }).isVisible(), 'failed workspace creation retains the submitted business brief');
-    await page.getByRole('button', { name: 'Choose smart agents', exact: true }).click();
-    await page.getByRole('heading', { name: /Build an agentic team/ }).waitFor();
+    await page.getByRole('button', { name: 'Build a custom team', exact: true }).click();
+    await page.getByRole('heading', { name: /Build a custom team/ }).waitFor();
     await page.getByLabel('Team name', { exact: true }).fill('Martin workshop operations');
-    const mission = page.getByLabel('Mission (one sentence)', { exact: true });
+    const mission = page.getByLabel('What should this team achieve?', { exact: true });
     await mission.fill('Prepare verified estimates and weekly supplier follow-ups.');
     const coordinator = page.locator('.role-row').filter({ hasText: 'Coordinator' }).locator('.col-companion select').first();
     await coordinator.selectOption('fixture-coordinator');
     await page.getByText('Advanced configuration',{exact:true}).click();
     await capture('manual');
     await keyboardFocus(page.getByLabel('Team name', { exact: true }));
-    await page.getByRole('button', { name: /Create agentic team/, exact: false }).click();
+    await page.getByRole('button', { name: /Create a smart workflow/, exact: false }).click();
     await page.getByText('Fixture storage is unavailable', { exact: true }).waitFor();
     assert.equal(await page.getByLabel('Team name', { exact: true }).inputValue(), 'Martin workshop operations');
     assert.equal(await mission.inputValue(), 'Prepare verified estimates and weekly supplier follow-ups.');

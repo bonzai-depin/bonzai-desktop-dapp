@@ -1,8 +1,8 @@
 {
   "name": "bonzai",
-  "productName": "BonzAI v4.0.0 RC",
-  "version": "4.0.1-rc.1",
-  "description": "BonzAI v4.0.1 RC \u2014 local-first AI creation, inference mesh, agentic companies, companions, games, and optional digital ownership.",
+  "productName": "BonzAI v4.1.0",
+  "version": "4.1.0",
+  "description": "BonzAI v4.1.0 \u2014 local-first AI creation, inference mesh, agentic companies, companions, games, and optional digital ownership.",
   "main": ".vite/build/main.js",
   "type": "module",
   "scripts": {
@@ -30,7 +30,7 @@
     "test:web3": "node --test test/protocol-recovery.test.mjs test/economy-simulation.test.mjs test/workflow-checkout.test.mjs test/transaction-journal.test.mjs test/public-storage.test.mjs test/agent-slot-mint.test.mjs test/market-data.test.mjs test/game-liquidity-preflight.test.mjs test/x402.service.test.mjs test/web3-production.test.mjs test/reward-services.test.mjs test/economy-abi.test.mjs test/wallet-credentials.test.mjs test/basket-ui-services.test.mjs test/staking-basket-services.test.mjs test/reward-membership.test.mjs test/agent-wallet-creation.test.mjs test/token-royalty-services.test.mjs",
     "test:connectors": "node --test test/company-connectors.test.mjs test/finance-connectors.test.mjs test/smart-agent-creation.test.mjs",
     "test:company": "node --test test/company-harness.test.mjs test/company-execution.test.mjs test/company-persistence.test.mjs test/company-automation.test.mjs test/company-connectors.test.mjs test/company-conversation.test.mjs test/company-workspace-blueprints.test.mjs test/company-maintenance-workspace.test.mjs test/gmao-domain.test.mjs test/smart-agent-creation.test.mjs test/team-communication.test.mjs",
-    "test:gmao": "node --test test/gmao-domain.test.mjs test/gmao-operations.test.mjs test/gmao-pdf.test.mjs test/gmao-presentation.test.mjs",
+    "test:gmao": "node --test test/gmao-casework.test.mjs test/gmao-domain.test.mjs test/gmao-operations.test.mjs test/gmao-pdf.test.mjs test/gmao-presentation.test.mjs",
     "web3:verify": "node scripts/check-web3-production.mjs",
     "web3:verify:offline": "node scripts/check-web3-production.mjs --offline",
     "companions:cold-start": "npx hardhat --config hardhat.config.cjs run scripts/cold-start-default-companions.cjs",
@@ -39,7 +39,9 @@
     "db:studio": "drizzle-kit studio",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "test:chat": "node --test test/chat-capabilities.test.mjs test/public-sessions.test.mjs test/model-context.test.mjs",
-    "test:roleplay": "node --test test/roleplay-journey.test.mjs test/roleplay-journey.browser.test.mjs test/roleplay-scenarios.test.mjs test/roleplay-profile.test.mjs test/roleplay-media-policy.test.mjs test/roleplay-video.test.mjs"
+    "test:roleplay": "node --test test/roleplay-journey.test.mjs test/roleplay-journey.browser.test.mjs test/roleplay-scenarios.test.mjs test/roleplay-profile.test.mjs test/roleplay-media-policy.test.mjs test/roleplay-video.test.mjs",
+    "test:workflows": "node scripts/test-workflows.mjs",
+    "test:workflows:ui": "node scripts/test-workflows.mjs --browser"
   },
   "keywords": [],
   "author": {
@@ -152,7 +154,8 @@
     "@x402/evm": "2.25.0",
     "@x402/svm": "2.25.0",
     "@x402/core": "2.25.0",
-    "@x402/extensions": "2.25.0"
+    "@x402/extensions": "2.25.0",
+    "adm-zip": "0.6.1"
   },
   "optionalDependencies": {
     "appdmg": "0.6.6"

@@ -75,9 +75,9 @@
                 >{{ obligationTitle(item)
                 }}<small
                   >{{
-                    item.dueAt
+                    item.dueDate || (item.dueAt
                       ? formatDate(item.dueAt)
-                      : t("Date à renseigner", "Date needed")
+                      : t("Date à renseigner", "Date needed"))
                   }}<template v-if="item.kind === 'periodic_report'">
                     ·
                     {{
@@ -401,6 +401,7 @@
                   {{ t("Exporter la fiche", "Export sheet") }}
                 </button>
               </footer>
+              <CompanyCasework v-if="kind==='monograph' && assetId" class="control-wide" :company-id="companyId" :asset-id="assetId" :assets="data.assets || []" readonly />
             </form>
           </div>
         </div>
@@ -409,6 +410,7 @@
   </section>
 </template>
 <script setup>
+import CompanyCasework from './CompanyCasework.vue';
 import "./company-design.css";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { i18n } from "../../i18n/index.js";
@@ -598,6 +600,7 @@ const obligationTitle = (item) =>
               regulatory: "Equipment inspection due",
             }[item.recordKind] || item.title;
 async function openObligation(item) {
+  if(item.kind==='casework_followup'){emit('open-work-order',item.workOrderId);return;}
   if (item.kind === "periodic_report") {
     const result = item.issueId
       ? { issueId: item.issueId }

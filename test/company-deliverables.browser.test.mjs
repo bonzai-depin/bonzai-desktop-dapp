@@ -10,7 +10,7 @@ test('deliverables keep Markdown structure, highlighted code and exact clipboard
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>new URL(route.request().url()).origin===new URL(url).origin?route.continue():route.abort());
   await page.goto(`${url}/src/assets/tokens.css`);
-  await page.setContent('<html><head><link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css"><link rel="stylesheet" href="/src/assets/buttons.css"><link rel="stylesheet" href="/src/assets/fonts/fonts.css"><style>body{margin:0;padding:24px;background:var(--bz-canvas);color:var(--bz-fg);font-family:"Fira Sans",sans-serif}*{box-sizing:border-box}</style></head><body><main id="app"></main></body></html>');
+  await page.setContent('<html><head><link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css"><link rel="stylesheet" href="/src/assets/buttons.css"><link rel="stylesheet" href="/src/assets/fonts/fonts.css"><style>/* Bulma baseline from index.html must not override themed document headers. */ th{color:#363636}body{margin:0;padding:24px;background:var(--bz-canvas);color:var(--bz-fg);font-family:"Fira Sans",sans-serif}*{box-sizing:border-box}</style></head><body><main id="app"></main></body></html>');
   await page.evaluate(async()=>{
    const source = await fetch('/src/components/company/CompanyDeliverableLibrary.vue').then(r => r.text());
    const runtime = source.match(/from ["']([^"']*\/vue\.js(?:\?[^"']*)?)["']/)[1];
@@ -40,7 +40,7 @@ test('deliverables keep Markdown structure, highlighted code and exact clipboard
   await page.getByRole('button',{name:'Copy code',exact:true}).click();
   await page.getByText('Code copied',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>window.fixture.clipboard[0]),'const visit = { id: "OI-041", approved: false };\nconsole.log(visit.id);\n');
-  for(const theme of ['default','waveform','light'])for(const width of [1440,800,390]){
+  for(const theme of ['default','waveform','gruvbox','light'])for(const width of [1440,800,390]){
    await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);await page.setViewportSize({width,height:1000});
    assert.ok(await page.locator('.company-markdown th').first().evaluate(el => getComputedStyle(el).color === getComputedStyle(el.closest('.company-markdown')).color), `${theme}: table headings use the readable document foreground`);
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${theme}/${width}: no page overflow`);

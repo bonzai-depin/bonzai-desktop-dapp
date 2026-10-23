@@ -463,7 +463,7 @@
  --bz-canvas:#002b36; --bz-panel:#073642; --bz-card:#073642;
  --bz-raised:color-mix(in srgb,#073642 85%,#e1e8dc); --bz-overlay:color-mix(in srgb,#002b36 90%,transparent);
  --bz-fg:#e1e8dc; --bz-fg-mid:#a7babb; --bz-fg-low:#a7babb; --bz-fg-faint:#a7babb;
- --bz-purple-100:#2aa198; --bz-purple-300:#2aa198; --bz-purple-500:#2aa198;
+ --bz-purple-100:#51bab0; --bz-purple-300:#2aa198; --bz-purple-500:#2aa198;
  --bz-purple-700:color-mix(in srgb,#2aa198 75%,#002b36); --bz-purple-900:#073642;
  --bz-purple-soft:color-mix(in srgb,#2aa198 13%,transparent); --bz-purple-glow:transparent;
  --bz-emerald-300:#d7ad52; --bz-emerald-500:#d7ad52; --bz-emerald-700:#d7ad52;

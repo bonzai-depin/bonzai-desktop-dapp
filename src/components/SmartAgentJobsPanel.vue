@@ -1,6 +1,6 @@
 <template>
   <section v-if="wallet" class="agent-jobs-panel">
-    <header><h3 class="bz-h3">{{ ui("Smart-agent jobs") }}</h3><button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="loading || busy" @click="refresh">{{ $t('common.refresh') }}</button></header>
+    <header><h3 class="bz-h3">{{ ui("Jobs & Payments") }}</h3><button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="loading || busy" @click="refresh">{{ $t('common.refresh') }}</button></header>
     <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="openProtocolGuide('jobs')">Workflow Payment Guide</button>
     <p v-if="!records.length && !loading" class="bz-meta">{{ ui("No paid jobs on this device. Local team agents can keep working without a wallet or mint.") }}</p>
     <section v-if="incoming.length" class="agent-job__body" aria-label="Incoming worker assignments">

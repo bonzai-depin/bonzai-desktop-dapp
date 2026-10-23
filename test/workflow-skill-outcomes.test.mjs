@@ -117,7 +117,7 @@ test('comparison streams are isolated, scoped and release the device after parti
   assert.deepEqual(lockEvents, [['start', 'text'], ['stop', 'text']]);
 });
 
-test('model comparisons wait for other work and use isolated nonstreaming fallback', async () => {
+test('model comparisons submit to the shared queue and use isolated nonstreaming fallback', async () => {
   let available = false; const calls = [];
   const { state } = loadSkill('MassChatSkill', { api: {
     loadModel: async () => calls.push('load'),
@@ -125,9 +125,7 @@ test('model comparisons wait for other work and use isolated nonstreaming fallba
   }, extra: { canStartGeneration: () => available } });
   state.prompt.value = 'Question'; state.selectedModels.value = ['model.gguf'];
   await state.runMassChat();
-  assert.equal(calls.length, 0);
-  assert.match(state.runError.value, /Another creation/);
-  available = true; await state.runMassChat();
+  assert.equal(calls.length, 2, 'busy UI state must not discard work before it reaches the device coordinator');
   assert.equal(calls[1].isolated, true);
   assert.equal(state.results.value[0].response, 'Answer');
 });

@@ -8,16 +8,32 @@ export class InferenceCoordinator {
   pending = [];
   active = null;
   prepare = async () => {};
-  async acquire(kind, { signal, priority = kind === 'workflow' ? 0 : 10 } = {}) {
+  listeners = new Set();
+  records = new Map();
+  revision = 0;
+  ownsDevice() { return !!this.active && this.context.getStore() === this.active; }
+  subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  snapshot() { return [...this.records.values()].map(record => ({ ...record })); }
+  publish(item, status) {
+    const record = { id: item.id, kind: item.kind, title: item.title,
+      status, revision: ++this.revision, activityId: item.activityId, startedAt: item.queuedAt, updatedAt: Date.now() };
+    this.records.set(item.id, record);
+    const ended = [...this.records.values()].filter(row => ['completed','failed','cancelled'].includes(row.status));
+    for (const row of ended.slice(0, Math.max(0, ended.length - 30))) this.records.delete(row.id);
+    for (const listener of this.listeners) { try { this.context.exit(() => listener({ ...record })); } catch { /* UI cannot interrupt inference. */ } }
+  }
+  async acquire(kind, { signal, priority = kind === 'workflow' ? 0 : 10, title, activityId } = {}) {
     if (signal?.aborted) throw signal.reason || new Error('Inference cancelled');
+    if (this.pending.length >= 32) throw new Error('The inference queue is full. Please wait for a task to finish.');
     return new Promise((resolve, reject) => {
-      const item = { kind, priority, resolve, reject, signal, queuedAt: Date.now() };
+      const item = { id: randomBytes(12).toString('hex'), kind, title, activityId, priority, resolve, reject, signal, queuedAt: Date.now() };
       item.abort = () => {
         const i = this.pending.indexOf(item);
-        if (i >= 0) { this.pending.splice(i, 1); reject(signal.reason || new Error('Inference cancelled')); }
+        if (i >= 0) { this.pending.splice(i, 1); this.publish(item, 'cancelled'); reject(signal.reason || new Error('Inference cancelled')); }
       };
       signal?.addEventListener('abort', item.abort, { once: true });
       this.pending.push(item);
+      this.publish(item, 'queued');
       this.drain();
     });
   }
@@ -28,25 +44,31 @@ export class InferenceCoordinator {
     const item = this.pending.shift();
     this.active = item;
     item.signal?.removeEventListener('abort', item.abort);
+    this.publish(item, 'running');
     let released = false;
-    item.resolve(() => {
+    item.resolve((status = 'completed') => {
       if (released) return;
       released = true;
+      this.publish(item, status);
       this.active = null;
       this.drain();
     });
   }
   async run(kind, operation, options = {}) {
-    if (this.context.getStore() === this.active && this.active) return operation();
+    if (this.ownsDevice()) return operation();
     const release = await this.acquire(kind, options);
     const owner = this.active;
+    let status = 'completed';
     try {
       return await this.context.run(owner, async () => {
         if (options.signal?.aborted) throw options.signal.reason || new Error('Inference cancelled');
         await this.prepare(kind);
         return operation();
       });
-    } finally { release(); }
+    } catch (error) {
+      status = options.signal?.aborted || error?.name === 'AbortError' ? 'cancelled' : 'failed';
+      throw error;
+    } finally { release(options.signal?.aborted ? 'cancelled' : status); }
   }
 }
 export const localInference = new InferenceCoordinator();

@@ -5,12 +5,13 @@ const url=process.env.BONZAI_UI_URL;
 test('level editor selects, moves, places, regenerates, undoes and saves without starting a game',{skip:!url,timeout:180000},async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true,args:['--enable-webgl','--ignore-gpu-blocklist']});
  try{
-  const page=await browser.newPage({viewport:{width:1440,height:1100}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const page=await browser.newPage({viewport:{width:1440,height:1100}});const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error(e.message);});page.setDefaultTimeout(15000);
   await page.route('**/*',route=>new URL(route.request().url()).origin===new URL(url).origin?route.continue():route.abort());
   await page.goto(`${url}/src/assets/tokens.css`);
   await page.setContent('<html data-theme="default"><head><link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css"><link rel="stylesheet" href="/src/assets/fonts/fonts.css"><link rel="stylesheet" href="/src/assets/buttons.css"></head><body style="margin:0;background:var(--bz-bg)"><div id="app"></div></body></html>');
   await page.evaluate(async()=>{
    const source=await fetch('/src/components/Generative3D.vue').then(r=>r.text());const runtime=source.match(/from ["']([^"']*\/vue\.js(?:\?[^"']*)?)["']/)[1];
+   await import('/src/App.vue?vue&type=style&index=0&lang.css');
    const {createApp}=await import(runtime);const {default:Component}=await import('/src/components/Generative3D.vue');
    const {createI18nPlugin}=await import('/src/i18n/index.js');
    const {createGameProject,addLevel,addObjectAsset}=await import('/src/components/gen3d/gameProject.js');
@@ -31,12 +32,49 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   });
   await page.waitForFunction(()=>window.vm.threeViewer?.isReady&&window.vm.threeViewer.scene.getObjectByName('GeneratedObject'),{timeout:60000});
   const previewLayout=await page.evaluate(async()=>{const {normalizeLLMCode}=await import('/src/components/Generative3D.vue');await window.vm.threeViewer.applyModuleCode(normalizeLLMCode(window.vm.activeLevel.code),'replace',{kind:'level'});return window.vm.threeViewer.scene.getObjectByName('Tower base').position.z;});
-  await page.getByRole('button',{name:'Build',exact:true}).click();
+  await page.locator('.three-workspace-tabs').getByRole('button',{name:'Build',exact:true}).click();
   await page.waitForFunction(()=>window.vm.editorRevision>0&&!window.vm.editorBusy);
-  await page.locator('#level-object-select option').filter({hasText:'Tower base'}).waitFor({state:'attached'});
+  await page.locator('.level-editor__bar').getByRole('button',{name:'Scene objects',exact:true}).click();
+  await page.locator('[data-object-key]').filter({hasText:'Tower base'}).waitFor();
+  const chooseObject=async key=>{const browse=page.getByRole('button',{name:'Browse scene objects',exact:true});if(await browse.count() && await browse.getAttribute('aria-expanded')==='false')await browse.click();await page.locator(`[data-object-key="${key}"]`).click();};
+  const openRedesign=async()=>{if(await page.locator('.level-editor__regeneration').getAttribute('open')===null)await page.locator('.level-editor__regeneration summary').click();};
   assert.equal(await page.evaluate(()=>window.vm.threeViewer.scene.getObjectByName('Tower base').position.z),previewLayout,'opening the editor must preserve the generation preview layout');
   assert.equal(await page.getByRole('button',{name:'Explore',exact:true}).count(),0);
   assert.equal(await page.evaluate(()=>!!window.vm.threeViewer._activeEngine?.GAME?.active),false);
+  assert.equal(await page.getByRole('button',{name:'Playtest',exact:true}).isEnabled(),true,'unfinished levels remain playable');
+  const workspace=await page.evaluate(()=>{const rect=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,height:r.height};};return{canvas:rect('.viewer-wrapper'),inspector:rect('.level-editor__inspector'),tools:rect('.level-editor__bar'),assets:rect('.level-editor__library')};});
+  assert.ok(workspace.inspector.x>workspace.canvas.x && workspace.inspector.right<=workspace.canvas.right,'inspector overlays the right of the full-width canvas');
+  assert.ok(workspace.inspector.bottom<=workspace.canvas.bottom && workspace.inspector.y>=workspace.canvas.y,'inspector stays within the viewport');
+  assert.ok(workspace.tools.bottom<=workspace.canvas.y+1,'tools stay above the canvas');
+  assert.ok(workspace.assets.y>=workspace.canvas.bottom-1,'assets sit directly below the canvas');
+  assert.equal(await page.locator('.level-editor__regenerate').count(),0,'no inactive AI form without an object');
+  await page.locator('.viewer-container').screenshot({path:'/tmp/bonzai-editor-overview.png'});
+
+  await page.locator('.level-editor__tabs').getByRole('button',{name:'Rules & Goals',exact:true}).click();
+  await page.getByRole('button',{name:'Survive',exact:true}).click();
+  await page.getByLabel('Seconds to survive').fill('20');
+  await page.getByRole('button',{name:'Add objective',exact:true}).click();
+  await page.waitForFunction(()=>window.vm.activeLevel.clearConditions.some(rule=>rule.type==='survive'&&rule.target===20));
+  await page.locator('.viewer-container').screenshot({path:'/tmp/bonzai-game-rules.png'});
+  await page.getByLabel('Describe gameplay',{exact:true}).scrollIntoViewIfNeeded();
+  assert.equal(await page.getByLabel('Describe gameplay',{exact:true}).isVisible(),true);
+  const designBox=await page.getByLabel('Describe gameplay',{exact:true}).boundingBox();
+  assert.ok(designBox.width>=380 && designBox.height>=160,'design briefs get a usable multiline editor');
+  await page.locator('.viewer-container').screenshot({path:'/tmp/bonzai-game-design.png'});
+  await page.getByRole('button',{name:'Remove Survive 20 seconds',exact:true}).click();
+  await page.locator('.level-editor__tabs').getByRole('button',{name:'Scene objects',exact:true}).click();
+  await page.getByLabel('Find an object…',{exact:true}).fill('tower');
+  assert.equal(await page.locator('[data-object-key]').count(),3);
+  await page.getByLabel('Find an object…',{exact:true}).fill('not-an-object');
+  assert.equal(await page.getByText('No matching objects.',{exact:true}).count(),1);
+  await page.getByLabel('Find an object…',{exact:true}).fill('');
+  await page.locator('.level-editor__assets').getByRole('button',{name:'Lantern',exact:true}).click();
+  assert.equal(await page.getByText('Click a surface to place your asset.',{exact:true}).count(),1);
+  await page.getByRole('button',{name:'Cancel placement',exact:true}).click();
+  await page.getByLabel('Level options',{exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Move earlier',exact:true}).isVisible(),true);
+  await page.getByLabel('Level options',{exact:true}).click();
+  await page.getByRole('button',{name:'Close inspector',exact:true}).click();
   // Click the actual tower in the viewport, then drag its X handle.
   await page.locator('.viewer-wrapper canvas').first().scrollIntoViewIfNeeded();
   const clickPoint=await page.evaluate(()=>{const v=window.vm.threeViewer,r=v.renderer.domElement.getBoundingClientRect(),p=v.scene.getObjectByName('Tower base').position.clone();v.scene.getObjectByName('Tower').localToWorld(p);p.project(v.camera);return{x:r.left+(p.x+1)*r.width/2,y:r.top+(1-p.y)*r.height/2};});
@@ -48,11 +86,13 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   await page.waitForFunction(()=>!window.vm.editorBusy&&window.vm.activeLevel.partEdits?.['node:2']?.transform.position.x!==undefined);
   assert.notEqual(await page.evaluate(()=>window.vm.activeLevel.partEdits['node:2'].transform.position.x),-4,'drag handles must change geometry');
 
-  const before=await page.evaluate(()=>({camera:window.vm.threeViewer.camera.position.toArray(),source:window.vm.activeLevel.code}));
+  const before=await page.evaluate(()=>({revision:window.vm.editorRevision,root:window.vm.threeViewer.scene.getObjectByName('GeneratedObject').uuid,camera:window.vm.threeViewer.camera.position.toArray(),source:window.vm.activeLevel.code}));
   await page.getByRole('spinbutton',{name:'Position X',exact:true}).fill('-3');await page.getByRole('spinbutton',{name:'Position X',exact:true}).press('Tab');
   await page.waitForFunction(()=>!window.vm.editorBusy&&Object.values(window.vm.activeLevel.partEdits||{}).some(edit=>edit.transform.position.x===-3));
   assert.ok((await page.evaluate(()=>window.vm.threeViewer.camera.position.toArray())).every((value,index)=>Math.abs(value-before.camera[index])<.05),'recompilation retains the camera framing');
   assert.equal(await page.evaluate(()=>window.vm.activeLevel.code),before.source);
+  assert.equal(await page.evaluate(()=>window.vm.editorRevision),before.revision,'transform commits must not rebuild the scene');
+  assert.equal(await page.evaluate(()=>window.vm.threeViewer.scene.getObjectByName('GeneratedObject').uuid),before.root,'editing preserves the existing scene graph');
   // Place a reusable asset on an elevated surface using the actual canvas drop handler.
   const drop=await page.evaluate(()=>{const v=window.vm.threeViewer,r=v.renderer.domElement.getBoundingClientRect(),p=v.scene.getObjectByName('Platform').position.clone();p.y=2;p.project(v.camera);return{x:r.left+(p.x+1)*r.width/2,y:r.top+(1-p.y)*r.height/2,id:window.vm.buildObjectLibrary[0].libraryId};});
   await page.locator('.viewer-wrapper canvas').first().dispatchEvent('drop',{clientX:drop.x,clientY:drop.y,dataTransfer:await page.evaluateHandle(id=>{const dt=new DataTransfer();dt.setData('application/x-bonzai-asset',id);return dt;},drop.id)});
@@ -62,9 +102,10 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   // A second copy must retain its original asset when the first is regenerated.
   await page.evaluate(()=>window.vm.placeEditorAsset({asset:window.vm.buildObjectLibrary[0],position:{x:0,y:0,z:3}}));
   await page.waitForFunction(()=>!window.vm.editorBusy&&window.vm.activeLevel.placements.length===2);
-  await page.locator('#level-object-select').selectOption({label:'Tower'});
+  await chooseObject('node:2');
   const ids=await page.evaluate(()=>window.vm.activeLevel.placements.map(p=>({id:p.id,objectId:p.objectId})));
-  await page.locator('#level-object-select').selectOption(`placement:${ids[0].id}`);
+  await chooseObject(`placement:${ids[0].id}`);
+  await openRedesign();
   await page.getByLabel('Regenerate selection',{exact:true}).fill('An ornate brass lantern');
   await page.getByRole('button',{name:'Regenerate selection',exact:true}).click();
   await page.waitForFunction(()=>!window.vm.editorBusy&&window.vm.activeLevel.placements[0].objectId!==window.vm.activeLevel.placements[1].objectId);
@@ -76,6 +117,7 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   await page.waitForFunction(()=>!window.vm.editorBusy&&window.vm.activeLevel.placements[0].objectId!==window.vm.activeLevel.placements[1].objectId);
   const validDraft=await page.evaluate(()=>JSON.stringify(window.vm.gameProject));
   await page.evaluate(()=>window.reply='throw new Error("Replacement fixture failed");');
+  await openRedesign();
   await page.getByLabel('Regenerate selection',{exact:true}).fill('Invalid replacement test');
   await page.getByRole('button',{name:'Regenerate selection',exact:true}).click();
   await page.waitForFunction(()=>!window.vm.editorBusy&&window.chatCalls.length>=3);
@@ -84,6 +126,7 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   assert.equal(await page.evaluate(()=>!!window.vm.threeViewer.scene.getObjectByName('GeneratedObject')),true);
   // Cancelling a model response must retain the scene and its draft.
   await page.evaluate(()=>{window.electronAPI.chat=()=>new Promise(resolve=>window.resolveChat=resolve);window.electronAPI.abortChatStream=async()=>window.resolveChat({text:'root.add(new THREE.Mesh(new THREE.BoxGeometry(),MAT.gold));'});});
+  await openRedesign();
   await page.getByLabel('Regenerate selection',{exact:true}).fill('Cancellation test');
   await page.getByRole('button',{name:'Regenerate selection',exact:true}).click();
   await page.waitForFunction(()=>!!window.resolveChat);
@@ -91,13 +134,14 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   await page.waitForFunction(()=>!window.vm.editorBusy);
   assert.equal(await page.evaluate(()=>JSON.stringify(window.vm.gameProject)),validDraft);
   await page.evaluate(()=>window.electronAPI.chat=async()=>({text:'root.add(new THREE.Mesh(new THREE.IcosahedronGeometry(1,1),MAT.gold));'}));
-  await page.locator('#level-object-select').selectOption({label:'Tower'});
+  await chooseObject('node:2');
+  await openRedesign();
   await page.getByLabel('Regenerate selection',{exact:true}).fill('Brass watchtower');
   await page.getByRole('button',{name:'Regenerate selection',exact:true}).click();
   await page.waitForFunction(()=>!window.vm.editorBusy&&!!window.vm.activeLevel.partEdits['node:2'].replacement);
   assert.equal(await page.evaluate(()=>window.vm.threeViewer.scene.getObjectByName('Platform').position.y),1);
   // Individual instances remain independently selectable after a transform.
-  await page.locator('#level-object-select').selectOption({label:'Trees'});
+  await chooseObject('node:3');
   await page.locator('.level-editor__instance input').fill('2');await page.locator('.level-editor__instance input').press('Tab');
   await page.getByRole('spinbutton',{name:'Position Z',exact:true}).fill('-6');await page.getByRole('spinbutton',{name:'Position Z',exact:true}).press('Tab');
   await page.waitForFunction(()=>!window.vm.editorBusy&&window.vm.activeLevel.partEdits['node:3@1']?.transform.position.z===-6);
@@ -108,19 +152,19 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   assert.equal(await page.evaluate(()=>window.saved.unifiedObjectInferences.at(-1).levelProject.level.placements.length),2,'the snapshot must reach durable storage');
   const exportResult=await page.evaluate(async()=>{const {exportObjectGLB}=await import('/src/components/gen3d/glbExport.js');const bytes=await exportObjectGLB(window.vm.threeViewer.scene.getObjectByName('GeneratedObject'));return bytes.length;});assert.ok(exportResult>1000);
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('bonzai-game-project')).levels[0].placements.length),2);
-  for(const theme of ['default','light']){
+  for(const theme of ['default','light','amber']){
    await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
    for(const width of [1440,480]){
     await page.setViewportSize({width,height:1100});
-    await page.locator('.level-editor').screenshot({path:`/tmp/bonzai-level-editor-${theme}-${width}.png`});
+    await page.locator('.viewer-container').screenshot({path:`/tmp/bonzai-level-editor-${theme}-${width}.png`});
     if(width===1440)await page.locator('.viewer-container').screenshot({path:`/tmp/bonzai-level-editor-scene-${theme}.png`});
-    assert.equal(await page.locator('.level-editor').evaluate(el=>el.scrollWidth>el.clientWidth+1),false, JSON.stringify(await page.locator('.level-editor').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth,children:[...el.querySelectorAll('*')].filter(n=>n.getBoundingClientRect().right>el.getBoundingClientRect().right).map(n=>({cls:n.className,width:n.clientWidth,text:n.textContent.slice(0,40)}))}))));
+    assert.equal(await page.locator('.viewer-container').evaluate(el=>el.scrollWidth>el.clientWidth+1),false, JSON.stringify(await page.locator('.viewer-container').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth,children:[...el.querySelectorAll('*')].filter(n=>n.getBoundingClientRect().right>el.getBoundingClientRect().right).map(n=>({cls:n.className,width:n.clientWidth,text:n.textContent.slice(0,40)}))}))));
    }
   }
   // Reload the component from the stored project and history, without reseeding.
   await page.evaluate(async()=>{window.app.unmount();const source=await fetch('/src/components/Generative3D.vue').then(r=>r.text());const runtime=source.match(/from ["']([^"']*\/vue\.js(?:\?[^"']*)?)["']/)[1];const {createApp}=await import(runtime);const {default:Component}=await import('/src/components/Generative3D.vue');const {createI18nPlugin}=await import('/src/i18n/index.js');window.app=createApp(Component).use(createI18nPlugin());window.vm=window.app.mount('#app');});
   await page.waitForFunction(()=>window.vm.threeViewer?.scene?.getObjectByName('GeneratedObject'));
-  await page.getByRole('button',{name:'Build',exact:true}).click();
+  await page.locator('.three-workspace-tabs').getByRole('button',{name:'Build',exact:true}).click();
   await page.waitForFunction(()=>window.vm.editorRevision>0&&!window.vm.editorBusy);
   assert.equal(await page.evaluate(()=>window.vm.activeLevel.placements.length),2);
   assert.equal(await page.evaluate(()=>window.vm.activeLevel.partEdits['node:3@1'].transform.position.z),-6);
@@ -128,12 +172,29 @@ test('level editor selects, moves, places, regenerates, undoes and saves without
   assert.equal(await page.evaluate(()=>window.vm.objectInferences.at(-1).levelProject.level.placements.length),2);
   await page.evaluate(async()=>{const {addClearCondition}=await import('/src/components/gen3d/gameProject.js');const level=window.vm.activeLevel;level.placements[0].role='player';addClearCondition(window.vm.gameProject,level.id,{type:'reach',label:'Reach lantern',targetPlacementId:level.placements[1].id});});
   await page.getByRole('button',{name:'Playtest',exact:true}).click();
-  await page.waitForFunction(()=>window.vm.isPlaytesting);
+  await page.waitForFunction(()=>window.vm.isPlaytesting && window.vm.threeViewer._activeEngine?.GAME?.active);
   assert.equal(await page.evaluate(()=>!!window.vm.threeViewer._activeEngine.GAME.active),true);
+  await page.setViewportSize({width:1440,height:1100});
+  await page.locator('.viewer-wrapper').screenshot({path:'/tmp/bonzai-playtest-third.png'});
+  const cameraDistance=await page.evaluate(()=>{const v=window.vm.threeViewer,g=v._activeEngine.GAME.active;return v.camera.position.distanceTo(g.actors.get('player').object.getWorldPosition(v.camera.position.clone()));});
+  assert.ok(cameraDistance>1 && cameraDistance<12,'playtest camera starts close to the player, not at the editor orbit');
+  await page.getByRole('button',{name:'First person',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.vm.threeViewer._activeEngine.GAME.active.cameraMode),'first');
+  await page.locator('.viewer-wrapper').screenshot({path:'/tmp/bonzai-playtest-first.png'});
+  await page.getByRole('button',{name:'Third person',exact:true}).click();
   assert.equal(await page.evaluate(()=>!!window.vm.threeViewer.scene.getObjectByName('Brass watchtower')),true);
-  await page.locator('.playtest-bar').getByRole('button',{name:'Edit',exact:true}).click();
+  await page.locator('.playtest-bar').getByRole('button',{name:'Back to Build',exact:true}).click();
   await page.waitForFunction(()=>!window.vm.editorBusy&&!window.vm.isPlaytesting);
   assert.equal(await page.evaluate(()=>!!window.vm.threeViewer._activeEngine.GAME.active),false);
+  const tracking=await page.evaluate(async()=>{
+    const g=await import('/src/stores/generationStore.js');
+    g.resetGeneration('image');g.resetGeneration('audio');
+    const first=g.startGeneration('image'),second=g.startGeneration('audio');
+    const queued=g.generationStore.state.audio.stage;
+    g.stopGeneration('audio');const stillBusy=!g.canStartGeneration();
+    g.stopGeneration('image');return {first,second,queued,stillBusy,idle:g.canStartGeneration()};
+  });
+  assert.deepEqual(tracking,{first:true,second:true,queued:'queued',stillBusy:true,idle:true});
   assert.deepEqual(errors,[]);
   await page.evaluate(()=>window.app.unmount());
  }finally{await browser.close();}

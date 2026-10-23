@@ -170,6 +170,7 @@ export async function formCompany(cfg) {
  * the charter doesn't declare any per-role llm assignments.
  */
 async function _registerPoolModels(charter) {
+  if ((await window.electronAPI?.openRouter?.status?.())?.active) return;
   if (!window.electronAPI?.poolRegisterModel) return;
   // Only relevant for parallel mode — sequential / swap go through legacy
   if (charter.execution?.llm?.mode !== "parallel") return;

@@ -6,7 +6,7 @@
           <div class="mint-modal-header">
             <h2 id="mint-modal-title" class="mint-modal-title">
               <span class="material-symbols-outlined" aria-hidden="true">token</span>
-              Mint Collectible
+              Tokenize
             </h2>
             <div class="header-right">
               <span class="network-pill">
@@ -15,86 +15,49 @@
               <BzCloseButton
                 :disabled="isMinting"
                 size="md"
-                aria-label="Close mint dialog"
+                aria-label="Close tokenization dialog"
                 @click="handleClose"
               />
             </div>
           </div>
 
+          <div class="mint-process"><TokenizationProgress :steps="tokenizationSteps" :current="tokenizationStep" :complete="stage === 'success'" :failed="stage === 'error' && !confirmationPending" /></div>
           <div class="mint-modal-body" :class="{'is-review':stage === 'ready'}">
-            <!-- Content Preview -->
-            <div class="content-preview" :aria-busy="!previewReady && !previewError" :class="{ 'content-preview--text': contentType?.startsWith('text/') }">
-              <div
-                v-if="contentType?.startsWith('image/')"
-                class="preview-image"
-              >
-                <img v-if="previewSrc" :src="previewSrc" alt="Content preview" @load="previewReady = true" @error="previewError = 'The selected image could not be displayed.'" />
-              </div>
-              <div v-else-if="contentType?.startsWith('audio/')" class="preview-audio">
-                <img :src="customBgSrc || audioBgSrc" class="audio-bg" :class="{ blurred: !customBgSrc }" alt="" />
-                <div class="preview-shade"></div>
-                <div class="audio-overlay">
-                  <img v-if="!customBgSrc" :src="logoSrc" class="preview-logo" alt="BonzAI" />
-                  <span class="preview-type">{{ generationType }}</span>
-                  <audio v-if="audioPreviewSrc" controls preload="metadata" :src="audioPreviewSrc" @loadedmetadata="previewReady = true" @error="previewError = 'The selected audio could not be played.'"></audio>
-                </div>
-              </div>
-              <div v-else-if="contentType?.startsWith('video/')" class="preview-video">
-                <img :src="customBgSrc || videoPosterSrc" class="video-bg" :class="{ blurred: !customBgSrc }" alt="" />
-                <div class="preview-shade"></div>
-                <div class="video-overlay">
-                  <img v-if="!customBgSrc" :src="logoSrc" class="preview-logo" alt="BonzAI" />
-                  <video
-                    v-if="videoPreviewSrc" controls
-                    preload="metadata"
-                    :poster="customBgSrc || videoPosterSrc"
-                    :src="videoPreviewSrc" @loadedmetadata="previewReady = true" @error="previewError = 'The selected video could not be played.'"
-                  ></video>
-                </div>
-                <span class="preview-type">{{ generationType }}</span>
-              </div>
-              <div v-else-if="contentType?.startsWith('text/')" class="preview-text">
-                <div class="preview-text__head">
-                  <span class="material-symbols-outlined" aria-hidden="true">article</span>
-                  <span>{{ generationType }}</span>
-                </div>
-                <p class="text-snippet">{{ textSnippet }}</p>
-              </div>
-              <div v-else-if="inferenceType === 'object' || contentType?.startsWith('model/')" class="preview-3d">
-                <Mint3DPreview v-if="visible" :code="generation.threeCode || content" @ready="previewReady = true" @error="previewError = $event.message" />
-                <span class="preview-type">{{ generationType }}</span>
-              </div>
-              <div v-else-if="contentType === 'application/json'" class="preview-text preview-text--code">
-                <div class="preview-text__head">
-                  <span class="material-symbols-outlined" aria-hidden="true">model_training</span>
-                  <span>{{ generationType }}</span>
-                </div>
-                <pre class="text-snippet">{{ structuredSnippet }}</pre>
-              </div>
-              <div v-else class="preview-icon">
-                <span class="material-symbols-outlined">
-                  {{ previewIcon }}
-                </span>
-                <span class="preview-type">{{ generationType }}</span>
-              </div>
+            <aside class="mint-preview-column">
+            <div class="nft-background-carousel" aria-label="NFT theme">
+              <button type="button" class="bz-btn bz-btn--icon" aria-label="Previous theme" :disabled="stage !== 'ready'" @click="cycleTheme(-1)"><span class="material-symbols-outlined">chevron_left</span></button>
+              <span class="nft-theme-swatch" :style="{background:selectedTheme.swatch?.[0] || 'var(--bz-canvas)',color:selectedTheme.swatch?.[1] || 'var(--bz-fg)'}" aria-hidden="true">Aa</span><span>{{ selectedTheme.name }}</span>
+              <button type="button" class="bz-btn bz-btn--icon" aria-label="Next theme" :disabled="stage !== 'ready'" @click="cycleTheme(1)"><span class="material-symbols-outlined">chevron_right</span></button>
             </div>
+            <div v-if="canChooseBackground" class="nft-background-carousel" aria-label="Artwork background">
+              <button type="button" class="bz-btn bz-btn--icon" aria-label="Previous background" :disabled="stage !== 'ready'" @click="cycleBackground(-1)"><span class="material-symbols-outlined">chevron_left</span></button>
+              <img :src="selectedBackground?.src" alt="" /><span>{{ selectedBackgroundName }}</span>
+              <button type="button" class="bz-btn bz-btn--icon" aria-label="Next background" :disabled="stage !== 'ready'" @click="cycleBackground(1)"><span class="material-symbols-outlined">chevron_right</span></button>
+            </div>
+            <!-- Content Preview -->
+            <div class="token-artwork-preview">
+              <img v-if="contentType?.startsWith('image/') && !artworkTheme && previewSrc" :src="previewSrc" alt="Original NFT artwork" @load="previewReady = true" @error="previewError = 'The image could not be displayed.'" />
+              <img v-else-if="coverSrc" :src="coverSrc" alt="Final NFT cover artwork" />
+              <span v-else-if="!coverError && !previewError" role="status">Preparing artwork…</span><span v-else role="status">Artwork unavailable</span>
+              <audio v-if="contentType?.startsWith('audio/') && audioPreviewSrc" ref="inlineMedia" preload="metadata" :src="audioPreviewSrc" @loadedmetadata="previewReady = true" @ended="stopPlayback" @error="previewError = 'The selected audio could not be played.'"></audio>
+              <video v-if="contentType?.startsWith('video/') && videoPreviewSrc" ref="inlineMedia" class="inline-video" :class="{'is-playing': isPlaying}" playsinline preload="metadata" :src="videoPreviewSrc" @loadedmetadata="previewReady = true" @ended="stopPlayback" @error="previewError = 'The selected video could not be played.'"></video>
+              <div v-if="inferenceType === 'object' && isPlaying" class="inline-scene"><Mint3DPreview :code="generation.threeCode || content" @ready="previewReady = true" @error="previewError = $event.message; stopPlayback()" /></div>
+              <button v-if="inferenceType === 'object' || /^(audio|video)\//.test(contentType)" type="button" class="artwork-play bz-btn bz-btn--primary bz-btn--icon" :aria-label="isPlaying ? 'Stop preview' : 'Play preview'" @click="togglePlayback"><span class="material-symbols-outlined">{{ isPlaying ? 'stop' : 'play_arrow' }}</span></button>
+            </div>
+            <p v-if="coverError" class="bz-notice bz-notice--warning" role="status">{{ coverError }} <button type="button" class="bz-btn" @click="coverRetry++">Retry</button></p>
 
-            <p v-if="inferenceType === 'training'">This asset contains the model manifest and provenance, not the model weights.</p>
-            <p v-if="inferenceType === 'object' && stage === 'ready'">
-              Minting stores the GLB model, source and interactive viewer on IPFS.
-              The GLB preview includes geometry, materials and exported animations. Runtime effects and gameplay require the source in BonzAI.
-            </p>
-            <p class="mint-explanation">Mint publishes this file and its metadata to decentralized storage and creates an asset in your wallet. Uploads are public. Review the preview and details before continuing. The displayed Mint price is an estimate; your wallet shows the final amount and network fees.</p>
-            <div v-if="previewError || (licenseLoaded && !licenseStatus.allowed)" class="bz-notice bz-notice--warning" role="status">{{ previewError || licenseStatus.reason }}</div>
-            <details class="mint-source"><summary>Source and generation details</summary><dl><dt>Model</dt><dd>{{ generation.model || 'Unknown' }}</dd><dt>Format</dt><dd>{{ contentType }}</dd><dt>License</dt><dd>{{ licenseStatus.licenses.join(', ') || 'Not verified' }}</dd></dl><pre>{{ JSON.stringify(generation.parameters || {}, null, 2) }}</pre><p>{{ prompt }}</p></details>
+
+            <div v-if="previewError" class="bz-notice bz-notice--warning" role="status">{{ previewError }}</div>
+
+            </aside>
             <!-- Editable Fields (before minting) -->
             <div v-if="stage === 'ready'" class="mint-fields">
               <!-- Wallet not connected -->
-              <div v-if="!isWalletConnected" class="bz-notice bz-notice--danger">
+              <div v-if="!isWalletConnected" class="bz-notice">
                 <span class="bz-notice__icon"><span class="material-symbols-outlined">account_balance_wallet</span></span>
                 <div class="bz-notice__body">
                   <p class="bz-notice__title">Wallet not connected</p>
-                  <p class="bz-notice__text">Connect your wallet to mint your content as a collectible.</p><button class="bz-btn bz-btn--primary" @click="requestConnection">Connect Wallet</button>
+                  <p class="bz-notice__text">{{ inferenceType === 'training' ? 'Connect your wallet to tokenize this model.' : 'Connect your wallet to tokenize your content.' }}</p><button class="bz-btn bz-btn--primary" @click="requestConnection">Connect Wallet</button>
                 </div>
               </div>
 
@@ -110,7 +73,7 @@
               <div v-else-if="isCheckingLevels" class="bz-notice">
                 <span class="bz-notice__icon"><span class="material-symbols-outlined rotating">sync</span></span>
                 <div class="bz-notice__body">
-                  <p class="bz-notice__title">Checking mint access&hellip;</p>
+                  <p class="bz-notice__title">Checking tokenization access&hellip;</p>
                 </div>
               </div>
 
@@ -123,28 +86,8 @@
                 </div>
               </div>
 
-              <div v-if="!mintConfigured || !storageReady" class="bz-notice bz-notice--warning" role="status"><div class="bz-notice__body"><p v-if="!mintConfigured">Minting contracts are not configured on {{ networkConfig.label }} yet.</p><p v-if="!storageReady">Set up your IPFS storage before publishing.</p><button class="bz-btn bz-btn--ghost" @click="openGuide(!storageReady ? 'storage' : 'mint')">{{ !storageReady ? 'Set Up Storage' : 'View Minting Steps' }}</button><button class="bz-btn bz-btn--ghost" :disabled="isCheckingLevels" @click="refreshAccess">Refresh Access</button></div></div>
+
               <p v-if="accessError" role="alert">{{ accessError }}</p>
-              <div class="mint-field">
-                <label class="mint-label" for="mint-title">
-                  Collectible Title
-                </label>
-                <input
-                  id="mint-title" v-model="mintTitle"
-                  class="mint-input"
-                  type="text"
-                  maxlength="80"
-                />
-              </div>
-              <div class="mint-field">
-                <label class="mint-label" for="mint-description">Collectible Description</label>
-                <textarea
-                  id="mint-description" v-model="mintDescription"
-                  class="mint-input mint-input--textarea"
-                  rows="2"
-                  maxlength="500"
-                ></textarea>
-              </div>
               <div class="mint-policy">
                 <label class="mint-policy__item" :class="{ 'is-disabled': isNsfwGeneration }">
                   <input
@@ -155,60 +98,50 @@
                   <span>
                     <strong>Discoverable in marketplace metadata</strong>
                     <small v-if="isNsfwGeneration">Disabled for NSFW/adult generations.</small>
-                    <small v-else>Marks this asset as discoverable. Mint does not create a sale listing.</small>
+
                   </span>
                 </label>
                 <label class="mint-policy__item">
                   <input v-model="trainingMaterial" type="checkbox" />
                   <span>
                     <strong>Allow as training material</strong>
-                    <small>Allow this generation to be referenced as training material. This does not guarantee revenue.</small>
+
                   </span>
                 </label>
               </div>
-              <div class="mint-actions">
-                <button
-                  type="button"
-                  class="bz-btn bz-btn--primary bz-btn--lg"
-                  @click="startMint"
-                  :disabled="!mintConfigured || !storageReady || isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields || !hasRenderableContent || !licenseStatus.allowed || !previewReady || !!previewError"
-                >
-                  <span class="material-symbols-outlined">token</span>
-                  <template v-if="!isWalletConnected">Connect wallet to mint</template>
-                  <template v-else-if="isCheckingLevels">Checking access&hellip;</template>
-                  <template v-else-if="!hasValidFields">Enter a title</template>
-                  <template v-else-if="!licenseLoaded">Checking license…</template>
-                  <template v-else-if="!licenseStatus.allowed">Mint unavailable</template>
-                  <template v-else-if="!previewReady">Loading preview…</template>
-                  <template v-else>Mint collectible &middot; {{ mintFee }} {{ networkConfig.currency }}</template>
-                </button>
+              <div v-if="!['video','object'].includes(inferenceType)" class="mint-field">
+                <label class="mint-label" for="mint-title">
+                  {{ inferenceType === 'training' ? 'Model Name' : 'Collectible Title' }}
+                </label>
+                <input
+                  id="mint-title" v-model="mintTitle"
+                  class="mint-input"
+                  type="text"
+                  maxlength="80"
+                />
               </div>
+              <div v-if="!['video','object'].includes(inferenceType)" class="mint-field mint-description-field">
+                <label class="mint-label" for="mint-description">{{ inferenceType === 'training' ? 'Model Description' : 'Collectible Description' }}</label>
+                <textarea
+                  id="mint-description" v-model="mintDescription"
+                  class="mint-input mint-input--textarea"
+                  rows="2"
+                  maxlength="500"
+                ></textarea>
+              </div>
+
+
             </div>
 
             <!-- Progress (during minting) -->
             <div v-else-if="stage === 'minting'" class="mint-progress">
-              <div class="progress-stages">
-                <div
-                  v-for="(s, i) in stages"
-                  :key="s.key"
-                  class="progress-stage"
-                  :class="{
-                    active: currentStage === s.key,
-                    done: stageIndex(currentStage) > i,
-                  }"
-                >
-                  <span class="stage-icon material-symbols-outlined">
-                    {{ stageIndex(currentStage) > i ? "check_circle" : s.icon }}
-                  </span>
-                  <span class="stage-label">{{ s.label }}</span>
-                </div>
-              </div>
-
+              <span class="material-symbols-outlined mint-stage-icon">{{ currentStage === 'mint' ? 'account_balance_wallet' : 'cloud_upload' }}</span>
+              <h3>{{ currentStage === 'mint' ? 'Confirm Your Token' : 'Publishing Your Content' }}</h3>
               <div class="mint-progress-bar" role="progressbar" :aria-valuenow="progressPercent" aria-valuemin="0" aria-valuemax="100">
                 <span :style="{ width: `${progressPercent}%` }"></span>
               </div>
               <p class="progress-message">{{ progressMessage }}</p>
-              <p>Keep this window open until the transaction is confirmed. You can reject a pending signature in your wallet.</p>
+              <p>Keep this window open until confirmation.</p>
             </div>
 
             <!-- Success Result -->
@@ -221,7 +154,7 @@
                 </span>
               </div>
               <h3 class="mint-result-title">
-                Minted successfully
+                Tokenized successfully
               </h3>
 
               <p v-if="mintResult.localRecordWarning" role="status">{{ mintResult.localRecordWarning }}</p>
@@ -278,6 +211,7 @@
               </div>
 
               <div v-if="generation.assetKind === 'game'" class="game-token-issue">
+                <TokenizationProgress :steps="[{title:'Review Game Token',detail:'Symbol and liquidity'},{title:'Wallet & Confirmation',detail:'Approve the token launch'},{title:'Token Ready',detail:'ERC-20 and locked pool'}]" :current="gameTokenResult ? 2 : issuingGameToken || gamePendingHash ? 1 : 0" :complete="!!gameTokenResult" :failed="!!gameTokenError && !gamePendingHash" />
                 <div class="game-token-issue__head">
                   <strong>Game economy</strong>
                   <span>1 billion tokens: 96% locked liquidity, 4% to you. Trading fee: 1%, split 70% creator / 20% treasury / 10% rewards.</span>
@@ -326,7 +260,7 @@
               <div class="bz-notice bz-notice--danger bz-notice--stacked">
                 <span class="bz-notice__icon"><span class="material-symbols-outlined">error</span></span>
                 <div class="bz-notice__body">
-                  <p class="bz-notice__title">Mint failed</p>
+                  <p class="bz-notice__title">Tokenization failed</p>
                   <p class="bz-notice__text">{{ errorMessage }}</p>
                 </div>
               </div>
@@ -340,6 +274,32 @@
                 </button>
               </div>
             </div>
+
+              <div v-if="stage === 'ready'" class="mint-actions mint-actions--primary">
+                <button
+                  type="button"
+                  class="bz-btn bz-btn--primary bz-btn--lg"
+                  @click="startMint"
+                  :disabled="!mintConfigured || !storageReady || isMinting || !mintAccess.canMint || isCheckingLevels || !isWalletConnected || !hasValidFields || !hasRenderableContent || !licenseStatus.allowed || !previewReady || !!previewError || !!coverError || (!coverSrc && (artworkTheme || !contentType?.startsWith('image/')))"
+                >
+                  <span class="material-symbols-outlined">token</span>
+                  <template v-if="!isWalletConnected">Connect wallet to tokenize</template>
+                  <template v-else-if="isCheckingLevels">Checking access&hellip;</template>
+                  <template v-else-if="!hasValidFields">Enter a title</template>
+                  <template v-else-if="!licenseLoaded">Checking license…</template>
+                  <template v-else-if="!licenseStatus.allowed">Tokenization unavailable</template>
+                  <template v-else-if="!previewReady">Loading preview…</template>
+                  <template v-else>Tokenize &middot; {{ mintFee }} {{ networkConfig.currency }}</template>
+                </button>
+              </div>
+            <p v-if="stage === 'ready' && licenseLoaded && !licenseStatus.allowed" class="mint-rights-note" role="status">{{ licenseStatus.reason }}</p>
+            <details class="mint-source mint-source--full">
+              <summary><span class="material-symbols-outlined">description</span>Source &amp; Generation Details<span class="material-symbols-outlined source-chevron">expand_more</span></summary>
+              <div class="source-facts"><div><span>Model</span><strong>{{ generation.model || 'Not recorded' }}</strong></div><div><span>Format</span><strong>{{ contentType }}</strong></div><div><span>License</span><strong>{{ licenseStatus.licenses.join(', ') || 'Not verified' }}</strong></div></div>
+              <div v-if="Object.keys(generation.parameters || {}).length" class="source-block"><h4>Parameters</h4><pre>{{ JSON.stringify(generation.parameters, null, 2) }}</pre></div>
+              <div v-if="prompt" class="source-block"><h4>Prompt</h4><p>{{ prompt }}</p></div>
+            </details>
+            <button type="button" class="mint-guide-link" @click="openGuide('mint')">Tokenization Guide <span aria-hidden="true">↗</span></button>
           </div>
         </div>
       </div>
@@ -365,7 +325,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeUnmount, defineAsyncComponent } from "vue";
+import { visibleText } from "../shared/visibleText.js";
+import { themeService } from '../services/theme.service.js';
+import TokenizationProgress from './TokenizationProgress.vue';
+import { renderNFTCover, extractVideoPoster } from '../services/nftArtwork.js';
+import { ref, computed, watch, onBeforeUnmount, defineAsyncComponent, nextTick } from "vue";
 import {useModalAccessibility} from "../composables/useModalAccessibility.js";
 import BzCloseButton from "./BzCloseButton.vue";
 import { requestConnection } from '../services/connectionDialog.service.js';
@@ -380,11 +344,10 @@ import { useWeb3Store } from "../stores/web3.store.js";
 import { web3Service } from "../services/web3.service.js";
 import { CONTENT_TYPE_MAP } from "../constants/index.js";
 import { issueGameToken, recoverGameIssuance } from "../services/gameToken.service.js";
-import audioBgSrc from "../assets/bonzai_music.webp";
-import videoPosterSrc from "../assets/bonzai_video.webp";
-import logoSrc from "../assets/bonzai_logo-full.png";
 
-import {mintLicenseStatus,mintMediaBytes} from '../services/mintValidation.js';
+import {musicNFTDescription} from '../services/nftCopy.js';
+import {nftBackgrounds} from '../services/nftBackgrounds.js';
+import {mintLicenseStatus,resolveMintMediaBytes} from '../services/mintValidation.js';
 const Mint3DPreview=defineAsyncComponent(()=>import('./Mint3DPreview.vue'));
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -444,21 +407,16 @@ const mintDescription = ref("");
 const marketplaceDiscoverable = ref(true);
 const trainingMaterial = ref(false);
 
-const stages = [
-  { key: "upload", label: "Upload", icon: "cloud_upload" },
-  { key: "metadata", label: "Metadata", icon: "description" },
-  { key: "mint", label: "Mint", icon: "token" },
-  { key: "finalize", label: "Done", icon: "check" },
+const tokenizationSteps = [
+  {title:'Review', detail:'Check content, rights and costs'},
+  {title:'Publish Files', detail:'Upload public content to IPFS'},
+  {title:'Wallet & Confirmation', detail:'Approve and confirm onchain'},
+  {title:'Complete', detail:'Save the token record'},
 ];
-
-const stageIndex = (key) => stages.findIndex((s) => s.key === key);
-
-const previewIcon = computed(() => {
-  if (props.contentType?.startsWith("audio/")) return "graphic_eq";
-  if (props.contentType?.startsWith("video/")) return "play_circle";
-  if (props.contentType?.startsWith("text/")) return "code";
-  if (props.contentType?.startsWith("model/")) return "3d_rotation";
-  return "token";
+const tokenizationStep = computed(() => {
+  if (stage.value === 'ready') return 0;
+  if (stage.value === 'success') return 3;
+  return {upload:1, metadata:1, mint:2, finalize:3}[currentStage.value] ?? 1;
 });
 
 const generationType = computed(() => {
@@ -537,30 +495,29 @@ const licenseCatalog=ref({});
 const licenseLoaded=ref(false);
 const licenseStatus=computed(()=>mintLicenseStatus(props.generation,licenseCatalog.value));
 let mediaBlobUrl=null;
+let mediaPreviewRun=0;
+const resolvedMedia=ref(null);
 const previewSrc=ref('');
 const audioPreviewSrc=previewSrc;
 const videoPreviewSrc=previewSrc;
 watch(()=>[props.visible,props.content,props.contentType,props.inferenceId],async()=>{
+ const run=++mediaPreviewRun; resolvedMedia.value=null;
  if(mediaBlobUrl)URL.revokeObjectURL(mediaBlobUrl);
  mediaBlobUrl=null;previewSrc.value='';previewError.value='';previewReady.value=false;
  if(!props.visible)return;
  try {
-  const bytes=mintMediaBytes(props.content,props.contentType);
+  const bytes=await resolveMintMediaBytes(props.content,props.contentType);
+  if (run !== mediaPreviewRun || !props.visible) return;
+  resolvedMedia.value=bytes;
   if(/^(image|audio|video)\//.test(props.contentType)) {
    mediaBlobUrl=URL.createObjectURL(new Blob([bytes],{type:props.contentType}));previewSrc.value=mediaBlobUrl;
   }else if(props.inferenceType!=='object')previewReady.value=true;
- }catch(error){previewError.value=error.message;}
+ }catch(error){if(run===mediaPreviewRun)previewError.value=error.message;}
  const {MODEL_REQUIREMENTS}=await import('../skills/flagship.js');licenseCatalog.value=MODEL_REQUIREMENTS;licenseLoaded.value=true;
 },{immediate:true});
 onBeforeUnmount(()=>{if(mediaBlobUrl)URL.revokeObjectURL(mediaBlobUrl);});
 
-function stripThinkTags(text) {
-  return String(text || "")
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/<think>[\s\S]*$/i, "")
-    .replace(/<\/think>/gi, "")
-    .trim();
-}
+function stripThinkTags(text) { return visibleText(text); }
 
 const textSnippet = computed(() => {
   if (!props.content || !props.contentType?.startsWith("text/")) return "";
@@ -570,17 +527,54 @@ const textSnippet = computed(() => {
   return clean.substring(0, 1400) + "...";
 });
 
-const structuredSnippet = computed(() => {
-  if (typeof props.content !== "string") return "";
-  try {
-    return JSON.stringify(JSON.parse(props.content), null, 2).slice(0, 1800);
-  } catch {
-    return props.content.slice(0, 1800);
-  }
-});
+const artworkThemes = computed(() => [{id:'',name:props.contentType?.startsWith('image/')?'Original Artwork':'BonzAI Collection'},...themeService.list()]);
+const selectedTheme = computed(() => artworkThemes.value.find(item=>item.id===artworkTheme.value) || artworkThemes.value[0]);
+function cycleTheme(delta) {const index=artworkThemes.value.findIndex(item=>item.id===artworkTheme.value);artworkTheme.value=artworkThemes.value[(index+delta+artworkThemes.value.length)%artworkThemes.value.length].id;}
+const defaultBackground = () => ({training:'intelligence',text:'create',audio:'music',object:'three-d'})[props.inferenceType] || 'create';
+const artworkBackground = ref(defaultBackground());
+const selectedBackground = computed(() => nftBackgrounds.find(item => item.id === artworkBackground.value));
+function cycleBackground(delta) { const index=nftBackgrounds.findIndex(item=>item.id===artworkBackground.value); artworkBackground.value=nftBackgrounds[(index+delta+nftBackgrounds.length)%nftBackgrounds.length].id; }
+const inlineMedia=ref(null), isPlaying=ref(false);
+function stopPlayback() { isPlaying.value=false; if(inlineMedia.value){inlineMedia.value.pause();inlineMedia.value.currentTime=0;} }
+async function togglePlayback() {
+ if(isPlaying.value){stopPlayback();return;}
+ if(props.inferenceType !== 'object' && !inlineMedia.value){previewError.value='The video is still loading. Please try again.';return;}
+ previewError.value=''; isPlaying.value=true;
+ await nextTick();
+ try { if(inlineMedia.value)await inlineMedia.value.play(); }
+ catch { stopPlayback(); previewError.value='Playback could not start. Check that the original media plays in generation history, then retry.'; }
+}
 
+watch(()=>[props.visible,props.content],stopPlayback);
+onBeforeUnmount(stopPlayback);
+const canChooseBackground = computed(() => !/^(image|video)\//.test(props.contentType) && !props.generation.thumbnail && !props.generation.screenshots?.[0]?.dataUrl);
+const selectedBackgroundName = computed(() => nftBackgrounds.find(item => item.id === artworkBackground.value)?.name || 'Automatic');
+const artworkGeneration = computed(() => ({...props.generation, nftArtwork: {version:1, themeId:artworkTheme.value || null, backgroundId:canChooseBackground.value ? artworkBackground.value || null : null}}));
+const artworkTheme = ref('');
+const coverRetry = ref(0);
 const isGeneratingBg = ref(false);
 const customBgSrc = ref(null);
+const coverSrc = ref(''), coverError = ref('');
+let coverRevision = 0;
+watch(() => [props.visible, props.inferenceType, JSON.stringify(props.generation), props.content, mintTitle.value, customBgSrc.value, artworkTheme.value, artworkBackground.value, previewSrc.value, coverRetry.value], async () => {
+  const revision = ++coverRevision;
+  if (coverSrc.value) URL.revokeObjectURL(coverSrc.value);
+  coverSrc.value = ''; coverError.value = '';
+  if (!props.visible || (props.contentType?.startsWith('image/') && !artworkTheme.value)) return;
+  try {
+    const bytes = await renderNFTCover({ inferenceType: props.inferenceType, generation: artworkGeneration.value, title: mintTitle.value,
+      textContent: props.inferenceType === 'text' ? props.content : '', customThumbnail: props.contentType?.startsWith('image/') ? previewSrc.value : customBgSrc.value, themeId: artworkTheme.value });
+    if (revision === coverRevision) coverSrc.value = URL.createObjectURL(new Blob([bytes], {type:'image/png'}));
+  } catch (error) { if (revision === coverRevision) coverError.value = error.message; }
+}, {immediate:true});
+watch(() => [props.visible, videoPreviewSrc.value], async (_, __, onCleanup) => {
+  let cancelled = false; onCleanup(() => { cancelled = true; });
+  if (!props.visible || !props.contentType?.startsWith('video/') || !videoPreviewSrc.value) return;
+  try { const poster = await extractVideoPoster(videoPreviewSrc.value); if (!cancelled) customBgSrc.value = poster; }
+  catch { /* The collection cover remains available when the video decoder cannot extract a frame. */ }
+});
+onBeforeUnmount(() => { coverRevision++; if (coverSrc.value) URL.revokeObjectURL(coverSrc.value); });
+
 
 // Reset state when modal opens
 watch(
@@ -597,7 +591,9 @@ watch(
       mintResult.value = {};
       errorMessage.value = "";
       confirmationPending.value = false;
+      artworkTheme.value = props.generation?.nftArtwork?.themeId || '';
       customBgSrc.value = null;
+      artworkBackground.value = props.generation.nftArtwork?.backgroundId || defaultBackground();
       isGeneratingBg.value = false;
       marketplaceDiscoverable.value = true;
       trainingMaterial.value = false;
@@ -617,7 +613,7 @@ watch(
 
       // Auto-generate title from prompt
       mintTitle.value =
-        (props.generation?.metadata?.title || props.prompt || "").substring(0, 80) ||
+        (props.generation?.songName || props.generation?.metadata?.title || props.prompt || "").substring(0, 80) ||
         `BonzAI ${generationType.value}`;
       gameTokenResult.value = null; gamePendingHash.value = '';
       gameTokenError.value = "";
@@ -625,7 +621,7 @@ watch(
         .replace(/[^a-z0-9]/gi, "")
         .slice(0, 8)
         .toUpperCase();
-      mintDescription.value = props.generation?.metadata?.description || `AI-generated ${generationType.value} by BonzAI.`;
+      mintDescription.value = (props.generation.type === 'music' ? musicNFTDescription(props.generation) : '') || props.generation?.metadata?.description || `AI-generated ${generationType.value} by BonzAI.`;
       if (isNsfwGeneration.value) marketplaceDiscoverable.value = false;
     }
   },
@@ -637,22 +633,23 @@ watch(isNsfwGeneration, (blocked) => {
 });
 
 async function startMint() {
-  if(!mintConfigured.value || !storageReady.value || isMinting.value || !hasValidFields.value || !hasRenderableContent.value || !licenseStatus.value.allowed || !previewReady.value || previewError.value)return;
+  if(!mintConfigured.value || !storageReady.value || isMinting.value || !hasValidFields.value || !hasRenderableContent.value || !licenseStatus.value.allowed || !previewReady.value || previewError.value || coverError.value || (!coverSrc.value && (artworkTheme.value || !props.contentType?.startsWith('image/'))))return;
   isMinting.value = true;
   stage.value = "minting";
+  currentStage.value = "upload";
   progressPercent.value = 5;
   progressMessage.value = "Starting...";
 
   const result = await mintContent({
-    content: props.content,
+    content: /^(image|audio|video)\//.test(props.contentType) ? (resolvedMedia.value || props.content) : props.content,
     contentType: props.contentType,
     prompt: props.prompt,
-    generation: props.generation,
+    generation: artworkGeneration.value,
     title: mintTitle.value,
     description: mintDescription.value,
     inferenceType: props.inferenceType,
     inferenceId: props.inferenceId,
-    customThumbnail: customBgSrc.value || undefined,
+    customThumbnail: props.contentType?.startsWith('image/') && artworkTheme.value ? previewSrc.value : customBgSrc.value || undefined,
     marketplacePolicy: {
       discoverable: marketplaceDiscoverable.value,
       trainingMaterial: trainingMaterial.value,
@@ -1322,9 +1319,10 @@ backdrop-filter:blur(10px);
 
 @media (min-width: 850px) {
  .mint-modal {width:min(980px,100%)}
- .mint-modal-body.is-review {display:grid;grid-template-columns:minmax(240px,340px) minmax(0,1fr);align-items:start;gap:20px 28px;}
- .mint-modal-body.is-review > :not(.mint-fields) {grid-column:1;}
- .mint-modal-body.is-review > .mint-fields {grid-column:2;grid-row:1 / span 8;}
+ .mint-modal-body {display:grid;grid-template-columns:minmax(240px,340px) minmax(0,1fr);align-items:start;gap:20px 28px;}
+ .mint-preview-column { display:flex; flex-direction:column; gap:20px; min-width:0; }
+ .mint-preview-column p { margin:0; line-height:1.6; }
+ .mint-modal-body.is-review > .mint-fields {grid-column:2;grid-row:1;}
  .mint-modal-body.is-review .content-preview {width:100%;}
 }
 @media (max-width: 640px) {
@@ -1354,4 +1352,81 @@ backdrop-filter:blur(10px);
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.mint-modal-header { position: sticky; top: 0; z-index: 5; background: var(--bz-surface); flex-shrink: 0; }
+.mint-fields { min-width: 0; gap: 20px; }
+.mint-fields .bz-notice__body > .bz-btn { margin-top: 12px; margin-right: 8px; }
+.mint-source pre, .preview-text--code pre { background: var(--bz-canvas); color: var(--bz-fg); padding: 16px; border: 1px solid var(--bz-border); border-radius: var(--bz-r-sm); overflow:auto; max-height:180px; }
+.mint-source summary { cursor:pointer; padding:12px 0; }
+.model-registration-preview { display:flex; flex-direction:column; align-items:flex-start; gap:16px; padding:28px; }
+.model-registration-preview > .material-symbols-outlined { font-size:36px; color:var(--bz-accent); }
+.model-registration-preview h3 { margin:0; overflow-wrap:anywhere; font-family:var(--bz-font-metric); font-size:26px; }
+.model-registration-preview__format { color:var(--bz-fg-mid); font-size:13px; }
+@media(max-width:700px) { .mint-modal-body { grid-template-columns:minmax(0,1fr); } .mint-modal-body.is-review > .mint-fields { grid-column:1; grid-row:auto; } .network-pill { display:none; } }
+ .mint-process { padding:0 24px; }
+</style>
+
+<style scoped>
+.token-artwork-preview { width:100%; aspect-ratio:1; overflow:hidden; border-radius:var(--bz-r-sm); background:var(--bz-canvas); display:grid; place-items:center; }
+.token-artwork-preview img { width:100%; height:100%; object-fit:contain; display:block; }
+.token-media-preview { width:100%; max-height:300px; object-fit:contain; border-radius:var(--bz-r-sm); }
+</style>
+
+<style scoped>
+.mint-source--full { grid-column:1 / -1; border:1px solid var(--bz-border); border-radius:12px; background:var(--bz-canvas); padding:0 20px; min-width:0; }
+.mint-source--full summary { display:flex; align-items:center; gap:10px; padding:18px 0; font-weight:600; list-style:none; }
+.mint-source--full summary::-webkit-details-marker { display:none; }
+.source-chevron { margin-left:auto; }
+.mint-source--full[open] .source-chevron { transform:rotate(180deg); }
+.source-facts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; padding:16px 0 24px; border-top:1px solid var(--bz-border); }
+.source-facts div { display:flex; flex-direction:column; gap:8px; overflow-wrap:anywhere; }
+.source-facts span,.source-block h4 { color:var(--bz-fg-mid); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+.source-block { padding-bottom:20px; }.source-block p { line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; max-height:220px; overflow:auto; }.source-block h4 { margin:0 0 12px; }
+.mint-guide-link { grid-column:1 / -1; justify-self:end; background:none; border:0; color:var(--bz-fg-mid); cursor:pointer; padding:8px; }
+.mint-fields { gap:20px; }.mint-preview-column { gap:16px; }
+@media(max-width:600px){.source-facts{grid-template-columns:1fr;gap:16px}}
+</style>
+
+<style scoped>
+.mint-progress { align-self:center; padding:32px; border:1px solid var(--bz-border); border-radius:12px; background:var(--bz-surface); display:flex; flex-direction:column; gap:20px; text-align:center; }
+.mint-progress h3 { font-family:var(--bz-font-display); font-size:26px; margin:0; }.mint-progress p { margin:0; }.mint-stage-icon { font-size:36px; color:var(--bz-accent); }.mint-progress-bar { width:100%; }
+</style>
+
+
+
+<style scoped>
+.nft-background-carousel { display:flex; align-items:center; gap:10px; padding:8px; border:1px solid var(--bz-border); border-radius:8px; }.nft-background-carousel img{width:42px;height:42px;object-fit:cover;border-radius:4px}.nft-background-carousel>span{flex:1;font-size:14px}
+.token-artwork-preview{position:relative}.artwork-play{position:absolute;right:14px;bottom:14px;z-index:3}.inline-video,.inline-scene{position:absolute;inset:0;width:100%;height:100%;background:var(--bz-canvas)}.inline-video{object-fit:cover;object-position:center;opacity:0;pointer-events:none}.inline-video.is-playing{opacity:1;pointer-events:auto}.inline-scene :deep(.three-container){height:100%;min-height:0}.inline-scene :deep(.perf-stats){display:none}
+</style>
+
+<style scoped>.nft-theme-swatch{display:grid;place-items:center;width:42px;height:42px;flex:none!important;border:1px solid var(--bz-border);border-radius:4px;font-family:var(--bz-font-display)}</style>
+
+<style scoped>
+.mint-actions--primary { display:flex; justify-content:center; grid-column:1 / -1; padding:24px 0; border-top:1px solid var(--bz-border); margin:0; }
+.mint-actions--primary > .bz-btn { min-height:56px; width:min(100%,420px); font-size:18px; font-weight:700; justify-content:center; border-radius:12px; }
+@media(min-width:850px) {
+ .mint-modal-body { align-items:stretch; }
+ .mint-preview-column, .mint-fields, .mint-progress, .mint-result, .mint-error { align-self:stretch; min-height:0; }
+ .mint-preview-column { grid-column:1;grid-row:1; }
+ .mint-fields, .mint-progress, .mint-result, .mint-error { grid-column:2;grid-row:1; }
+ .mint-preview-column > .bz-notice:last-child { margin-top:auto; }
+ .mint-fields .mint-policy { margin-top:0; }
+ .mint-progress { justify-content:center; }
+}
+@media(max-width:849px) { .mint-actions--primary { padding:20px 0; } }
+</style>
+
+<style scoped>
+.mint-policy--full { grid-column:1 / -1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.mint-rights-note { grid-column:1 / -1; text-align:center; color:var(--bz-fg-mid); line-height:1.5; margin:-12px auto 0; max-width:680px; }
+@media(min-width:850px) {
+ .mint-description-field { flex:1; min-height:0; }
+ .mint-description-field textarea { flex:1; min-height:120px; resize:none; }
+}
+@media(max-width:849px) { .mint-policy--full { grid-template-columns:1fr; } }
+</style>
+
+<style scoped>
+.mint-rights-note { font-size:11px; line-height:1.4; white-space:nowrap; max-width:100%; overflow-x:auto; padding:2px 0; }
+@media(min-width:850px){ .mint-fields{gap:14px}.mint-fields .mint-policy{gap:8px}.mint-description-field textarea{min-height:64px} }
 </style>

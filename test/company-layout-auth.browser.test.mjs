@@ -7,7 +7,7 @@ async function frame(page) {
   await page.route('**/*', route => new URL(route.request().url()).origin === new URL(url).origin ? route.continue() : route.abort());
   await page.goto(`${url}/src/assets/tokens.css`);
   await page.setContent(`<html data-theme="waveform"><head>
-    <link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css">
+    <link rel="stylesheet" href="/src/assets/page-layout.css"><link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css">
     <link rel="stylesheet" href="/src/assets/buttons.css"><link rel="stylesheet" href="/src/assets/fields.css"><link rel="stylesheet" href="/src/assets/fonts/fonts.css">
     <style>*{box-sizing:border-box}body{margin:0;background:var(--bz-canvas);color:var(--bz-fg);font-family:var(--bz-font-body)}
     #shell{display:grid;grid-template-columns:240px minmax(0,1fr);height:100vh;overflow:hidden}
@@ -57,7 +57,8 @@ test('integrated company pages have one scroll owner, aligned actions and a usab
       window.layoutFixture = { state, i18n };
       createApp({ render: () => h(View) }).use(createI18nPlugin()).mount('#app');
     });
-    const nav = page.getByRole('navigation', { name: 'Team workspace' }); await nav.waitFor();
+    await page.getByRole('button', { name: 'My workflows', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: 'Team workspace' }); await nav.waitFor().catch(async e=>{throw new Error(e.message+'\n'+errors.join('\n')+'\n'+(await page.locator('body').innerText()).slice(0,1800));});
     await nav.getByRole('button', { name: 'Today', exact: true }).click();
     assert.doesNotMatch(await page.locator('.today-brief').innerText(), /team\.readConversation|team\.reply/);
 
@@ -67,25 +68,34 @@ test('integrated company pages have one scroll owner, aligned actions and a usab
       await page.waitForTimeout(250);
       const metrics = await page.evaluate(selector => {
         const box = document.querySelector('.company-channel-head').getBoundingClientRect();
+        const icon = document.querySelector('.company-channel-head__symbol').getBoundingClientRect();
         const section = document.querySelector(selector).getBoundingClientRect();
         const inner = document.querySelector('.dash-body');
         const owner = document.querySelector('.company-tab');
-        return { offset: Math.abs(box.left-section.left), innerOverflow: getComputedStyle(inner).overflowY, pageOverflow: document.documentElement.scrollWidth > innerWidth,
+        return { iconInside:icon.top>=box.top && icon.bottom<=box.bottom, sectionClear:section.top>=box.bottom, offset: Math.abs(box.left-section.left), innerOverflow: getComputedStyle(inner).overflowY, pageOverflow: document.documentElement.scrollWidth > innerWidth,
           ownerBottom: owner.getBoundingClientRect().bottom, viewport: innerHeight,
           scrollColor: getComputedStyle(owner).scrollbarColor,
           controls: [...document.querySelectorAll(`${selector} .bz-btn, ${selector} .bz-iconbtn`)].filter(el => el.offsetWidth).map(el => ({ right: el.getBoundingClientRect().right, edge: owner.getBoundingClientRect().right })) };
       }, selector);
+      assert.ok(metrics.iconInside, `${name}: title icon fits within header`);
+      assert.ok(metrics.sectionClear, `${name}: content clears header`);
       assert.equal(metrics.innerOverflow, 'visible', `${name}: no competing inner scroll area`);
       assert.equal(metrics.pageOverflow, false, `${name}: no horizontal page overflow`);
       assert.ok(metrics.offset < 2, `${name}: content aligns with page heading (${metrics.offset}px)`);
       assert.ok(metrics.ownerBottom <= metrics.viewport+1, `${name}: scroll owner fits beneath the runtime bar`);
       assert.notEqual(metrics.scrollColor, 'auto', `${name}: scrollbars use the current theme`);
-      assert.ok(metrics.controls.every(b => b.right <= b.edge-12), `${name}: actions have a right gutter`);
+      assert.ok(metrics.controls.every(b => b.right <= b.edge-12), `${name}/${page.viewportSize().width}: actions have a right gutter ${JSON.stringify(metrics.controls)}`);
       await page.screenshot({ path: `/tmp/bonzai-layout-${name}-${page.viewportSize().width}.png` });
     }
     for (const theme of ['waveform', 'light']) for (const width of [1780, 1100, 600]) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       await page.setViewportSize({ width, height: 1010 });
+      await nav.getByRole('button', { name: 'Chat', exact: true }).click();
+      await layout('chat', '.company-command');
+      await nav.getByRole('button', { name: 'Activity', exact: true }).click();
+      await layout('activity', '.company-execution-strip');
+      await nav.getByRole('button', { name: 'Agent Market', exact: true }).click();
+      await layout('market', '.team-agent-market');
       await nav.getByRole('button', { name: 'Inbox', exact: true }).click();
       await layout('inbox', '.inbox-workspace');
       assert.equal(await page.locator('.inbox-empty').count(), 1);

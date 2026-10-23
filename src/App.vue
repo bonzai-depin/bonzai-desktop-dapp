@@ -163,7 +163,7 @@
           <span v-if="alwaysLoaded" class="bz-sidebar__model-lock material-symbols-outlined" :title="i18n.t('network.alwaysLoaded')">lock</span>
         </button>
 
-        <button v-if="systemValues?.memBudget" class="bz-sidebar__footer-action bz-sidebar__specs" @click="openSpecsModal" :title="(systemValues.memBudget / 1024**3).toFixed(0) + ' GB'">
+        <button v-if="systemValues?.memBudget" class="bz-sidebar__footer-action bz-sidebar__specs" @click="openSpecsModal" :title="$ui('Model memory budget')">
           <span class="material-symbols-outlined">memory</span>
           <span>{{ (systemValues.memBudget / 1024**3).toFixed(0) }} GB</span>
         </button>
@@ -275,7 +275,7 @@
               <div class="bz-specs-item"><span class="bz-specs-item__label">CPU Speed</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.cpuSpeed }} GHz</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">GPU</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.gpu }}</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">Total RAM</span><span class="bz-specs-item__value bz-mono">{{ (specsData.hardware.ram / 1024**3).toFixed(0) }} GB</span></div>
-              <div class="bz-specs-item bz-specs-item--highlight"><span class="bz-specs-item__label">Inference Budget</span><span class="bz-specs-item__value bz-mono" style="color:var(--bz-emerald-500)">{{ (specsData.hardware.memBudget / 1024**3).toFixed(1) }} GB</span></div>
+              <div class="bz-specs-item bz-specs-item--highlight"><span class="bz-specs-item__label" :title="$ui('Planning limit based on total RAM, not currently free memory.')">Model memory budget</span><span class="bz-specs-item__value bz-mono" style="color:var(--bz-emerald-500)">{{ (specsData.hardware.memBudget / 1024**3).toFixed(1) }} GB</span></div>
               <div v-if="specsData.hardware.vram > 0" class="bz-specs-item"><span class="bz-specs-item__label">VRAM</span><span class="bz-specs-item__value bz-mono">{{ (specsData.hardware.vram / 1024).toFixed(0) }} GB</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">OS</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.os }}</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">Architecture</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.arch }}</span></div>
@@ -326,6 +326,7 @@ import GenerationInspector from "./components/GenerationInspector.vue";
 import AgentJobBoard from "./components/AgentJobBoard.vue";
 import LanguageSelector from "./components/LanguageSelector.vue";
 import RewardsView from "./components/RewardsView.vue";
+import { remoteInference, refreshRemoteInference } from './stores/remoteInference.js';
 import NetworkSettings from "./components/NetworkSettings.vue";
 import MeshPresence from "./components/MeshPresence.vue";
 import FirstRunWelcome from "./components/FirstRunWelcome.vue";
@@ -538,6 +539,7 @@ export default {
     };
 
     const openBrowseModels = () => {
+      if (remoteInference.active) { showNetworkModal.value = true; return; }
       showBrowseModels();
       window.dispatchEvent(new CustomEvent("bonzai:open-browse-models"));
     };
@@ -599,7 +601,7 @@ const companyModelSummary = computed(() => {
       if (!charter) return null;
       return operationText("Team settings", i18n.state.locale);
     });
-    const sidebarModelName = computed(() => companyModelSummary.value || currentModelName.value || null);
+    const sidebarModelName = computed(() => remoteInference.active ? `OpenRouter · ${remoteInference.model}` : companyModelSummary.value || currentModelName.value || null);
     const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
 
     const showThemeGallery = ref(false);
@@ -716,6 +718,7 @@ const companyModelSummary = computed(() => {
     const handleNeedsReauth = () => { showAuthModal.value = true; };
 
     onMounted(() => {
+      refreshRemoteInference().catch(() => {});
       startPublicSessions();
       themeService.init();
       requestAnimationFrame(() => {

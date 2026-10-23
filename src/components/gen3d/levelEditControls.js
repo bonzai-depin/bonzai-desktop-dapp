@@ -103,6 +103,7 @@ export class LevelEditControls {
   }
   transform(value){if(!this.selection)return;writeTransform(this.proxy||this.selection.node,value);this.updateInstance();this.commit();}
   commit(){if(!this.selection)return;const {node,target}=this.selection;this.onTransform({...describePart(node,target),instanceCount:node.isInstancedMesh?node.count:0,transform:readTransform(this.proxy||node)});}
+  markerPosition(){if(!this.selection)return null;const point=(this.proxy||this.selection.node).getWorldPosition(new THREE.Vector3());this.root.worldToLocal(point);return {x:point.x,y:point.y,z:point.z};}
   setMode(mode){this.gizmo.setMode(mode);}
   setSnap(enabled){this.gizmo.setTranslationSnap(enabled ? .25 : null);this.gizmo.setRotationSnap(enabled ? Math.PI/12 : null);this.gizmo.setScaleSnap(enabled ? .1 : null);}
   setDisabled(value){this.disabled=value;this.gizmo.enabled=!value;}

@@ -99,7 +99,9 @@ const reviewedOverrides = {
     'Tokenomics': 'Économie du token',
     'Mint': 'Créer le token',
     'Mint NFT': 'Créer le NFT',
-    'Inference Budget': 'Mémoire disponible pour l’inférence',
+    'Inference Budget': 'Budget mémoire pour l’inférence',
+    'Model memory budget': 'Budget mémoire des modèles',
+    'Planning limit based on total RAM, not currently free memory.': 'Limite calculée sur la RAM totale, pas sur la mémoire actuellement libre.',
     'Average Performance': 'Performances moyennes',
     'Hardware Specifications': 'Caractéristiques matérielles',
     'Session': 'Session',
@@ -121,9 +123,9 @@ const reviewedOverrides = {
     'Set the current scene.': 'Définir la scène actuelle.',
     'Toggle multimodal generation per channel.': 'Activer ou désactiver les générations multimodales pour ce canal.',
     'Set the content level.': 'Définir le niveau de contenu.',
-    'Fast image generation with FLUX Klein.': 'Génération rapide d’images avec FLUX Klein.',
+    'Fast image generation with Qwen Image 2.1 Turbo.': 'Génération rapide d’images avec Qwen Image 2.1 Turbo.',
     'Quality image generation with Z-Image Turbo.': 'Génération d’images de qualité avec Z-Image Turbo.',
-    'Standard SDXL image generation.': 'Génération d’images standard avec SDXL.',
+    'Standard Qwen Image 2.1 generation.': 'Génération d’images standard avec Qwen Image 2.1.',
     'Video generation with LTX-2.': 'Génération vidéo avec LTX-2.',
     'Fast TTS.': 'Synthèse vocale rapide.',
     'Quality Chatterbox V3 TTS.': 'Synthèse vocale de qualité avec Chatterbox V3.',
@@ -145,6 +147,9 @@ const renderedAttributes = new WeakMap()
 const originalAttributes = new WeakMap()
 const ignoredSelector = [
   '[data-i18n-skip]',
+  '.material-symbols-outlined',
+  '.material-icons',
+  '.material-icons-outlined',
   'option',
   '[contenteditable="true"]',
   '.chat-message',
@@ -163,7 +168,6 @@ const ignoredSelector = [
 ].join(',')
 
 function translated(source) {
-  if (/\bmint\b/i.test(source)) return source;
   if (i18n.state.locale === 'en') return source
   const reviewed = reviewedCatalogOverrides[i18n.state.locale]?.[source] || reviewedOverrides[i18n.state.locale]?.[source]
   if (reviewed) return reviewed

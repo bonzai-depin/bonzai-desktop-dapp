@@ -1,3 +1,5 @@
+import { podcastStudio, musicVideoForge, mangaToAnime } from './mediaProduction.js';
+export { podcastStudio, musicVideoForge, mangaToAnime };
 import { enhanceVideo } from "../services/videoEnhance.js";
 import { sceneEnvironmentChanged, streamedDialogue } from "../services/roleplayMediaPolicy.js";
 import { agentAvatarSource } from "../utils/agentAvatar.js";
@@ -1799,20 +1801,14 @@ export const MODEL_REQUIREMENTS = {
   ..._generateLLMRequirements(),
   // Image Generation Models (keys match pipeline names)
   image_turbo: {
-    name: "FLUX.2 Klein 9B Q4_K_M",
-    type: "diffusion",
-    pipeline: "image_turbo",
-    endpoint: "/image/turbo",
-    repo: "black-forest-labs/FLUX.2-klein-9B",
-    license: "flux-non-commercial-license",
-    licenseUrl: "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md",
-    size: "~23 GB",
-    description: "4-step image generation and editing with a GGUF Q4_K_M transformer",
-    additionalFiles: [{
-      name: "flux-2-klein-9b-q4_k_m.gguf",
-      url: "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf",
-      size: "5.91 GB",
-    }],
+    name: "Qwen Image 2.1 Turbo Q4_K_M", type: "diffusion", pipeline: "image_turbo",
+    endpoint: "/image/turbo", repo: "Qwen/Qwen-Image-2.1-Turbo",
+    license: "qwen-research", licenseUrl: "https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/blob/main/LICENSE",
+    size: "~22 GB", description: "Image generation and editing · 8 steps · CFG 1 · Official Turbo schedule",
+    additionalFiles: [{ name: "qwen-image-2.1-turbo-q4_k_m.gguf",
+      url: "https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K_M.gguf", size: "4.2 GB" },
+      { name: "qwen-image-2.1-lora.safetensors",
+        url: "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/qwen-image-2.1-lora.safetensors", size: "80 MB" }],
   },
   image_quality: {
     name: "Z-Image Turbo",
@@ -1835,24 +1831,14 @@ export const MODEL_REQUIREMENTS = {
     ],
   },
   image_standard: {
-    name: "SDXL 1.0",
-    type: "diffusion",
-    pipeline: "image_standard",
-    endpoint: "/image/standard",
-    repo: "stabilityai/stable-diffusion-xl-base-1.0",
-    license: "CreativeML Open RAIL++-M",
-    licenseUrl: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
-    size: "~7 GB",
-    vram: "16 GB",
-    description: "Standard SDXL image generation (uncensored)",
-    additionalFiles: [
-      {
-        name: "sdxl-lora.safetensors",
-        url: "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/sdxl-lora.safetensors",
-        size: "6.94 GB",
-        description: "SDXL LoRA for enhanced generation",
-      },
-    ],
+    name: "Qwen Image 2.1 Q4_K_M", type: "diffusion", pipeline: "image_standard",
+    endpoint: "/image/standard", repo: "Qwen/Qwen-Image-2.1",
+    license: "qwen-research", licenseUrl: "https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE",
+    size: "~22 GB", description: "Image generation and editing · 25 steps · CFG 4 · ER_SDE / beta",
+    additionalFiles: [{ name: "qwen-image-2.1-q4_k_m.gguf",
+      url: "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q4_K_M.gguf", size: "4.2 GB" },
+      { name: "qwen-image-2.1-lora.safetensors",
+        url: "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/qwen-image-2.1-lora.safetensors", size: "80 MB" }],
   },
   // Audio Models
   audio_turbo: {
@@ -2048,6 +2034,7 @@ export const MODEL_REQUIREMENTS = {
  */
 export const SKILL_MODEL_REQUIREMENTS = {
   "story-studio-v1.0.0": ["llm_llama_3_1_8b", "image_turbo", "audio"],
+  "podcast-studio-v1.0.0": ["llm_qwen3_5_9b", "audio_turbo", "image_turbo"],
   "meditation-forge-v1.0.0": ["llm_qwen3_5_9b", "image_turbo", "audio_turbo"],
   "video-captioning-v1.0.0": ["vision_caption"],
   "finger-frame-director-v1.0.0": ["video_fast"],
@@ -2056,19 +2043,14 @@ export const SKILL_MODEL_REQUIREMENTS = {
   "virtual-try-on-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
   "chefs-table-v1.0.0": ["llm_llama_3_1_8b", "image_quality"],
   "eli5-v1.0.0": ["llm_llama_3_1_8b", "image_turbo", "audio"],
-  "music-video-forge-v1.0.0": [
-    "llm_llama_3_1_8b",
-    "image_turbo",
-    "video_fast",
-    "music",
-  ],
+  "music-video-forge-v1.0.0": ["llm_qwen3_5_9b", "image_turbo", "video_sota", "music_fast"],
   "game-maker-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
-  "manga-to-anime-v1.0.0": ["llm_llama_3_1_8b", "image_turbo", "video_fast"],
+  "manga-to-anime-v1.0.0": ["llm_qwen3_5_9b", "video_sota"],
   "hairstyle-studio-v1.0.0": ["llm_llama_3_1_8b", "image_turbo"],
   "roleplay-companion-v1.0.0": [
     "llm_nemomix_12b_heretic",
     "image_turbo",
-    "video_quality",
+    "video_sota",
   ],
   "live-streaming-v1.0.0": [
     "image_turbo",
@@ -4174,6 +4156,7 @@ const ROLEPLAY_LLM = {
 let _loadedModelFilename = null;
 
 async function ensureLLMLoaded(config = DEFAULT_LLM) {
+  if ((await window.electronAPI?.openRouter?.status?.())?.active) return;
   if (!window.electronAPI?.loadModel) {
     throw new Error(
       "LLM API not available. Make sure you are running in the Electron app.",
@@ -4233,10 +4216,9 @@ async function generateText(prompt, systemPrompt = "") {
     throw new Error("LLM chat API not available.");
   }
 
-  await ensureLLMLoaded();
 
   const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
-  const response = await window.electronAPI.chat(fullPrompt);
+  const response = await window.electronAPI.chat(fullPrompt, { isolated: true, model: DEFAULT_LLM });
 
   if (!response || (typeof response === "string" && response.trim() === "")) {
     throw new Error("LLM returned empty response");
@@ -4255,7 +4237,6 @@ async function generateTextWithModel(
     throw new Error("LLM chat API not available.");
   }
 
-  await ensureLLMLoaded(llmConfig);
 
   const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
   let response;
@@ -4266,11 +4247,11 @@ async function generateTextWithModel(
     });
     try {
       response = await window.electronAPI.zhcChatStream({
-        streamId, prompt: fullPrompt, maxTokens: options.maxTokens || 2048, enableThinking: false,
+        streamId, model: llmConfig, prompt: fullPrompt, maxTokens: options.maxTokens || 2048, enableThinking: false,
       });
     } finally { unsubscribe(); }
   } else {
-    response = await window.electronAPI.chat(fullPrompt, { maxTokens: options.maxTokens || 2048 });
+    response = await window.electronAPI.chat(fullPrompt, { maxTokens: options.maxTokens || 2048, isolated: true, model: llmConfig });
   }
 
   if (!response || (typeof response === "string" && response.trim() === "")) {
@@ -5099,7 +5080,7 @@ export async function resolvePortraitReference(image) {
   });
 }
 
-// Image generation - quality (Z-Image Turbo) or turbo (FLUX Klein)
+// Image generation - quality (Z-Image Turbo) or turbo (Qwen Image 2.1)
 async function generateImage(prompt, options = {}) {
   const reference = options.referenceImage ? await resolvePortraitReference(options.referenceImage) : null;
   const endpoint = reference ? "/image/image/turbo" :
@@ -5110,14 +5091,14 @@ async function generateImage(prompt, options = {}) {
     negative_prompt: options.negativePrompt || IMAGE_NEG_BASE,
     width: options.width || 1024,
     height: options.height || 1024,
-    steps: options.steps || (options.quality || options.advanced ? 9 : 4),
-    guidance_scale: options.guidanceScale || 3.5,
+    steps: options.steps || (options.quality || options.advanced ? 9 : 8),
+    guidance_scale: options.guidanceScale ?? 1.0,
   });
 }
 
 // SDXL generation - for uncensored/adult content
 async function generateImageSDXL(prompt, options = {}) {
-  return await callFlaskEndpoint("/image/standard", {
+  return await callFlaskEndpoint("/image/sdxl", {
     prompt,
     negative_prompt:
       options.negativePrompt || `${IMAGE_NEG_BASE}, ${IMAGE_NEG_LAYOUT}`,
@@ -5137,8 +5118,8 @@ async function editImage(imageBase64, prompt, options = {}) {
     strength: options.strength || 0.75,
     width: options.width || 1024,
     height: options.height || 1024,
-    steps: options.steps || 4,
-    guidance_scale: options.guidanceScale || 3.5,
+    steps: options.steps || 8,
+    guidance_scale: options.guidanceScale ?? 1.0,
   });
 }
 
@@ -5222,13 +5203,13 @@ export async function generateScenarioPicture(scenario, options = {}) {
       `[Flagship] Generating scene for scenario: ${name} (using /image/turbo)`,
     );
 
-    // Use turbo model (FLUX Klein) for scenario backgrounds - landscape format, fast
+    // Use turbo model (Qwen Image 2.1) for scenario backgrounds - landscape format, fast
     const result = await generateImage(prompt, {
       // No quality or advanced flag = uses /image/turbo
       width: options.width || 1024,
       height: options.height || 576, // 16:9 landscape
       negativePrompt,
-      steps: options.steps || 4,
+      steps: options.steps || 8,
     });
 
     return {
@@ -5669,7 +5650,7 @@ async function generateSceneryBackground(scenarioOrLocation, options = {}) {
   );
 
   try {
-    // Use /image/turbo (FLUX Klein) for backgrounds - fast generation, no characters
+    // Use /image/turbo (Qwen Image 2.1) for backgrounds - fast generation, no characters
     const result = await callFlaskEndpoint(
       "/image/turbo",
       {
@@ -5678,7 +5659,7 @@ async function generateSceneryBackground(scenarioOrLocation, options = {}) {
           "person, people, character, face, human, portrait, figure",
         width: options.width || 1280,
         height: options.height || 720,
-        steps: 4,
+        steps: 8,
         guidance_scale: 1.0,
       },
       true,
@@ -5784,14 +5765,22 @@ const VIDEO_NEG_DEFAULT = [
 ].join(", ");
 
 async function generateVideo(imageBase64OrNull, prompt, options = {}) {
+  if (options.pipeline === 'sota') {
+    const remoteVideoSettings = await globalThis.window?.electronAPI?.openRouter?.status?.();
+    if (!(remoteVideoSettings?.active && remoteVideoSettings.mediaModels?.video) && globalThis.localStorage?.getItem('bonzai:minimax-h3-terms') !== 'accepted') throw new Error('Accept the MiniMax H3 license in roleplay settings before generating video.');
+    return callFlaskEndpoint('/video/sota', {
+      prompt, image_base64: imageBase64OrNull ? await resolveImageBase64(imageBase64OrNull) : undefined,
+      width: 512, height: 288, num_frames: 124, num_inference_steps: 8,
+      guidance_scale: 1, license_accepted: true, auto_download: true,
+    });
+  }
   // Pipeline selection:
   //   - 'fast'    → LTX-2 GGUF at /video (default for skill batch jobs
   //                 like story-studio / music-video-forge — fastest, can
   //                 run pure text-to-video).
   //   - 'quality' → Wan 2.2 i2v at /video/quality (better motion +
   //                 character consistency; requires a starting image).
-  // Roleplay calls /video/quality directly with the full Wan param set;
-  // this helper routes other skill consumers cleanly.
+  // Roleplay uses the H3 branch above; other skills retain their chosen pipeline.
   const wantQuality =
     options.quality === true || options.pipeline === "quality";
   // Resolve `bonzai-blob://` URLs / data URLs back to raw base64 — message
@@ -6609,13 +6598,13 @@ ${userInFrame ? `- Weave appearance terms from ${userGenderLabel.toUpperCase()} 
     console.log(
       `[Roleplay] Generating enhanced image prompt with ${ROLEPLAY_LLM.modelname}...`,
     );
-    await ensureLLMLoaded(ROLEPLAY_LLM);
     // 200 was way too low — a 4-sentence prompt with identity anchors,
     // location detail, and explicit anatomical phrasing routinely runs
     // 600-800 tokens. The LLM was stopping mid-sentence and the
     // cleanup step would then propagate a truncated prompt to SDXL.
     // 1024 leaves comfortable headroom for the longest scenes.
     const result = await window.electronAPI.chat(llmPrompt, {
+      model: ROLEPLAY_LLM, isolated: true,
       maxTokens: 1024,
       temperature: 0.3,
     });
@@ -6810,17 +6799,7 @@ async function regenerateMessageMedia(
     onProgress?.({ type: "status", message: "Generating video..." });
 
     try {
-      // Use the enhanced prompt for video too. Routed to Wan 2.2 via
-      // quality:true so manual regenerate matches the live-turn quality.
-      const videoResult = await generateVideo(result.image, enhancedPrompt, {
-        quality: true,
-        height: 240,
-        width: 320,
-        frames: 41,
-        frameRate: 8,
-        // Defaults via generateVideo helper: 4 steps + CFG 1.0
-        // (QuantStack Q5_K_M GGUF + Lightning Seko V1 LoRA).
-      });
+      const videoResult = await generateVideo(result.image, enhancedPrompt, { pipeline: 'sota' });
 
       result.video =
         videoResult.video_path || videoResult.video_base64 || videoResult.video;
@@ -8175,133 +8154,6 @@ Return ONLY valid JSON.`;
 // 7. MUSIC VIDEO FORGE (Entertainment)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const musicVideoForge = createSkillDefinition({
-  id: "music-video-forge-v1.0.0",
-  name: "Music Video Forge",
-  description:
-    "Create music video visuals with AI-generated imagery and animations.",
-  version: "1.0.0",
-  author: {
-    address: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
-    name: "BonzAI",
-    verified: true,
-  },
-  category: "entertainment",
-  price: 0,
-  tags: ["music", "video", "visuals", "creative"],
-  requirements: {
-    minLevel: 4,
-    requiredApis: ["llm", "image", "video"],
-    requiredPermissions: [],
-  },
-  inputs: {
-    mood: {
-      type: "string",
-      default: "",
-      label: "Mood / Theme",
-      description: "Describe the feeling of your music",
-    },
-    visualStyle: {
-      type: "select",
-      default: "abstract",
-      label: "Visual Style",
-      options: [
-        "abstract",
-        "nature",
-        "urban",
-        "surreal",
-        "minimalist",
-        "retro",
-        "futuristic",
-      ],
-    },
-    sceneCount: {
-      type: "number",
-      default: 4,
-      min: 2,
-      max: 8,
-      label: "Number of Scenes",
-    },
-  },
-  prompt: {
-    system: "You are a music video director.",
-    task: "Create music video concept.",
-    outputFormat: { type: "json" },
-  },
-  tools: { bonzai: [], mcp: [] },
-  execution: {
-    type: "javascript",
-    entrypoint: "execute",
-    async execute(inputs, context) {
-      const { mood, visualStyle, sceneCount } = inputs;
-
-      context.updateStatus?.("Loading AI model...");
-      await ensureLLMLoaded();
-
-      context.updateStatus?.("Creating video concept...");
-      const conceptPrompt = `Create a music video concept for mood: ${mood}
-Style: ${visualStyle}
-
-Output JSON with:
-- "title": Video title
-- "scenes": Array of ${sceneCount} scenes, each with:
-  - "description": Scene description
-  - "imagePrompt": Detailed ${visualStyle} style image prompt
-  - "motionDescription": How it should animate
-
-Return ONLY valid JSON.`;
-
-      const conceptResponse = await generateText(conceptPrompt);
-      let concept;
-      try {
-        concept = extractJSON(conceptResponse);
-      } catch (e) {
-        throw new Error(`Failed to parse concept: ${e.message}`);
-      }
-
-      context.updateStatus?.("Freeing memory...");
-      await unloadLLM();
-
-      context.updateStatus?.("Generating visuals...");
-      for (let i = 0; i < concept.scenes.length; i++) {
-        const scene = concept.scenes[i];
-        context.updateStatus?.(
-          `Creating scene ${i + 1}/${concept.scenes.length}...`,
-        );
-        try {
-          const imgResult = await generateImage(
-            `${scene.imagePrompt}, ${visualStyle} aesthetic, cinematic`,
-            { width: 1024, height: 576 },
-          );
-          scene.image = imgResult.image_base64 || imgResult.image;
-
-          context.updateStatus?.(`Animating scene ${i + 1}...`);
-          const videoResult = await generateVideo(
-            scene.image,
-            scene.motionDescription,
-            { frames: 41, fps: 8, height: 240, width: 320 },
-          );
-          scene.video = videoResult.video_path || videoResult.video;
-        } catch (e) {
-          scene.image = null;
-          scene.video = null;
-        }
-      }
-
-      return {
-        success: true,
-        musicVideo: concept,
-        meta: { mood, visualStyle, sceneCount: concept.scenes.length },
-      };
-    },
-  },
-  metadata: {
-    createdAt: "2025-01-25T00:00:00Z",
-    updatedAt: "2025-01-25T00:00:00Z",
-    license: "MIT",
-  },
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // 8. GAME MAKER (Entertainment) - Formerly Game Asset Foundry
 // ═══════════════════════════════════════════════════════════════════════════
@@ -8472,168 +8324,6 @@ Return ONLY valid JSON.`;
 // ═══════════════════════════════════════════════════════════════════════════
 // 9. MANGA TO ANIME (Reading) - Formerly Book Trailer Studio
 // ═══════════════════════════════════════════════════════════════════════════
-
-export const mangaToAnime = createSkillDefinition({
-  id: "manga-to-anime-v1.0.0",
-  name: "Manga to Anime",
-  description:
-    "Transform manga panels or story concepts into animated anime sequences.",
-  version: "1.0.0",
-  author: {
-    address: "0x8Ff3b2e823b33BeE30e699bB1b6BBc8F622fEa89",
-    name: "BonzAI",
-    verified: true,
-  },
-  category: "entertainment",
-  price: 0,
-  tags: ["manga", "anime", "animation", "japanese", "creative"],
-  requirements: {
-    minLevel: 4,
-    requiredApis: ["llm", "image", "video"],
-    requiredPermissions: [],
-  },
-  inputs: {
-    mangaPanel: {
-      type: "image",
-      default: "",
-      label: "Manga Panel (Optional)",
-      description: "Upload a manga panel to animate",
-    },
-    sceneDescription: {
-      type: "string",
-      default: "",
-      label: "Scene Description",
-      description: "Describe the scene if no image uploaded",
-    },
-    animeStyle: {
-      type: "select",
-      default: "shonen",
-      label: "Anime Style",
-      options: [
-        "shonen",
-        "shojo",
-        "seinen",
-        "slice-of-life",
-        "mecha",
-        "isekai",
-        "horror",
-      ],
-    },
-    motionType: {
-      type: "select",
-      default: "action",
-      label: "Motion Type",
-      options: [
-        "action",
-        "emotional",
-        "comedic",
-        "dramatic",
-        "peaceful",
-        "intense",
-      ],
-    },
-  },
-  prompt: {
-    system: "You are an anime director.",
-    task: "Create anime sequences.",
-    outputFormat: { type: "json" },
-  },
-  tools: { bonzai: [], mcp: [] },
-  execution: {
-    type: "javascript",
-    entrypoint: "execute",
-    async execute(inputs, context) {
-      const { mangaPanel, sceneDescription, animeStyle, motionType } = inputs;
-      const hasMangaPanel = mangaPanel && mangaPanel.length > 100;
-
-      context.updateStatus?.("Loading AI model...");
-      await ensureLLMLoaded();
-
-      context.updateStatus?.("Creating anime sequence...");
-      const animePrompt = `Create an anime sequence for a ${animeStyle} style scene.
-Scene: ${sceneDescription || "A dramatic manga panel"}
-Motion type: ${motionType}
-
-Output JSON with:
-- "title": Scene title
-- "keyFrames": Array of 3 key frames, each with:
-  - "description": What happens in this frame
-  - "imagePrompt": Detailed anime-style image prompt
-  - "motion": How this frame should animate
-  - "dialogue": Any dialogue (or null)
-- "soundEffects": Array of suggested sound effects
-- "mood": Overall mood
-
-Return ONLY valid JSON.`;
-
-      const animeResponse = await generateText(animePrompt);
-      let animeSequence;
-      try {
-        animeSequence = extractJSON(animeResponse);
-      } catch (e) {
-        throw new Error(`Failed to parse anime sequence: ${e.message}`);
-      }
-
-      context.updateStatus?.("Freeing memory...");
-      await unloadLLM();
-
-      // Generate key frames
-      context.updateStatus?.("Drawing key frames...");
-      for (let i = 0; i < animeSequence.keyFrames.length; i++) {
-        const frame = animeSequence.keyFrames[i];
-        context.updateStatus?.(
-          `Drawing frame ${i + 1}/${animeSequence.keyFrames.length}...`,
-        );
-        try {
-          let imageResult;
-          const prompt = `${frame.imagePrompt}, ${animeStyle} anime style, high quality animation frame, vibrant colors`;
-
-          if (hasMangaPanel && i === 0) {
-            // Use manga panel as base for first frame
-            imageResult = await editImage(mangaPanel, prompt, {
-              strength: 0.7,
-              width: 1024,
-              height: 576,
-            });
-          } else {
-            imageResult = await generateImage(prompt, {
-              width: 1024,
-              height: 576,
-            });
-          }
-          frame.image = imageResult.image_base64 || imageResult.image;
-
-          // Animate the frame
-          context.updateStatus?.(`Animating frame ${i + 1}...`);
-          const videoResult = await generateVideo(
-            frame.image,
-            `${frame.motion}, anime animation, smooth motion`,
-            { frames: 121, fps: 24, height: 448, width: 640 },
-          );
-          frame.video = videoResult.video_path || videoResult.video;
-        } catch (e) {
-          frame.image = null;
-          frame.video = null;
-        }
-      }
-
-      return {
-        success: true,
-        anime: animeSequence,
-        meta: {
-          animeStyle,
-          motionType,
-          frameCount: animeSequence.keyFrames.length,
-        },
-      };
-    },
-  },
-  metadata: {
-    createdAt: "2025-01-25T00:00:00Z",
-    updatedAt: "2025-01-25T00:00:00Z",
-    license: "MIT",
-  },
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 10. HAIRSTYLE STUDIO (Personal Care)
@@ -8933,10 +8623,7 @@ Scene: ${scenario.description}
       const recentEmotionsStr = recentEmotions.slice(-3).join(", ");
       const recentActionsStr = recentActions.slice(-2).join("; ");
 
-      context.updateStatus?.("Loading Language Model...");
-      await ensureLLMLoaded(ROLEPLAY_LLM);
-
-      context.updateStatus?.(`${companion.name} is thinking...`);
+            context.updateStatus?.(`${companion.name} is thinking...`);
 
       // Build smart image generation instructions
       let imageInstructions = "";
@@ -9512,7 +9199,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
           );
           const isExplicitScene = isAdult && hasExplicitKeywords;
 
-          // Every scene uses Klein; content level controls the prompt, not downloads.
+          // Every scene uses Qwen Image 2.1; content level controls the prompt, not downloads.
 
           // ═══════════════════════════════════════════════════════════════════
           // ENHANCED IMAGE PROMPT GENERATION
@@ -9621,7 +9308,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
             "covered genitals",
           ].join(", ");
 
-          // Match the Klein pipeline advertised by roleplay's download requirements.
+          // Match the Qwen Image 2.1 pipeline advertised by roleplay's download requirements.
           imageResult = await generateImage(prompt, {
             referenceImage: companion.image || companion.avatarUrl,
             width: 1024,
@@ -9719,7 +9406,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
         `[Roleplay] Video check: includeVideo=${includeVideo}, hasImage=${!!response.image}, hasAudio=${!!response.audio}, emotion=${videoEmotionLower}, isPeakEmotion=${isPeakEmotion}`,
       );
 
-      // Wan uses a starting image; video must never enable voice implicitly.
+      // H3 uses a starting image; video must never enable separate TTS implicitly.
       // If video is enabled but no image exists, generate one for the video
       if (includeVideo && !response.image && isPeakEmotion) {
         console.log(
@@ -9859,8 +9546,7 @@ Be literal and precise. Think like a cinematographer describing a shot list. Sta
 
 Write ONLY the video description paragraph, nothing else:`;
 
-          await ensureLLMLoaded(ROLEPLAY_LLM);
-          const videoPromptRaw = await generateTextWithModel(
+                const videoPromptRaw = await generateTextWithModel(
             videoPromptInstruction,
             "",
             ROLEPLAY_LLM,
@@ -9889,59 +9575,19 @@ Write ONLY the video description paragraph, nothing else:`;
             "Content-Type": "application/json",
             ...authHeaders,
           };
-          // Extract audio base64 for video conditioning (companion voice sync)
-          let audioBase64ForVideo = null;
-          if (response.audio) {
-            // response.audio can be a data URL or path - extract base64 if data URL
-            if (response.audio.startsWith("data:audio")) {
-              // Extract base64 from data URL: "data:audio/wav;base64,..."
-              const audioMatch = response.audio.match(
-                /^data:audio\/[^;]+;base64,(.+)$/,
-              );
-              if (audioMatch) {
-                audioBase64ForVideo = audioMatch[1];
-                console.log(
-                  "[Roleplay] Passing companion audio to video for voice sync",
-                );
-              }
-            }
-          }
-
-          // Roleplay video uses Wan 2.2 (/video/quality) — QuantStack
-          // Q5_K_M GGUF + Lightning Seko V1 LoRA loaded on top. Locked
-          // to the distillation point: 4 steps + CFG 1.0.
-          //
-          // Roleplay defaults to a short 512×320 Wan clip. It keeps the
-          // interaction responsive while preserving enough detail for
-          // inline playback and optional enhancement.
-          // Defensive: response.image is fresh raw base64 on the live
-          // turn, but resolveImageBase64 also handles bonzai-blob:// /
-          // data: prefixes for any future call site that reuses this
-          // path with a stored image.
+          // H3 generates native audio; it does not lip-sync the separate TTS track.
+          const remoteVideoSettings = await globalThis.window?.electronAPI?.openRouter?.status?.();
+    if (!(remoteVideoSettings?.active && remoteVideoSettings.mediaModels?.video) && globalThis.localStorage?.getItem('bonzai:minimax-h3-terms') !== 'accepted') throw new Error('Accept the MiniMax H3 license in roleplay settings before generating video.');
           const videoImageBase64 = await resolveImageBase64(response.image);
-          const videoResponse = await fetch(
-            `http://localhost:${port}/video/quality`,
-            {
-              method: "POST",
-              headers: videoHeaders,
-              body: JSON.stringify({
-                prompt: videoPrompt,
-                negative_prompt: VIDEO_NEG_DEFAULT,
-                image_base64: videoImageBase64,
-                // NOTE: /video/quality doesn't currently consume audio for
-                // conditioning — audio_base64 is kept here so the call
-                // stays forward-compatible if Wan adds audio sync later.
-                audio_base64: audioBase64ForVideo,
-                height: 320,
-                width: 512,
-                num_frames: 49, // 16 fps × ~3s
-                fps: 16,
-                num_inference_steps: 4,
-                guidance_scale: 1.0,
-                auto_download: true,
-              }),
-            },
-          );
+          const videoPayload = { prompt: videoPrompt, image_base64: videoImageBase64,
+            height: 288, width: 512, duration: 5, num_frames: 124, num_inference_steps: 8,
+            guidance_scale: 1, license_accepted: true, auto_download: true };
+          const remoteVideo = await routeFlaskRequest('/video/sota', videoPayload);
+          const videoResponse = remoteVideo.handled
+            ? { ok: true, json: async () => remoteVideo.result }
+            : await fetch(`http://localhost:${port}/video/sota`, {
+              method: 'POST', headers: videoHeaders, body: JSON.stringify(videoPayload),
+            });
 
           if (videoResponse.ok) {
             const videoData = await videoResponse.json();
@@ -9950,7 +9596,7 @@ Write ONLY the video description paragraph, nothing else:`;
 
               // Restore detail without changing the scene's timing. Keep the
               // original available if restoration fails, and record that state.
-              if (finalVideoPath) {
+              if (finalVideoPath && !remoteVideo.handled) {
                 try {
                   const enhanced = await enhanceVideo({
                     baseUrl: `http://localhost:${port}`, videoPath: finalVideoPath, headers: videoHeaders,
@@ -9991,13 +9637,19 @@ Write ONLY the video description paragraph, nothing else:`;
 
               // Clear memory after video generation (preserve TTS for voice consistency)
               await clearGenerationMemory(false, true);
+            } else {
+              throw new Error('MiniMax H3 returned no video.');
             }
           } else {
             const errorText = await videoResponse.text();
-            console.warn(
-              `[Roleplay] Video generation failed (${videoResponse.status}):`,
-              errorText,
-            );
+            let failure;
+            try { failure = JSON.parse(errorText); } catch { /* Non-JSON server error. */ }
+            response.videoFailure = {
+              generationId: failure?.generation_id,
+              settings: failure?.generation_settings,
+              status: videoResponse.status,
+            };
+            throw new Error(failure?.error || `MiniMax H3 request failed (HTTP ${videoResponse.status}).`);
           }
         } catch (e) {
           console.warn(
@@ -10006,6 +9658,8 @@ Write ONLY the video description paragraph, nothing else:`;
             e.stack,
           );
           response.video = null;
+          response.mediaErrors = [...(response.mediaErrors || []),
+            `Video could not be generated: ${e.message || String(e)}`];
         }
       } else if (includeVideo && !response.image) {
         console.log(
@@ -11422,9 +11076,7 @@ export const massChat = createSkillDefinition({
         updateStatus?.(`Running ${filename}…`);
         const startedAt = Date.now();
         try {
-          await api.loadModel({ filename });
-          await api.resetChat?.();
-          const reply = await api.chat(prompt, { temperature, maxTokens });
+          const reply = await api.chat(prompt, { temperature, maxTokens, model: { filename }, isolated: true });
           const durationMs = Date.now() - startedAt;
           const text = typeof reply === "string" ? reply : reply?.text || "";
           const tokenCount = text.split(/\s+/).filter(Boolean).length;
@@ -11672,6 +11324,7 @@ const flagshipSkillCatalog = [
   dslaSmartMarket, // Prediction Market Maker
   roleplayCompanion, // Roleplay Companion
   meditationForge, // Meditation Forge
+  podcastStudio, musicVideoForge, mangaToAnime,
   videoCaptioning, // Video Captioning
   fingerFrameDirector, // Finger Frame Director
   tcgAnalysis, // Trading Card Game Analysis

@@ -40,7 +40,7 @@ test(
       );
       await page.goto(url + "/src/assets/tokens.css");
       await page.setContent(
-        '<link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css"><link rel="stylesheet" href="/src/assets/buttons.css"><div id="app" style="padding:20px"></div>',
+        '<link rel="stylesheet" href="/src/assets/fonts/fonts.css"><link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css"><link rel="stylesheet" href="/src/assets/buttons.css"><div id="app" style="padding:20px"></div>',
       );
       await page.evaluate(async () => {
         window.reads = 0;

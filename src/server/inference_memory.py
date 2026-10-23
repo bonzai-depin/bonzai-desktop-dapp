@@ -151,7 +151,7 @@ def bound_gguf_layers(model, device, checkpoint=None):
     return count
 
 
-def configure_pipeline(pipe, device, checkpoint=None):
+def configure_pipeline(pipe, device, checkpoint=None, *, sequential_components=()):
     """Layer offload on constrained accelerators; resident fast path otherwise."""
     from diffusers.hooks import apply_group_offloading
     # Estimate resident weights plus working space; a large CUDA card should
@@ -167,6 +167,12 @@ def configure_pipeline(pipe, device, checkpoint=None):
             continue
         if name in ('vae', 'audio_vae', 'vocoder'):
             component.to(device)
+            continue
+        if name in sequential_components and torch.device(device).type != 'cpu':
+            # Preserve the original file-backed CPU tensors instead of copying
+            # every accelerator layer back into a new CPU allocation.
+            from accelerate import cpu_offload
+            cpu_offload(component, execution_device=device)
             continue
         if torch.device(device).type != 'cpu':
             apply_group_offloading(component, onload_device=device, offload_device='cpu', offload_type='leaf_level')

@@ -88,3 +88,23 @@ test('roleplay Create preserves portrait conditioning and routes video through W
   assert.equal(actions[1].params.image_base64, 'scene-frame');
   assert.equal(actions.length, 2, 'Video must not generate voice implicitly');
 });
+
+test('roleplay video commands use H3 only after license acceptance', async () => {
+  const previous=globalThis.localStorage;
+  let accepted=false;
+  const calls=[];
+  globalThis.localStorage={getItem:()=>accepted?'accepted':null};
+  const deps={create:async action=>{calls.push(action);return {payload:'video',pipeline:'video'};},persist:async output=>output};
+  try {
+    const request={kind:'create',pipeline:'video',prompt:'A quiet garden'};
+    const context={mediaModes:{video:'sota'},image:'reference'};
+    await assert.rejects(()=>runChatCapability(request,context,deps),/license/);
+    assert.equal(calls.length,0);
+    accepted=true;
+    await runChatCapability(request,context,deps);
+    assert.equal(calls[0].mode,'sota');
+    assert.equal(calls[0].params.license_accepted,true);
+    assert.equal(calls[0].params.num_frames,124);
+    assert.equal(calls[0].params.image_base64,'reference');
+  } finally { if(previous===undefined)delete globalThis.localStorage;else globalThis.localStorage=previous; }
+});

@@ -37,15 +37,15 @@ test('company displays saved portraits and hires agents without workflow assignm
     const coordinator = page.locator('.role-row').filter({ hasText: 'Coordinator' }).first();
     const picker = coordinator.locator('.col-companion select');
     await picker.locator('option[value="custom-existing-companion"]').waitFor({ state: 'attached' });
-    assert.deepEqual(await picker.locator('option').allTextContents(), ['— inherit —', 'Maya Existing']);
+    assert.deepEqual(await picker.locator('option').allTextContents(), ['Not assigned', 'Maya Existing']);
     assert.equal(await picker.inputValue(), 'custom-existing-companion', 'The requested hire is preselected when creating the first team');
     assert.equal(await page.evaluate(() => window.companyAgentCatalog.pendingHireId), null, 'Consume the request only after assigning the saved companion');
     await coordinator.locator('.worker-model-control').click();
     await page.getByRole('button', { name: 'Use this model', exact: true }).click();
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
-    await page.locator('input[placeholder="Shop operations"]').fill('Saved companion team');
+    await page.getByLabel('Team name', {exact:true}).fill('Saved companion team');
     await page.locator('textarea').first().fill('Caption this week\'s product videos.');
-    await page.getByRole('button', { name: /Create agentic team/ }).click();
+    await page.getByRole('button', { name: /Create a smart workflow/ }).click();
 
     await page.waitForFunction(() => window.formedCompany || document.querySelector('.bz-notice--danger'), null, { timeout: 5000 }).catch(async error => { throw new Error(`${error.message}\n${await page.locator('.bz-notice--danger').allTextContents()}\n${errors.join('\n')}`); });
     assert.equal(await page.locator('.bz-notice--danger').count(), 0, await page.locator('.form-shell').innerText());
@@ -125,7 +125,7 @@ test('a roster read error does not block the company workspace from initializing
     });
     await page.waitForFunction(() => window.companyInitialized === true);
     await page.getByRole('alert').filter({ hasText: 'Roster unavailable' }).waitFor();
-    assert.equal(await page.locator('.company-onboarding').isVisible(), true);
+    assert.equal(await page.locator('.workflow-start').isVisible(), true);
     assert.deepEqual(errors, []);
     await page.evaluate(() => window.companyFixture.unmount());
   } finally { await browser.close(); }

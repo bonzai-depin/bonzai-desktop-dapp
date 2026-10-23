@@ -3,11 +3,12 @@ export function mintLicenseStatus(generation = {}, catalog = {}) {
   const list=value=>Array.isArray(value)?value:value?[value]:[];
   const sources = [generation, generation.modelProvenance, ...list(generation.sources), ...list(generation.loras)].filter(Boolean);
   const identity = String(generation.model || '').toLowerCase();
-  const aliases={'flux-klein':'image_turbo','z-image-turbo':'image_quality','sdxl':'image_standard','kokoro':'audio_turbo','chatterbox-multilingual-v3':'audio_quality','ace-step-v1.5-xl-turbo-diffusers':'music_fast'};
+  const aliases={'qwen-image-2.1':'image_standard','qwen-image-2.1-turbo':'image_turbo','z-image-turbo':'image_quality','kokoro':'audio_turbo','chatterbox-multilingual-v3':'audio_quality','ace-step-v1.5-xl-turbo-diffusers':'music_fast'};
   const alias=aliases[identity];
   const descriptors = Object.entries(catalog).filter(([key, model]) =>
     key === generation.pipeline || key === alias || [key, model.name, model.filename, model.repo].some(value => value && String(value).toLowerCase() === identity));
   for (const [, descriptor] of descriptors) sources.push(descriptor);
+  if (identity === 'sdxl') sources.push({license:'CreativeML Open RAIL++-M'});
   // Legacy records used this alias before license snapshots were persisted.
   if (/flux[-. ]?(?:2[-. ]?)?klein|flux.2-klein-9b/i.test(identity)) sources.push({license:'flux-non-commercial-license'});
   const licenses = sources.map(s => s.license || s.licenseName || s.license_id).filter(Boolean).map(String);
@@ -55,8 +56,10 @@ export function recordedMintGeneration(record = {}, extra = {}) {
     license:record.license || data.license, commercialAllowed:record.commercialAllowed ?? data.commercialAllowed,
     modelProvenance:record.modelProvenance || null, sources:record.sources || [], loras:record.loras || data.loras || (record.lora ? [record.lora] : []),
     metadata:record.metadata || data.metadata || {},
+    outputText:record.outputText || data.text || record.answer?.text || '',
     negativePrompt:record.negativePrompt || record.negative_prompt || data.negative_prompt || '',
     hasReferenceImage:record.hasReferenceImage === true || record.mode === 'i2v',
+    songName:record.songName || record.songTitle || data.song_title || null,
     musicParams:record.musicParams || null, voiceGender:record.voiceGender || null, language:record.language || null,
     ...Object.fromEntries(Object.entries(extra).filter(([k])=>!['model','modelProvenance','parameters'].includes(k)))};
 }
@@ -64,4 +67,23 @@ export function recordedMintGeneration(record = {}, extra = {}) {
 export function validateMintFormat(inferenceType, contentType) {
  const formats={image:/^image\/(png|jpeg|webp|gif|avif)$/,audio:/^audio\/(mpeg|wav|ogg|flac|mp4|webm|x-wav)$/,video:/^video\/(mp4|webm|quicktime)$/,text:/^text\//,object:/^application\/javascript$/,training:/^application\/json$/};
  if(!formats[inferenceType]?.test(contentType)) throw new Error('The selected media type and file format do not match.');
+}
+
+// History may retain a local blob-protocol URL instead of inline base64.
+// Resolve it before both preview and publication so they use identical bytes.
+export async function resolveMintMediaBytes(content, contentType) {
+  if (/^(image|audio|video)\//.test(contentType) && typeof content === 'string' && /^(?:bonzai-blob:|blob:|https?:|file:)/i.test(content)) {
+    let bytes;
+    if (content.startsWith('file:') && globalThis.window?.electronAPI?.readFileAsBase64) {
+      const path = decodeURIComponent(new URL(content).pathname);
+      bytes = mintMediaBytes(await window.electronAPI.readFileAsBase64(path), contentType);
+    } else {
+      const response = await fetch(content, {signal: AbortSignal.timeout(15000)});
+      if (!response.ok) throw new Error('This saved file is unavailable. Reopen it from generation history and try again.');
+      bytes = new Uint8Array(await response.arrayBuffer());
+    }
+    if (!bytes.length) throw new Error('The selected media is empty.');
+    return bytes;
+  }
+  return mintMediaBytes(content, contentType);
 }

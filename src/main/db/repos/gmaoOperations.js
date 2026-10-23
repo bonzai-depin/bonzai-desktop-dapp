@@ -1,4 +1,5 @@
 /** Operational records share the company's local boundary, including maintenance ↔ purchasing. */
+import * as casework from './gmaoCasework.js';
 import { GAS_CONTRACT_TERMS, interventionProgress } from "../../../services/company/gmaoProcess.js";
 import { v4 as uuid } from "uuid";
 import { get } from "../connection.js";
@@ -184,6 +185,8 @@ export function getDossier(companyId, reference) {
       )
       .all(companyId, workOrder.id)
       .map(camel);
+  const fieldEvidence=casework.snapshot(companyId,{workOrderId:workOrder.id});
+  const serializedEvidence=JSON.stringify(fieldEvidence.records);
   return {
     workOrder,
     site,
@@ -194,6 +197,8 @@ export function getDossier(companyId, reference) {
       ? camel(owned("gmao_assets", companyId, workOrder.assetId))
       : null,
     ...related,
+    casework: fieldEvidence,
+    relatedAssets: db.prepare('SELECT id,asset_code,serial_number FROM gmao_assets WHERE company_id=?').all(companyId).filter(a=>serializedEvidence.includes(a.id)).map(camel),
     maintenance: dossierContext(companyId, workOrder),
     process: interventionProgress(workOrder, related),
   };

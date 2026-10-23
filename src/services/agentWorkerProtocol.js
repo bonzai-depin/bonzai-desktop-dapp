@@ -1,7 +1,8 @@
 import { ethers } from 'ethers';
+import { validateServiceOffer } from './agentServiceOffer.js';
 
 export const WORKER_VERSION = 1;
-export const WORKER_CAPABILITIES = Object.freeze(['text', 'image', 'audio', 'music', 'video', 'vision', '3d', 'skill', 'fineTune', 'workflow']);
+export const WORKER_CAPABILITIES = Object.freeze(['text', 'image', 'audio', 'music', 'video', 'vision', '3d', 'skill', 'fineTune', 'workflow', 'assets']);
 export const sameAddress = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const digest = value => ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(value)));
 export const workerKey = ref => `${ref.chainId}:${String(ref.collection).toLowerCase()}:${ref.tokenId}`;
@@ -16,6 +17,7 @@ export function validateWorkerGrant(grant, now = Date.now()) {
     || grant.capabilities.some(c => !WORKER_CAPABILITIES.includes(c))
     || !Array.isArray(grant.workflows) || grant.workflows.length > 100 || grant.workflows.some(w => typeof w !== 'string' || w.length > 160)
     || typeof grant.name !== 'string' || grant.name.length > 100) throw new Error('Invalid or expired worker delegation.');
+  if (grant.offer) validateServiceOffer(grant.offer, grant);
   return grant;
 }
 export async function verifyWorkerGrant(descriptor, resolveIdentity, peerId, now = Date.now(), verifySignature) {

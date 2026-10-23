@@ -1,6 +1,6 @@
 <template>
   <section class="protocol-recovery" aria-label="Payments and royalties">
-    <h3 class="bz-h3">Payments &amp; Royalties</h3>
+    <h3 class="rewards-section-title"><span class="material-symbols-outlined" aria-hidden="true">account_balance_wallet</span>Payments &amp; Royalties</h3>
     <p>
       Recover escrow payments, refunds and contribution royalties directly from
       the chain, including on a new device.
@@ -696,4 +696,6 @@ select {
 details {
   margin-top: var(--bz-space-5);
 }
+
+.rewards-section-title{display:flex;align-items:center;gap:12px;font-family:var(--bz-font-metric);font-weight:900;font-style:italic;font-size:26px;line-height:1.2;margin:0 0 16px}.rewards-section-title>span{font-size:24px;color:var(--bz-accent);font-variation-settings:'wght' 200}section>p{max-width:85ch;margin:12px 0 20px}details{border-top:1px solid var(--bz-border);padding:20px 0;margin-top:16px}summary{cursor:pointer;font-weight:600;padding:4px 0 12px;font-size:16px}details p{max-width:85ch;margin:12px 0 16px}details button{margin-top:8px}details label{display:grid;gap:8px}input{box-sizing:border-box}section{padding-bottom:24px}@media(max-width:600px){.rewards-section-title{font-size:22px}details{padding:16px 0}}
 </style>

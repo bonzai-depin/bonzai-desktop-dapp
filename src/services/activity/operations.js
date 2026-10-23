@@ -22,5 +22,5 @@ export function generationPatch(event) {
 }
 export function orderOperations(rows) {
   const rank = {failed:0,interrupted:0,attention:0,running:1,queued:2,monitoring:3,completed:4,cancelled:5};
-  return [...rows].sort((a,b)=>(rank[a.status]??3)-(rank[b.status]??3)||b.updatedAt-a.updatedAt);
+  return [...rows].sort((a,b)=>(rank[a.status]??3)-(rank[b.status]??3)||(a.status==='queued'&&b.status==='queued' ? a.startedAt-b.startedAt : b.updatedAt-a.updatedAt));
 }

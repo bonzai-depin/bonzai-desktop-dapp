@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { validateServiceOffer, verifyOfferPayment } from './agentServiceOffer.js';
 
 export function buildSmartAgentJobTerms(agent, input) {
   const title = String(input.title || '').trim();
@@ -8,20 +9,23 @@ export function buildSmartAgentJobTerms(agent, input) {
   if (amount <= 0n) throw new Error('Enter a positive amount of the smart agent’s token.');
   if (!ethers.isAddress(agent.tokenAddress) || agent.tokenAddress === ethers.ZeroAddress) throw new Error('A verified social token is required.');
   if (!ethers.isAddress(agent.worker) || agent.worker === ethers.ZeroAddress) throw new Error('The smart agent has no payment wallet.');
+  if (agent.serviceOffer && !input.execution) throw new Error('Specify the inputs for this service before funding.');
   if (input.execution && (typeof input.executionPeer !== 'string' || !input.executionPeer || input.executionPeer.length > 160)) throw new Error('Choose the provider peer for this execution.');
   if (input.executionCaller && !ethers.isAddress(input.executionCaller)) throw new Error('Invalid requesting agent wallet.');
   const terms = {
-    version: 1, title, outcome, ...(input.executionCaller ? { executionCaller: input.executionCaller } : {}), ...(input.execution ? { executionPeer: input.executionPeer, executionHash: ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(input.execution))) } : {}), companionTokenId: String(agent.tokenId), worker: agent.worker,
+    version: 1, title, outcome, ...(agent.serviceOffer ? {serviceOffer:validateServiceOffer(agent.serviceOffer)} : {}), ...(input.executionCaller ? { executionCaller: input.executionCaller } : {}), ...(input.execution ? { executionPeer: input.executionPeer, executionHash: ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(input.execution))) } : {}), companionTokenId: String(agent.tokenId), worker: agent.worker,
     currency: agent.tokenAddress, amount: amount.toString(), decimals: agent.decimals,
     chainId: agent.chainId, escrow: agent.escrow, arbitrator: agent.arbitrator,
     routeAssetId: agent.routeAssetId || ethers.ZeroHash,
     platformBps: agent.platformBps, treasuryBps: agent.treasuryBps, holderBps: agent.holderBps, contributionBps: agent.routeAssetId && agent.routeAssetId !== ethers.ZeroHash ? agent.contributionBps : 0,
     acceptWindow: agent.acceptWindow, deliveryWindow: agent.deliveryWindow, reviewWindow: agent.reviewWindow, disputeWindow: agent.disputeWindow,
   };
+  if (agent.serviceOffer) verifyOfferPayment(agent.serviceOffer, terms);
   return { terms, amount, termsHash: ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(terms))) };
 }
 
 export function verifySmartAgentQuote(reviewed, current) {
+  if (reviewed.serviceOffer?.hash !== current.serviceOffer?.hash) throw new Error('The asset package changed. Review it again before funding.');
   for (const key of ['owner', 'tokenAddress', 'worker', 'arbitrator', 'escrow', 'tokenId', 'decimals', 'platformBps', 'treasuryBps', 'holderBps', 'contributionBps', 'chainId', 'routeAssetId', 'acceptWindow', 'deliveryWindow', 'reviewWindow', 'disputeWindow']) {
     if (String(reviewed[key] ?? '').toLowerCase() !== String(current[key] ?? '').toLowerCase()) throw new Error('The smart agent’s terms changed. Review the updated job before funding.');
   }

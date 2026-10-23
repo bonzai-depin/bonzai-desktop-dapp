@@ -13,7 +13,7 @@
       <ChatLayout
         class="bz-text-chat"
         :messages="threadInferences"
-        :autoscroll="false"
+        :autoscroll="true"
         :busy="isLoading"
         :rail-collapsed="isHistoryCollapsed"
         rail-label="chat history"
@@ -53,8 +53,8 @@
                   {{ isHistoryCollapsed ? 'left_panel_open' : 'left_panel_close' }}
                 </span>
               </button>
-              <button type="button" class="bz-iconbtn" title="Browse models" aria-label="Browse models" @click="openModelPicker">
-                <span class="material-symbols-outlined">folder_open</span>
+              <button type="button" class="bz-btn bz-btn--ghost" title="Browse models" aria-label="Browse models" @click="openModelPicker">
+                <span class="material-symbols-outlined">folder_open</span>{{ $ui("Open model") }}
               </button>
               <button type="button" class="bz-iconbtn" title="Import history" aria-label="Import history" @click="importHistory()">
                 <span class="material-symbols-outlined">upload</span>
@@ -115,8 +115,8 @@
           <!-- Default empty state when model is ready but no conversation is active -->
           <div v-else-if="!threadInferences.length" class="bz-text-chat__empty">
             <EmptyChat
-              :model-name="loadedModel?.modelname || currentModel.modelname"
-              :headline="`What are we making with ${loadedModel?.modelname || currentModel.modelname}?`"
+              :model-name="chatHeaderTitle"
+              :headline="`What are we making with ${chatHeaderTitle}?`"
               subhead=""
               @pick="pickPrompt"
               @browse-models="openModelPicker"
@@ -156,6 +156,12 @@
                 @mint="openMint(inf)"
                 @delete="deleteMessage(inf)"
               >
+                <template #actions>
+                  <template v-if="inf.answer.text && !(isLoading && inf.answer.id === streamingInferenceId)">
+                    <button type="button" class="chat-workflow-action" @click="createPodcast(inf)"><span class="material-symbols-outlined" aria-hidden="true">podcasts</span>{{ $ui('Podcast') }}</button>
+                    <button type="button" class="chat-workflow-action" @click="agentHandoff = inf"><span class="material-symbols-outlined" aria-hidden="true">forward_to_inbox</span>{{ $ui('Send To Agent') }}</button>
+                  </template>
+                </template>
                 <div class="answer markdown-body" @click="handleAnswerClick">
                   <div
                     v-if="inf.tokensPerSecond || (inf.networkMode && inf.networkMode !== 'local')"
@@ -289,7 +295,7 @@
             :streaming="isLoading"
             :disabled="!hasAccess || !isChatReady"
             :attachments="chatAttachments"
-            :enable-attachments="isMultimodalModel && isMmprojAvailable"
+            :enable-attachments="isMultimodalModel && (remoteInference.active || isMmprojAvailable)"
             :slash-commands="slashCommands"
             :hint="composerHint"
             @submit="hasAccess && sendMessage(form.prompt)"
@@ -371,6 +377,7 @@
   </div>
 
   <!-- Mint Modal -->
+  <SendToAgentModal v-if="agentHandoff" :content="stripThinkBlocks(agentHandoff.answer.text)" :source-id="String(agentHandoff.id)" @close="agentHandoff = null" />
   <MintModal
     v-if="mintTarget"
     :visible="!!mintTarget"
@@ -381,6 +388,7 @@
 </template>
 
 <script>
+import { visibleText } from "../shared/visibleText.js";
 import { reportOperation } from "../stores/activityStore.js";
 import { bonzaiCodeBlockPlugin } from "../shared/markdownCode.js";
 import {
@@ -399,6 +407,7 @@ import VueMarkdown from "vue-markdown-render";
 import useClipboard from "vue-clipboard3";
 import { recordedMintGeneration } from "../services/mintValidation.js";
 import MintModal from "./MintModal.vue";
+import { remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
 import DownloadRequirement from "./DownloadRequirement.vue";
 import { DEFAULT_LLM_ID, DEFAULT_LLM_TIER, selectPreferredModel } from "../config/modelDefaults.js";
 import { modelStore } from "../stores/modelStore.js";
@@ -466,14 +475,7 @@ function splitThinkSegments(text) {
  * Strip every `<think>…</think>` segment from a string (used for clipboard
  * copy and for any caller that wants only the user-facing answer).
  */
-function stripThinkBlocks(text) {
-  if (!text) return "";
-  return splitThinkSegments(text)
-    .filter((s) => s.type === "content")
-    .map((s) => s.text)
-    .join("")
-    .trim();
-}
+function stripThinkBlocks(text) { return visibleText(text); }
 
 function estimateTokenCount(text) {
   const clean = stripThinkBlocks(text || "");
@@ -523,6 +525,7 @@ import { computeMemoryRequirements, computeFitTier } from "../services/modelFit.
 import GenerativeImage from "./GenerativeImage.vue";
 import AccessRequirements from "./AccessRequirements.vue";
 import ChatLayout from "./chat/ChatLayout.vue";
+import SendToAgentModal from "./company/SendToAgentModal.vue";
 import ChatMessage from "./chat/ChatMessage.vue";
 import ChatInput from "./chat/ChatInput.vue";
 import ChatHistoryRail from "./chat/ChatHistoryRail.vue";
@@ -542,7 +545,7 @@ export default {
     AccessRequirements,
     MintModal,
     ChatLayout,
-    ChatMessage,
+    ChatMessage, SendToAgentModal,
     ChatInput,
     ChatHistoryRail,
     EmptyChat,
@@ -551,6 +554,8 @@ export default {
     const { inferenceRequest } = useInferenceRouter();
 
     // ------------ NFT Minting ---------
+    const agentHandoff = ref(null);
+    const createPodcast = (inference) => window.dispatchEvent(new CustomEvent('bonzai:run-agent-workflow', { detail: { skillId: 'podcast-studio-v1.0.0', inputs: { brief: stripThinkBlocks(inference.answer.text) }, sourceId: inference.id } }));
     const mintTarget = ref(null);
 
     const openMint = (inference) => {
@@ -713,9 +718,9 @@ export default {
       || _entryFromResolved(resolveLLM(DEFAULT_LLM_ID, DEFAULT_LLM_TIER)));
     const loadedModel = ref(null);
     const hasUserSelectedModel = ref(false);
-    const chatHeaderTitle = computed(() => loadedModel.value?.modelname || currentModel.value?.modelname);
+    const chatHeaderTitle = computed(() => remoteInference.active ? `OpenRouter · ${remoteInference.model}` : loadedModel.value?.modelname || currentModel.value?.modelname);
     const activeModelProvenance = computed(() =>
-      currentModel.value?.model_provenance ||
+      remoteInference.active ? null : currentModel.value?.model_provenance ||
       currentModel.value?.provenance ||
       loadedModel.value?.model_provenance ||
       loadedModel.value?.provenance ||
@@ -729,7 +734,7 @@ export default {
       sameModelFile(loadedModel.value?.filename, currentModel.value?.filename),
     );
 
-    const isChatReady = computed(() => isCurrentModelLoaded.value);
+    const isChatReady = computed(() => remoteInference.active ? remoteInference.connected && !!remoteInference.model : isCurrentModelLoaded.value);
 
     const syncCurrentModelFromLoaded = (loaded) => {
       if (!loaded?.filename) return;
@@ -960,6 +965,7 @@ export default {
     // local panel. The legacy panel was 192 lines of duplicated UI;
     // retired in v1.6 of the design system.
     const openModelPicker = () => {
+      if (remoteInference.active) { window.dispatchEvent(new CustomEvent('bonzai:open-network')); return; }
       modelPicker.show();
     };
 
@@ -1645,12 +1651,12 @@ export default {
 
     // Check if current model supports vision
     const isMultimodalModel = computed(() => {
-      return currentModel.value?.isMultimodal === true;
+      return remoteInference.active ? remoteInference.inputModalities?.includes('image') === true : currentModel.value?.isMultimodal === true;
     });
 
     // Check if current model supports thinking/reasoning
     const isThinkingModel = computed(() => {
-      return currentModel.value?.thinking === true;
+      return !remoteInference.active && currentModel.value?.thinking === true;
     });
     const composerHint = computed(() => {
       if (branchDraft.value) return "Forking conversation";
@@ -1779,14 +1785,7 @@ export default {
       // result (or a fresh error).
       pipelineError.value = null;
 
-      // Lazy-spawn: nothing auto-loads at boot. The send button is only
-      // rendered when the picked model is on disk, so we can trust it here.
-      // loadModel is idempotent — main.js short-circuits if this model is
-      // already the running subprocess.
-      if (currentModel.value?.filename) {
-        await loadModel(currentModel.value);
-      }
-      const memoryContext = await memoryService.buildRecallContext(prompt, { includeUser: true });
+      const memoryContext = remoteInference.active ? '' : await memoryService.buildRecallContext(prompt, { includeUser: true });
       await syncSystemPrompt(memoryContext);
       const chatRequestOptions = getChatRequestOptions();
 
@@ -1800,12 +1799,12 @@ export default {
       const answerId = uuid();
       const activeBranch = branchDraft.value ? { ...branchDraft.value } : null;
       streamingInferenceId.value = answerId;
-      const modelName = currentModel.value?.modelname || "Unknown";
+      const modelName = remoteInference.active ? remoteInference.model : currentModel.value?.modelname || "Unknown";
       let configuredNetworkMode = "local";
       let pipelineEnabled = false;
       try {
         configuredNetworkMode = await window.electronAPI?.store?.get?.("p2p.networkMode", "local") || "local";
-        pipelineEnabled = await window.electronAPI?.store?.get?.("p2p.pipeline.enabled", false) || false;
+        pipelineEnabled = !remoteInference.active && await window.electronAPI?.store?.get?.("p2p.pipeline.enabled", false) || false;
       } catch (e) {
         console.warn("[GenerativeText] Failed to read network mode:", e);
       }
@@ -1845,7 +1844,7 @@ export default {
       try {
         let assistantResult;
         let tokenCount = 0;
-        let routingMode = 'local'; // 'local' | 'remote' | 'private'
+        let routingMode = remoteInference.active ? 'remote' : 'local'; // 'local' | 'remote' | 'private'
         const startTime = performance.now();
 
         // Check if we have an attached image and current model is multimodal
@@ -1873,7 +1872,7 @@ export default {
           });
 
           try {
-            const result = await inferenceRequest('llm', {
+            const result = remoteInference.active ? { useLocal: true, transport: 'openrouter' } : await inferenceRequest('llm', {
               messages: [{ role: 'user', content: prompt }],
               model: currentModel.value?.modelname,
               prompt, // for pipeline orchestrator
@@ -1902,7 +1901,7 @@ export default {
             // useLocal or no result: fall through to local streaming
             if (!assistantResult) {
               // Fallback: direct local streaming via llama-server
-              const chatOpts = { ...chatRequestOptions };
+              const chatOpts = { ...chatRequestOptions, activityId, model: currentModel.value ? JSON.parse(JSON.stringify(currentModel.value)) : null, returnMetadata: remoteInference.active };
               if (!reasoningEnabled.value) chatOpts.thoughtTokens = 0;
               // Live toggle of hybrid reasoning. Forwarded to llama-server
               // as request-level `chat_template_kwargs.enable_thinking`,
@@ -1960,8 +1959,9 @@ export default {
         const arr = inferences.value;
         const last = arr[arr.length - 1];
         if (last && last.answer.id === answerId) {
-          last.answer.text = assistantResult;
-          last.tokensPerSecond = finalTokPerSec;
+          last.answer.text = typeof assistantResult === "string" ? assistantResult : assistantResult?.text || "";
+          if (assistantResult?.source === "openrouter") { last.source = "openrouter"; last.model = assistantResult.model; last.usage = assistantResult.usage; }
+          last.tokensPerSecond = assistantResult?.usage?.completion_tokens && elapsedSec > 0 ? (assistantResult.usage.completion_tokens / elapsedSec).toFixed(1) : finalTokPerSec;
           last.networkMode = routingMode;
           last.durationMs = Math.round(elapsedSec * 1000);
           inferences.value = [...arr];
@@ -2105,6 +2105,7 @@ export default {
       }
     };
     onMounted(() => {
+      refreshRemoteInference().catch(() => {});
       window.addEventListener("bonzai:show-browse-models", handleShowBrowseModels);
       window.addEventListener("keydown", handleChatShortcuts);
       pipelineErrorUnsub = window.electronAPI?.onPipelineError?.((err) => {
@@ -2250,8 +2251,7 @@ export default {
     });
 
     // Thread of inferences to render as a multi-turn conversation.
-    // The chat view shows the newest exchange first, leaving earlier
-    // messages last per the current chat UX direction.
+    // Keep turns chronological so streaming follows the latest exchange.
     const threadInferences = computed(() => {
       const arr = inferences.value || [];
       if (!arr.length) return [];
@@ -2271,7 +2271,7 @@ export default {
       return arr.slice(startIdx, idx + 1).map((inf, i) => ({
         ...inf,
         _originalIndex: startIdx + i,
-      })).reverse();
+      }));
     });
     const recentRailEntries = computed(() =>
       [...railEntries.value]
@@ -2290,28 +2290,6 @@ export default {
       return msg.parentElement;
     };
 
-    // Auto-scroll to top when thread changes because newest messages render first.
-    watch(
-      () => threadInferences.value.length,
-      () => {
-        nextTick(() => {
-          const el = getStreamEl();
-          if (!el) return;
-          el.scrollTop = 0;
-        });
-      },
-    );
-
-    // Also scroll on streaming text updates (during active generation)
-    watch(streamingText, () => {
-      nextTick(() => {
-        const el = getStreamEl();
-        if (!el) return;
-        const atTop = el.scrollTop < 120;
-        if (atTop) el.scrollTop = 0;
-      });
-    });
-
     const pickPrompt = (p) => {
       // EmptyChat passes the prompt object — value or title becomes the
       // composer's seed text, leaving the cursor at the end so the user
@@ -2322,6 +2300,7 @@ export default {
     };
 
     return {
+      remoteInference,
       downloadProgress,
       isLoading,
       isModel,
@@ -2420,7 +2399,7 @@ export default {
       // Network modal
       requestOpenNetworkModal,
       // NFT Minting
-      mintTarget,
+      agentHandoff, createPodcast, mintTarget,
       openMint,
       onMinted,
       // Always loaded
@@ -2904,7 +2883,7 @@ div.desc p {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-left: 8px;
+  margin-left: 0;
   vertical-align: middle;
 }
 
@@ -3623,4 +3602,8 @@ ol.chat li {
   opacity: 0;
   transform: translateY(8px);
 }
+</style>
+
+<style scoped>
+.chat-workflow-action{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;border-radius:var(--bz-r-sm);background:transparent;color:var(--bz-fg-mid);padding:3px 7px;font-size:12px;cursor:pointer}.chat-workflow-action:hover{background:var(--bz-raised);color:var(--bz-fg)}.chat-workflow-action .material-symbols-outlined{font-size:16px}
 </style>

@@ -124,7 +124,7 @@ test(
       await dialog.getByLabel("Équipe destinataire").selectOption("purchasing");
       assert.match(
         await dialog.getByLabel("Membre destinataire").textContent(),
-        /Alex · Achats/,
+        /Alex · Responsable achats/,
       );
       await dialog.getByLabel("Objet", { exact: true }).fill("Start");
       await dialog
@@ -136,7 +136,7 @@ test(
       await page.locator(".exchange-body").nth(1).waitFor();
       const bylines = await page.locator(".exchange-byline").allTextContents();
       assert.match(bylines[0], /Alex.*Maintenance Martin.*Coordination/);
-      assert.match(bylines[1], /Alex.*Achats Martin.*Achats/);
+      assert.match(bylines[1], /Alex.*Achats Martin.*Responsable achats/);
       assert.match(
         await page.locator(".exchange-layout>nav").textContent(),
         /En attente/,
@@ -256,16 +256,16 @@ test(
         window.__app=createApp({render:()=>h(Wizard)});window.__app.use(createI18nPlugin());window.__app.mount('#app');
       });
       await page.setViewportSize({width:1440,height:1000});
-      await page.getByRole('heading',{name:'Créer une équipe',exact:true}).waitFor();
+      await page.getByRole('heading',{name:'Créer un workflow intelligent',exact:true}).waitFor();
       const cards=page.locator('.workflow-card');
       assert.ok((await cards.allTextContents()).some(text=>text.includes('Achats')));
       assert.ok((await cards.allTextContents()).some(text=>text.includes('Ventes')));
-      await cards.filter({has:page.locator('.workflow-card__title',{hasText:'Achats'})}).click();
+      await cards.filter({has:page.locator('.workflow-card__copy strong',{hasText:'Achats'})}).click();
       await page.locator('.wiz__actions-right button').click();
       await page.locator('#company-business-name').fill('Ateliers Martin');
       await page.locator('.wiz__actions-right button').click();
-      assert.match(await page.locator('.workspace-team-preview__roles').textContent(),/Achats/);
-      assert.equal(await page.locator('#company-demo-label').locator('..').locator('..').locator('input').isChecked(),false);
+      assert.match(await page.locator('.review-details .role-preview').textContent(),/Responsable achats/);
+      assert.equal(await page.locator('.demo-row input').isChecked(),false);
       assert.doesNotMatch(await page.locator('.wiz').textContent(),/under control|sous contrôle|jusqu’au bout/);
       assert.deepEqual(errors, []);
     } finally {

@@ -17,9 +17,12 @@
             <button v-else-if="!wallet" class="bz-btn bz-btn--primary" @click="requestConnection">{{ $t('common.connect') }}</button>
             <p v-else-if="loading" role="status">{{ $t('common.loading') }}</p>
             <form v-else-if="quote" @submit.prevent="reviewing ? fund() : review()">
+              <ol class="hire-progress" :aria-label="$ui('Hiring steps')"><li :aria-current="!reviewing ? 'step' : undefined">1 · {{ $ui('Define the job') }}</li><li :aria-current="reviewing ? 'step' : undefined">2 · {{ $ui('Review access & payment') }}</li><li>3 · {{ $ui('Fund in wallet') }}</li></ol>
+              <section v-if="quote.serviceOffer" class="hire-package"><h3 class="bz-h3">{{ quote.serviceOffer.title }}</h3><p>{{ quote.serviceOffer.outcome }}</p><ul><li v-for="asset in quote.serviceOffer.assets" :key="asset.collection+asset.tokenId"><strong>{{ asset.title }}</strong><span>{{ $ui(asset.use === 'model' ? 'Private model · inference only' : asset.use === 'knowledge' ? 'Private knowledge · used for this job' : 'Licensed original · delivered to your team') }}</span><small>{{ asset.license }}</small></li></ul></section>
+              <details v-if="execution" class="hire-brief"><summary>{{ $ui('Exact inputs shared with the provider') }}</summary><pre>{{ JSON.stringify(execution.input,null,2) }}</pre></details>
               <label>Desired outcome<input v-model="form.title" required :readonly="reviewing" placeholder="Reconcile this month’s invoices" /></label>
               <label>Scope and acceptance criteria<textarea v-model="form.outcome" required :readonly="reviewing" placeholder="Describe the work, permitted data, deliverables, and how success will be checked." /></label>
-              <label>Job payment ({{ quote.symbol }})<input v-model="form.amount" required inputmode="decimal" :readonly="reviewing" placeholder="0.00" /></label>
+              <label>Job payment ({{ quote.symbol }})<input v-model="form.amount" required inputmode="decimal" :readonly="reviewing || !!quote.serviceOffer" placeholder="0.00" /></label>
               <label>Pay with<select v-model="form.paymentMethod" :disabled="reviewing || busy"><option value="social">{{ quote.symbol }}</option><option value="usdc" :disabled="!usdcConfigured">USDC · convert automatically</option></select></label>
               <p v-if="form.paymentMethod==='usdc'" class="bz-meta">Only the missing agent tokens are purchased. The swap and escrow are separate wallet confirmations. If funding stops, purchased tokens stay in your wallet. Refunds are in {{ quote.symbol }}.</p>
               <p v-if="reviewing && checkout && checkout.output!=='0'" class="hire-review">USDC estimate: {{ formatUsdc(checkout.input) }} · Maximum: {{ formatUsdc(checkout.maximumInput) }} · 0.5% slippage · Quote valid for 10 minutes. Network fees are additional.</p>
@@ -63,12 +66,15 @@ import { web3Service } from '../services/web3.service.js';
 import { requestConnection } from '../services/connectionDialog.service.js';
 import { useModalAccessibility } from '../composables/useModalAccessibility.js';
 import BzCloseButton from './BzCloseButton.vue';
+import { operationError } from '../i18n/operations.js';
+import { useI18n } from '../i18n/index.js';
 import { withTimeout } from '../utils/withTimeout.js';
 
+const i18n = useI18n();
 const props = defineProps({ agent: { type: Object, required: true }, companyId: { type: String, default: '' }, execution: { type: Object, default: null } });
 const emit = defineEmits(['close', 'hired']);
 const dialog = ref(null), quote = ref(null), result = ref(null), loading = ref(false), busy = ref(false), error = ref(''), reviewing = ref(false);
-const form = reactive({ title: '', outcome: '', amount: '', executionCaller: '', paymentMethod: 'social' });
+const form = reactive({ title: props.agent.offer?.title || '', outcome: '', amount: props.agent.offer?.price || '', executionCaller: '', paymentMethod: 'social' });
 const usdcConfigured=stablecoinCheckoutConfigured(),checkout=ref(null);
 const formatUsdc=value=>ethers.formatUnits(value,6);
 const configured = computed(smartAgentJobsConfigured);
@@ -83,8 +89,8 @@ async function load() {
   quote.value = null; reviewing.value = false; error.value = '';
   if (!configured.value || !wallet.value) { loading.value = false; return; }
   loading.value = true;
-  try { const next = await withTimeout(fetchSmartAgentQuote(props.agent), 15000); if (current === revision) quote.value = next; }
-  catch (failure) { if (current === revision) error.value = failure.shortMessage || failure.message; }
+  try { const next = await withTimeout(fetchSmartAgentQuote(props.agent), 15000); if (current === revision) { quote.value = next; if(next.serviceOffer) form.amount=next.serviceOffer.price; } }
+  catch (failure) { if (current === revision) error.value = operationError(failure.shortMessage || failure, i18n.locale.value); }
   finally { if (current === revision) loading.value = false; }
 }
 async function review() {
@@ -93,13 +99,13 @@ async function review() {
   try { buildSmartAgentJobTerms(quote.value, { ...form, execution: props.execution, executionPeer: props.agent.peerId });
     const result=form.paymentMethod==='usdc'?await quoteWorkflowCheckout(quote.value,form.amount,account):null;
     if(rev===revision&&wallet.value===account){checkout.value=result;reviewing.value=true;}
-  } catch(failure){error.value=failure.message;} finally{busy.value=false;}
+  } catch(failure){error.value=operationError(failure, i18n.locale.value);} finally{busy.value=false;}
 }
 async function fund() {
   if (busy.value || !reviewing.value || !quote.value) return;
   busy.value = true; error.value = '';
   try { result.value = await fundSmartAgentJob(props.agent, quote.value, { ...form, checkout: checkout.value, execution: props.execution, executionPeer: props.agent.peerId, companyId: props.companyId, expectedWallet: wallet.value }); emit('hired', result.value); }
-  catch (failure) { error.value = failure.shortMessage || failure.message; reviewing.value = false; }
+  catch (failure) { error.value = operationError(failure.shortMessage || failure, i18n.locale.value); reviewing.value = false; }
   finally { busy.value = false; }
 }
 watch([wallet, () => props.agent.tokenId], load, { immediate: true });
@@ -112,7 +118,7 @@ onBeforeUnmount(() => { revision++; });
 .hire-body { padding: var(--bz-space-5); }
 .hire-body form { display: grid; gap: var(--bz-space-4); }
 .hire-body label { display: grid; gap: var(--bz-space-2); font-size: var(--bz-size-caption); color: var(--bz-fg-mid); }
-.hire-body input, .hire-body textarea, .hire-body select { width: 100%; min-height: 42px; padding: var(--bz-space-3); background: var(--bz-panel); color: var(--bz-fg); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-radius-sm); }
+.hire-body input, .hire-body textarea, .hire-body select { width: 100%; min-height: 42px; padding: var(--bz-space-3); background-color: var(--bz-panel); color: var(--bz-fg); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-radius-sm); }
 .hire-body textarea { min-height: 96px; resize: vertical; }
 .hire-terms { display: grid; grid-template-columns: 1fr auto; gap: var(--bz-space-2); font-size: var(--bz-size-caption); }
 .hire-terms > span { color: var(--bz-fg-mid); }
@@ -121,4 +127,7 @@ onBeforeUnmount(() => { revision++; });
 .hire-error { color: var(--bz-danger); overflow-wrap: anywhere; }
 .hire-review { border-top: 1px solid var(--bz-border); padding-top: var(--bz-space-3); }
 .hire-reference { overflow-wrap: anywhere; }
+</style>
+<style scoped>
+.hire-modal{width:min(760px,calc(100vw - 32px))}.hire-progress{list-style:none;display:flex;flex-wrap:wrap;gap:8px 16px;padding:0 0 16px;margin:0;border-bottom:1px solid var(--bz-border);font-size:12px;color:var(--bz-fg-mid)}.hire-progress [aria-current]{color:var(--bz-accent);font-weight:600}.hire-package{padding:20px;border:1px solid var(--bz-border);border-radius:var(--bz-r-md);background:var(--bz-panel)}.hire-package h3{margin:0 0 8px}.hire-package p{margin:0;line-height:1.6}.hire-package ul{padding:0;list-style:none;margin:16px 0 0;display:grid;gap:12px}.hire-package li{border-top:1px solid var(--bz-border);padding-top:12px;display:grid;gap:4px}.hire-package span,.hire-package small{color:var(--bz-fg-mid)}.hire-brief summary{cursor:pointer;color:var(--bz-fg-mid);font-size:13px}.hire-brief pre{max-height:200px;overflow:auto;background:var(--bz-canvas);color:var(--bz-fg);white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border-radius:var(--bz-r)}
 </style>

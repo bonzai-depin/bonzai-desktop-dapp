@@ -1,3 +1,5 @@
+import { importBatch } from '../gmao/importBatch.js';
+import * as gmaoCasework from '../db/repos/gmaoCasework.js';
 import * as companySales from '../db/repos/companySales.js';
 import * as companyIntake from '../db/repos/companyIntake.js';
 import { workspaceLicense, registerWorkspaceIpc } from '../workspace/ipc.js';
@@ -154,7 +156,12 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential } = {}
     const blob=blobStore.write(await fs.promises.readFile(file),ext,{source:'company-grant',sourceId:companyId});
     return companyGrants.persist(companyId,'document',{label:input.label || path.basename(file),...context,validUntil:input.validUntil || null,documentType:String(input.documentType || '').trim(),blob_id:blob.id,ext});
   }};
-  const operationalRepos = { companyWorkspace, companyIntake, companySales, companyGrants:grants, companyBrowser:browser, recordOperations:{...recordOperations,...recordDelivery}, companyBilling: companyBillingRepo, gmaoMaintenance: maintenanceRepo, purchasing: purchasingRepo };
+  const intake = {...companyIntake, importBatch: async (companyId, options={}) => {
+    const choice=await dialog.showOpenDialog({title:'Importer les documents',properties: options.folder ? ['openDirectory'] : ['openFile','multiSelections']});
+    if(choice.canceled) return null;
+    return importBatch(companyId,choice.filePaths,{mode:options.mode,onProgress:()=>broadcast('db:companyIntake:changed',{companyId})});
+  }};
+  const operationalRepos = { gmaoCasework, companyWorkspace, companyIntake:intake, companySales, companyGrants:grants, companyBrowser:browser, recordOperations:{...recordOperations,...recordDelivery}, companyBilling: companyBillingRepo, gmaoMaintenance: maintenanceRepo, purchasing: purchasingRepo };
   for (const [namespace, methods] of Object.entries(COMPANY_OPERATIONS)) {
     const repo = operationalRepos[namespace];
     for (const method of [...methods.reads, ...methods.writes]) {

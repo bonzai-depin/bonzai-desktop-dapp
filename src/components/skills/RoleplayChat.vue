@@ -1475,9 +1475,12 @@
               </label>
               <hr />
               <p class="media-download-intro">Images bring your scenes to life. Add voice, video or vision whenever you want.</p>
+              <label v-if="!remoteVideoEnabled" class="roleplay-h3-terms"><input type="checkbox" :checked="h3TermsAccepted" @change="acceptRoleplayH3Terms" />
+                <span>For MiniMax H3 video, I agree to the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">model license</a> and have read the <a href="https://huggingface.co/unsloth/MiniMax-H3-GGUF/blob/main/NOTICE" target="_blank" rel="noopener noreferrer">derivative notice</a>.</span>
+              </label>
               <div class="control media-selector">
                 <div v-for="media in roleplayMedia" :key="media.key" class="roleplay-media-item">
-                  <button type="button" class="media-option" :class="{ 'is-selected': settings[media.key] && isModelAvailable(media.model) }" :aria-pressed="settings[media.key] && isModelAvailable(media.model)" :disabled="!isModelAvailable(media.model)" @click="toggleMediaOption(media.key, media.model)">
+                  <button type="button" class="media-option" :class="{ 'is-selected': settings[media.key] && isModelAvailable(media.model) }" :aria-pressed="settings[media.key] && isModelAvailable(media.model)" :disabled="!isModelAvailable(media.model) || (media.key === 'enableVideo' && !remoteVideoEnabled && !h3TermsAccepted)" @click="toggleMediaOption(media.key, media.model)">
                     <span class="material-symbols-outlined media-icon" aria-hidden="true">{{ media.icon }}</span>
                     <span class="media-option-content"><strong>{{ media.name }}</strong><span class="media-option-description">{{ media.description }}</span></span>
                     <span class="media-option-state">{{ !isModelAvailable(media.model) ? media.key === 'enableImage' ? 'Recommended' : 'Optional' : settings[media.key] ? 'On' : 'Off' }}</span>
@@ -2797,6 +2800,7 @@
 </template>
 
 <script>
+import { remoteInference, refreshRemoteInference, remoteRequirementSatisfied, remoteMediaEnabled } from "../../stores/remoteInference.js";
 import RoleplayVideoPlayer from './RoleplayVideoPlayer.vue';
 import RelationshipJourney from '../roleplay/RelationshipJourney.vue';
 import HeartbeatStudio from '../roleplay/HeartbeatStudio.vue';
@@ -2918,6 +2922,7 @@ export default {
   },
   emits: ["charge-fee", "companion-selected", "companions-changed", "hire-agent", "start-roleplay"],
   setup(props, { emit, expose }) {
+    refreshRemoteInference().catch(() => {});
     // Skill store for autonomous mode (global state)
     const skillStore = useSkillStore();
     const economyNetwork = CONFIG.networks[ECONOMY_NETWORK_KEY];
@@ -3165,6 +3170,13 @@ export default {
         moltbook: { enabled: false },
       },
     });
+    const remoteVideoEnabled = computed(() => remoteMediaEnabled('video'));
+    const h3TermsAccepted = ref(localStorage.getItem('bonzai:minimax-h3-terms') === 'accepted');
+    const acceptRoleplayH3Terms = event => {
+      h3TermsAccepted.value = event.target.checked;
+      if (event.target.checked) localStorage.setItem('bonzai:minimax-h3-terms', 'accepted');
+      else { localStorage.removeItem('bonzai:minimax-h3-terms'); settings.value.enableVideo = false; }
+    };
     const companionPaymentsEnabled = false;
 
     // Message queue for handling messages during generation
@@ -3231,7 +3243,7 @@ export default {
       image_quality: "image_quality",
       audio_quality: "audio_quality_persona",
       video_fast: "video_fast",
-      video_quality: "video_quality",
+      video_sota: "video_sota",
       vision: "vision",
     };
 
@@ -3243,6 +3255,7 @@ export default {
 
     // Check if a specific model is available
     const isModelAvailable = (modelKey) => {
+      if (remoteInference.active && MODEL_REQUIREMENTS[modelKey]?.type === 'llm') return true;
       return modelAvailability[modelKey] === true;
     };
 
@@ -3256,7 +3269,7 @@ export default {
     const optionalSelectedModels = computed(() => {
       const optional = [];
       if (settings.value.enableAudio) optional.push("audio_quality");
-      if (settings.value.enableVideo) optional.push("video_quality");
+      if (settings.value.enableVideo) optional.push("video_sota");
       if (settings.value.enableVision) optional.push("vision");
       return optional;
     });
@@ -5248,11 +5261,13 @@ export default {
         storeData.sessionKey === currentSessionKey.value
       ) {
         // Store has messages for this session - merge them
-        if (storeData.history.length > chatHistory.value.length) {
+        if (storeData.history.some(message => !chatHistory.value.some(local => local.id === message.id))) {
           console.log(
             `[Roleplay] Syncing ${storeData.history.length - chatHistory.value.length} messages from store`,
           );
-          chatHistory.value = [...storeData.history];
+          const merged = new Map(storeData.history.map(message => [message.id, message]));
+          for (const message of chatHistory.value) merged.set(message.id, message);
+          chatHistory.value = [...merged.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
           sceneState.value = { ...storeData.sceneState };
           // Sync background image and history from store
           if (storeData.backgroundImage) {
@@ -5275,13 +5290,13 @@ export default {
 
     // Watch for autonomous session changes (messages generated while viewing)
     watch(
-      () => skillStore.autonomousSession.history.length,
-      (newLen, oldLen) => {
+      () => skillStore.autonomousSession.history.map(message => message.id).join("|"),
+      (newIds, oldIds) => {
         // If store has new messages and we're viewing this session
         if (
           phase.value === "chat" &&
           skillStore.autonomousSession.sessionKey === currentSessionKey.value &&
-          newLen > chatHistory.value.length
+          newIds !== oldIds
         ) {
           syncFromStore();
         }
@@ -5499,6 +5514,8 @@ export default {
     const featuredCompanions = computed(() => featuredCompanion.value ? [featuredCompanion.value] : []);
     const focusCompanion = async (id, keyboard = false) => {
       carouselId.value = id;
+      const companion = companions.value.find(item => item.id === id);
+      if (companion && selectedCompanion.value?.id !== id) await selectCompanion(companion);
       await nextTick();
       const button = carouselButtons.value[id];
       button?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
@@ -5554,6 +5571,8 @@ export default {
     const featuredScenarios = computed(() => scenarios.value.length ? [scenarios.value[stageIndex.value]] : []);
     const focusStage = async (id, keyboard = false) => {
       stageId.value = id;
+      const scenario = scenarios.value.find(item => item.id === id);
+      if (scenario) selectScenario(scenario);
       await nextTick();
       stageButtons.value[id]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       if (keyboard) stageButtons.value[id]?.focus({ preventScroll: true });
@@ -6012,6 +6031,7 @@ export default {
         }
         return;
       }
+      if (option === 'enableVideo' && !remoteVideoEnabled.value && !h3TermsAccepted.value) return;
       settings.value[option] = !settings.value[option];
     };
 
@@ -7123,7 +7143,7 @@ export default {
       // Auto-disable optional media if the model isn't available
       if (!isModelAvailable("audio_quality"))
         settings.value.enableAudio = false;
-      if (!isModelAvailable("video_quality")) settings.value.enableVideo = false;
+      if (!isModelAvailable("video_sota")) settings.value.enableVideo = false;
       if (!isModelAvailable("vision")) settings.value.enableVision = false;
 
       // Check if there's an existing session with same params
@@ -7924,7 +7944,7 @@ export default {
               : undefined),
             referenceImage: capability.pipeline === 'image' && selectedCompanion.value.image
               ? await resolvePortraitReference(selectedCompanion.value.image) : undefined,
-            mediaModes: { video: 'quality' },
+            mediaModes: { video: 'sota' },
             enabledMedia: messageContent.trim().startsWith('/') ? CHAT_MEDIA : [
               ...(settings.value.enableImage ? ['image'] : []),
               ...(settings.value.enableAudio ? ['audio'] : []),
@@ -8100,6 +8120,7 @@ export default {
             msg.video = result.response.video;
 
             msg.mediaErrors = result.response.mediaErrors || [];
+            msg.videoFailure = result.response.videoFailure || null;
             // Store environment state changes in message for session recovery
             if (result.response.timeOfDay)
               msg.timeOfDay = result.response.timeOfDay;
@@ -8495,7 +8516,9 @@ export default {
             // User profile is loaded globally — no per-session restore needed
 
             // Sync history and scene state
-            chatHistory.value = [...storeData.history];
+            const merged = new Map(storeData.history.map(message => [message.id, message]));
+          for (const message of chatHistory.value) merged.set(message.id, message);
+          chatHistory.value = [...merged.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
             sceneState.value = { ...storeData.sceneState };
 
             // Enter chat phase
@@ -8626,7 +8649,7 @@ export default {
       roleplayMedia: [
         { key: 'enableImage', category: 'image', model: 'image_turbo', icon: 'image', name: 'Images', description: 'Illustrate the scene' },
         { key: 'enableAudio', category: 'audio', model: 'audio_quality', icon: 'headphones', name: 'Voice', description: 'Hear your companion' },
-        { key: 'enableVideo', category: 'video', model: 'video_quality', icon: 'movie', name: 'Video', description: 'Animate key moments' },
+        { key: 'enableVideo', category: 'video', model: 'video_sota', icon: 'movie', name: 'Video', description: 'MiniMax H3 · video with native audio' },
         { key: 'enableVision', category: 'vision', model: 'vision', icon: 'visibility', name: 'Vision', description: 'Share images for context' },
       ],
       scenarioImageError, stageIndex, stageButtons, featuredScenarios, focusStage, moveStage,
@@ -8907,7 +8930,7 @@ export default {
       modelAvailability,
       modelAvailabilityChecked,
       isModelAvailable,
-      toggleMediaOption,
+      toggleMediaOption, remoteVideoEnabled, h3TermsAccepted, acceptRoleplayH3Terms,
       canStartChat,
       requiredLLMName,
       requiredModelsForSelection,
@@ -12053,6 +12076,7 @@ button:is(.card-action-btn,
 .role-profile-field .input:focus { border-color:var(--bz-accent); }
 .role-profile-field :is(input,textarea)::placeholder { color:var(--bz-fg-mid); opacity:1; }
 @media(max-width:720px) { .role-profile-grid { grid-template-columns:1fr; } }
+.roleplay-h3-terms{display:flex;align-items:flex-start;gap:10px;margin:16px 0;font-size:13px;line-height:1.5}.roleplay-h3-terms input{flex-shrink:0;margin-top:4px}
 </style>
 
 <style scoped>
@@ -12066,6 +12090,7 @@ button:is(.card-action-btn,
 .message-header{background:transparent!important;color:var(--bz-fg)!important;padding:10px 14px!important}.message-header .skill-chip{background:var(--bz-panel)!important;color:var(--bz-fg)!important;border:1px solid var(--bz-border)!important}.action-text{color:var(--bz-fg-mid)!important;opacity:1;line-height:1.6}
 .roleplay-stage{grid-template-columns:minmax(0,1fr);border-radius:16px;min-width:0;max-width:100%;box-sizing:border-box}.roleplay-stage>*{min-width:0}.chat-phase{min-width:0;max-width:100%}.chat-messages-container{border-radius:12px}.roleplay-session-header{flex-wrap:wrap}.roleplay-session-actions{flex-wrap:wrap}.chat-input{box-sizing:border-box;min-width:0;max-width:100%}
 @media(max-width:600px){.roleplay-stage{padding:12px;gap:12px}.chat-messages{padding:16px 12px}.chat-input{padding:12px}.roleplay-session-header{gap:12px}.roleplay-session-actions{gap:8px}.chat-message{max-width:100%}}
+.roleplay-h3-terms{display:flex;align-items:flex-start;gap:10px;margin:16px 0;font-size:13px;line-height:1.5}.roleplay-h3-terms input{flex-shrink:0;margin-top:4px}
 </style>
 
 <style scoped>
@@ -12080,4 +12105,5 @@ button:is(.card-action-btn,
   .chat-phase { height: auto; min-height: 0; }
   .roleplay-stage .chat-messages-container { flex: none; height: 50vh; min-height: 260px; }
 }
+.roleplay-h3-terms{display:flex;align-items:flex-start;gap:10px;margin:16px 0;font-size:13px;line-height:1.5}.roleplay-h3-terms input{flex-shrink:0;margin-top:4px}
 </style>

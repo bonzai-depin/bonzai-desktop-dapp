@@ -58,3 +58,22 @@ test('async construction wrappers finish before the returned group is inspected'
  assert.equal(awaitSceneConstruction(animation),animation,'do not make a synchronous animation callback syntactically invalid');
  assert.equal(awaitSceneConstruction('export default async function(){bad(}'),'export default async function(){bad(}');
 });
+
+import { constructionHelpers as H } from '../src/components/gen3d/constructionHelpers.js';
+test('Rally Buggy helper assemblies are cloned instead of crashing Mesh.updateMorphTargets',()=>{
+ const frame = new THREE.MeshStandardMaterial({color:0x888888});
+ const rubber = new THREE.MeshStandardMaterial({color:0x1a1a1a});
+ const wheel=H.wheel({radius:.12,width:.08,hubRadius:.04,spokes:6,rim:.015,material:frame});
+ // Exact constructor misuse from the failed Rally Buggy generation.
+ assert.throws(()=>new THREE.Mesh(wheel,rubber),/Cannot convert undefined or null to object/);
+ const API=generatedThreeAPI(THREE);
+ const tires=Array.from({length:4},()=>new API.Mesh(wheel,rubber));
+ assert.equal(new Set(tires).size,4);
+ for(const tire of tires){assert.ok(tire.isObject3D);assert.notEqual(tire,wheel);tire.traverse(child=>{if(child.isMesh){assert.ok(child.geometry.isBufferGeometry);assert.equal(child.material,rubber);}});}
+ wheel.traverse(child=>{if(child.isMesh)assert.equal(child.material,frame);});
+ const spring=H.spring({radius:.035,height:.12,wire:.006,turns:6,material:frame});
+ const copy=new API.Mesh(spring,null);
+ copy.traverse(child=>{if(child.isMesh)assert.equal(child.material,frame);});
+ const actual=new API.Mesh(new THREE.BoxGeometry(),frame);
+ assert.ok(actual instanceof THREE.Mesh);
+});

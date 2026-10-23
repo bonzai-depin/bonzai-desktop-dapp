@@ -49,7 +49,7 @@ test('a successful fee replacement is confirmed; uncertain submission is not ret
 test('guide does not call absent or zero contracts available and separates the money flows', () => {
   const activities = protocolActivities({});
   for (const id of ['mint', 'stake', 'rewards', 'agents', 'models', 'games', 'fees', 'jobs', 'provider', 'contributions']) assert.equal(activities.find(row => row.id === id).configured, false, id);
-  assert.match(activities.find(row => row.id === 'jobs').limitation, /not implemented/);
+  assert.match(activities.find(row => row.id === 'jobs').limitation, /requires a configured router and available liquidity/);
   assert.match(activities.find(row => row.id === 'storage').result, /not a permanent/);
   assert.equal(protocolActivities({ basketRewards: { contractAddress: '0x0000000000000000000000000000000000000000' } }).find(row => row.id === 'rewards').configured, false);
   const routes = new Set(['connect', 'storage', 'image', 'rewards', 'agent', 'tune', 'game', 'markets', 'company', 'network', 'datasets']);

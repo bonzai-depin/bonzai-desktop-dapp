@@ -335,7 +335,7 @@ import { getAuthHeaders } from '../../services/auth.service.js';
 import { meditationTiming, writeTimedMeditation } from '../../services/meditation/timing.js';
 import { measureNarrationDuration } from '../../services/meditation/audioDuration.js';
 import { meditationArtworkSource, validateMeditationArtwork } from '../../services/meditation/artwork.js';
-import { canStartGeneration, startGeneration, stopGeneration } from '../../stores/generationStore.js';
+import { startGeneration, stopGeneration } from '../../stores/generationStore.js';
 
 const STORAGE_KEY = 'meditation-forge-sessions';
 
@@ -958,7 +958,7 @@ You are lighter now. Namaste.`,
 
     const retryArtwork = async () => {
       if (!meditationData.value || !audioSrc.value || isGenerating.value || isExportingVideo.value || isRetryingArtwork.value) return;
-      if (!canStartGeneration() || !startGeneration('text')) {
+      if (!startGeneration('text')) {
         artworkError.value = 'Another generation is running. Wait for it to finish before retrying artwork.';
         return;
       }
@@ -987,7 +987,7 @@ You are lighter now. Namaste.`,
 
     const generateMeditation = async () => {
       if (!selectedScenario.value || isGenerating.value || isExportingVideo.value || isRetryingArtwork.value) return;
-      if (!canStartGeneration() || !startGeneration('text')) {
+      if (!startGeneration('text')) {
         generationError.value = 'Another generation is running. Wait for it to finish before creating this meditation.';
         return;
       }

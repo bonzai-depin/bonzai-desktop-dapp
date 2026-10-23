@@ -1175,7 +1175,7 @@ async function handleGenerateCommand(channelId, args, webhookData = {}) {
     return {
       text: `**Generate Commands**
 
-\`!bonzai generate image <prompt>\` - Fast image (FLUX Klein)
+\`!bonzai generate image <prompt>\` - Fast image (Qwen Image 2.1 Turbo)
 \`!bonzai generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
 \`!bonzai generate image_standard <prompt>\` - Standard image (SDXL)
 \`!bonzai generate video <prompt>\` - Video (LTX-2)
@@ -2085,7 +2085,7 @@ All commands use the \`!bonzai\` prefix (or \`/bonzai\` for Hermes).
 \`!bonzai reset\` - Clear history
 
 **Generation**
-\`!bonzai generate image <prompt>\` - Fast image (FLUX Klein)
+\`!bonzai generate image <prompt>\` - Fast image (Qwen Image 2.1 Turbo)
 \`!bonzai generate image_quality <prompt>\` - Quality image (Z-Image Turbo)
 \`!bonzai generate image_standard <prompt>\` - Standard image (SDXL)
 \`!bonzai generate video <prompt>\` - Video (LTX-2)

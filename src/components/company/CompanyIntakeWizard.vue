@@ -130,7 +130,7 @@ export default {
       try {
         creationPresets.value = workflowTeamPresets(await getAvailableAgentWorkflows());
         const requested = _props.initialTemplateId || _props.initialWorkflowId;
-        if (requested && !selectedWorkflowId.value && workflows.value.some(item => item.id === requested)) selectWorkflow(requested);
+        if (requested && !selectedWorkflowId.value && workflows.value.some(item => item.id === requested)) { selectWorkflow(requested); step.value = 1; }
       } catch (error) { errorMessage.value = error.message || 'Unable to load team templates.'; }
       finally { catalogLoading.value = false; }
     }
@@ -177,7 +177,7 @@ export default {
       workflowPlaceholder: "Request -> priority/service level -> assignment -> visit -> evidence -> approval -> billing",
       goals: ["Verify the initial ST1/ST2/ST3 equipment inventory", "Plan preventive visits and work orders", "Monitor P0–P3 service levels and penalty risks", "Review safety documents, subcontractors, and qualifications", "Prepare the weekly register and billing evidence"],
     } : workflow));
-    watch(() => _props.initialTemplateId || _props.initialWorkflowId, id => { if (id && workflows.value.some(item => item.id === id)) selectWorkflow(id); });
+    watch(() => _props.initialTemplateId || _props.initialWorkflowId, id => { if (id && workflows.value.some(item => item.id === id)) { selectWorkflow(id); step.value = 1; } });
     const selectedWorkflow = computed(() =>
       workflows.value.find((workflow) => workflow.id === selectedWorkflowId.value) || null,
     );

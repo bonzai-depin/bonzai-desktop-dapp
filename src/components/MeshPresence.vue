@@ -37,7 +37,7 @@
       <div class="mesh-presence__stats" :aria-label="i18n.t('rc.mesh.title')">
         <span><strong>{{ store.state.connectedPeers }}</strong> {{ i18n.t('rc.mesh.connected') }}</span>
         <span><strong>{{ store.state.lanPeers }}</strong> {{ i18n.t('rc.mesh.lan') }}</span>
-        <span><strong>{{ modeName }}</strong> {{ i18n.t('rc.mesh.mode') }}</span>
+        <span><strong>{{ modeLabel }}</strong></span>
       </div>
 
       <div class="mesh-presence__activity">
@@ -64,6 +64,7 @@ defineProps({
   compact: { type: Boolean, default: false },
 });
 
+import { operationText } from '../i18n/operations.js';
 import { useI18n } from '../i18n/index.js';
 const i18n = useI18n();
 const panelId = useId();
@@ -80,7 +81,7 @@ function dismissPanels(event) {
 }
 let stopTokenListener = null;
 const modeName = computed(() => i18n.t(store.state.mode === 'local' ? 'common.private' : `network.${store.state.mode}`));
-const modeLabel = computed(() => `${modeName.value} ${i18n.t('rc.mesh.modeTitle')}`);
+const modeLabel = computed(() => operationText(({local: 'Private Mode', consumer: 'Consumer Mode', provider: 'Provider Mode'})[store.state.mode] || 'Private Mode', i18n.state.locale));
 const formattedTokenCount = computed(() => {
   const value = lifetimeTokens.value;
   if (value >= 1_000_000_000) return `${Number((value / 1_000_000_000).toFixed(1))}B`;

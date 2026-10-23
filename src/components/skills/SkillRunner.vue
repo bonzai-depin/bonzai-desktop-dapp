@@ -1,8 +1,8 @@
 <template>
-  <div class="skill-runner">
+  <div class="skill-runner" :class="{ 'skill-runner--production': skill.execution?.managesGeneration }">
     <!-- Model Requirements Section -->
     <div v-if="modelRequirements.length > 0" class="model-requirements skill-panel">
-      <h3 class="skill-panel__title fira-sans-condensed-black-italic">
+      <h3 v-if="!skill.execution?.managesGeneration || missingModels.length" class="skill-panel__title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined" aria-hidden="true">deployed_code</span>
         Required Models
       </h3>
@@ -13,11 +13,15 @@
         :items="[model]"
         :active="downloadingModel === model.key"
         :progress="downloadProgress"
+        :disabled="!!downloadingModel"
+        :cancellable="skill.execution?.managesGeneration"
+        @cancel="cancelDownload"
         @download="downloadModel(model)"
       />
 
       <!-- Available Models -->
-      <div class="available-models">
+      <p v-if="skill.execution?.managesGeneration && !missingModels.length" class="production-download-ready"><span class="material-symbols-outlined">check_circle</span>Required downloads ready</p>
+      <div v-if="!skill.execution?.managesGeneration" class="available-models">
         <div class="skill-chip-list">
           <span
             v-for="model in modelRequirements"
@@ -38,7 +42,7 @@
     </div>
 
     <!-- LLM Auto-Fill Section -->
-    <div v-if="hasInputs && !isChatBased" class="autofill-section skill-panel">
+    <div v-if="hasInputs && !isChatBased && !skill.execution?.managesGeneration" class="autofill-section skill-panel">
       <div class="skill-panel__head">
         <div>
           <h3 class="skill-panel__title fira-sans-condensed-black-italic">
@@ -75,13 +79,14 @@
     <div v-if="hasInputs && !isChatBased" class="skill-inputs skill-panel">
       <h3 class="skill-panel__title fira-sans-condensed-black-italic">
         <span class="material-symbols-outlined" aria-hidden="true">tune</span>
-        Skill Settings
+        {{ skill.execution?.managesGeneration ? 'Production Settings' : 'Skill Settings' }}
       </h3>
 
       <div class="skill-form-grid">
         <div
           v-for="(field, key) in skill.inputs"
           :key="key"
+          v-show="!(localInputs.soundtrack && ['duration', 'instrumental'].includes(key))"
           class="skill-field"
           :class="{ 'skill-field--full': isWideField(field) }"
         >
@@ -163,6 +168,14 @@
               </div>
             </div>
 
+            <div v-if="field.type === 'audio' || field.type === 'images'" class="production-file-input">
+              <label class="production-file-picker bz-btn bz-btn--ghost"><span class="material-symbols-outlined">upload</span>{{ field.type === 'audio' ? 'Choose Song' : 'Add Manga Panels' }}<input type="file" :accept="field.type === 'audio' ? 'audio/*' : 'image/*'" :multiple="field.type === 'images'" @change="handleMediaUpload($event, key, field.type)" /></label>
+              <div v-if="field.type === 'images'" class="production-panels">
+                <div v-for="(panel, index) in localInputs[key]" :key="index"><img :src="getImagePreview(panel)" :alt="'Panel ' + (index + 1)" /><span>{{ index + 1 }}</span><button type="button" :disabled="index === 0" aria-label="Move panel earlier" @click="movePanel(key, index)">←</button><button type="button" aria-label="Remove panel" @click="localInputs[key].splice(index, 1)">×</button></div>
+              </div>
+              <div v-else-if="localInputs[key]" class="production-attached">Song attached <button type="button" class="bz-btn bz-btn--ghost bz-btn--sm" @click="localInputs[key] = ''">Remove</button></div>
+            </div>
+            <a v-if="key === 'h3Accepted'" href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Review MiniMax H3 License</a>
             <p v-if="field.description && field.type !== 'boolean'" class="skill-help">
               {{ field.description }}
             </p>
@@ -170,6 +183,7 @@
         </div>
       </div>
 
+      <p v-if="inputError" role="alert" class="production-input-error">{{ inputError }}</p>
       <!-- Run Button -->
       <div class="skill-run-actions">
         <button
@@ -216,14 +230,17 @@
 </template>
 
 <script>
-import { ref, computed, watch, reactive, onMounted } from 'vue';
+import { ref, computed, watch, reactive, onMounted, onUnmounted } from 'vue';
 import DownloadRequirement from '../DownloadRequirement.vue';
+import { cancelLocalDownloads } from '../../services/downloadCancellation.js';
+import { remoteInference, refreshRemoteInference, remoteRequirementSatisfied } from '../../stores/remoteInference.js';
 import { getSkillModelRequirements, MODEL_REQUIREMENTS } from '../../skills/flagship.js';
 
 export default {
   name: 'SkillRunner',
   components: { DownloadRequirement },
   props: {
+    initialInputs: { type: Object, default: () => ({}) },
     actionLabel: { type: String, default: 'Run workflow' },
     skill: {
       type: Object,
@@ -237,6 +254,10 @@ export default {
   emits: ['execute', 'download-model', 'update:inputs'],
   setup(props, { emit }) {
     const localInputs = reactive({});
+    const inputError = ref('');
+    const checkedModels = reactive({});
+    let modelTimer, checking = false, disposed = false, downloadEpoch = 0;
+    let activePipelineIds = [], activeFilename = null;
     const autoFillPrompt = ref('');
     const isAutoFilling = ref(false);
     const isExecuting = ref(false);
@@ -249,7 +270,7 @@ export default {
     const initializeInputs = () => {
       if (props.skill?.inputs) {
         Object.entries(props.skill.inputs).forEach(([key, field]) => {
-          localInputs[key] = field.default;
+          localInputs[key] = props.initialInputs[key] ?? (key === 'h3Accepted' ? localStorage.getItem('bonzai:minimax-h3-terms') === 'accepted' : structuredClone(field.default));
         });
       }
     };
@@ -261,9 +282,10 @@ export default {
     }, { immediate: true });
 
     // Computed properties
+    refreshRemoteInference().catch(() => {});
     const modelRequirements = computed(() => {
       if (!props.skill?.id) return [];
-      return getSkillModelRequirements(props.skill.id);
+      return getSkillModelRequirements(props.skill.id).filter(model => !remoteRequirementSatisfied(model)).filter(model => !(localInputs.soundtrack && (model.key === 'music_fast' || model.parentKey === 'music_fast')));
     });
 
     const missingModels = computed(() => {
@@ -283,6 +305,7 @@ export default {
     });
 
     const canAutoFill = computed(() => {
+      if (remoteInference.active) return true;
       // Check if LLM model is available for auto-fill
       const llmModel = modelRequirements.value.find(m => m.type === 'llm');
       return llmModel ? isModelAvailable(llmModel) : false;
@@ -290,6 +313,7 @@ export default {
 
     // Methods
     const isModelAvailable = (model) => {
+      if (props.skill.execution?.managesGeneration) return checkedModels[model.key] === true;
       // Check via props or assume available if not specified
       if (props.modelAvailability[model.key] !== undefined) {
         return props.modelAvailability[model.key];
@@ -313,16 +337,18 @@ export default {
     };
 
     const isWideField = (field) => {
-      return (field.type === 'string' && isLongText(field)) || field.type === 'image';
+      return (field.type === 'string' && isLongText(field)) || ['image', 'audio', 'images'].includes(field.type);
     };
 
     const isLongText = (field) => {
-      return field.description?.toLowerCase().includes('describe') ||
+      return field.label === 'Creative Brief' || field.description?.toLowerCase().includes('describe') ||
              field.label?.toLowerCase().includes('description') ||
              field.default?.length > 50;
     };
 
     const formatOption = (opt) => {
+      const voices = { af_heart: 'Heart · American English', af_bella: 'Bella · American English', am_adam: 'Adam · American English', am_michael: 'Michael · American English', bf_emma: 'Emma · British English', bm_george: 'George · British English' };
+      if (voices[opt]) return voices[opt];
       if (typeof opt === 'string') {
         return opt.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
       }
@@ -346,13 +372,84 @@ export default {
       return `data:image/png;base64,${base64}`;
     };
 
+    async function handleMediaUpload(event, key, type) {
+      inputError.value = '';
+      const files = [...(event.target.files || [])];
+      try {
+        if (type === 'images' && files.length + (localInputs[key]?.length || 0) > 24) throw new Error('Choose up to 24 panels.');
+        for (const file of files) {
+          if (file.size > (type === 'audio' ? 100 : 20) * 1024 ** 2) throw new Error('This file is too large. Use an image under 20 MB or audio under 100 MB.');
+          const data = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); });
+          if (type === 'images') localInputs[key] = [...(localInputs[key] || []), data]; else localInputs[key] = data;
+        }
+      } catch (error) { inputError.value = error.message || 'Could not open this media.'; }
+      event.target.value = '';
+    }
+    function movePanel(key, index) { [localInputs[key][index - 1], localInputs[key][index]] = [localInputs[key][index], localInputs[key][index - 1]]; }
+    const base = () => window.electronAPI?.env?.API_BASE || 'http://127.0.0.1:65000';
+    async function checkModels() {
+      if (!props.skill.execution?.managesGeneration || checking || disposed) return;
+      checking = true;
+      for (const model of modelRequirements.value) {
+        try {
+          if (model.type === 'llm') checkedModels[model.key] = await window.electronAPI?.checkModel?.(model.filename) === true;
+          else {
+            const response = await fetch(`${base()}/pipelines/plan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pipeline: model.pipeline || model.key }), signal: AbortSignal.timeout(5000) });
+            checkedModels[model.key] = response.ok && (await response.json()).ok === true;
+          }
+        } catch { checkedModels[model.key] = false; }
+      }
+      checking = false;
+    }
     const downloadModel = async (model) => {
+      if (props.skill.execution?.managesGeneration) {
+        if (downloadingModel.value) return;
+        const epoch = ++downloadEpoch;
+        downloadingModel.value = model.key; inputError.value = ''; downloadProgress.value = 0;
+        let unsubscribe;
+        try {
+          if (model.type === 'llm') {
+            activeFilename = model.filename;
+            unsubscribe = window.electronAPI?.onDownloadProgress?.((_event, data) => {
+              if (data.filename === model.filename) downloadProgress.value = Math.round((data.percent || 0) * 100);
+            });
+            if (!await window.electronAPI?.downloadModel?.(model.url, model.filename)) throw new Error('The download did not finish. Retry when ready.');
+          } else {
+            const response = await fetch(`${base()}/pipelines/prefetch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pipeline: model.pipeline || model.key }), signal: AbortSignal.timeout(15000) });
+            if (!response.ok) throw new Error('The download could not start. Check the local server.');
+            const data = await response.json();
+            activePipelineIds = data.pipelines_started?.length ? data.pipelines_started : data.pipeline_id ? [data.pipeline_id] : [];
+            if (response.status === 202 && !activePipelineIds.length) throw new Error('Download tracking is unavailable. Check Downloads before retrying.');
+            while (activePipelineIds.length && !disposed && epoch === downloadEpoch) {
+              const states = await Promise.all(activePipelineIds.map(async id => {
+                const res = await fetch(`${base()}/downloads/status/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10000) });
+                if (!res.ok) throw new Error('Could not check download progress.');
+                return res.json();
+              }));
+              if (states.some(item => ['failed', 'cancelled', 'canceled'].includes(item.status))) throw new Error('The download stopped. Check Downloads and retry.');
+              downloadProgress.value = Math.round(states.reduce((sum, item) => sum + (item.total_progress || item.progress || 0), 0) / states.length);
+              if (states.every(item => item.status === 'completed')) break;
+              await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+          }
+          if (epoch === downloadEpoch && !disposed) await checkModels();
+        } catch (error) { if (epoch === downloadEpoch) inputError.value = error.message; }
+        finally { unsubscribe?.(); if (epoch === downloadEpoch) { downloadingModel.value = null; activePipelineIds = []; activeFilename = null; } }
+        return;
+      }
       downloadingModel.value = model.key;
       downloadProgress.value = 0;
       emit('download-model', model, (progress) => {
         downloadProgress.value = progress;
       });
     };
+
+    async function cancelDownload() {
+      try {
+        await cancelLocalDownloads({ filenames: activeFilename ? [activeFilename] : [], pipelineIds: activePipelineIds, apiBase: base() });
+        downloadEpoch++; downloadingModel.value = null; activeFilename = null; activePipelineIds = [];
+      } catch { inputError.value = 'Could not stop this download. Retry cancellation.'; }
+    }
 
     const autoFillInputs = async () => {
       if (!autoFillPrompt.value || isAutoFilling.value) return;
@@ -445,10 +542,13 @@ Return ONLY the JSON, no explanation.`;
 
     onMounted(() => {
       initializeInputs();
+      void checkModels();
+      if (props.skill.execution?.managesGeneration) modelTimer = setInterval(() => void checkModels(), 10000);
     });
+    onUnmounted(() => { disposed = true; clearInterval(modelTimer); });
 
     return {
-      localInputs,
+      inputError, handleMediaUpload, movePanel, localInputs,
       autoFillPrompt,
       isAutoFilling,
       isExecuting,
@@ -470,6 +570,7 @@ Return ONLY the JSON, no explanation.`;
       handleImageUpload,
       getImagePreview,
       downloadModel,
+      cancelDownload,
       autoFillInputs,
       executeSkill,
       setExecutionResult,
@@ -700,4 +801,19 @@ Return ONLY the JSON, no explanation.`;
     transform: rotate(360deg);
   }
 }
+.skill-runner--production .skill-panel{background:transparent;border:0;padding:0;min-width:0}
+.skill-runner--production .skill-label{font-family:var(--bz-font-body);font-style:normal;font-weight:500;font-size:14px}
+.skill-runner--production .skill-help{color:var(--bz-fg-mid)}
+.skill-runner--production .skill-field,.skill-runner--production .skill-field__inner,.skill-runner--production .control{min-width:0}
+.skill-runner--production a{color:var(--bz-accent);font-size:13px}
+.production-download-ready{display:flex;align-items:center;gap:8px;color:var(--bz-fg-mid);font-size:13px;margin:0}
+.production-download-ready .material-symbols-outlined{color:var(--bz-success);font-size:18px}
+.production-file-picker{position:relative;justify-content:center;width:fit-content;max-width:100%;overflow:hidden}
+.production-file-picker input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;max-width:100%;min-width:0}
+.production-file-picker:focus-within{outline:2px solid var(--bz-accent);outline-offset:2px}
+.production-file-picker .material-symbols-outlined{font-size:18px}
+</style>
+
+<style scoped>
+.production-panels{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}.production-panels>div{width:100px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.production-panels img{width:100px;height:100px;object-fit:cover;border-radius:var(--bz-r)}.production-panels button{background:var(--bz-raised);color:var(--bz-fg);border:1px solid var(--bz-border);border-radius:4px;cursor:pointer}.production-attached{display:flex;align-items:center;gap:12px;margin-top:12px}.production-input-error{color:var(--bz-danger)}
 </style>

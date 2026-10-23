@@ -249,3 +249,19 @@
 @media (prefers-reduced-motion: reduce) {
   .company-workspace *, .company-workspace *::before, .company-workspace *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* One header rhythm. The shared icon is absolute: reserve its actual height so
+   it cannot protrude across navigation or the content divider. */
+.company-workspace .company-channel-head.bz-page-header.bz-page-header {
+  padding: 20px 0; margin: 0 0 24px; border: 0; border-bottom: 1px solid var(--bz-border);
+  border-radius: 0; background: transparent; gap: 16px;
+}
+.company-workspace .company-channel-head.bz-page-header.bz-page-header > .company-channel-head__copy { min-height:52px; padding-left:72px; }
+.company-workspace .company-channel-head.bz-page-header.bz-page-header .bz-title-icon { width:52px;height:52px;font-variation-settings:"FILL" 0,"wght" 200,"GRAD" 0,"opsz" 24; }
+.company-workspace .team-agent-market { display:grid;gap:32px;min-width:0; }
+@media(max-width:600px){
+  .company-workspace .company-channel-head.bz-page-header.bz-page-header { padding:16px 0; margin-bottom:20px; }
+  .company-workspace .company-channel-head.bz-page-header.bz-page-header > .company-channel-head__copy { min-height:44px;padding-left:60px; }
+  .company-workspace .company-channel-head.bz-page-header.bz-page-header .bz-title-icon { width:44px;height:44px; }
+  .company-workspace .company-team-status {flex-wrap:wrap;}
+}
