@@ -95,7 +95,9 @@ numpy>=2,<2.4
 onnxruntime==1.23.2
 omegaconf==2.3.1
 opencv-contrib-python==4.11.0.86
-mediapipe>=0.10.35,<0.11
+# 0.10.x has no Linux aarch64 wheel; Finger Frame is unavailable on that
+# target (finger_frame_workflow.py reports the missing package on use).
+mediapipe>=0.10.35,<0.11; sys_platform != "linux" or platform_machine != "aarch64"
 optimum-quanto==0.2.7
 packaging==25.0
 parso==0.8.4

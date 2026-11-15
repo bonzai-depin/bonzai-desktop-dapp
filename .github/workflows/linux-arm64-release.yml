@@ -1,0 +1,453 @@
+name: "Release (Linux ARM64)"
+# NVIDIA DGX Spark and other aarch64 CUDA hosts. Manual dispatch only until the
+# installer has been validated on real hardware; add the `release` trigger then.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag (e.g. v4.0.0-rc.1)'
+        required: true
+        type: string
+      publish:
+        description: 'Publish installers (false builds and validates only)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  BONZAI_PROTOCOL_CONFIG_ENV: ${{ vars.BONZAI_PROTOCOL_CONFIG_ENV }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS: "1"
+  LLAMA_CPP_REF: a30fb4924dcfec81c1b2c20634bd47fa4403061a
+
+concurrency:
+  group: release-linux-arm64-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish_on_linux_arm64:
+    # GitHub-hosted ARM64 runner (free for public repositories). It has no
+    # NVIDIA GPU or driver: CUDA code is compiled and link-checked here, and
+    # GPU execution still requires validation on the target hardware.
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gpu_backend: cuda
+            torch_index_url: https://download.pytorch.org/whl/nightly/cu130
+            backend_label: CUDA 13.0 nightly
+    env:
+      MAIN_PY_FILE: src/server/diffuser.py
+      OS_KEY: linux
+      ARCH_KEY: arm64
+      GPU_BACKEND: ${{ matrix.gpu_backend }}
+      # Python and the native GGUF runtime both use CUDA. The GGUF backends are
+      # plugins, so a host without the CUDA 13 runtime still starts on CPU.
+      BONZAI_LLAMA_BACKEND: cuda
+      BONZAI_LLAMA_PORTABLE: "true"
+      # CUDA toolkits before 13.5 bundle a CCCL older than llama.cpp expects.
+      BONZAI_LLAMA_CUDA_CCCL_VERSION: v3.4.3
+      CUDA_APT_VERSION: "13-0"
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT || secrets.R2_ENDPOINT }}
+      R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+      R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || secrets.R2_PUBLIC_URL }}
+      AWS_DEFAULT_REGION: auto
+      PUBLISH_RELEASE: ${{ github.event_name == 'release' || inputs.publish }}
+      CI: true
+    steps:
+      # Free ~30GB by removing pre-installed tools we don't need.
+      # CUDA PyTorch + PyInstaller + Electron need significant disk space.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523
+        with:
+          # Reinstall only our selected Node/Python versions below. Unrelated
+          # hosted runtimes otherwise exhaust the disk during ROCm freezing.
+          preinstalled-runtimes: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          /usr/bin/python3 - <<'PYCODE'
+          import json, os
+          version = json.load(open('package.json'))['version']
+          if os.environ.get('PUBLISH_RELEASE') == 'true' and os.environ['RELEASE_TAG'].removeprefix('v') != version:
+              raise SystemExit('Release tag must match package.json version')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f'TAG={version}\n')
+          PYCODE
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg fakeroot libsndfile1 binutils
+
+      # Validate the interface before downloading/freezing the large inference stack.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+
+      - name: Install Node dependencies
+        env:
+          # BonzAI builds its own standalone llama runtime below.
+          NODE_LLAMA_CPP_SKIP_DOWNLOAD: "true"
+        run: npm ci
+
+      - name: Build Vite bundles
+        shell: bash
+        env:
+          # The renderer dependency graph exceeds Node's default 2 GB heap.
+          NODE_OPTIONS: --max-old-space-size=6144
+          BONZAI_VALIDATE_WEB3: ${{ vars.BONZAI_VALIDATE_WEB3 }}
+          VITE_PRIVY_APP_ID: ${{ secrets.PRIVY_APP_ID }}
+          VITE_ALCHEMY_API_KEY: ${{ secrets.ALCHEMY_API_KEY }}
+          VITE_BONZAI_ECONOMY_CHAIN_ID: ${{ secrets.BONZAI_ECONOMY_CHAIN_ID }}
+          VITE_ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
+          VITE_BONZAI_TOKEN_ROBINHOOD_ADDRESS: ${{ secrets.BONZAI_TOKEN_ROBINHOOD_ADDRESS }}
+          VITE_BONZAI_UNLOCK_ADDRESS: ${{ secrets.BONZAI_UNLOCK_ADDRESS }}
+          VITE_BONZAI_SKILL_REGISTRY_ADDRESS: ${{ secrets.BONZAI_SKILL_REGISTRY_ADDRESS }}
+          VITE_BONZAI_SKILL_OWNERSHIP_ADDRESS: ${{ secrets.BONZAI_SKILL_OWNERSHIP_ADDRESS }}
+          VITE_BONZAI_COLLECTIBLES_ADDRESS: ${{ secrets.BONZAI_COLLECTIBLES_ADDRESS }}
+          VITE_BONZAI_COLLECTIBLES_FACTORY_ADDRESS: ${{ secrets.BONZAI_COLLECTIBLES_FACTORY_ADDRESS }}
+          VITE_BONZAI_MINT_POOL_ADDRESS: ${{ secrets.BONZAI_MINT_POOL_ADDRESS }}
+          VITE_BONZAI_ROYALTY_SPLITTER_ADDRESS: ${{ secrets.BONZAI_ROYALTY_SPLITTER_ADDRESS }}
+          VITE_BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS: ${{ secrets.BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS }}
+          VITE_BONZAI_COMPANIONS_ADDRESS: ${{ secrets.BONZAI_COMPANIONS_ADDRESS }}
+          VITE_BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS: ${{ secrets.BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS }}
+          VITE_BONZAI_PROVIDER_REGISTRY_ADDRESS: ${{ secrets.BONZAI_PROVIDER_REGISTRY_ADDRESS }}
+          VITE_BONZAI_SERVICE_TIME_ADDRESS: ${{ secrets.BONZAI_SERVICE_TIME_ADDRESS }}
+          VITE_BONZAI_STAKING_VAULT_ADDRESS: ${{ secrets.BONZAI_STAKING_VAULT_ADDRESS }}
+          VITE_BONZAI_REVENUE_ROUTER_ADDRESS: ${{ secrets.BONZAI_REVENUE_ROUTER_ADDRESS }}
+          VITE_BONZAI_CONTRIBUTION_REGISTRY_ADDRESS: ${{ secrets.BONZAI_CONTRIBUTION_REGISTRY_ADDRESS }}
+          VITE_BONZAI_DATASET_REGISTRY_ADDRESS: ${{ secrets.BONZAI_DATASET_REGISTRY_ADDRESS }}
+          VITE_BONZAI_MODEL_REGISTRY_ADDRESS: ${{ secrets.BONZAI_MODEL_REGISTRY_ADDRESS }}
+          VITE_BONZAI_EVALUATION_REGISTRY_ADDRESS: ${{ secrets.BONZAI_EVALUATION_REGISTRY_ADDRESS }}
+          VITE_BONZAI_CONTRIBUTION_SCORE_ORACLE_ADDRESS: ${{ secrets.BONZAI_CONTRIBUTION_SCORE_ORACLE_ADDRESS }}
+          VITE_BONZAI_JOB_ESCROW_ADDRESS: ${{ secrets.BONZAI_JOB_ESCROW_ADDRESS }}
+          VITE_BONZAI_UNISWAP_HOOK_ADDRESS: ${{ secrets.BONZAI_UNISWAP_HOOK_ADDRESS }}
+          VITE_BONZAI_SKILL_ID_MAP_JSON: ${{ secrets.BONZAI_SKILL_ID_MAP_JSON }}
+          VITE_UNISWAP_V4_POOL_MANAGER: ${{ secrets.UNISWAP_V4_POOL_MANAGER }}
+          VITE_UNISWAP_V4_POSITION_MANAGER: ${{ secrets.UNISWAP_V4_POSITION_MANAGER }}
+          VITE_UNISWAP_V4_UNIVERSAL_ROUTER: ${{ secrets.UNISWAP_V4_UNIVERSAL_ROUTER }}
+          VITE_UNISWAP_V4_QUOTER: ${{ secrets.UNISWAP_V4_QUOTER }}
+          VITE_UNISWAP_V4_STATE_VIEW: ${{ secrets.UNISWAP_V4_STATE_VIEW }}
+        run: |
+          if [ "$BONZAI_VALIDATE_WEB3" = "true" ]; then npm run web3:verify:offline; fi
+          npm run build:vite
+          node scripts/verify-renderer-materials.mjs
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # GPU-enabled nightly aarch64 PyTorch wheels (CUDA 13.0, the DGX Spark
+      # toolkit generation). Falls back to CPU at runtime without the driver.
+      - name: Install PyTorch (${{ matrix.backend_label }})
+        run: |
+          pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url ${{ matrix.torch_index_url }}
+
+      - name: Install Python deps
+        run: |
+          python scripts/install-python-deps.py --skip-torch
+
+      # basicsr 1.4.2 (used by /video/enhance via realesrgan) imports
+      # `torchvision.transforms.functional_tensor` which was removed in
+      # torchvision >= 0.17. Patch the one offending import so the
+      # bundled binary doesn't crash on first /video/enhance request.
+      - name: Patch basicsr torchvision import
+        shell: bash
+        run: |
+          python -c "
+          import site, pathlib, sys
+          for sp in site.getsitepackages() + [site.getusersitepackages()]:
+              p = pathlib.Path(sp) / 'basicsr' / 'data' / 'degradations.py'
+              if p.exists():
+                  s = p.read_text()
+                  new = s.replace(
+                      'from torchvision.transforms.functional_tensor',
+                      'from torchvision.transforms.functional',
+                  )
+                  if new != s:
+                      p.write_text(new)
+                      print(f'Patched: {p}')
+                      sys.exit(0)
+                  print(f'Already patched or unchanged: {p}')
+                  sys.exit(0)
+          print('basicsr/data/degradations.py not found; skipping')
+          "
+
+      # Privacy-pipeline smoke tests — codec + provider blueprint. These run
+      # against the just-installed deps (torch + lz4 + flask), independently
+      # of model weights, so they catch wire-format / framing / runner-
+      # registry regressions before we waste a 30-min PyInstaller build on
+      # a broken Python tree. Cheap to run; expensive to skip.
+      - name: Privacy-pipeline smoke tests
+        run: |
+          python src/server/pipeline_transport.py
+          python scripts/smoke-shard-provider.py
+          # Exchange a tensor between Python and Node over a local socket.
+          BONZAI_PYTHON="$(python -c 'import sys; print(sys.executable)')" node scripts/smoke-shard-twohost.mjs
+
+      - name: Smoke-test source inference runtime
+        shell: bash
+        run: |
+          python test/test_torchvision_packaging.py
+          python src/server/runtime_check.py
+
+      - name: Reclaim download caches before freezing
+        run: |
+          pip cache purge
+          npm cache clean --force
+          df -h /
+
+      - name: Build Python runtime
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --clean \
+            --distpath "binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}" \
+            --workpath "$RUNNER_TEMP/pybuild" diffuser.spec
+
+      - name: Verify Python binary
+        run: |
+          # onedir executable plus complete shared-library tree
+          BINARY="binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser"
+          file "$BINARY"
+          file "$BINARY" | grep -q "ELF 64-bit" || { echo "ERROR: Not a 64-bit binary!"; exit 1; }
+          ls -lh "$BINARY"
+
+      # PyInstaller has already bundled everything into the binary.
+      # Remove build caches, retaining installed Python packages and GPU libraries
+      # for post-build validation.
+      - name: Free Python disk space
+        run: |
+          pip cache purge 2>/dev/null || true
+          rm -rf $RUNNER_TEMP/pybuild
+          rm -rf ~/.cache/pip
+          # Retain packages for post-build validation.
+          echo "Disk space after Python cleanup:"
+          df -h /
+
+      - name: Smoke-test frozen inference runtime
+        shell: bash
+        run: |
+          binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
+
+      # The validated frozen runtime contains its own complete Python/GPU stack.
+      # Discard only the hosted runner's build-time copy before staging installers.
+      - name: Reclaim build-time Python packages
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import os, shutil, sysconfig
+          from pathlib import Path
+          python_root = Path(os.environ['pythonLocation']).resolve()
+          for key in ('purelib', 'platlib'):
+              directory = Path(sysconfig.get_path(key)).resolve()
+              if not directory.is_relative_to(python_root) or directory.name != 'site-packages':
+                  raise SystemExit(f'Refusing to remove packages outside the hosted Python: {directory}')
+              if directory.exists():
+                  shutil.rmtree(directory)
+          PYCODE
+          # Prove the shipped runtime does not rely on the removed build environment.
+          binaries/${{ env.OS_KEY }}-${{ env.ARCH_KEY }}/diffuser/diffuser --bonzai-runtime-check
+          df -h /
+
+      # CUDA 13.0 is the oldest 13.x toolkit, so the backend loads against any
+      # CUDA 13 runtime. GCC 14 is required for the ARMv9.2 (SME) CPU variant.
+      - name: Install CUDA build toolchain
+        run: |
+          curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake gcc-14 g++-14 \
+            "cuda-nvcc-${CUDA_APT_VERSION}" "cuda-cudart-dev-${CUDA_APT_VERSION}" "libcublas-dev-${CUDA_APT_VERSION}"
+          CUDA_ROOT="/usr/local/cuda-${CUDA_APT_VERSION/-/.}"
+          test -x "$CUDA_ROOT/bin/nvcc"
+          echo "$CUDA_ROOT/bin" >> "$GITHUB_PATH"
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          echo "CUDAHOSTCXX=g++-14" >> "$GITHUB_ENV"
+          df -h /
+
+      - name: Build llama.cpp RPC binaries
+        run: npm run build:rpc
+
+      # The runner has the CUDA toolkit but no NVIDIA driver (libcuda.so.1), so
+      # this proves the CUDA backend was compiled and linked against CUDA 13,
+      # and that the runtime starts on CPU when the backend cannot load.
+      - name: Smoke-test native GGUF runtime
+        shell: bash
+        run: |
+          BIN="bin/${OS_KEY}-${ARCH_KEY}"
+          ls -lh "$BIN"
+          file "$BIN/llama-server" | grep -q "ARM aarch64" || { echo "ERROR: llama-server is not aarch64"; exit 1; }
+          NEEDED="$(readelf -d "$BIN/libggml-cuda.so" | grep NEEDED)"
+          echo "$NEEDED"
+          echo "$NEEDED" | grep -q 'libcudart\.so\.13' || { echo "ERROR: CUDA backend is not linked against the CUDA 13 runtime"; exit 1; }
+          echo "$NEEDED" | grep -q 'libcublas\.so\.13' || { echo "ERROR: CUDA backend is not linked against cuBLAS 13"; exit 1; }
+          "$BIN/llama-server" --version
+          # CPU fallback: no GPU backend present and no toolkit on the library path.
+          FALLBACK="$RUNNER_TEMP/llama-cpu-fallback"
+          rm -rf "$FALLBACK" && cp -r "$BIN" "$FALLBACK" && rm "$FALLBACK/libggml-cuda.so"
+          (cd / && env -u LD_LIBRARY_PATH "$FALLBACK/llama-server" --version)
+          rm -rf "$FALLBACK"
+
+      # The frozen Python runtime and the app carry their own CUDA libraries.
+      - name: Remove CUDA build toolchain
+        run: |
+          sudo apt-get purge -y "cuda-*" "libcublas-*" "libnvvm-*" "libnvptxcompiler-*" || true
+          sudo apt-get autoremove -y --purge || true
+          sudo rm -rf /usr/local/cuda*
+          df -h /
+
+      - name: Reclaim native compiler intermediates
+        run: |
+          # build:rpc has copied and launched the finished binary. Object files,
+          # generated shaders and the temporary checkout are no longer needed.
+          node --input-type=module -e 'import fs from "node:fs"; import os from "node:os"; import path from "node:path"; fs.rmSync(path.join(os.tmpdir(), "bonzai-llama-rpc-build"), { recursive: true, force: true });'
+          df -h /
+
+      - name: Package Electron app
+        run: |
+          npx electron-packager . BonzAI \
+            --platform=linux \
+            --arch=arm64 \
+            --out=out \
+            --overwrite \
+            --icon=src/assets/logo.png \
+            --ignore="^/(\.local-release-archive|\.chart-data-[^/]*|\.codex-presentation-build|\.codex-finalizer|dist|bonzai|binaries|out|out-test|\.venv|venv|build|\.cache|\.git|test|docs|\.env.*)$|^/src/assets/materials/.*\.jpg$"
+
+      # main.js expects: resources/server/python-runtime/linux-arm64/diffuser + _internal/
+      - name: Remove development-only package payload
+        run: python scripts/prune-desktop-payload.py "out/BonzAI-linux-arm64/resources/app" linux arm64
+
+      - name: Move validated Python runtime into app
+        run: |
+          APP_RESOURCES="out/BonzAI-linux-arm64/resources"
+          DEST="$APP_RESOURCES/server/python-runtime/linux-arm64"
+          mkdir -p "$(dirname "$DEST")"
+          # Same filesystem: move the complete tree instead of duplicating GPU libraries.
+          mv binaries/linux-arm64/diffuser "$DEST"
+          chmod +x "$DEST/diffuser"
+          echo "Python runtime embedded:"
+          ls -lh "$DEST/diffuser"
+
+      # Packaging must not lose the shared libraries the executables load from
+      # their own directory, and the moved Python runtime must still start.
+      - name: Smoke-test packaged runtimes
+        shell: bash
+        run: |
+          APP_RESOURCES="out/BonzAI-linux-arm64/resources"
+          (cd / && "$GITHUB_WORKSPACE/$APP_RESOURCES/app/bin/linux-arm64/llama-server" --version)
+          test -x "$APP_RESOURCES/app/bin/linux-arm64/rpc-server"
+          test -x "$APP_RESOURCES/app/bin/linux-arm64/llama-quantize"
+          test -f "$APP_RESOURCES/app/bin/linux-arm64/libggml-cuda.so"
+          "$APP_RESOURCES/server/python-runtime/linux-arm64/diffuser" --bonzai-runtime-check
+
+      # The runtime has moved into the app; discard empty build directories.
+      - name: Remove duplicate binaries
+        run: |
+          rm -rf binaries/
+          df -h /
+
+      # Keep GPU libraries, locales and third-party licenses intact. The
+      # uncompressed onedir runtime is compressed once by the installer.
+      - name: Build .deb package (xz compressed)
+        run: |
+          TAG="${{ env.TAG }}"
+          mkdir -p out/make
+
+          # Build with electron-installer-debian
+          npx electron-installer-debian \
+            --src out/BonzAI-linux-arm64 \
+            --dest out/make \
+            --arch arm64 \
+            --options.name bonzai \
+            --options.bin BonzAI \
+            --options.productName BonzAI \
+            --options.genericName "AI Desktop Application" \
+            --options.description "1-click Sovereign AI deployment, training & serving" \
+            --options.maintainer "BonzAI Foundation <team@bonzai.sh>" \
+            --options.homepage "https://bonzai.sh" \
+            --options.icon src/assets/logo.png \
+            --options.categories "Utility;Science;ArtificialIntelligence" \
+            --options.compression xz \
+            --options.section misc
+
+          # Rename — architecture and backend suffixed, beside the amd64 installers.
+          DEB=$(ls out/make/*.deb | head -1)
+          BACKEND="${{ matrix.gpu_backend }}"
+          if [ -n "$DEB" ]; then
+            mv "$DEB" "out/make/BonzAI-${TAG}-linux-arm64-${BACKEND}.deb"
+          fi
+
+          DEB_PATH="out/make/BonzAI-${TAG}-linux-arm64-${BACKEND}.deb"
+          DEB_SIZE=$(stat --format='%s' "$DEB_PATH")
+          echo "DEB size: $(echo $DEB_SIZE | numfmt --to=iec)"
+
+          # Already xz-compressed. Split oversized assets below; do not unpack
+          # another multi-GB runtime just to recompress it a second time.
+
+      - name: Disk report
+        if: always()
+        run: |
+          df -h /
+          du -sh out/make/* 2>/dev/null || true
+
+      - name: Prepare checksummed release assets
+        shell: bash
+        run: python scripts/release-assets.py prepare out/make
+
+      - name: Configure complete-installer hosting
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
+        run: python -m pip install awscli
+
+      - name: Upload release assets
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
+        run: python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+
+      - name: Mirror to bonzai-releases
+        if: github.event_name == 'release' || inputs.publish
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          MIRROR_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          if [ -n "$MIRROR_TOKEN" ]; then
+            GH_TOKEN="$MIRROR_TOKEN" python scripts/release-assets.py upload out/make --tag "$RELEASE_TAG" --repo bonzai-depin/bonzai-releases
+          fi
+
+      - name: Save validated build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bonzai-${{ env.OS_KEY }}-${{ env.ARCH_KEY }}-${{ matrix.gpu_backend || 'default' }}
+          path: out/make/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7

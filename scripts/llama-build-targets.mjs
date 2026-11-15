@@ -30,3 +30,58 @@ export function assertWindowsGpuFiles(files, backend = 'vulkan') {
     if (!names.has(name)) throw new Error(`Incomplete Windows GPU runtime: missing ${name}`);
   }
 }
+
+// Portable Linux release layout (used by the ARM64 CUDA installer): GPU and
+// CPU backends are plugins beside the executables, so a machine without the
+// CUDA runtime still starts on CPU, and one binary set covers ARMv8.0–ARMv9.2
+// instead of the build host's CPU. Mirrors upstream llama.cpp release builds.
+export function portableLinuxFlags(platform, portable) {
+  if (platform !== 'linux' || !portable) return [];
+  return [
+    '-DGGML_BACKEND_DL=ON',
+    '-DGGML_NATIVE=OFF',
+    '-DGGML_CPU_ALL_VARIANTS=ON',
+    '-DCMAKE_INSTALL_RPATH=$ORIGIN',
+    '-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON',
+  ];
+}
+
+// Map CMake's versioned library chain (libx.so -> libx.so.0 -> libx.so.0.1.2)
+// to the single file name each consumer opens. Packaging dereferences
+// symlinks, so shipping the whole chain would triple every library.
+//   - backend plugins are discovered by scanning for libggml-<name>.so
+//   - linked libraries are resolved by SONAME (libx.so.<major>)
+export function portableLibraryNames(names) {
+  const groups = new Map();
+  for (const name of names) {
+    const match = /^(lib.+\.so)((?:\.\d+)*)$/.exec(name);
+    if (!match) continue;
+    if (!groups.has(match[1])) groups.set(match[1], []);
+    groups.get(match[1]).push(name);
+  }
+  const result = [];
+  for (const [base, chain] of groups) {
+    const plugin = /^libggml-(?!base\.so$)/.test(base);
+    const soname = chain.find(name => /\.so\.\d+$/.test(name));
+    result.push({ source: chain.includes(base) ? base : chain[0], name: plugin || !soname ? base : soname });
+  }
+  return result.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function assertLinuxPortableFiles(files, backend = 'cuda') {
+  const names = new Set(files);
+  const required = ['llama-server', 'rpc-server', 'llama-quantize', 'libggml-rpc.so'];
+  if (backend !== 'cpu') required.push(`libggml-${backend}.so`);
+  for (const name of required) {
+    if (!names.has(name)) throw new Error(`Incomplete Linux runtime: missing ${name}`);
+  }
+  for (const prefix of ['libllama.so', 'libggml.so', 'libggml-base.so']) {
+    if (!files.some(name => name === prefix || name.startsWith(`${prefix}.`))) {
+      throw new Error(`Incomplete Linux runtime: missing ${prefix}`);
+    }
+  }
+  // Without a CPU plugin the runtime cannot start when the GPU is unavailable.
+  if (!files.some(name => /^libggml-cpu(-.+)?\.so$/.test(name))) {
+    throw new Error('Incomplete Linux runtime: missing CPU backend');
+  }
+}

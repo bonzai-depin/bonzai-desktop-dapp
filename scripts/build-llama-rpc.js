@@ -16,6 +16,9 @@
  *   npm run build:rpc -- --clean                   # force rebuild
  *   npm run build:rpc -- --ref=master              # explicit ref
  *   LLAMA_CPP_REF=b8550 npm run build:rpc -- --clean
+ *   BONZAI_LLAMA_PORTABLE=true BONZAI_LLAMA_BACKEND=cuda npm run build:rpc
+ *                                                  # Linux release layout: backend
+ *                                                  # plugins + shared libraries
  *
  * Output:
  *   bin/{platform}-{arch}/rpc-server
@@ -29,7 +32,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { rpcBuildTarget, selectGpuBackend, buildConfigurationMatches, assertWindowsGpuFiles } from "./llama-build-targets.mjs";
+import { rpcBuildTarget, selectGpuBackend, buildConfigurationMatches, assertWindowsGpuFiles, portableLinuxFlags, portableLibraryNames, assertLinuxPortableFiles } from "./llama-build-targets.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +52,9 @@ const PLATFORM_KEY = {
 }[PLATFORM] || PLATFORM;
 
 const BIN_DIR = path.join(ROOT, "bin", `${PLATFORM_KEY}-${ARCH}`);
+// Opt-in so local Linux builds keep their single-file, host-tuned binaries.
+const PORTABLE_LINUX = PLATFORM === "linux" && /^(1|true)$/i.test(process.env.BONZAI_LLAMA_PORTABLE || "");
+let selectedBackend = "cpu";
 const SOURCE_MARKER = path.join(BIN_DIR, ".llama-source.json");
 const BUILD_DIR = path.join(os.tmpdir(), "bonzai-llama-rpc-build");
 const SRC_DIR = path.join(BUILD_DIR, "llama-src");
@@ -106,7 +112,8 @@ function getCmakeFlags() {
     // BonzAI owns HTTPS downloads and serves inference over loopback/P2P.
     // Avoid a runtime dependency on the build host's OpenSSL installation.
     "-DLLAMA_OPENSSL=OFF",
-    `-DBUILD_SHARED_LIBS=${PLATFORM === 'win32' ? 'ON' : 'OFF'}`,
+    `-DBUILD_SHARED_LIBS=${PLATFORM === 'win32' || PORTABLE_LINUX ? 'ON' : 'OFF'}`,
+    ...portableLinuxFlags(PLATFORM, PORTABLE_LINUX),
   ];
 
   if (PLATFORM === "darwin") {
@@ -138,9 +145,18 @@ function getCmakeFlags() {
     };
     const commands = { cuda: 'nvcc --version', hip: 'hipcc --version', vulkan: 'glslc --version' };
     const backend = selectGpuBackend(process.env.BONZAI_LLAMA_BACKEND, name => probe(commands[name]));
+    selectedBackend = backend;
 
     if (backend === 'cuda') {
       flags.push("-DGGML_CUDA=ON");
+      if (PORTABLE_LINUX) {
+        // Single-GPU desktops do not need NCCL; never pick up a build-host copy.
+        flags.push("-DGGML_CUDA_NCCL=OFF");
+        // CUDA toolkits before 13.5 bundle a CCCL older than llama.cpp expects.
+        if (process.env.BONZAI_LLAMA_CUDA_CCCL_VERSION) {
+          flags.push(`-DGGML_CUDA_CCCL_VERSION=${process.env.BONZAI_LLAMA_CUDA_CCCL_VERSION}`);
+        }
+      }
       console.log("  CUDA detected — enabling GPU acceleration (NVIDIA)");
     } else if (backend === 'hip') {
       flags.push("-DGGML_HIP=ON");
@@ -240,7 +256,7 @@ function configure(flags) {
   // a shell splits the command and silently drops the source/build paths.
   execFileSync('cmake', [...flags, '-S', SRC_DIR, '-B', CMAKE_BUILD_DIR], { stdio: 'inherit' });
   const cache = fs.readFileSync(path.join(CMAKE_BUILD_DIR, 'CMakeCache.txt'), 'utf8');
-  for (const flag of flags.filter(value => /^-DGGML_(VULKAN|CUDA|HIP|METAL|BACKEND_DL)=ON$/.test(value))) {
+  for (const flag of flags.filter(value => /^-DGGML_(VULKAN|CUDA|HIP|METAL|BACKEND_DL|CPU_ALL_VARIANTS)=ON$/.test(value))) {
     const key = flag.slice(2, flag.indexOf('='));
     if (!new RegExp(`^${key}:BOOL=ON$`, 'm').test(cache)) {
       throw new Error(`CMake did not enable requested capability ${key}`);
@@ -311,6 +327,22 @@ function copyBinaries(rpcTarget) {
     }
   }
 
+  // Never leave stale libraries from another configuration in a package.
+  if (PLATFORM === 'linux') {
+    for (const name of fs.readdirSync(BIN_DIR).filter(name => /^lib.+\.so(\.\d+)*$/.test(name))) {
+      fs.rmSync(path.join(BIN_DIR, name), { force: true });
+    }
+  }
+  if (PORTABLE_LINUX) {
+    const directory = path.join(CMAKE_BUILD_DIR, 'bin');
+    for (const { source, name } of portableLibraryNames(fs.readdirSync(directory))) {
+      // copyFileSync follows the symlink chain to the real library.
+      fs.copyFileSync(path.join(directory, source), path.join(BIN_DIR, name));
+      console.log(`  ${name} → ${BIN_DIR}`);
+    }
+    assertLinuxPortableFiles(fs.readdirSync(BIN_DIR), selectedBackend);
+  }
+
   const converter = path.join(SRC_DIR, "convert_hf_to_gguf.py");
   if (!fs.existsSync(converter)) {
     console.error(`ERROR: llama.cpp converter not found at ${converter}`);
@@ -327,6 +359,17 @@ function verify() {
   const ext = PLATFORM === "win32" ? ".exe" : "";
   if (PLATFORM === 'win32' && process.env.BONZAI_LLAMA_BACKEND === 'vulkan') {
     assertWindowsGpuFiles(fs.readdirSync(BIN_DIR));
+  }
+  if (PORTABLE_LINUX) {
+    assertLinuxPortableFiles(fs.readdirSync(BIN_DIR), selectedBackend);
+    // Executables must resolve every linked library from their own directory
+    // or the base system — never from the build tree or a GPU toolkit.
+    for (const name of ['rpc-server', 'llama-server', 'llama-quantize']) {
+      const resolved = execFileSync('ldd', [path.join(BIN_DIR, name)], { encoding: 'utf8' });
+      if (/not found/.test(resolved) || /lib(cuda|cudart|cublas)/.test(resolved)) {
+        throw new Error(`${name} has unresolved or GPU-toolkit link dependencies:\n${resolved}`);
+      }
+    }
   }
 
   for (const name of [`rpc-server${ext}`, `llama-server${ext}`, `llama-quantize${ext}`]) {

@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import platform
 import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, copy_metadata
@@ -14,6 +15,11 @@ packages = [
 ]
 if sys.platform == 'darwin':
     packages += ['mlx', 'mlx_lm', 'mlx_vlm']
+# mediapipe 0.10.x publishes no Linux aarch64 wheel (see requirements.txt).
+optional_imports = ['mediapipe']
+if sys.platform == 'linux' and platform.machine() == 'aarch64':
+    packages.remove('mediapipe')
+    optional_imports = []
 package_data, package_binaries, package_imports = [], [], []
 for package in packages:
     data, binaries, imports = collect_all(package)
@@ -32,7 +38,7 @@ a = Analysis(
     pathex=['src/server'],
     binaries=package_binaries,
     datas=package_data,
-    hiddenimports=package_imports + local_imports + ['finger_frame_workflow', 'mediapipe', 'minimax_h3_gguf', 'h3_quantized', 'h3_numerics', 'h3_weight_stream', 'inference_memory', 'wan_residency', 'chatterbox.mtl_tts', 's3tokenizer', 'video_enhance', 'seedvr2_worker', 'rotary_embedding_torch', 'omegaconf', 'einops', 'gguf'],
+    hiddenimports=package_imports + local_imports + optional_imports + ['finger_frame_workflow', 'minimax_h3_gguf', 'h3_quantized', 'h3_numerics', 'h3_weight_stream', 'inference_memory', 'wan_residency', 'chatterbox.mtl_tts', 's3tokenizer', 'video_enhance', 'seedvr2_worker', 'rotary_embedding_torch', 'omegaconf', 'einops', 'gguf'],
     hookspath=['scripts/pyinstaller-hooks'],
     hooksconfig={},
     runtime_hooks=[],

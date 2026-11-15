@@ -1,7 +1,8 @@
 # Desktop release builds
 
 The three workflows in `.github/workflows/` build macOS ARM64, Windows x64,
-and Linux x64 (separate CUDA and ROCm installers). They all use `diffuser.spec`
+and Linux x64 (separate CUDA and ROCm installers). A fourth, manually
+dispatched workflow builds [Linux ARM64](#linux-arm64-nvidia-dgx-spark). They all use `diffuser.spec`
 to package an onedir Python runtime and run `--bonzai-runtime-check` against
 that executable before assembling the desktop application. This checks imports,
 CPU tensor and torchvision native operations, and bundled ffmpeg, without downloading model weights.
@@ -30,6 +31,36 @@ installation of the actual setup executable. The installed Python runtime is
 also smoke-tested. The native build cache includes its CMake configuration, so
 a cached CPU build cannot satisfy a GPU build request. Compatible vendor GPU
 drivers are required on the test machine; the development SDK is not.
+
+## Linux ARM64 (NVIDIA DGX Spark)
+
+**Release (Linux ARM64)** (`linux-arm64-release.yml`) builds
+`BonzAI-<version>-linux-arm64-cuda.deb` for aarch64 CUDA hosts so they can run
+and pool large language models. It is dispatched manually and is not one of
+the four jobs that gate a release; it has no `release` trigger until the
+installer has been validated on real hardware.
+
+- Runner: GitHub-hosted `ubuntu-24.04-arm` (free for public repositories). It
+  has no NVIDIA GPU or driver. The CUDA 13.0 compiler, cuDART and cuBLAS come
+  from NVIDIA's `ubuntu2404/sbsa` apt repository; GCC 14 is required for the
+  ARMv9.2 CPU variant.
+- GGUF runtime: `BONZAI_LLAMA_PORTABLE=true` with `BONZAI_LLAMA_BACKEND=cuda`
+  produces `bin/linux-arm64/{llama-server,rpc-server,llama-quantize}` plus
+  shared libraries and backend plugins (`libggml-cuda.so`, `libggml-rpc.so`,
+  one `libggml-cpu-*.so` per ARMv8.0–ARMv9.2 level) loaded from the executable
+  directory. CUDA acceleration uses the host's CUDA 13 runtime
+  (`libcudart.so.13`, `libcublas.so.13`, NVIDIA driver); these are not bundled
+  with the GGUF runtime. Without them the runtime starts on CPU.
+- CI proves: the CUDA backend is compiled and linked against CUDA 13, the
+  executables have no unresolved or toolkit link dependencies, the runtime
+  starts with the CUDA plugin removed, the packaged copies start, and the
+  source and frozen Python runtime checks pass. CI cannot execute CUDA code.
+- Python backend: PyTorch nightly `cu130` aarch64 wheels. Every pinned
+  dependency has an aarch64 or pure-Python distribution except `mediapipe`
+  0.10.x, so **Finger Frame is unavailable on Linux ARM64** and reports the
+  missing package when used. Vulkan is not built for this target.
+- Not validated on hardware: CUDA inference in `llama-server`/`rpc-server`,
+  linked-device pooling, and PyTorch GPU pipelines on DGX Spark.
 
 ## Validate without publishing
 
