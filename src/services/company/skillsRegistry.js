@@ -12,7 +12,8 @@ import { executeFinanceLocal } from "./finance/evidence.js";
 
 import * as treasury from "./treasury.solo.js";
 import * as connectors from "./connectors.js";
-import { append } from "./auditLog.js";
+import { append, filter as auditFilter } from "./auditLog.js";
+import { OUTFLOW_ACTIONS, outflowExposure, checkOutflow } from "./spendControls.js";
 import { SKILL_MANIFESTS, getManifest } from "./skillManifests.js";
 import { executeConnectorAction } from "./connectorExecutors.js";
 import { executeLocalAction } from "./gmao.js";
@@ -74,15 +75,15 @@ export async function execute(companyId, actionType, params, ctx = {}) {
     }
   }
 
-  const outflow = ['stripe.refund', 'qbo.payBill', 'shopify.refundOrder'].includes(actionType);
+  const outflow = OUTFLOW_ACTIONS.includes(actionType);
   if (outflow && !ctx.charter?.demoMode) {
     const amount = Number(params.amount);
     const state = await treasury.getState(companyId);
-    const currency = String(params.currency || ctx.charter?.rules?.currency || '').toUpperCase();
-    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(ctx.cap) || amount > ctx.cap
-      || currency !== state.currency || state.balance - amount < (ctx.charter?.rules?.reserveFloor || 0)) {
-      return { ok: false, error: 'Payment needs an explicit amount within this role’s cap, matching treasury currency and reserve floor.' };
-    }
+    const windowStart = Date.now() - (ctx.charter?.heartbeat?.roleMin ?? 30) * 60_000;
+    const exposure = outflowExposure(await auditFilter(companyId, { kind: 'action' }), await treasury.listEntries(companyId), { role: ctx.role, windowStart });
+    const allowed = checkOutflow({ amount, currency: params.currency || ctx.charter?.rules?.currency, cap: ctx.cap,
+      reserveFloor: ctx.charter?.rules?.reserveFloor || 0, balance: state.balance, ledgerCurrency: state.currency, ...exposure });
+    if (!allowed.ok) return { ok: false, beforeDispatch: true, error: allowed.error };
     if (actionType === 'qbo.payBill' && Number(params.payload?.TotalAmt) !== amount) return { ok: false, error: 'QuickBooks payment amount must match the amount approved for this task.' };
   }
   const financeLocal = ["finance.reconcilePayouts", "finance.listEvidence", "finance.readEvidence"].includes(actionType);
@@ -110,7 +111,10 @@ export async function execute(companyId, actionType, params, ctx = {}) {
     action: actionType,
     status: simulated ? "simulated" : outcome.status || "executed",
     note: outcome.message || outcome.summary || _summarize(actionType, params),
-    txOrLink: result.shareLink || null,
+    // A payout's amount and provider reference stay on the trail so later
+    // payouts are measured against what has already left the company.
+    txOrLink: outflow ? String(result.id || result.externalId || '') || null : result.shareLink || null,
+    ...(outflow && !simulated ? { amount: Number(params.amount), currency: String(params.currency || ctx.charter?.rules?.currency || '').toUpperCase(), direction: 'out' } : {}),
   });
 
   return { ok: true, ...outcome, ...(simulated ? { simulated: true, status: 'simulated' } : {}) };

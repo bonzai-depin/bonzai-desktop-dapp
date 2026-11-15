@@ -41,6 +41,30 @@ function encodeForm(data, prefix = "", out = new URLSearchParams()) {
   return out;
 }
 
+async function requestId(key) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(key)));
+  return Array.from(new Uint8Array(bytes).slice(0, 20), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** {customerId, lines:[{description, amount | quantity+unitPrice, itemId}], dueDate} → QuickBooks Invoice. */
+export function quickBooksInvoice(params) {
+  if (!params.customerId) throw new Error("An invoice needs customerId");
+  const lines = Array.isArray(params.lines) ? params.lines : [];
+  if (!lines.length) throw new Error("An invoice needs at least one line");
+  return {
+    CustomerRef: { value: String(params.customerId) },
+    ...(params.dueDate ? { DueDate: String(params.dueDate).slice(0, 10) } : {}),
+    Line: lines.map((line, index) => {
+      const quantity = Number(line.quantity ?? 1), unitPrice = Number(line.unitPrice ?? line.amount);
+      const amount = Number(line.amount ?? quantity * unitPrice);
+      if (!(amount > 0) || !Number.isFinite(quantity) || !Number.isFinite(unitPrice)) throw new Error(`Invoice line ${index + 1} needs a positive amount`);
+      return { DetailType: "SalesItemLineDetail", Amount: Math.round(amount * 100) / 100,
+        ...(line.description ? { Description: String(line.description).slice(0, 4000) } : {}),
+        SalesItemLineDetail: { Qty: quantity, UnitPrice: unitPrice, ...(line.itemId ? { ItemRef: { value: String(line.itemId) } } : {}) } };
+    }),
+  };
+}
+
 const actionConnector = (actionType) => ({
   qonto: "qonto", stripe: "stripe", hubspot: "hubspot", qbo: "quickbooks",
   sage: "sage_accounting", twilio: "twilio", whatsapp: "twilio",
@@ -131,7 +155,23 @@ async function runConnectorAction(companyId, actionType, params, idempotencyKey,
       const realm = connector.accountIdentifier;
       if (!realm) throw new Error("QuickBooks realm ID is missing from the connector account field");
       const entity = actionType === "qbo.createInvoice" ? "invoice" : actionType === "qbo.recordPayment" ? "payment" : "billpayment";
-      const data = await call({ url: `https://quickbooks.api.intuit.com/v3/company/${realm}/${entity}?minorversion=75`, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params.payload || params) });
+      // QuickBooks rejects the action's own field names; translate them to its
+      // Invoice and Payment objects. A caller-built `payload` is passed through.
+      let payload = params.payload;
+      if (!payload && actionType === "qbo.createInvoice") payload = quickBooksInvoice(params);
+      if (!payload && actionType === "qbo.recordPayment") {
+        const amount = Number(params.amount);
+        if (!params.invoiceId || !(amount > 0)) throw new Error("Recording a payment needs invoiceId and a positive amount");
+        // The payment must name the invoice's customer; read it instead of asking the model to guess.
+        const invoice = (await call({ url: `https://quickbooks.api.intuit.com/v3/company/${realm}/invoice/${encodeURIComponent(params.invoiceId)}?minorversion=75`, method: "GET" })).Invoice;
+        if (!invoice?.CustomerRef?.value) throw new Error(`QuickBooks invoice ${params.invoiceId} was not found`);
+        payload = { CustomerRef: { value: invoice.CustomerRef.value }, TotalAmt: amount,
+          Line: [{ Amount: amount, LinkedTxn: [{ TxnId: String(params.invoiceId), TxnType: "Invoice" }] }],
+          ...(params.method ? { PrivateNote: `Method: ${String(params.method).slice(0, 100)}` } : {}) };
+      }
+      if (!payload) throw new Error("A QuickBooks payload is required");
+      // QuickBooks deduplicates on `requestid`, so a repeated request cannot create a second document.
+      const data = await call({ url: `https://quickbooks.api.intuit.com/v3/company/${realm}/${entity}?minorversion=75&requestid=${await requestId(idempotencyKey)}`, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const record = data[entity[0].toUpperCase() + entity.slice(1)] || data;
       return { id: record.Id || record.id, summary: `${entity} ${record.DocNumber || record.Id || "created"}` };
     }

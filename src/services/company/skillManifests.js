@@ -115,7 +115,7 @@ export const SKILL_MANIFESTS = {
     requiredConnectors: ["quickbooks"],
     suggestedRoles: ["CFO", "InvoicingSpecialist", "PaymentsSpecialist", "AccountingSpecialist"],
     actions: [
-      { type: "qbo.createInvoice",     summary: "Create a customer invoice", params: { customerId: "string", lines: "array", dueDate: "string" } },
+      { type: "qbo.createInvoice",     summary: "Create a customer invoice", params: { customerId: "string", lines: "array of {description, amount, quantity?, unitPrice?, itemId?}", dueDate: "YYYY-MM-DD" } },
       { type: "qbo.sendInvoice",       summary: "Email an invoice", params: { invoiceId: "string" } },
       { type: "qbo.recordPayment",     summary: "Record a payment received", params: { invoiceId: "string", amount: "number", method: "string" } },
       { type: "qbo.reportAR",          summary: "Generate A/R aging report", params: {} },

@@ -79,6 +79,30 @@ test('a partly failed SMS broadcast reports who was reached so nobody is message
   assert.match(result.summary, /2 messages accepted.*1 not sent \(bad\)/);
 });
 
+test('QuickBooks receives its own invoice and payment objects, never the raw action', async () => {
+  // Business reason: an invoice the accounting system rejects is not an invoice.
+  const qbo = { id: 'books', kind: 'quickbooks', status: 'active', accountIdentifier: '123' };
+  const { requests } = provider({ connectors: [qbo], respond: async spec => spec.method === 'GET'
+    ? { Invoice: { Id: '77', CustomerRef: { value: 'C9' } } } : spec.url.includes('/invoice') ? { Invoice: { Id: '77', DocNumber: '1001' } } : { Payment: { Id: 'P1' } } });
+  const action = { type: 'qbo.createInvoice', stepId: 'step1', reason: 'bill the visit', customerId: 'C9', dueDate: '2026-12-01',
+    lines: [{ description: 'Maintenance visit', quantity: 2, unitPrice: 60 }, { description: 'Filter', amount: 15.5, itemId: '4' }] };
+  const invoice = await executeConnectorAction('team', action.type, action, 'team:task:step1');
+  assert.equal(invoice.id, '77');
+  const body = JSON.parse(requests[0].body);
+  assert.deepEqual(Object.keys(body).sort(), ['CustomerRef', 'DueDate', 'Line']);
+  assert.deepEqual(body.Line.map(line => line.Amount), [120, 15.5]);
+  assert.deepEqual(body.Line[1].SalesItemLineDetail.ItemRef, { value: '4' });
+  assert.match(requests[0].url, /requestid=[0-9a-f]{40}$/);
+  await executeConnectorAction('team', 'qbo.createInvoice', action, 'team:task:step1');
+  assert.equal(requests[1].url, requests[0].url, 'a repeat of the same step carries the same QuickBooks request id');
+
+  await executeConnectorAction('team', 'qbo.recordPayment', { type: 'qbo.recordPayment', invoiceId: '77', amount: 135.5, method: 'transfer' }, 'team:task:step2');
+  const payment = JSON.parse(requests.at(-1).body);
+  assert.deepEqual(payment.CustomerRef, { value: 'C9' }, 'the customer comes from the invoice, not from a guess');
+  assert.deepEqual(payment.Line[0].LinkedTxn, [{ TxnId: '77', TxnType: 'Invoice' }]);
+  await assert.rejects(executeConnectorAction('team', 'qbo.createInvoice', { customerId: 'C9', lines: [] }, 'k'), error => error.beforeDispatch === true && /at least one line/.test(error.message));
+});
+
 test('only a rejected credential disconnects a tool', async () => {
   // Business reason: "card expired" or a 403 rate limit must not disable every
   // later action of the team until someone reconnects the tool by hand.
