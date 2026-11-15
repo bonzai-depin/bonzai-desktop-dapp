@@ -12,6 +12,9 @@ test('the words of a brief choose the theme and size; a variation only changes w
   assert.equal(castle.size, 'large');
   assert.equal(planWorld('petite forêt enneigée, hiver').theme, 'snow');
   assert.equal(planWorld('petite forêt enneigée, hiver').size, 'small');
+  assert.equal(planWorld('snowy forest').theme, 'snow', 'a climate outranks plain vegetation');
+  assert.equal(planWorld('forêt enneigée').theme, 'snow');
+  assert.equal(planWorld('a quiet forest').theme, 'forest');
   const again = planWorld('A large haunted castle dungeon', { variation: 1 });
   assert.equal(again.theme, 'dungeon');
   assert.notEqual(again.seed, castle.seed, 'asking again gives a different map of the same place');

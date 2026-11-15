@@ -64,8 +64,11 @@ export function addObjectAsset(project, {
   sourceInferenceId = "",
   thumbnail = "",
   collectible = null,
+  role = "",
+  settings = null,
 } = {}) {
   if (!String(code || "").trim()) throw new Error("Object code is required");
+  if (role && !PLACEMENT_ROLES.includes(role)) throw new Error(`Unsupported object role ${role}`);
   const asset = {
     id: id("object"),
     kind: ASSET_KINDS.OBJECT,
@@ -76,6 +79,8 @@ export function addObjectAsset(project, {
     thumbnail,
     collectible,
   };
+  // A game piece knows what it is: placing it again keeps its role and tuning.
+  if (role) { asset.role = role; asset.settings = { ...(settings || {}) }; }
   project.objects.push(asset);
   project.updatedAt = Date.now();
   return asset;
@@ -123,6 +128,8 @@ export function addClearCondition(project, levelId, condition = {}) {
     targetPlacementId: String(condition.targetPlacementId || ""),
     event: String(condition.event || ""),
   };
+  // "Every" follows the level: its target is counted when the game is compiled.
+  if (condition.all && (type === "collect" || type === "defeat")) clearCondition.all = true;
   level.clearConditions ||= [];
   level.clearConditions.push(clearCondition);
   project.updatedAt = Date.now();
@@ -346,6 +353,9 @@ export function validateGameProject(project, { requireClearConditions = true } =
       if (condition.type === "reach" && !condition.targetPlacementId && !level.exits?.length) {
         errors.push(`${condition.id} needs a target object or marker`);
       }
+      if (condition.all && !(level.placements || []).some((placement) => (placement.tags?.length ? placement.tags : [placement.role]).includes(condition.tag))) {
+        errors.push(`${condition.id} needs at least one ${condition.tag} in the level`);
+      }
     }
     for (const placement of level.placements || []) {
       if (!objectIds.has(placement.objectId)) {
@@ -388,11 +398,14 @@ export function compileGameProject(project) {
     .flatMap((level) => level.placements || [])
     .find((placement) => placement.role === "player");
   const runtimeId = (placementId) => placementId === playerPlacement?.id ? "player" : placementId;
+  // Counted here, so adding or removing a crystal in the editor cannot leave a level unwinnable.
+  const every = (level, condition) => (level.placements || []).filter((placement) =>
+    (placement.tags?.length ? placement.tags : [placement.role]).includes(condition.tag || (condition.type === "collect" ? "collectible" : "enemy"))).length;
   const objectiveRows = orderedLevels.flatMap((level) => (level.clearConditions || []).map((condition) => ({
     id: `${level.id}_${condition.id}`,
     type: condition.type,
     label: condition.label,
-    target: Math.max(1, Number(condition.target || 1)),
+    target: Math.max(1, Number(condition.all ? every(level, condition) : condition.target || 1)),
     tag: condition.tag || undefined,
     event: condition.event || undefined,
     trigger: condition.type === "reach" ? `reach_${level.id}_${condition.id}` : undefined,

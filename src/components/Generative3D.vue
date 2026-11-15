@@ -205,20 +205,9 @@
                     <span>{{ $t('levelEditor.instant') }}</span>
                   </div>
                   <div class="bz-3d-instant__body">
-                    <div v-if="creationMode === 'game'" class="bz-3d-selector" role="group" :aria-label="$t('levelEditor.instantRules')">
-                      <button
-                        v-for="template in gameTemplates"
-                        :key="template.id"
-                        type="button"
-                        class="bz-3d-option"
-                        :class="{ 'is-selected': instantTemplate === template.id }"
-                        :aria-pressed="instantTemplate === template.id"
-                        @click="instantTemplate = template.id"
-                      >
-                        <span class="material-symbols-outlined" aria-hidden="true">{{ template.icon }}</span>
-                        <span>{{ $t(`levelEditor.template_${template.id}`) }}</span>
-                      </button>
-                    </div>
+                    <select v-if="creationMode === 'game'" v-model="instantTemplate" class="bz-3d-instant__rules" :aria-label="$t('levelEditor.instantRules')" :disabled="instantBusy">
+                      <option v-for="template in gameTemplates" :key="template.id" :value="template.id">{{ $t(`levelEditor.template_${template.id}`) }}</option>
+                    </select>
                     <button
                       type="button"
                       class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
@@ -383,7 +372,13 @@
                   <span class="material-symbols-outlined" aria-hidden="true">close</span>
                 </button>
                 <span v-if="!activeLevel.clearConditions?.length" class="clear-conditions__empty">Ask BonzAI to define the win condition.</span>
-                <span v-else-if="activeLevel.clearConditions.length > 1" class="clear-conditions__mode">{{ activeLevel.clearMode === 'any' ? 'Any' : 'All' }}</span>
+                <span class="clear-conditions__add" role="group" :aria-label="$t('levelEditor.addRule')">
+                  <button v-for="rule in gameRules" :key="rule" type="button" :disabled="editorBusy" :title="$t(`levelEditor.rule_${rule}`)" :aria-label="$t(`levelEditor.rule_${rule}`)" @click="addRule(rule)">
+                    <span class="material-symbols-outlined" aria-hidden="true">add</span>
+                    <span class="material-symbols-outlined" aria-hidden="true">{{ clearConditionIcon(rule) }}</span>
+                  </button>
+                </span>
+                <span v-if="activeLevel.clearConditions?.length > 1" class="clear-conditions__mode">{{ activeLevel.clearMode === 'any' ? 'Any' : 'All' }}</span>
               </div>
               <div class="gameplay-suggestions" aria-label="Gameplay suggestions">
                 <button v-for="suggestion in gameplaySuggestions" :key="suggestion" type="button" @click="gameplayInstruction = suggestion">{{ suggestion }}</button>
@@ -439,6 +434,7 @@
             :can-undo="editUndo.length>0" :can-redo="editRedo.length>0" :message="projectStatus"
             @selection="selectedPlacementId=$event?.target?.placementId || ''" @transform="commitLevelTransform"
             @place="placeEditorAsset" @regenerate="regenerateLevelSelection" @save="saveEditedLevel"
+            :can-add-pieces="canAddGamePieces" @add-pieces="addBuiltInPieces"
             @undo="undoLevelEdit" @redo="redoLevelEdit">
             <template #selection>
               <details v-if="selectedPlacement" class="build-gameplay"><summary>{{ $t('levelEditor.gameplay') }}</summary>
@@ -731,6 +727,7 @@ import { DEFAULT_3D_LLM_ID, DEFAULT_3D_LLM_TIER } from "../config/modelDefaults.
 import { validateGeneratedGameCode } from "./gen3d/gameRuntime.js";
 import {
   applyGameplayPatch,
+  addClearCondition,
   addInteraction,
   addLevel,
   addObjectAsset,
@@ -747,7 +744,7 @@ import {
   updatePlacement,
   validateGameProject,
 } from "./gen3d/gameProject.js";
-import { createInstantGame, createInstantLevel, GAME_TEMPLATES } from "./gen3d/gameTemplates.js";
+import { createInstantGame, createInstantLevel, GAME_TEMPLATES, GAME_RULES, ruleCondition, addGamePieces } from "./gen3d/gameTemplates.js";
 import { routeFlaskRequest } from "../services/inferenceRouter.service.js";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
@@ -1714,6 +1711,7 @@ export default {
           libraryId: `project:${item.id}`,
           projectAssetId: item.id,
           kind: "object",
+          role: item.role,
           elapsedMs: item.elapsedMs,
           title: item.title,
           code: item.code,
@@ -3178,6 +3176,23 @@ OUTPUT RAW JAVASCRIPT:`;
       custom: "bolt",
     }[type] || "check_circle");
 
+    // Win rules and game pieces by hand: no model is needed to turn a level into a game.
+    const gameRules = GAME_RULES;
+    const addRule = (rule) => {
+      if (!activeLevel.value) return;
+      try {
+        const condition = addClearCondition(gameProject.value, activeLevel.value.id, ruleCondition(activeLevel.value, rule));
+        projectStatus.value = condition.label;
+      } catch (error) {
+        projectStatus.value = error.message;
+      }
+    };
+    const canAddGamePieces = computed(() => addGamePieces(cloneProject(gameProject.value)).length > 0);
+    const addBuiltInPieces = () => {
+      const added = addGamePieces(gameProject.value);
+      projectStatus.value = added.map((piece) => piece.title).join(", ");
+    };
+
     const deleteClearCondition = (conditionId) => {
       if (!activeLevel.value) return;
       try {
@@ -3384,7 +3399,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       await editLevel((project,level)=>{
       let object=project.objects.find(item=>item.id===asset.projectAssetId || (asset.inferenceId && item.sourceInferenceId===asset.inferenceId));
       if(!object)object=addObjectAsset(project,{title:asset.title,code:asset.code,thumbnail:asset.thumbnail,sourceInferenceId:asset.inferenceId||''});
-      const placement=placeObject(project,level.id,object.id,{position,role:'prop'});
+      const placement=placeObject(project,level.id,object.id,{position,role:object.role||'prop',settings:object.settings});
       target={placementId:placement.id};
       });
       await nextTick();
@@ -5157,6 +5172,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       gameplayUpdating,
       gameplaySuggestions,
       gameTemplates, instantTemplate, instantBusy, instantStatus, buildInstantLevel, buildInstantGame,
+      gameRules, addRule, canAddGamePieces, addBuiltInPieces,
       selectedBuildLevelLibraryId,
       selectedBuildObjectLibraryIds,
       buildEditorReady,
@@ -5272,8 +5288,12 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
 <style scoped>
 /* The playtest bar spans the top of the canvas; the game HUD sits below it. */
 .viewer-container.is-build .viewer-wrapper.has-builder :deep(.bonzai-game-hud) { top: 76px; }
+.clear-conditions__add { display: inline-flex; gap: var(--bz-space-1, 4px); }
+.clear-conditions__add button { gap: 0; padding-inline: var(--bz-space-2, 8px); }
 .bz-3d-instant { margin-top: var(--bz-space-3, 12px); }
 .bz-3d-instant__body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bz-space-2, 8px); min-width: 0; }
+.bz-3d-instant__rules { flex: 1 1 160px; min-width: 0; min-height: 36px; padding: 0 var(--bz-space-2, 8px); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-radius-sm, 3px); outline: 0; background: var(--bz-card); color: var(--bz-fg); font: 400 13px var(--bz-font-ui); }
+.bz-3d-instant__rules:focus-visible { border-color: var(--bz-accent, var(--bz-fg)); }
 .bz-3d-instant__status { flex: 1 1 100%; margin: 0; color: var(--bz-fg-low); font-size: var(--bz-size-meta, 13px); font-weight: 400; text-align: left; overflow-wrap: anywhere; }
 /* Keep editing controls compact so the canvas remains in the working viewport. */
 .three-controls-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:16px; align-items:stretch; }

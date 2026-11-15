@@ -47,6 +47,7 @@
         </div>
         <p class="level-editor__hint">{{$t(assets.length?'levelEditor.placeHint':'levelEditor.emptyAssets')}}</p>
         <button v-if="pending" type="button" class="bz-btn bz-btn--ghost" @click="armAsset(null)">{{$t('levelEditor.cancel')}}</button>
+        <button v-if="canAddPieces" type="button" class="bz-btn bz-btn--ghost" :disabled="busy" @click="emit('add-pieces')"><span class="material-symbols-outlined" aria-hidden="true">extension</span>{{$t('levelEditor.addPieces')}}</button>
       </div>
     </div>
     <p v-if="message||error" class="level-editor__status" :class="{'is-error':error}" role="status">{{error||message}}</p>
@@ -56,8 +57,8 @@
 <script setup>
 import {ref,computed,watch,nextTick,onBeforeUnmount} from 'vue';
 import {LevelEditControls} from './levelEditControls.js';
-const props=defineProps({viewer:Object,revision:Number,assets:{type:Array,default:()=>[]},busy:Boolean,generating:Boolean,modelReady:{type:Boolean,default:true},canUndo:Boolean,canRedo:Boolean,message:String});
-const emit=defineEmits(['selection','transform','regenerate','place','save','undo','redo','cancel-generation']);
+const props=defineProps({viewer:Object,revision:Number,assets:{type:Array,default:()=>[]},busy:Boolean,generating:Boolean,modelReady:{type:Boolean,default:true},canUndo:Boolean,canRedo:Boolean,canAddPieces:Boolean,message:String});
+const emit=defineEmits(['selection','transform','regenerate','place','save','undo','redo','cancel-generation','add-pieces']);
 const entries=ref([]),selected=ref(null),draft=ref(null),prompt=ref(''),mode=ref('translate'),snap=ref(false),pending=ref(''),error=ref('');
 let controller=null,disposed=false;
 const selectedKey=computed(()=>entries.value.some(entry=>entry.key===selected.value?.key)?selected.value.key:selected.value?.target.instanceId!=null?`node:${selected.value.target.path}`:selected.value?.key||'');

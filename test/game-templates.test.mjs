@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { GAME_TEMPLATES, GAME_DIFFICULTIES, createInstantGame, createInstantLevel } from '../src/components/gen3d/gameTemplates.js';
-import { validateGameProject, compileGameProject, importLevelSnapshot } from '../src/components/gen3d/gameProject.js';
+import { GAME_TEMPLATES, GAME_DIFFICULTIES, GAME_RULES, createInstantGame, createInstantLevel, ruleCondition, addGamePieces } from '../src/components/gen3d/gameTemplates.js';
+import { validateGameProject, compileGameProject, importLevelSnapshot, createGameProject, addLevel, placeObject, addClearCondition, removePlacement } from '../src/components/gen3d/gameProject.js';
 import { createGameRuntime, validateGeneratedGameCode, inspectGameSession } from '../src/components/gen3d/gameRuntime.js';
 import { WORLD_THEMES, WORLD_SIZES } from '../src/components/gen3d/worldLayout.js';
 import { worldHelpers } from '../src/components/gen3d/worldKit.js';
@@ -34,8 +34,8 @@ test('every template yields a publishable project whose objective can be complet
     assert.equal(count('player'), 1, label);
     assert.equal(count('goal'), 1, label);
     for (const condition of level.clearConditions) {
-      if (condition.type === 'collect') assert.equal(count('collectible'), condition.target, `${label}: as many crystals as the objective asks for`);
-      if (condition.type === 'defeat') assert.equal(count('enemy'), condition.target, label);
+      if (condition.type === 'collect') assert.ok(condition.all && count('collectible') >= 1, `${label}: the objective counts crystals that exist`);
+      if (condition.type === 'defeat') assert.ok(condition.all && count('enemy') >= 1, label);
       if (condition.type === 'reach') assert.ok(level.placements.some(placement => placement.id === condition.targetPlacementId), label);
     }
     assert.ok(count('enemy') >= 1, `${label}: a game needs a threat`);
@@ -47,7 +47,7 @@ test('harder difficulties add threats without changing the objective', () => {
   const enemies = level => level.placements.filter(placement => placement.role === 'enemy');
   assert.ok(enemies(hard).length > enemies(easy).length);
   assert.ok(enemies(hard)[0].settings.speed > enemies(easy)[0].settings.speed);
-  assert.deepEqual(hard.clearConditions.map(condition => condition.target), easy.clearConditions.map(condition => condition.target));
+  assert.deepEqual(hard.clearConditions.map(condition => condition.type), easy.clearConditions.map(condition => condition.type));
   assert.throws(() => createInstantGame({ template: 'racing' }), /collect, hunt, survive, escape/);
   assert.throws(() => createInstantGame({ difficulty: 'brutal' }), /easy, normal or hard/);
 });
@@ -111,4 +111,40 @@ test('an instant level is ordinary level source with its plan', () => {
   assert.equal(level.title, 'snowy mountain pass');
   assert.match(level.code, /H\.world\(/);
   assert.notDeepEqual(createInstantLevel({ prompt: 'snowy mountain pass', variation: 1 }).blueprint.seed, level.blueprint.seed);
+});
+
+test('"every" objectives are counted from the level, so editing it cannot make the game unwinnable', async () => {
+  // A fixed target went stale as soon as a crystal was added or removed in the editor.
+  const project = createInstantGame({ template: 'collect', theme: 'station', size: 'small', seed: 8 }), level = project.levels[0];
+  const crystals = () => level.placements.filter(placement => placement.role === 'collectible');
+  const target = () => Number(compileGameProject(project).match(/"type":"collect","label":"Collect every crystal","target":(\d+)/)[1]);
+  assert.equal(target(), crystals().length);
+  removePlacement(project, level.id, crystals()[0].id);
+  assert.equal(target(), crystals().length);
+  for (const crystal of crystals()) removePlacement(project, level.id, crystal.id);
+  assert.match(validateGameProject(project).errors.join(' '), /needs at least one collectible/);
+});
+
+test('a level becomes a game by hand: built-in pieces keep their role and rules need no model', async () => {
+  const project = createGameProject({ title: 'Hand built' });
+  const level = addLevel(project, { title: 'Yard', code: 'root.add(new THREE.Mesh(new THREE.BoxGeometry(30, 1, 30).translate(0, -.5, 0)));' });
+  const pieces = addGamePieces(project), piece = title => project.objects.find(object => object.title === title);
+  assert.deepEqual(pieces.map(item => item.role), ['player', 'enemy', 'enemy', 'collectible', 'collectible', 'buff', 'goal', 'trap', 'checkpoint']);
+  assert.deepEqual(addGamePieces(project), [], 'pieces are added once');
+  const themed = createInstantGame({ prompt: 'castle dungeon', template: 'collect' });
+  assert.equal(addGamePieces(themed).some(item => ['Hero', 'Crystal', 'Portal'].includes(item.title)), false, 'a themed piece the game already has is not offered twice');
+  assert.throws(() => ruleCondition(level, 'collect'), /Place a collectible first/);
+  assert.throws(() => ruleCondition(level, 'reach'), /Place a goal or set the finish position first/);
+  assert.throws(() => ruleCondition(level, 'race'), new RegExp(GAME_RULES.join(', ')));
+  // The editor places a palette piece with the role and tuning the asset carries.
+  const drop = (title, x) => placeObject(project, level.id, piece(title).id, { position: { x, y: 0, z: 0 }, role: piece(title).role, settings: piece(title).settings });
+  drop('Hero', 0); drop('Coin', 3); drop('Coin', 6); drop('Portal', 9);
+  for (const rule of ['collect', 'reach']) addClearCondition(project, level.id, ruleCondition(level, rule));
+  assert.deepEqual(validateGameProject(project), { ok: true, errors: [] });
+  const { game, run, key } = await play(project);
+  key('keydown', 'KeyD');
+  run(1.5);
+  assert.equal(game.state.score, 2, 'walking over the coins collects them');
+  run(1.5);
+  assert.equal(game.phase, 'won');
 });

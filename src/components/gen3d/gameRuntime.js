@@ -396,7 +396,8 @@ export function createGameRuntime({
       }
 
       if (phase === 'running') updateObjectives("tick");
-      syncHud();
+      // A finished run keeps its result and replay hint on screen.
+      if (phase === 'running') syncHud();
       justPressed.clear();
     }
     addUpdateCallback?.(tick);

@@ -14,4 +14,6 @@ en.instantLevelReady='Level built in {seconds} s. Open Edit level to change it.'
 fr.instant='Instantané';fr.instantRules='Règles du jeu';fr.instantLevel='Créer le niveau';fr.instantGame='Créer et jouer';
 fr.template_collect='Collecter et s’échapper';fr.template_hunt='Nettoyer la zone';fr.template_survive='Survivre';fr.template_escape='Atteindre la sortie';
 fr.instantLevelReady='Niveau créé en {seconds} s. Ouvrez « Modifier le niveau » pour le changer.';fr.instantGameReady='Jouable en {seconds} s. Choisissez « Modifier » pour changer le niveau ou ses règles.';
+en.addPieces='Add game pieces';en.addRule='Add a win rule';en.rule_collect='Collect every crystal';en.rule_defeat='Defeat every enemy';en.rule_reach='Reach the goal';en.rule_survive='Survive for 60 seconds';
+fr.addPieces='Ajouter des pièces de jeu';fr.addRule='Ajouter une règle de victoire';fr.rule_collect='Collecter tous les cristaux';fr.rule_defeat='Vaincre tous les ennemis';fr.rule_reach='Atteindre l’objectif';fr.rule_survive='Survivre 60 secondes';
 export const levelEditorMessages={en:{levelEditor:en},fr:{levelEditor:fr}};

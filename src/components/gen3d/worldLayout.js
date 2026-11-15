@@ -57,11 +57,12 @@ export function randomSource(seed) {
   return next;
 }
 
-/** Explicit words in the brief decide the theme and size; the seed only varies what the brief leaves open. */
+/** Explicit words in the brief decide the theme and size; the seed only varies what the brief leaves open.
+ * On a tie a climate or setting outranks plain vegetation: a snowy forest is a snowfield with trees. */
 export function planWorld(prompt = '', { seed, theme, size, variation = 0 } = {}) {
   const terms = new Set(words(prompt));
   const base = seedFrom(String(prompt).trim().toLowerCase());
-  const scores = Object.entries(WORLD_THEMES).map(([id, entry]) => [id, words(entry.words).filter(word => terms.has(word)).length]);
+  const scores = Object.entries(WORLD_THEMES).map(([id, entry]) => [id, words(entry.words).filter(word => terms.has(word)).length - (id === 'forest' ? .5 : 0)]);
   const best = scores.reduce((a, b) => b[1] > a[1] ? b : a);
   const ids = Object.keys(WORLD_THEMES);
   const chosenTheme = theme || (best[1] > 0 ? best[0] : ids[base % ids.length]);
