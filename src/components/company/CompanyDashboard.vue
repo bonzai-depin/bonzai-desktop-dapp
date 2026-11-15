@@ -240,6 +240,7 @@
           </div>
         </div>
 
+        <CompanyPlanning :charter="charter" :goals="displayState.goals || []" @changed="store.refreshActive()" />
         <label class="company-search work-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input v-model="workQuery" :aria-label="$ui('Search work')" :placeholder="$ui('Search work')" /></label>
         <div class="work-status-tabs" aria-label="Work status filter">
           <button
@@ -281,6 +282,7 @@
                 <span v-if="item.type === 'issue'" class="company-pill" :class="priorityClass(item.issue.priority)">
                   {{ item.issue.priority }}
                 </span>
+                <span v-if="(item.type === 'goal' ? item.goal : item.issue).overdue" class="company-pill company-pill--danger" data-i18n-skip>{{ $t('companyPlan.overdue') }}</span>
                 <span class="work-todo__role">
                   {{ item.type === 'issue' ? roleDisplayName(item.issue.assigneeRole) : (item.goal.createdBy === 'ceo' ? 'Coordinator outcome' : 'Owner outcome') }}
                 </span>
@@ -565,14 +567,15 @@
             <small class="muted">(last 200)</small>
           </h2>
           <button
-            class="bz-btn bz-btn--sm bz-btn--destructive fira-sans-condensed-black-italic"
+            class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
             :disabled="!state.audit.length"
-            @click="clearAuditConfirm"
+            @click="exportAuditTrail"
           >
-            <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>
-            Clear all
+            <span class="material-symbols-outlined" aria-hidden="true">verified_user</span>
+            {{ $ui('Export audit trail') }}
           </button>
         </div>
+        <p v-if="auditExportMessage" role="status">{{ auditExportMessage }}</p>
         <BonzaiDataTable
           v-if="state.audit.length"
           :columns="auditColumns"
@@ -595,11 +598,6 @@
           </template>
           <template #cell-note="{ row }">
             <span class="ellipsis">{{ row.note || row.txOrLink || '' }}</span>
-          </template>
-          <template #cell-actions="{ row }">
-            <button class="bz-iconbtn bz-iconbtn--sm bz-iconbtn--danger" @click="store.removeAuditEntry(row.id)" title="Delete audit entry">
-              <span class="material-symbols-outlined">delete</span>
-            </button>
           </template>
         </BonzaiDataTable>
         <button
@@ -794,6 +792,14 @@
                 />
               </label>
             </div>
+          </section>
+
+          <section v-show="teamSettingsSection === 'background'" class="charter-card">
+            <div class="charter-card__head">
+              <span class="material-symbols-outlined">notifications</span>
+              <h3 class="fira-sans-condensed-black-italic">{{ $ui('Background and alerts') }}</h3>
+            </div>
+            <CompanyBackgroundSettings />
           </section>
         </div>
 
@@ -1006,6 +1012,11 @@
           placeholder="Optional but recommended: a sentence on why this outcome matters now."
         ></textarea>
 
+        <label class="goal-modal__label" for="goal-success-criteria" data-i18n-skip>{{ $t('companyPlan.successCriteria') }}</label>
+        <input id="goal-success-criteria" v-model.trim="goalDraft.successCriteria" class="input" maxlength="2000" :placeholder="$t('companyPlan.successCriteriaHint')" data-i18n-skip />
+        <label class="goal-modal__label" for="goal-deadline" data-i18n-skip>{{ $t('companyPlan.deadline') }}</label>
+        <input id="goal-deadline" v-model="goalDraft.deadline" class="input" type="datetime-local" />
+
         <label class="goal-modal__label">Tasks</label>
         <div
           v-for="(task, idx) in goalDraft.tasks"
@@ -1166,6 +1177,7 @@
 <script>
 import CompanyWorkflowStudio from "./CompanyWorkflowStudio.vue";
 import CompanyTeamStatus from "./CompanyTeamStatus.vue";
+import CompanyBackgroundSettings from "./CompanyBackgroundSettings.vue";
 import { isAutonomousWorkflowTask } from "../../shared/companyAutomation.js";
 import { setCompanyWorkflowHandoff } from "../../services/company/workflowHandoff.js";
 import DownloadRequirement from "../DownloadRequirement.vue";
@@ -1190,6 +1202,7 @@ import CompanyLiveFeed from "./CompanyLiveFeed.vue";
 import { domainWorkspaceViews, workInDomain, workspaceNavigation, workspaceViews, workspaceSection, maintenanceDestination, resolveWorkspaceDestination } from "../../services/company/workspaceNavigation.js";
 import CompanyQuestion from "./CompanyQuestion.vue";
 import CompanyGoalRoom from "./CompanyGoalRoom.vue";
+import CompanyPlanning from "./CompanyPlanning.vue";
 import { visibleText as stripReasoningTags, visibleRecord } from "../../shared/visibleText.js";
 import CompanyGmao from "./CompanyGmao.vue";
 import CompanyToday from "./CompanyToday.vue";
@@ -1216,8 +1229,8 @@ import { buildWorkspaceBlueprint, hydrateWorkspaceChannels } from "../../service
 
 export default {
   name: "CompanyDashboard",
-  components: { CompanyTeamStatus, DownloadRequirement, CompanyWorkflowStudio, CompanyWorkerModel, CompanyToday, CompanyOperationalFiles, CompanySales, CompanyGettingStarted, CompanyGrants, CompanyBilling, CompanyPurchasing, CompanyInbox, CompanyDeliverableLibrary, CompanyMarkdown, CompanyQuestion, CompanyMission,
-    CompanyWorkflowProgress, CompanyTaskReview, AgentWorkersPanel, SmartAgentJobsPanel, SmartAgentHireModal, BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyArtifactPreview, CompanyConnectors, CompanyLiveFeed, CompanyGoalRoom, CompanyGmao },
+  components: { CompanyTeamStatus, CompanyBackgroundSettings, DownloadRequirement, CompanyWorkflowStudio, CompanyWorkerModel, CompanyToday, CompanyOperationalFiles, CompanySales, CompanyGettingStarted, CompanyGrants, CompanyBilling, CompanyPurchasing, CompanyInbox, CompanyDeliverableLibrary, CompanyMarkdown, CompanyQuestion, CompanyMission,
+    CompanyWorkflowProgress, CompanyTaskReview, AgentWorkersPanel, SmartAgentJobsPanel, SmartAgentHireModal, BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyArtifactPreview, CompanyConnectors, CompanyLiveFeed, CompanyGoalRoom, CompanyPlanning, CompanyGmao },
   props: {
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
@@ -1285,8 +1298,10 @@ export default {
       { id: 'autonomy', label: 'Autonomy and memory', icon: 'verified_user' },
       { id: 'cadence', label: 'Cadence', icon: 'schedule' },
       { id: 'execution', label: 'Model execution', icon: 'memory' },
+      { id: 'background', label: 'Background and alerts', icon: 'notifications' },
     ];
     const exportMessage = ref('');
+    const auditExportMessage = ref('');
     const isFullscreen = ref(false);
     const pendingDelete = ref(null);
     const charterDraft = reactive({
@@ -1879,11 +1894,15 @@ export default {
     const goalDraft = reactive({
       title: "",
       rationale: "",
+      successCriteria: "",
+      deadline: "",
       tasks: [{ title: "", assigneeRole: "", priority: "normal" }],
     });
     function openNewGoalModal() {
       goalDraft.title = "";
       goalDraft.rationale = "";
+      goalDraft.successCriteria = "";
+      goalDraft.deadline = "";
       goalDraft.tasks = [{ title: "", assigneeRole: "", priority: "normal" }];
       goalModalOpen.value = true;
     }
@@ -1904,6 +1923,8 @@ export default {
         await store.createGoal({
           title: goalDraft.title,
           rationale: goalDraft.rationale,
+          successCriteria: goalDraft.successCriteria || null,
+          deadline: goalDraft.deadline || null,
           tasks: goalDraft.tasks
             .filter((t) => t.title.trim())
             .map((t) => ({
@@ -2165,7 +2186,6 @@ export default {
       { key: "action", title: "Action", width: "160px" },
       { key: "status", title: "Status", width: "110px" },
       { key: "note", title: "Note", width: "360px" },
-      { key: "actions", title: "", width: "48px", align: "center" },
     ]);
 
     const openIssues = computed(() =>
@@ -2393,10 +2413,23 @@ export default {
       await store.clearCatalog();
     }
     async function removeContent(id) { await store.removeContent(id); }
-    async function clearAuditConfirm() {
-      if (!displayState.value.audit.length) return;
-      if (!confirm("Clear the audit log? Goals, catalog, and treasury stay intact.")) return;
-      await store.clearAudit();
+    // Activity history is append-only: it can be exported with its integrity check, not cleared.
+    async function exportAuditTrail() {
+      auditExportMessage.value = '';
+      try {
+        const trail = await store.exportAuditTrail();
+        const blob = new Blob([JSON.stringify(trail, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url;
+        link.download = `${props.charter.name.replace(/\s+/g, '_')}-audit-trail.json`;
+        link.click(); URL.revokeObjectURL(url);
+        const check = trail.verification;
+        auditExportMessage.value = check.ok
+          ? `Audit trail exported: ${check.entries} entries, integrity verified.`
+          : check.firstBrokenSeq
+            ? `Audit trail exported. Integrity check failed at entry ${check.firstBrokenSeq}: history was changed outside BonzAI.`
+            : `Audit trail exported. Integrity check failed: ${check.unsealed} entries were added outside BonzAI.`;
+      } catch (error) { auditExportMessage.value = `Audit trail export failed: ${error.message}`; }
     }
     async function recordRevenue() {
       if (!manual.amount) return;
@@ -2506,7 +2539,7 @@ export default {
       clearCatalog, removeContent, requestDeleteIssue, requestDeleteContent,
       pendingDelete, dismissDelete, confirmDelete,
       downloadDeliverable, copyDeliverable, toggleWorkResult, openWorkResult, openResultTask, humanizeAction,
-      clearAuditConfirm,
+      exportAuditTrail, auditExportMessage,
       recordRevenue, recordSpend, copy, toggleDemoMode,
       toggleExecution, exportCompany,
       // live execution

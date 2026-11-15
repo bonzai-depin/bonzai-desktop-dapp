@@ -95,7 +95,8 @@ async function _loadCharter(id) {
 async function _deleteCharter(id) {
   const api = _api();
   if (!api) throw new Error('Company storage is unavailable. No company was deleted.');
-  await api.remove(id);
+  // One main-process transaction removes the team and all of its records.
+  if (!(await api.dissolve(id))) throw new Error('Team not found. Nothing was deleted.');
   clearCompanyDrafts(id);
   await window.electronAPI?.store?.delete?.(CHARTER_KEY(id));
 }
@@ -313,18 +314,16 @@ export async function resumeCompany(id) {
   return c;
 }
 
-/** Permanently dissolve. Wipes all per-company state. */
+/**
+ * Permanently dissolve. The team and every record it owns (tasks, approvals,
+ * treasury, activity history, connectors, automation) are deleted together
+ * in the main process, so a failure cannot leave a half-deleted team.
+ */
 export async function dissolveCompany(id) {
   await schedule('stop', id);
+  const forgetSecrets = await connectors.secretsCleanup(id);
   await _deleteCharter(id);
-  await audit.clear(id);
-  await treasury.reset(id);
-  await gov.clear(id);
-  await dist.clear(id);
-  await issues.clear(id);
-  await goalsSvc.clear(id);
-  await automationRuntime.clear(id);
-  await connectors.clear(id);
+  await forgetSecrets();
   await clearQueues(id);
   const ids = (await _readIndex()).filter((x) => x !== id);
   await _writeIndex(ids);
@@ -431,7 +430,14 @@ export async function approveAction(id, pendingId) {
   const { resolveRoleCompanion: r } = await import("./company/charter.js");
   const roleKey = pending.role || 'CEO';
   const assigned = r(charter, roleKey);
-  return dispatchAction(charter, roleKey, pending.requestedBy || assigned?.companion, action, { pendingId });
+  try {
+    return await dispatchAction(charter, roleKey, pending.requestedBy || assigned?.companion, action, { pendingId });
+  } catch (error) {
+    // The approval is consumed; without a task to carry the failure, the trail must.
+    await audit.append(id, { kind: 'approval', role: roleKey, action: action.type, status: 'error', pendingId,
+      note: `Approved action failed and was not completed: ${String(error?.message || error).slice(0, 300)}` });
+    throw error;
+  }
 }
 
 export const rejectAction = (id, pendingId, reason) => gov.reject(id, pendingId, reason);
@@ -462,6 +468,7 @@ export async function createGoal(companyId, input) {
     rationale: clean.rationale,
     missionAlignment: clean.missionAlignment || clean.rationale,
     deadline: clean.deadline,
+    successCriteria: clean.successCriteria,
     createdBy: "user",
   };
   const tasks = Array.isArray(clean.tasks) && clean.tasks.length
@@ -516,13 +523,9 @@ export const issueCounts = (id) => issues.counts(id);
 export const recentAudit = (id, n) => audit.recent(id, n);
 export const summarizeAudit = (id, ms) => audit.summarize(id, ms);
 export const onAuditChange = audit.onChange;
-/**
- * Wipe the company's audit log. Goals, issues, treasury, and catalog are
- * preserved — only the audit history (the live-feed source) is cleared.
- * Used by the "Clear feed" button to start a fresh demo run.
- */
-export const clearAudit = (id) => audit.clear(id);
-export const removeAuditEntry = (id, entryId) => audit.remove(id, entryId);
+// Activity history is append-only: it can be verified and exported, never edited.
+export const verifyAudit = (id) => audit.verify(id);
+export const exportAuditTrail = (id) => audit.exportTrail(id);
 export const listCatalog = (id) => dist.listCatalog(id);
 export const getContent = (id, contentId) => dist.getRecord(id, contentId);
 export const clearCatalog = (id) => dist.clear(id);

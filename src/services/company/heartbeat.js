@@ -238,10 +238,12 @@ async function _safeTickAllRoles(charter,run) {
     // — those go in the diffusion bucket.
     const llmRoles = [];
     const diffusionRoles = [];
-    for (const roleKey of Object.keys(ROLE_LIBRARY)) {
+    // Include queued work for roles the library does not know, so it is
+    // surfaced to the owner by the role tick instead of never being visited.
+    for (const roleKey of new Set([...Object.keys(ROLE_LIBRARY), ...Object.keys(depths)])) {
       const depth = depths[roleKey] || 0;
       if (depth === 0) continue;
-      const def = ROLE_LIBRARY[roleKey];
+      const def = ROLE_LIBRARY[roleKey] || {};
       const taskClass = def.pipeline && def.pipeline !== "text" ? "diffusion" : "llm";
       (taskClass === "diffusion" ? diffusionRoles : llmRoles)
         .push({ roleKey, depth: Math.min(depth, drainLimit) });
@@ -315,5 +317,7 @@ function _mergeResults(...items) {
     error: sum.error + Number(item.error || 0),
     continuing: sum.continuing + Number(item.continuing || 0),
     waiting: sum.waiting + Number(item.waiting || 0),
-  }), { executed: 0, queued: 0, vetoed: 0, error: 0, continuing: 0, waiting: 0 });
+    blocked: sum.blocked + Number(item.blocked || 0),
+    deferred: sum.deferred + Number(item.deferred || 0),
+  }), { executed: 0, queued: 0, vetoed: 0, error: 0, continuing: 0, waiting: 0, blocked: 0, deferred: 0 });
 }

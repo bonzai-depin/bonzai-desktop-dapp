@@ -4,11 +4,12 @@ import path from 'node:path';
 import { get } from '../connection.js';
 import * as blobStore from '../blobs.js';
 import { syncCompanyMemory } from './companyMemory.js';
+import { seal as sealAuditTrail } from './audit.js';
 import { teamMemoryId } from '../../../shared/teamMemory.js';
 import { isOperationalTable } from '../../../shared/companyOperations.js';
 import { validateOperationalBackup, detachRestoredPurchasing } from './operationalBackup.js';
 
-const CORE = ['team_conversation_archives', 'goals', 'issues', 'issue_attempts', 'treasury_state', 'treasury_entries', 'pending_approvals', 'published_content', 'connectors', 'human_roster', 'audit_entries', 'company_automation_state', 'company_automation_runs'];
+const CORE = ['team_conversation_archives', 'goals', 'issues', 'company_schedules', 'issue_attempts', 'treasury_state', 'treasury_entries', 'pending_approvals', 'published_content', 'connectors', 'human_roster', 'audit_entries', 'company_automation_state', 'company_automation_runs'];
 const MEMORY = ['memory_instances', 'memory_sources', 'memory_notes', 'memory_pages', 'memory_links', 'memory_review_queue', 'memory_contribution_parents'];
 const sensitive = /^(secret_ref|secretRef|apiKey|api_key|accessToken|refreshToken|access_token|refresh_token|privateKey|private_key|mnemonic|password|credentials)$/i;
 function redact(value) {
@@ -152,8 +153,11 @@ export function importBundle(bundle, options = {}) {
     db.prepare('INSERT INTO companies (id, name, mode, status, mission, template_id, demo_mode, charter, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, charter.name, charter.mode || 'solo', 'paused', charter.mission || null, charter.template?.id || null, charter.demoMode ? 1 : 0, JSON.stringify(charter), charter.createdAt || Date.now(), Date.now());
     for (const table of tables(db)) {
-      for (const original of bundle.tables[table] || []) {
+      // Activity history keeps its original order; its chain is rebuilt below.
+      const source = table === 'audit_entries' ? [...(bundle.tables[table] || [])].sort((a, b) => (a.seq ?? Infinity) - (b.seq ?? Infinity) || a.ts - b.ts) : bundle.tables[table] || [];
+      for (const original of source) {
         const row = structured(original, remap);
+        if (table === 'audit_entries') { row.seq = null; row.prev_hash = null; row.hash = null; }
         if (table === 'company_sales_records') { const saved=parse(row.data); if(saved.handoff){saved.archivedHandoff=saved.handoff;delete saved.handoff;} row.data=JSON.stringify(saved); }
         if (table === 'purchasing_records' && row.kind === 'request') row.data = JSON.stringify(detachRestoredPurchasing(parse(row.data)));
         if (table === 'gmao_record_activity') {
@@ -167,6 +171,9 @@ export function importBundle(bundle, options = {}) {
         if (table === 'gmao_outbox') { if (['draft','failed'].includes(row.status)) { row.approved_revision=null; row.approved_at=null; } if(row.status==='submitting') { row.status='unknown'; row.error='Restored pending delivery: verify provider before retrying.'; row.approved_revision=null; } }
         if (table === 'company_intake_sources') { row.lease=null; row.lease_until=null; if(row.status==='processing')row.status='queued'; row.attempts=0; }
         if (table === 'company_intake_mailboxes') { const data=parse(row.data);data.enabled=false;data.cursor=null;row.data=JSON.stringify(data); }
+        // A scheduled task's label follows its schedule's new id. Schedules themselves stay
+        // enabled but cannot fire: the restored team is paused until the owner resumes it.
+        if (table === 'issues' && row.created_by==='schedule') row.labels=JSON.stringify((parse(row.labels)||[]).map(label=>typeof label==='string'&&label.startsWith('schedule:')?`schedule:${ids.get(label.slice(9))||label.slice(9)}`:label));
         if (table === 'issues' && row.created_by==='document-intake') {
           const references=value=>String(value||'').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,key=>ids.get(key)||key);
           row.description=references(row.description);
@@ -205,6 +212,8 @@ export function importBundle(bundle, options = {}) {
     }
     // DB references commit only when every attachment was validated and saved.
     for (const attachment of attachments) blobStore.write(attachment.bytes, attachment.ext, { source: 'company-restore', sourceId: id });
+    // Restored entries have new ids, so the copy gets its own verifiable chain.
+    sealAuditTrail(id);
     return charter;
   })();
 }

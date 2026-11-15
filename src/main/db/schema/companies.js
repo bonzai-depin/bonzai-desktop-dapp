@@ -42,6 +42,10 @@ export const goals = sqliteTable(
     rationale: text("rationale"),
     missionAlignment: text("mission_alignment"),
     deadline: text("deadline"),
+    deadlineAt: integer("deadline_at"),          // epoch ms, parsed from `deadline`
+    successCriteria: text("success_criteria"),
+    outcome: text("outcome", { mode: "json" }),  // { status: pending_review | met | not_met, evidence, decidedAt }
+    overdueNotifiedAt: integer("overdue_notified_at"),
     status: text("status").notNull(),            // active | completed | cancelled
     createdBy: text("created_by").notNull(),     // ceo | user
     createdByRole: text("created_by_role"),
@@ -77,6 +81,7 @@ export const issues = sqliteTable(
     lastError: text("last_error"),
     execution: text("execution", { mode: "json" }),
     executionRevision: integer("execution_revision").notNull().default(0),
+    dueAt: integer("due_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -105,6 +110,29 @@ export const issueAttempts = sqliteTable(
   },
   (t) => ({
     byIssue: index("idx_attempts_issue").on(t.issueId, t.startedAt),
+  }),
+);
+
+/** ─── Recurring work ─────────────────────────────────────────────── */
+export const companySchedules = sqliteTable(
+  "company_schedules",
+  {
+    id: text("id").primaryKey(),
+    companyId: text("company_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    assigneeRole: text("assignee_role").notNull(),
+    priority: text("priority").notNull().default("normal"),
+    cadence: text("cadence", { mode: "json" }).notNull(),
+    nextRunAt: integer("next_run_at").notNull(),
+    lastRunAt: integer("last_run_at"),
+    lastIssueId: text("last_issue_id"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(1),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => ({
+    byDue: index("idx_company_schedules_due").on(t.companyId, t.enabled, t.nextRunAt),
   }),
 );
 

@@ -29,6 +29,7 @@ function workspaceChannels(companyId) {
 const PRIORITY_ORDER = `CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`;
 const PRIORITIES = ["low", "normal", "high", "urgent"];
 const STATUSES = ["open", "in_progress", "blocked", "done", "cancelled"];
+const EDITABLE = new Set(['title', 'description', 'status', 'priority', 'labels', 'assigneeRole', 'assigneeCompanion', 'goalId', 'parentIssueId', 'lastError', 'dueAt']);
 
 export const PREREQUISITE_BLOCKED = 'A prerequisite task was cancelled or removed. Reopen or replace it, then reopen this task.';
 const TEAM_WAIT_ESCALATION_MS = 72 * 60 * 60_000;
@@ -97,6 +98,7 @@ export function create(companyId, input) {
     lastError: null,
     execution: input.execution ?? null,
     executionRevision: 0,
+    dueAt: Number(input.dueAt) > 0 ? Math.trunc(Number(input.dueAt)) : null,
     createdAt: now,
     updatedAt: now,
   };
@@ -132,7 +134,10 @@ export function list(companyId, filter = {}) {
     byIssue.get(attempt.issueId).push(attempt);
   }
   const channels = workspaceChannels(companyId);
-  return rows.map((row) => ({ ...row, labels: routeCompanyWork(row, channels), attempts: byIssue.get(row.id) || [] }));
+  const now = Date.now();
+  // Finished or cancelled work is never late; only work that can still be acted on is flagged.
+  return rows.map((row) => ({ ...row, labels: routeCompanyWork(row, channels), attempts: byIssue.get(row.id) || [],
+    overdue: Number(row.dueAt) > 0 && row.dueAt < now && !['done', 'cancelled'].includes(row.status) }));
 }
 
 export function getById(companyId, issueId) {
@@ -145,6 +150,9 @@ export function update(companyId, issueId, patch) {
   const cur = getById(companyId, issueId);
   if (!cur) throw new Error(`issue ${issueId} not found`);
   if ('execution' in patch || 'executionRevision' in patch) throw new Error('Use the execution checkpoint or owner review to change task outcomes.');
+  // Retry counters, timestamps and identity are owned by the execution engine.
+  const unsupported = Object.keys(patch).filter(key => !EDITABLE.has(key));
+  if (unsupported.length) throw new Error(`Task field cannot be edited: ${unsupported.join(', ')}`);
   if (patch.status === 'done' && !hasCompletedExecution(cur.execution)) throw new Error('Task completion requires recorded results and a completed outcome review.');
   if (patch.status && patch.status !== cur.status) {
     if (!STATUSES.includes(patch.status)) throw new Error(`invalid status: ${patch.status}`);
@@ -168,6 +176,8 @@ export function update(companyId, issueId, patch) {
     if (leaving && patch.status === 'cancelled') {
       db.prepare("UPDATE pending_approvals SET status = 'expired', decided_at = ? WHERE company_id = ? AND issue_id = ? AND status = 'pending'").run(Date.now(), companyId, issueId);
       blockDependents(companyId, issueId);
+      // The last open task of a goal may have just been cancelled.
+      if (cur.goalId) goalsRepo.maybeComplete(companyId, cur.goalId);
     }
     return getById(companyId, issueId);
   })();

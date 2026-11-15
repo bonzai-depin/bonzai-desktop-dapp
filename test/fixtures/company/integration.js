@@ -339,6 +339,22 @@ assert.equal(audit.filter(nativeTeam.id,{action:'issue.escalated',issueId:stuckT
 issues.update(nativeTeam.id,stuckTask.id,{status:'cancelled'});
 console.log('PASS: busy or failing model turns retry with backoff, then escalate');
 
+// Work nobody can pick up is surfaced, never left open and unseen.
+const fieldTask = issues.create(nativeTeam.id,{title:'Dispatch the technician',assigneeRole:'FieldTech'});
+const strayTask = issues.create(nativeTeam.id,{title:'Imported task',assigneeRole:'OperationsManager'});
+assert.equal((await tickRole(nativeTeam,'FieldTech')).reason,'unstaffed_role','a human-coordination role is not covered by the manager’s agent');
+assert.equal((await tickRole(nativeTeam,'OperationsManager')).reason,'unstaffed_role');
+assert.match(issues.getById(nativeTeam.id,fieldTask.id).lastError,/No agent fills the FieldTech role/);
+assert.match(issues.getById(nativeTeam.id,strayTask.id).lastError,/not a role of this team/);
+for(const task of [fieldTask,strayTask]){assert.equal(issues.getById(nativeTeam.id,task.id).status,'blocked');issues.update(nativeTeam.id,task.id,{status:'cancelled'});}
+// A task that stops for the owner is a successful run, not a scheduler failure.
+const refusedTask = issues.create(nativeTeam.id,{title:'Send an unsupported broadcast',assigneeRole:'CFO'});
+window.electronAPI.chat=async()=>JSON.stringify({kind:'act',action:{type:'transfer',amount:5,reason:'not available'}});
+const refusedTick=await tickRole(nativeTeam,'CFO');
+assert.equal(refusedTick.blocked,1);assert.equal(refusedTick.error,0);
+issues.update(nativeTeam.id,refusedTask.id,{status:'cancelled'});
+console.log('PASS: unstaffed roles surface to the owner; owner-blocked work is not a scheduler failure');
+
 // A reply that lands before the wait checkpoint must still resume the sender.
 const purchasingTeam={...structuredClone(nativeTeam),id:'native-purchasing',name:'Achats Martin'};
 companies.save(purchasingTeam);

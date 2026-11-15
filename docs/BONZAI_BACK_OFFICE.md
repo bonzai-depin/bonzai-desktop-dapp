@@ -173,12 +173,24 @@ Failure handling is deterministic:
 - **Replaced agent**: open tasks addressed to the previous agent of a role move to the agent now filling it (`issue.reassigned`); funded jobs are blocked for the owner instead.
 - **Team wait**: a wait whose conversation no longer exists, or that is unanswered after `automation.teamWaitEscalationMs` (default 72 hours), becomes an owner question.
 - **Mailbox**: an oversized, linked or unreadable attachment flags that email for review; the mailbox continues.
+- **Unstaffed role**: a task for a role with no agent is blocked with that reason. Roles that coordinate named human workers (`inheritable: false`) are never covered by their manager's agent.
+- **Payouts** (`stripe.refund`, `qbo.payBill`, `shopify.refundOrder`): the role budget is cumulative per role heartbeat period, and the reserve floor is measured after payouts that the owner has not yet reconciled in the ledger (`spendControls.js`).
+- **Scheduler health**: a task that stops for the owner is a completed run; only a tick that throws counts as a scheduler failure.
+
+The main process notifies the owner once per team when approvals, agent questions, uncertain outcomes or exhausted retries are waiting, and again after 24 hours (`src/main/ownerAttention.js`, setting `company.ownerNotifications`). With `company.keepRunningInBackground` enabled and a team active, closing the window keeps automation running behind a tray icon (`src/main/backgroundMode.js`); it is off by default.
 
 Goal completion commits in the same transaction as its final task. Owner reviews, answers and escalations are written to the audit trail by the main process.
 
+The audit trail is append-only. The main process assigns each entry's id, time and per-team sequence and chains it to the previous entry with SHA-256; no renderer channel edits or deletes entries. **Export audit trail** saves the entries with a verification result that names the first altered or missing entry. The chain detects changes made without recomputing it; keep an exported head hash outside the device to detect a full rewrite or a trimmed tail. Entries are removed only when their team is dissolved, which deletes the team and all of its records in one transaction.
+
 A task is done only after every step has a recorded result. Cancelled tasks do not complete goals. Unsupported handlers, simulations, empty acknowledgements, pending payments and missing interactive input remain incomplete. Generated reports and company artifacts are local drafts. Email and SMS submission receipts do not claim delivery. Payment and refund receipts require owner verification and ledger reconciliation; the local treasury is a recorded ledger, not a bank-balance feed.
 
-The goal rollup verifies completion of its recorded tasks, not the commercial success or semantic quality of their outputs. Owners must review deliverables against the intended business outcome.
+Schedules, deadlines and outcomes (`0029_company_schedules.sql`):
+
+- **Scheduled work**: a schedule (daily, weekly, monthly on day 1–28, or an interval of at least 15 minutes, local time) creates one ordinary task per occurrence for a role of the team. The main process checks every minute, for active non-demo teams with an unlocked workspace. Occurrences missed while the app was closed collapse into one run; an occurrence is skipped, with a `schedule.skipped` audit entry, while the previous task is still open, running or blocked.
+- **Deadlines**: goal deadlines accept a date, a date-time or `+24h` / `+3d` / `+2w`; unreadable text is kept but not enforced. A scheduled task is due at the next occurrence. A missed goal deadline is written once to the audit trail (`goal.overdue`); overdue goals and tasks carry an **Overdue** badge. Nothing is cancelled or escalated automatically.
+- **Outcome confirmation**: a goal without success criteria completes with its last task. A goal with success criteria stays active when its tasks finish and waits for **Confirm outcome**: the owner records Met or Not met with evidence. Met completes the goal; Not met keeps it active for further tasks. Finished tasks alone never report such a goal as achieved, and the semantic quality of deliverables remains the owner's review.
+- A restored team keeps its schedules; they create no work until the owner resumes the team.
 
 ## Smart Workflows discovery and results
 

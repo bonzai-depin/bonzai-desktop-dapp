@@ -903,7 +903,9 @@ export function resolveRoleCompanion(charter, roleKey) {
     if (assignment?.companion) return { roleKey: cur, companion: assignment.companion };
     const def = ROLE_LIBRARY[cur];
     if (!def) return null;
-    if (!def.inheritable && def.reportsTo == null) return null;
+    // A role marked non-inheritable (a coordinator of named human workers) is
+    // never silently covered by its manager's agent; it must be staffed.
+    if (!def.inheritable && (cur === roleKey || def.reportsTo == null)) return null;
     cur = def.reportsTo;
   }
   return null;

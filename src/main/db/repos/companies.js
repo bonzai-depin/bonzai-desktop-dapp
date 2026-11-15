@@ -74,6 +74,50 @@ export function remove(id) {
   return true;
 }
 
+// Shared history tables where company_id is only an optional tag: the
+// owner's media gallery, skill run history and the job board outlive a team.
+const KEEP_ON_DISSOLVE = new Set(["generations", "skill_runs", "agent_jobs"]);
+const COMPANY_MEMORY = "(scope = 'company' AND identity_id = ?) OR (scope = 'team' AND json_extract(metadata_json, '$.companyId') = ?)";
+
+/**
+ * Permanently delete a team and every row that belongs to it, in one
+ * transaction: either the whole team is gone or nothing changed. Covers
+ * every table carrying a company_id (discovered from the schema so new
+ * workspaces are included), task attempts, team conversations and the
+ * team's memory. The audit trail is only ever removed here, together
+ * with its team.
+ */
+export function dissolve(id) {
+  const { db } = get();
+  if (!id || typeof id !== "string") throw new Error("Team not found.");
+  return db.transaction(() => {
+    db.pragma("defer_foreign_keys = ON");
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all().map((row) => row.name);
+    const has = (table) => tables.includes(table);
+    const columns = (table) => db.prepare(`PRAGMA table_info("${table}")`).all().map((column) => column.name);
+    if (has("issue_attempts")) db.prepare("DELETE FROM issue_attempts WHERE issue_id IN (SELECT id FROM issues WHERE company_id = ?)").run(id);
+    if (has("team_threads")) {
+      db.prepare("DELETE FROM team_messages WHERE thread_id IN (SELECT id FROM team_threads WHERE source_company_id = ? OR target_company_id = ?)").run(id, id);
+      db.prepare("DELETE FROM team_threads WHERE source_company_id = ? OR target_company_id = ?").run(id, id);
+    }
+    if (has("memory_instances")) {
+      for (const table of tables) {
+        if (table === "memory_instances" || !table.startsWith("memory_") || !columns(table).includes("instance_key")) continue;
+        db.prepare(`DELETE FROM "${table}" WHERE instance_key IN (SELECT instance_key FROM memory_instances WHERE ${COMPANY_MEMORY})`).run(id, id);
+      }
+      db.prepare(`DELETE FROM memory_instances WHERE ${COMPANY_MEMORY}`).run(id, id);
+    }
+    for (const table of tables) {
+      if (table === "companies" || KEEP_ON_DISSOLVE.has(table) || !columns(table).includes("company_id")) continue;
+      db.prepare(`DELETE FROM "${table}" WHERE company_id = ?`).run(id);
+    }
+    const removed = db.prepare("DELETE FROM companies WHERE id = ?").run(id).changes > 0;
+    // Memory change tracking records the deletions above; it has no team left to sync.
+    if (has("memory_company_changes")) db.prepare("DELETE FROM memory_company_changes WHERE company_id = ?").run(id);
+    return removed;
+  })();
+}
+
 export function bulkInsert(charters) {
   const { db } = get();
   const stmt = db.prepare(`

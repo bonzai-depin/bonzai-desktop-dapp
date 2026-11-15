@@ -3,7 +3,14 @@
  * side adapter is a 1:1 IPC pass-through. Drizzle queries use prepared
  * statements under the hood; better-sqlite3 caches them per session.
  *
- * append() returns the persisted row (with id + ts assigned).
+ * The trail is append-only and tamper-evident. append() is the only
+ * writer for live entries: it assigns id, ts and the per-company seq in
+ * the main process and chains each entry to the previous one with
+ *   hash = sha256(prev_hash + canonical JSON of the persisted fields).
+ * verify() recomputes the chain, so a row edited, removed or inserted
+ * behind the app's back is reported. Nothing here deletes entries; they
+ * leave only with their team (companies.dissolve).
+ *
  * recent(n) returns newest first.
  * summarize(windowMs) is a single indexed GROUP BY, replacing the legacy
  *   O(n) array scan.
@@ -13,43 +20,168 @@
  * the renderer subscribes to. The repo itself is sync + side-effect-free.
  */
 
+import { createHash } from "node:crypto";
 import { v4 as uuid } from "uuid";
 import { eq, and, gte, sql, desc } from "drizzle-orm";
 import { get } from "../connection.js";
 import { auditEntries } from "../schema/audit.js";
 
+/** Persisted columns covered by an entry's hash, in canonical order. */
+export const CHAIN_FIELDS = Object.freeze([
+  "id", "company_id", "seq", "ts", "kind", "role", "action", "status", "note",
+  "tx_or_link", "llm", "direction", "amount", "currency", "pending_id",
+  "goal_id", "issue_id", "connector_id", "content_id", "extra",
+]);
+
+/** Hash of one stored row (raw column values) chained to its predecessor. */
+function _digest(prevHash, raw) {
+  const canonical = JSON.stringify(CHAIN_FIELDS.map((field) => [field, raw[field] ?? null]));
+  return createHash("sha256").update((prevHash || "") + canonical).digest("hex");
+}
+
+function _head(db, companyId) {
+  return db
+    .prepare("SELECT seq, hash FROM audit_entries WHERE company_id = ? AND seq IS NOT NULL ORDER BY seq DESC LIMIT 1")
+    .get(companyId) || null;
+}
+
 /**
- * Append an audit entry. If the caller pre-assigns id + ts (e.g. during
- * the legacy-store migration we want to preserve the original ts), we
- * honor those; otherwise generate fresh.
+ * Chain every entry of the company that has no hash yet, in (ts, rowid)
+ * order, continuing from the current head. Trusted main-process callers
+ * only: history written before the chain existed, the first-boot store
+ * migration, and a restored backup. Returns the number of rows sealed.
+ */
+export function seal(companyId) {
+  const { db } = get();
+  return db.transaction(() => {
+    const rows = db
+      .prepare("SELECT rowid AS _rowid, * FROM audit_entries WHERE company_id = ? AND hash IS NULL ORDER BY ts, rowid")
+      .all(companyId);
+    if (!rows.length) return 0;
+    const head = _head(db, companyId);
+    let seq = head?.seq || 0;
+    let prev = head?.hash || null;
+    const update = db.prepare("UPDATE audit_entries SET seq = ?, prev_hash = ?, hash = ? WHERE rowid = ?");
+    for (const row of rows) {
+      seq += 1;
+      const hash = _digest(prev, { ...row, seq });
+      update.run(seq, prev, hash, row._rowid);
+      prev = hash;
+    }
+    return rows.length;
+  })();
+}
+
+/**
+ * History that predates the chain is sealed the first time it is touched.
+ * Once a chain exists, an unchained row can only have been written outside
+ * append(), so it is left for verify() to report instead of being adopted.
+ */
+function _sealLegacy(db, companyId) {
+  if (_head(db, companyId)) return;
+  if (db.prepare("SELECT 1 FROM audit_entries WHERE company_id = ? AND hash IS NULL LIMIT 1").get(companyId)) seal(companyId);
+}
+
+/**
+ * Append an audit entry. id, ts, seq and the hash chain are always
+ * assigned here; values supplied by the caller for them are ignored so
+ * an entry cannot be backdated or made to replace another.
  *
  * Returns the persisted row.
  */
 export function append(companyId, entry) {
-  const { orm } = get();
-  const row = {
-    id: entry.id || uuid(),
-    companyId,
-    ts: entry.ts || Date.now(),
-    kind: entry.kind,
-    role: entry.role ?? null,
-    action: entry.action ?? null,
-    status: entry.status ?? null,
-    note: entry.note ?? null,
-    txOrLink: entry.txOrLink ?? null,
-    llm: entry.llm ?? null,
-    direction: entry.direction ?? null,
-    amount: entry.amount != null ? Number(entry.amount) : null,
-    currency: entry.currency ?? null,
-    pendingId: entry.pendingId ?? null,
-    goalId: entry.goalId ?? null,
-    issueId: entry.issueId ?? null,
-    connectorId: entry.connectorId ?? null,
-    contentId: entry.contentId ?? null,
-    extra: _captureExtras(entry),
-  };
-  orm.insert(auditEntries).values(row).run();
-  return row;
+  const { db, orm } = get();
+  return db.transaction(() => {
+    _sealLegacy(db, companyId);
+    const head = _head(db, companyId);
+    const amount = entry.amount != null ? Number(entry.amount) : null;
+    const row = {
+      id: uuid(),
+      companyId,
+      ts: Date.now(),
+      kind: entry.kind,
+      role: entry.role ?? null,
+      action: entry.action ?? null,
+      status: entry.status ?? null,
+      note: entry.note ?? null,
+      txOrLink: entry.txOrLink ?? null,
+      llm: entry.llm ?? null,
+      direction: entry.direction ?? null,
+      amount: Number.isFinite(amount) ? amount : null,
+      currency: entry.currency ?? null,
+      pendingId: entry.pendingId ?? null,
+      goalId: entry.goalId ?? null,
+      issueId: entry.issueId ?? null,
+      connectorId: entry.connectorId ?? null,
+      contentId: entry.contentId ?? null,
+      extra: _captureExtras(entry),
+      seq: (head?.seq || 0) + 1,
+      prevHash: head?.hash || null,
+    };
+    orm.insert(auditEntries).values(row).run();
+    // Hash what SQLite actually stored, the same bytes verify() will read.
+    const stored = db.prepare("SELECT * FROM audit_entries WHERE id = ?").get(row.id);
+    row.hash = _digest(row.prevHash, stored);
+    db.prepare("UPDATE audit_entries SET hash = ? WHERE id = ?").run(row.hash, row.id);
+    return row;
+  })();
+}
+
+/**
+ * Recompute the company's chain. `firstBrokenSeq` is the first position
+ * whose entry is missing or no longer matches its hash; `unsealed` counts
+ * rows that were written outside append() after the chain started.
+ */
+export function verify(companyId) {
+  const { db } = get();
+  return db.transaction(() => {
+    _sealLegacy(db, companyId);
+    const rows = db.prepare("SELECT * FROM audit_entries WHERE company_id = ? AND seq IS NOT NULL ORDER BY seq").all(companyId);
+    const unsealed = db.prepare("SELECT COUNT(*) AS n FROM audit_entries WHERE company_id = ? AND seq IS NULL").get(companyId).n;
+    let firstBrokenSeq = null;
+    let prev = null;
+    let expected = 1;
+    for (const row of rows) {
+      if (row.seq !== expected) { firstBrokenSeq = expected; break; }
+      if ((row.prev_hash || null) !== prev || row.hash !== _digest(prev, row)) { firstBrokenSeq = row.seq; break; }
+      prev = row.hash;
+      expected += 1;
+    }
+    const last = rows[rows.length - 1];
+    return {
+      ok: firstBrokenSeq === null && unsealed === 0,
+      entries: rows.length + unsealed,
+      firstBrokenSeq,
+      unsealed,
+      head: last ? { seq: last.seq, hash: last.hash } : null,
+    };
+  })();
+}
+
+/**
+ * Full trail for an auditor, oldest first, with the verification result
+ * computed from the same snapshot. Entries are the stored column values
+ * so the chain can be recomputed outside BonzAI from `chain`.
+ */
+export function exportTrail(companyId) {
+  const { db } = get();
+  return db.transaction(() => {
+    const verification = verify(companyId);
+    const entries = db
+      .prepare("SELECT * FROM audit_entries WHERE company_id = ? ORDER BY seq IS NULL, seq, ts, rowid")
+      .all(companyId);
+    return {
+      companyId,
+      exportedAt: Date.now(),
+      verification,
+      chain: {
+        algorithm: "sha256",
+        fields: CHAIN_FIELDS,
+        rule: "hash = sha256(prev_hash + JSON.stringify(fields.map(f => [f, entry[f]]))); prev_hash is empty for seq 1",
+      },
+      entries,
+    };
+  })();
 }
 
 /**
@@ -62,7 +194,7 @@ export function recent(companyId, n = 200) {
     .select()
     .from(auditEntries)
     .where(eq(auditEntries.companyId, companyId))
-    .orderBy(desc(auditEntries.ts))
+    .orderBy(desc(auditEntries.ts), desc(auditEntries.seq))
     .limit(n)
     .all();
 }
@@ -74,7 +206,7 @@ export function all(companyId) {
     .select()
     .from(auditEntries)
     .where(eq(auditEntries.companyId, companyId))
-    .orderBy(desc(auditEntries.ts))
+    .orderBy(desc(auditEntries.ts), desc(auditEntries.seq))
     .all();
 }
 
@@ -98,7 +230,7 @@ export function filter(companyId, opts = {}) {
     .select()
     .from(auditEntries)
     .where(and(...where))
-    .orderBy(desc(auditEntries.ts))
+    .orderBy(desc(auditEntries.ts), desc(auditEntries.seq))
     .all();
 }
 
@@ -142,23 +274,8 @@ export function summarize(companyId, windowMs = 24 * 60 * 60 * 1000) {
   return out;
 }
 
-/** Wipe a company's audit. */
-export function clear(companyId) {
-  const { orm } = get();
-  orm.delete(auditEntries).where(eq(auditEntries.companyId, companyId)).run();
-}
-
-/** Delete one audit entry for a company. */
-export function remove(companyId, entryId) {
-  const { orm } = get();
-  orm.delete(auditEntries)
-    .where(and(eq(auditEntries.companyId, companyId), eq(auditEntries.id, entryId)))
-    .run();
-  return true;
-}
-
-/** Bulk-insert helper used by the first-boot store migration. Wraps in a
- *  single transaction for ~100× throughput vs. per-row inserts. */
+/** First-boot store migration only (import-from-store.js); never exposed
+ *  over IPC. Keeps the legacy id + ts, then chains the imported history. */
 export function bulkInsert(rows) {
   const { db } = get();
   const stmt = db.prepare(`
@@ -198,6 +315,7 @@ export function bulkInsert(rows) {
     }
   });
   tx(rows);
+  for (const companyId of new Set(rows.map((r) => r.companyId))) seal(companyId);
   return rows.length;
 }
 
@@ -211,6 +329,8 @@ function _captureExtras(entry) {
     "id", "ts", "kind", "role", "action", "status", "note", "txOrLink",
     "llm", "direction", "amount", "currency", "pendingId", "goalId",
     "issueId", "connectorId", "contentId",
+    // Chain fields belong to the main process, never to the caller.
+    "companyId", "seq", "prevHash", "hash",
   ]);
   let extra = null;
   for (const k of Object.keys(entry || {})) {

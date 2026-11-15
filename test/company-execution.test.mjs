@@ -15,6 +15,10 @@ test('ordinary business briefs route by subject, not an arbitrary first word', (
   assert.equal(routeGoalToRole({ directive: 'Review software bugs' }), 'RnDLead');
   const charter = makeCharter({ name: 'Test', mission: 'Test' }); charter.roles.CEO = { companion: 'ceo-agent' };
   assert.equal(resolveRoleCompanion(charter, 'CFO').companion, 'ceo-agent');
+  // A coordinator of named human workers must be staffed; the manager's agent never covers it silently.
+  assert.equal(resolveRoleCompanion(charter, 'FieldTech'), null);
+  charter.roles.FieldTech = { companion: 'dispatch-agent' };
+  assert.equal(resolveRoleCompanion(charter, 'FieldTech').companion, 'dispatch-agent');
 });
 test('saved outputs flow into later actions without inventing IDs or losing structured data', async () => {
   const fixture = runtime([{ stepId: 'lookup', type: 'qbo.reportAR' }, { type: 'produce', source: { $ref: 'lookup.report' } }], { dispatch: async action => action.type === 'qbo.reportAR' ? { id: 'real-report', report: { rows: [{ invoice: 'invoice-17', overdue: 350 }] } } : { id: 'draft', source: action.source } });

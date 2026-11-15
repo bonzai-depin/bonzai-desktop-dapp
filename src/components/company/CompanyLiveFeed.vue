@@ -13,17 +13,6 @@
             {{ recentRate }} <small>/ min</small>
           </span>
         </div>
-        <button
-          class="bz-btn bz-btn--sm bz-btn--ghost fira-sans-condensed-black-italic"
-          :disabled="!entries.length"
-          @click="clearFeed"
-          :title="charter.demoMode
-            ? 'Wipe the audit log so the next demo run starts fresh'
-            : 'Clear the visible audit history (does not affect outcomes, tasks, or treasury)'"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>
-          {{ $ui('Clear') }}
-        </button>
       </div>
     </div>
 
@@ -132,14 +121,6 @@
               <span class="material-symbols-outlined">link</span>
               <code>{{ entry.txOrLink }}</code>
             </div>
-            <button
-              class="live-entry__delete bz-iconbtn bz-iconbtn--sm"
-              @click.stop="removeEntry(entry)"
-              :title="$ui('Delete feed item')"
-              :aria-label="$ui('Delete feed item')"
-            >
-              <span class="material-symbols-outlined">delete</span>
-            </button>
           </div>
         </div>
       </transition-group>
@@ -248,7 +229,6 @@ import "./company-design.css";
 import { actionDisplayName } from "../../services/company/actionLabels.js";
 import { visibleText as stripReasoningTags, visibleRecord } from "../../shared/visibleText.js";
 import { computed, ref, onMounted, onUnmounted } from "vue";
-import companyStore from "../../stores/companyStore.js";
 import BzCloseButton from "../BzCloseButton.vue";
 import CompanyMarkdown from "./CompanyMarkdown.vue";
 import CompanyArtifactPreview from "./CompanyArtifactPreview.vue";
@@ -269,7 +249,6 @@ export default {
   },
   setup(props) {
     const displayState = computed(() => visibleRecord(props.state));
-    const store = companyStore;
     const activeFilter = ref("all"), query=ref('');
     const selectedEntry = ref(null);
     const detailDialog = ref(null);
@@ -492,27 +471,12 @@ export default {
       return operationText(formatRoleTitle(roleKey),i18n.state.locale);
     }
 
-    /**
-     * Wipe the team's audit log. Outcomes, tasks, treasury, and
-     * outputs are preserved — this only clears the live-feed source.
-     */
-    async function clearFeed() {
-      if (!confirm("Clear the live feed?\n\nThis wipes the audit log only. Your outcomes, tasks, treasury, and outputs stay intact.")) return;
-      try { await store.clearAudit(); }
-      catch (err) { alert("Could not clear feed: " + (err.message || err)); }
-    }
-    async function removeEntry(entry) {
-      if (!entry?.id) return;
-      await store.removeAuditEntry(entry.id);
-    }
-
     return {
       query, stripReasoningTags, activeFilter, filters, filtered, entries, counts, recentRate, entryLimit, displayEntries,
       formatRoleTitle, detailDialog, selectedEntry, detailTitle, detailGoal, detailIssue, detailContent, detailWorkspace,
       liveStreams, nowTs, memberFilter, memberRoles,
       iconFor, statusClass, statusLabel, fmtRelative, formatAction, formatLLMAction, roleDisplayName,
       contentPreview, sentenceCaseTask, openDetail, closeDetail,
-      clearFeed, removeEntry,
     };
   },
 };
@@ -566,8 +530,6 @@ export default {
 .status-pill--error { background: var(--bz-danger-soft); border-color: transparent; color: var(--bz-danger); }
 .status-pill--queued { background: var(--bz-purple-soft); border-color: transparent; color: var(--bz-accent); }
 .status-pill--neutral { color: var(--bz-fg-mid); }
-.live-entry__delete { position: absolute; right: var(--bz-space-2); top: var(--bz-space-2); opacity: 0; pointer-events: none; transition: opacity var(--bz-dur-fast); }
-.live-entry:hover .live-entry__delete, .live-entry:focus-within .live-entry__delete { opacity: 1; pointer-events: auto; }
 .live-entry__thought { margin-top: var(--bz-space-4); border-top: 1px solid var(--bz-border); }
 .live-entry__thought summary { cursor: pointer; min-height: 36px; padding: var(--bz-space-3) 0; display: flex; align-items: center; gap: var(--bz-space-2); color: var(--bz-fg-mid); font: 400 var(--bz-size-meta)/1.5 var(--bz-font-body); list-style: none; }
 .live-entry__thought summary::-webkit-details-marker { display: none; }
@@ -608,7 +570,7 @@ export default {
 .live.is-horizontal .live-entry__role, .live.is-horizontal .live-entry__action { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--bz-size-meta); }
 .live.is-horizontal .live-entry__note { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; font-size: var(--bz-size-meta); line-height: 1.5; }
 .live.is-horizontal .live-entry__footer { margin: 0; }
-.live.is-horizontal :is(.live-entry__time, .live-entry__icon, .live-entry__duration, .live-entry__thought, .live-entry__link, .live-entry__delete) { display: none; }
+.live.is-horizontal :is(.live-entry__time, .live-entry__icon, .live-entry__duration, .live-entry__thought, .live-entry__link) { display: none; }
 .feed-detail-overlay { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; padding: var(--bz-space-5); background: var(--bz-overlay); backdrop-filter: blur(8px); }
 .feed-detail { box-sizing: border-box; width: min(980px, 100%); max-height: calc(100dvh - 48px); overflow: auto; padding: var(--bz-space-6) !important; border: 1px solid var(--bz-border-strong); border-radius: var(--bz-r-lg); background: var(--bz-panel); color: var(--bz-fg); scrollbar-width: thin; scrollbar-color: var(--bz-border-strong) transparent; }
 .feed-detail__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--bz-space-5); }
@@ -647,10 +609,9 @@ export default {
   .feed-detail { max-height: calc(100dvh - 24px); padding: var(--bz-space-5) !important; }
   .feed-detail__panel dl div { grid-template-columns: 80px minmax(0, 1fr); }
 }
-@media (hover: none) { .live-entry__delete { opacity: 1; pointer-events: auto; } }
 @media (prefers-reduced-motion: reduce) {
   .live-entry__cursor { animation: none; }
-  .live-entry, .live__chip, .live-entry__delete, .live-entry-enter-active, .live-entry-leave-active, .live-entry-move { transition: none; }
+  .live-entry, .live__chip, .live-entry-enter-active, .live-entry-leave-active, .live-entry-move { transition: none; }
 }
 .live-entry__inspect { min-height: 32px; padding: 4px 0; border: 0; background: transparent; text-align: left; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; margin-right: auto; font: 400 12px/1.5 var(--bz-font-body); color: var(--bz-fg-mid); }
 .live-entry__inspect .material-symbols-outlined { font-size: 17px; }

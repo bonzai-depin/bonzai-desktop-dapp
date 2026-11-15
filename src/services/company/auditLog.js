@@ -81,15 +81,21 @@ export async function summarize(companyId, windowMs = 24 * 60 * 60 * 1000) {
   );
 }
 
-export async function clear(companyId) {
-  await _safe((api) => api.clear(companyId), { ok: false });
-  _notify();
+// The trail is append-only: there is no clear() or remove(). Entries leave
+// only when their team is dissolved, in the main process.
+
+/** Recompute the hash chain. Fails visibly: "unknown" must not read as "intact". */
+export async function verify(companyId) {
+  const api = _api();
+  if (!api?.verify) throw new Error('Activity history could not be verified. Restart BonzAI to reconnect local storage.');
+  return api.verify(companyId);
 }
 
-export async function remove(companyId, entryId) {
-  const out = await _safe((api) => api.remove(companyId, entryId), { ok: false });
-  _notify();
-  return out?.ok ?? false;
+/** Full trail, oldest first, with its verification result. */
+export async function exportTrail(companyId) {
+  const api = _api();
+  if (!api?.export) throw new Error('Activity history could not be exported. Restart BonzAI to reconnect local storage.');
+  return api.export(companyId);
 }
 
 // ─────────────────────────────────────────────────────────────────────

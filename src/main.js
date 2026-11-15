@@ -22,6 +22,9 @@ import { parallelDownload } from './main/parallelDownload.js';
 import { createAgentJobMailbox } from './main/agentJobMailbox.js';
 import { parseJobPacket } from './services/smartAgentHandoff.js';
 import { createCompanyRuntime } from './main/companyRuntime.js';
+import { createBackgroundMode, BACKGROUND_SETTING_KEY } from './main/backgroundMode.js';
+import { createOwnerAttention, OWNER_ATTENTION_SETTING_KEY } from './main/ownerAttention.js';
+import { readStoredConnectorCredential } from './main/connectors/connectorCredential.js';
 import { interruptExecutor, recoverStoppedExecutors } from './main/db/repos/automation.js';
 import { recoverStale as recoverInterruptedCompanyTasks } from './main/db/repos/issues.js';
 import { VISUAL_REVIEW_FORMAT } from './components/gen3d/visualQuality.js';
@@ -47,6 +50,10 @@ import {
   session,
   clipboard,
   safeStorage,
+  Tray,
+  Menu,
+  nativeImage,
+  Notification,
 } from "electron";
 import Store from "electron-store";
 import { createWalletCredentialStore, assertPublicStoreKey } from "./main/security/walletCredentials.js";
@@ -707,6 +714,8 @@ app.on("open-url", (_event, url) => {
 });
 
 app.on("second-instance", (_event, argv) => {
+  // Launching BonzAI again while teams run in the background reopens the workspace.
+  if (backgroundMode.active) openMainWindow();
   const url = argv.find(a => a.startsWith("bonzai://"));
   if (url && url.startsWith("bonzai://auth/callback")) {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -894,6 +903,30 @@ ipcMain.handle('benchmark:export', async (_event, id) => {
 });
 
 let companyRuntime;
+// Show the workspace again from the tray, a notification or a second launch.
+function openMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else void createWindow();
+}
+const backgroundMode = createBackgroundMode({ app, Tray, Menu, nativeImage,
+  iconPath: path.join(__dirname, 'logo.png'),
+  enabled: () => store.get(BACKGROUND_SETTING_KEY, false) === true,
+  activeTeams: () => companyRuntime?.activeTeams() || 0,
+  open: openMainWindow,
+  report: error => console.warn('[background] Tray unavailable; closing the window quits:', error?.message),
+});
+const ownerAttention = createOwnerAttention({ store, Notification,
+  enabled: () => store.get(OWNER_ATTENTION_SETTING_KEY, true) !== false,
+  focused: () => !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+  open: openMainWindow,
+});
+// Connector calls come from the workspace or the supervised team runtime only.
+function assertConnectorSender(event) {
+  if (event.sender !== mainWindow?.webContents && !companyRuntime?.ownsSender(event.sender)) throw new Error('Connect a tool from the workspace.');
+}
 const workerRuntimeCommand = (name, args) => {
   if (!companyRuntime) throw new Error('Local worker runtime is starting.');
   return companyRuntime.command(name, args);
@@ -970,13 +1003,7 @@ function connectorHostAllowed(kind, hostname, accountIdentifier) {
 }
 
 function readConnectorCredential(companyId, connectorId) {
-  const stored = store.get(connectorSecretKey(companyId, connectorId), null);
-  if (!stored?.encrypted) throw new Error("Connector credential is unavailable or locked");
-  const bytes = Buffer.from(stored.encrypted, "base64");
-  const raw = stored.protected ? safeStorage.decryptString(bytes) : bytes.toString("utf8");
-  let credential;
-  try { credential = JSON.parse(raw); } catch { credential = { apiKey: raw, token: raw }; }
-  return { stored, credential };
+  return readStoredConnectorCredential({ store, safeStorage, key: connectorSecretKey(companyId, connectorId) });
 }
 
 const mailboxRefreshes = new Map();
@@ -1110,7 +1137,8 @@ for (const [channel, handler] of Object.entries({
   if (event.sender !== mainWindow?.webContents) throw new Error('Connect a tool from the workspace.');
   return handler(input || {});
 });
-ipcMain.handle("company-connector:set-secret", (_event, { companyId, connectorId, secret, kind, accountIdentifier }) => {
+ipcMain.handle("company-connector:set-secret", (event, { companyId, connectorId, secret, kind, accountIdentifier }) => {
+  assertConnectorSender(event);
   if (!companyId || !connectorId || !secret) throw new Error("Connector identity and secret are required");
   if (!kind) throw new Error("Connector kind is required");
   if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable on this device");
@@ -1125,14 +1153,17 @@ ipcMain.handle("company-connector:set-secret", (_event, { companyId, connectorId
   });
   return { ok: true };
 });
-ipcMain.handle("company-connector:delete-secret", (_event, { companyId, connectorId }) => {
+ipcMain.handle("company-connector:delete-secret", (event, { companyId, connectorId }) => {
+  assertConnectorSender(event);
   store.delete(connectorSecretKey(companyId, connectorId));
   return { ok: true };
 });
-ipcMain.handle("company-connector:request", async (_event, request) => {
+ipcMain.handle("company-connector:request", async (event, request) => {
+  assertConnectorSender(event);
   return performConnectorRequest(request);
 });
-ipcMain.handle("company-connector:validate", async (_event, { companyId, connectorId }) => {
+ipcMain.handle("company-connector:validate", async (event, { companyId, connectorId }) => {
+  assertConnectorSender(event);
   const { stored, credential } = readConnectorCredential(companyId, connectorId);
   if (stored.kind === 'chorus') return createChorusClient({credential,environment:stored.accountIdentifier}).validateConnection();
   const result = await performConnectorRequest(connectorValidationRequest(companyId, connectorId, stored));
@@ -4754,6 +4785,7 @@ const createWindow = async () => {
 
   // Set title explicitly (in case HTML overrides it)
   mainWindow.setTitle(appTitle);
+  backgroundMode.windowOpened();
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https:")) shell.openExternal(url);
@@ -4768,7 +4800,8 @@ const createWindow = async () => {
   // Clear reference when window is closed (important for macOS dock click handling)
   mainWindow.on("closed", () => {
     mainWindow = null;
-    app.quit();
+    // Opt-in: active teams keep running behind the tray. Otherwise quit as before.
+    if (!backgroundMode.windowClosed()) app.quit();
   });
 
   if (VITE_DEV_SERVER_URL) {
@@ -4863,7 +4896,7 @@ app.on("ready", async () => {
     if (result.skipped.length) console.log(`[Startup] ${result.skipped.length} migrations already applied`);
     const { clearBusinessDemos } = await import("./main/workspace/cleanup.js");
     clearBusinessDemos();
-    dbIpc.registerDbIpc({ connectorRequest: performConnectorRequest, readConnectorCredential });
+    dbIpc.registerDbIpc({ connectorRequest: performConnectorRequest, readConnectorCredential, ownerAttention: db => ownerAttention.evaluate(db) });
     for (const id of recoverStoppedExecutors()) recoverInterruptedCompanyTasks(id, Date.now()+1);
     // Contractual HVAC monitoring stays in the main process: it keeps
     // evaluating P0-P3 deadlines and generating due preventive work even
@@ -5431,7 +5464,8 @@ installShutdown(app, async () => {
   const database = await import('./main/db/connection.js');
   database.close();
 });
-app.on("window-all-closed", () => app.quit());
+// In background mode the hidden team runtime may restart; that must not end the session.
+app.on("window-all-closed", () => { if (!backgroundMode.active) app.quit(); });
 
 app.on("activate", () => {
   if (subpy == null) {

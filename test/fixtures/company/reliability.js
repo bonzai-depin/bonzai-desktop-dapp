@@ -57,6 +57,8 @@ const step = type => createTaskExecution([{ type }]);
   issues.claimNextForRole(id, 'CFO', 'agent');
   assert.throws(() => issues.remove(id, busy.id), /still running/, 'running work cannot be deleted from under its executor');
   issues.update(id, busy.id, { status: 'cancelled' });
+  assert.throws(() => issues.update(id, busy.id, { attemptCount: 0, executionRevision: 9 }), /execution checkpoint|cannot be edited/);
+  assert.throws(() => issues.update(id, busy.id, { attemptCount: 0, nextAttemptAt: null }), /cannot be edited: attemptCount, nextAttemptAt/, 'retry bookkeeping is not editable from the interface');
   console.log('PASS: owner changes to running work stay reviewable and attributable');
 }
 
@@ -116,6 +118,24 @@ const step = type => createTaskExecution([{ type }]);
   issues.finishAttempt(id, task.id, { status: 'done' });
   assert.equal(goals.getById(id, goal.id).status, 'completed', 'no separate call is needed for the goal to reflect finished work');
   console.log('PASS: goal completion commits with the final task');
+}
+
+// 4b. A goal whose remaining work was cancelled asks the owner instead of staying open forever.
+{
+  const goal = goals.create(id, { title: 'Customer is back in service' });
+  const done = issues.create(id, { title: 'Repair the unit', assigneeRole: 'CFO', goalId: goal.id, execution: step('produce') });
+  const optional = issues.create(id, { title: 'Send satisfaction survey', assigneeRole: 'CMO', goalId: goal.id });
+  const claimed = issues.claimNextForRole(id, 'CFO', 'agent');
+  Object.assign(claimed.execution.steps[0], { status: 'completed', output: { id: 'report', status: 'completed' } });
+  issues.saveExecution(id, done.id, claimed.execution, claimed.executionRevision);
+  issues.finishAttempt(id, done.id, { status: 'done' });
+  assert.equal(goals.getById(id, goal.id).outcome, null, 'work still open decides nothing');
+  issues.update(id, optional.id, { status: 'cancelled' });
+  const waiting = goals.getById(id, goal.id);
+  assert.equal(waiting.status, 'active', 'cancelled work is never counted as achieved');
+  assert.deepEqual([waiting.outcome.status, waiting.outcome.cancelledTasks], ['pending_review', 1]);
+  assert.equal(goals.recordOutcome(id, goal.id, { met: true, evidence: 'Customer confirmed the unit runs.' }).status, 'completed');
+  console.log('PASS: a goal with cancelled tasks is decided by the owner');
 }
 
 // 5. Retries are bounded and the owner is told when they run out.

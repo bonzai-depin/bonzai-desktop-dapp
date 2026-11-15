@@ -33,6 +33,7 @@ import * as blobStore from "../db/blobs.js";
 import * as companiesRepo from "../db/repos/companies.js";
 import * as goalsRepo from "../db/repos/goals.js";
 import * as issuesRepo from "../db/repos/issues.js";
+import * as schedulesRepo from "../db/repos/schedules.js";
 import * as gmaoOps from "../db/repos/gmaoOperations.js";
 import { printLocalPdf } from "../gmao/pdf.js";
 import { createDeliveryService } from "../gmao/delivery.js";
@@ -74,7 +75,7 @@ function broadcast(channel, payload) {
 }
 
 /** Register every IPC handler. Called once from main.js after DB open. */
-export function registerDbIpc({ connectorRequest, readConnectorCredential } = {}) {
+export function registerDbIpc({ connectorRequest, readConnectorCredential, ownerAttention } = {}) {
   registerWorkspaceIpc();
   const ipcMain = { handle(channel, handler) {
     electronIpcMain.handle(channel, (event, ...args) => {
@@ -96,7 +97,16 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential } = {}
           broadcast('db:issues:changed',{companyId:row.id});
         }
       } catch (error) { console.warn('[records] Reminder preparation failed:', error.message); }
+      // Recurring work and deadlines are checked here so they do not depend on an open team view.
+      try {
+        const due = schedulesRepo.runDue(row.id);
+        if (due.created.length || due.skipped.length) { broadcast('db:schedules:changed',{companyId:row.id}); broadcast('db:audit:changed',{companyId:row.id}); }
+        if (due.created.length) broadcast('db:issues:changed',{companyId:row.id});
+        if (goalsRepo.markOverdue(row.id).length) { broadcast('db:goals:changed',{companyId:row.id}); broadcast('db:audit:changed',{companyId:row.id}); }
+      } catch (error) { console.warn('[schedules] Scheduled work check failed:', error.message); }
     }
+    // Tell the owner, outside the window, what is waiting on them (after this pass's new work).
+    try { ownerAttention?.(get().db); } catch (error) { console.warn('[attention] Owner notification check failed:', error.message); }
   }, 60000);
   reminderTimer.unref();
   const chorusAction = createChorusBilling({billing:companyBillingRepo,connectors:connectorsRepo,blobs:blobStore,readCredential:readConnectorCredential});
@@ -259,21 +269,9 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential } = {}
   ipcMain.handle("db:audit:all", (_e, companyId) => auditRepo.all(companyId));
   ipcMain.handle("db:audit:filter", (_e, companyId, opts) => auditRepo.filter(companyId, opts));
   ipcMain.handle("db:audit:summarize", (_e, companyId, windowMs) => auditRepo.summarize(companyId, windowMs));
-  ipcMain.handle("db:audit:clear", (_e, companyId) => {
-    auditRepo.clear(companyId);
-    broadcast("db:audit:changed", { companyId });
-    return { ok: true };
-  });
-  ipcMain.handle("db:audit:remove", (_e, companyId, entryId) => {
-    const ok = auditRepo.remove(companyId, entryId);
-    broadcast("db:audit:changed", { companyId });
-    return { ok };
-  });
-  ipcMain.handle("db:audit:bulkInsert", (_e, rows) => {
-    const n = auditRepo.bulkInsert(rows);
-    if (rows.length) broadcast("db:audit:changed", { companyId: rows[0].companyId });
-    return { inserted: n };
-  });
+  // The trail is append-only: no channel edits or deletes entries.
+  ipcMain.handle("db:audit:verify", (_e, companyId) => auditRepo.verify(companyId));
+  ipcMain.handle("db:audit:export", (_e, companyId) => auditRepo.exportTrail(companyId));
 
   // ─── generations ──────────────────────────────────────────────────
   // The renderer hands us either a "buffer-and-meta" shape (preferred)
@@ -337,7 +335,11 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential } = {}
   ipcMain.handle("db:companies:list", () => companiesRepo.list());
   ipcMain.handle("db:companies:listIds", () => companiesRepo.listIds());
   ipcMain.handle("db:companies:setStatus", (_e, id, status) => companiesRepo.setStatus(id, status));
-  ipcMain.handle("db:companies:remove", (_e, id) => companiesRepo.remove(id));
+  ipcMain.handle("db:companies:dissolve", (_e, id) => {
+    const ok = companiesRepo.dissolve(id);
+    broadcast("db:companies:changed", { id });
+    return ok;
+  });
   ipcMain.handle("db:companies:bulkInsert", (_e, rows) => ({ inserted: companiesRepo.bulkInsert(rows) }));
 
   ipcMain.handle('db:goals:createWithTasks', (_e, companyId, input, tasks) => {
@@ -366,6 +368,23 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential } = {}
   });
   ipcMain.handle("db:goals:complete", (_e, companyId, goalId) => goalsRepo.complete(companyId, goalId));
   ipcMain.handle("db:goals:maybeComplete", (_e, companyId, goalId, siblings) => goalsRepo.maybeComplete(companyId, goalId, siblings));
+  ipcMain.handle("db:goals:recordOutcome", (_e, companyId, goalId, input) => {
+    const r = goalsRepo.recordOutcome(companyId, goalId, input);
+    broadcast("db:goals:changed", { companyId }); broadcast("db:audit:changed", { companyId });
+    return r;
+  });
+  // ─── schedules (recurring work) ───────────────────────────────────
+  const schedulesChanged = (companyId) => { broadcast("db:schedules:changed", { companyId }); broadcast("db:audit:changed", { companyId }); };
+  ipcMain.handle("db:schedules:list", (_e, companyId) => schedulesRepo.list(companyId));
+  ipcMain.handle("db:schedules:create", (_e, companyId, input) => { const r = schedulesRepo.create(companyId, input); schedulesChanged(companyId); return r; });
+  ipcMain.handle("db:schedules:update", (_e, companyId, id, patch) => { const r = schedulesRepo.update(companyId, id, patch); schedulesChanged(companyId); return r; });
+  ipcMain.handle("db:schedules:remove", (_e, companyId, id) => { const r = schedulesRepo.remove(companyId, id); schedulesChanged(companyId); return r; });
+  ipcMain.handle("db:schedules:runDue", (_e, companyId) => {
+    const r = schedulesRepo.runDue(companyId);
+    if (r.created.length || r.skipped.length) schedulesChanged(companyId);
+    if (r.created.length) broadcast("db:issues:changed", { companyId });
+    return r;
+  });
   ipcMain.handle("db:goals:counts", (_e, companyId) => goalsRepo.counts(companyId));
   ipcMain.handle("db:goals:clear", (_e, companyId) => { goalsRepo.clear(companyId); return { ok: true }; });
   ipcMain.handle("db:goals:bulkInsert", (_e, rows) => ({ inserted: goalsRepo.bulkInsert(rows) }));

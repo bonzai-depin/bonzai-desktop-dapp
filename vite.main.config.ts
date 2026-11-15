@@ -55,6 +55,11 @@ export default defineConfig({
           src: resolve(__dirname, "src/template.jinja"),
           dest: "",
         },
+        // Tray icon for background mode, read next to the bundled main.js.
+        {
+          src: resolve(__dirname, "src/assets/logo.png"),
+          dest: "",
+        },
         // Ship the .sql migrations alongside the bundled main.js so
         // src/main/db/migrate.js can read them at runtime. The runner
         // resolves them via __dirname which, post-bundle, points at

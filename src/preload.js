@@ -155,9 +155,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       all: (companyId) => ipcRenderer.invoke("db:audit:all", companyId),
       filter: (companyId, opts) => ipcRenderer.invoke("db:audit:filter", companyId, opts),
       summarize: (companyId, windowMs) => ipcRenderer.invoke("db:audit:summarize", companyId, windowMs),
-      clear: (companyId) => ipcRenderer.invoke("db:audit:clear", companyId),
-      remove: (companyId, entryId) => ipcRenderer.invoke("db:audit:remove", companyId, entryId),
-      bulkInsert: (rows) => ipcRenderer.invoke("db:audit:bulkInsert", rows),
+      verify: (companyId) => ipcRenderer.invoke("db:audit:verify", companyId),
+      export: (companyId) => ipcRenderer.invoke("db:audit:export", companyId),
       /** Subscribe to "table changed" broadcasts. cb receives { companyId }. */
       onChanged: (cb) => {
         const handler = (_event, payload) => cb(payload);
@@ -210,7 +209,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       list: () => ipcRenderer.invoke("db:companies:list"),
       listIds: () => ipcRenderer.invoke("db:companies:listIds"),
       setStatus: (id, status) => ipcRenderer.invoke("db:companies:setStatus", id, status),
-      remove: (id) => ipcRenderer.invoke("db:companies:remove", id),
+      dissolve: (id) => ipcRenderer.invoke("db:companies:dissolve", id),
       bulkInsert: (rows) => ipcRenderer.invoke("db:companies:bulkInsert", rows),
       onChanged: (cb) => {
         const h = (_e, p) => cb(p);
@@ -227,6 +226,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       cancel: (companyId, goalId, reason) => ipcRenderer.invoke("db:goals:cancel", companyId, goalId, reason),
       complete: (companyId, goalId) => ipcRenderer.invoke("db:goals:complete", companyId, goalId),
       maybeComplete: (companyId, goalId, siblings) => ipcRenderer.invoke("db:goals:maybeComplete", companyId, goalId, siblings),
+      recordOutcome: (companyId, goalId, input) => ipcRenderer.invoke("db:goals:recordOutcome", companyId, goalId, input),
       counts: (companyId) => ipcRenderer.invoke("db:goals:counts", companyId),
       clear: (companyId) => ipcRenderer.invoke("db:goals:clear", companyId),
       bulkInsert: (rows) => ipcRenderer.invoke("db:goals:bulkInsert", rows),
@@ -234,6 +234,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
         const h = (_e, p) => cb(p);
         ipcRenderer.on("db:goals:changed", h);
         return () => ipcRenderer.removeListener("db:goals:changed", h);
+      },
+    },
+    schedules: {
+      list: (companyId) => ipcRenderer.invoke("db:schedules:list", companyId),
+      create: (companyId, input) => ipcRenderer.invoke("db:schedules:create", companyId, input),
+      update: (companyId, id, patch) => ipcRenderer.invoke("db:schedules:update", companyId, id, patch),
+      remove: (companyId, id) => ipcRenderer.invoke("db:schedules:remove", companyId, id),
+      runDue: (companyId) => ipcRenderer.invoke("db:schedules:runDue", companyId),
+      onChanged: (cb) => {
+        const h = (_e, p) => cb(p);
+        ipcRenderer.on("db:schedules:changed", h);
+        return () => ipcRenderer.removeListener("db:schedules:changed", h);
       },
     },
     issues: {

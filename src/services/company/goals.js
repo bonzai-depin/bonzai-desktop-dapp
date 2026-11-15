@@ -126,6 +126,16 @@ export async function maybeComplete(companyId, goalId, allIssuesForGoal) {
   return goal;
 }
 
+/** Owner confirmation that a goal's success criteria were (or were not) reached. */
+export async function recordOutcome(companyId, goalId, input) {
+  const goal = await _write((api) => {
+    if (!api.recordOutcome) throw new Error('Restart BonzAI to confirm goal outcomes.');
+    return api.recordOutcome(companyId, goalId, input);
+  });
+  _notify();
+  return goal;
+}
+
 export async function counts(companyId) {
   return _safe(
     (api) => api.counts(companyId),

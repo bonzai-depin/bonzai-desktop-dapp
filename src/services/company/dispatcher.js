@@ -202,6 +202,7 @@ export async function tickCEO(charter, run = null) {
       rationale: draft.rationale || draft.mission_alignment || "",
       missionAlignment: draft.mission_alignment || draft.rationale || "",
       deadline: draft.deadline || null,
+      successCriteria: draft.success_criteria || null,
       createdBy: "ceo",
       createdByRole: "CEO",
     });
@@ -257,12 +258,15 @@ export async function tickRole(charter, roleKey, run = null) {
   await loadSmartAgents();
 
   const def = ROLE_LIBRARY[roleKey];
-  if (!def) return out;
-
-  const resolved = resolveRoleCompanion(charter, roleKey);
+  const resolved = def ? resolveRoleCompanion(charter, roleKey) : null;
   if (!resolved) {
-    // role unfilled and not inheritable → drop the goal
-    return out;
+    // Nobody can pick this work up. Tell the owner instead of leaving it open.
+    const reason = def ? `No agent fills the ${roleKey} role. Assign one in Team, then resume this task.`
+      : `“${roleKey}” is not a role of this team. Reassign this task to an existing role.`;
+    for (const task of await issues.list(companyId, { status: 'open', assigneeRole: roleKey })) {
+      await issues.update(companyId, task.id, { status: 'blocked', lastError: reason });
+    }
+    return { ...out, skipped: true, reason: 'unstaffed_role' };
   }
 
   /* Single work source: issues. CEO ticks now write issues directly
@@ -488,7 +492,10 @@ async function executeIssuePlan(charter, issue, companion, allowed, approval = n
   });
   if (status === 'done' && issue.goalId) await goals.maybeComplete(companyId, issue.goalId, await issues.list(companyId, { goalId: issue.goalId }));
   return { executed: execution.steps.filter(step => step.status === 'completed' && !previousResults.has(step.id)).length,
-    queued: status === 'queued' ? 1 : 0, waiting: status === 'waiting' ? 1 : 0, continuing: status === 'continue' ? 1 : 0, error: status === 'blocked' ? 1 : 0, vetoed: 0, receipts };
+    queued: status === 'queued' ? 1 : 0, waiting: status === 'waiting' ? 1 : 0, continuing: status === 'continue' ? 1 : 0,
+    // The run did its job: the task is saved and now needs the owner. Only a
+    // tick that throws is a scheduler failure.
+    blocked: status === 'blocked' ? 1 : 0, error: 0, vetoed: 0, receipts };
 }
 
 /** What a role may do, derived once so first runs and approval resumes agree. */
@@ -781,6 +788,8 @@ OUTPUT (strict JSON, no commentary):
     }
   ]
 }
+
+Optional per goal: "success_criteria" — a measurable result the owner must confirm before the goal closes; omit it for routine work.
 
 KEEP IT FOCUSED — 1 to 3 goals per heartbeat, each with 1 to 3 tasks. If
 ACTIVE GOALS already cover the obvious next moves, return fewer (or even

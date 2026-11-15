@@ -141,6 +141,15 @@ export async function remove(companyId, connId) {
   return !!ok;
 }
 
+/**
+ * Credentials live outside SQLite. Note which ones a team holds before it
+ * is dissolved; call the returned function once its rows are gone.
+ */
+export async function secretsCleanup(companyId) {
+  const list = await _safe((api) => api.list(companyId), []);
+  return async () => { for (const c of list) await _deleteSecret(companyId, c.id); };
+}
+
 export async function clear(companyId) {
   // v0: secrets aren't tracked individually outside the SQL row; the
   // company-level dissolve flow walks each connector and revokes.

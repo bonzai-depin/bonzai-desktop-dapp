@@ -14,7 +14,7 @@
  * else in `extra` (free-form JSON).
  */
 
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const auditEntries = sqliteTable(
   "audit_entries",
@@ -51,6 +51,13 @@ export const auditEntries = sqliteTable(
 
     // Free-form bag for fields that don't (yet) deserve their own column
     extra: text("extra", { mode: "json" }),
+
+    // Tamper-evident chain (0028). Assigned only by repos/audit.js in the
+    // main process: per-company sequence, previous entry's hash, and
+    // sha256(prev_hash + canonical JSON of this entry's persisted fields).
+    seq: integer("seq"),
+    prevHash: text("prev_hash"),
+    hash: text("hash"),
   },
   (t) => ({
     byCompanyTs: index("idx_audit_company_ts").on(t.companyId, t.ts),
@@ -59,5 +66,6 @@ export const auditEntries = sqliteTable(
     byGoal: index("idx_audit_goal").on(t.goalId),
     byIssue: index("idx_audit_issue").on(t.issueId),
     byConnector: index("idx_audit_connector").on(t.connectorId),
+    byCompanySeq: uniqueIndex("idx_audit_company_seq").on(t.companyId, t.seq),
   }),
 );

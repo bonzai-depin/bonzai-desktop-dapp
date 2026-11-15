@@ -423,19 +423,12 @@ export function endStream(streamId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Audit (live feed) — clear without dissolving
+// Audit (live feed) — append-only; export with its integrity check
 // ─────────────────────────────────────────────────────────────────────────
 
-export async function clearAudit() {
-  if (!_state.activeId) return;
-  await svc.clearAudit(_state.activeId);
-  await refreshActive();
-}
-export async function removeAuditEntry(entryId) {
-  if (!_state.activeId) return false;
-  const ok = await svc.removeAuditEntry(_state.activeId, entryId);
-  await refreshActive();
-  return ok;
+export async function exportAuditTrail() {
+  if (!_state.activeId) throw new Error("No active company");
+  return svc.exportAuditTrail(_state.activeId);
 }
 export async function clearCatalog() {
   if (!_state.activeId) return;
@@ -817,8 +810,7 @@ export const companyStore = {
   getTemplate,
   previewTemplate,
   // audit
-  clearAudit,
-  removeAuditEntry,
+  exportAuditTrail,
   // production catalog
   clearCatalog,
   removeContent,

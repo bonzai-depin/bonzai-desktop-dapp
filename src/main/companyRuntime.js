@@ -2,7 +2,7 @@
  * renderer reuses the existing inference/workflow adapters without owning UI. */
 export function createCompanyRuntime({ BrowserWindow, ipcMain, app, preload, url, file, getUI, powerSaveBlocker, onInterrupted = () => {} }) {
   let worker = null, ready = null, stopping = false, restartTimer, stableTimer, failures = 0;
-  let sleepBlocker = null;
+  let sleepBlocker = null, activeTeams = 0;
   function protectExecution(active) {
     if (active && sleepBlocker === null && powerSaveBlocker) sleepBlocker = powerSaveBlocker.start('prevent-app-suspension');
     if (!active && sleepBlocker !== null) { powerSaveBlocker.stop(sleepBlocker); sleepBlocker = null; }
@@ -87,7 +87,7 @@ export function createCompanyRuntime({ BrowserWindow, ipcMain, app, preload, url
   });
   ipcMain.on('company-runtime:stream', (event, payload) => {
     if (!isWorker(event)) return;
-    if (payload?.type === 'runtime-state') protectExecution(payload.activeTeams > 0);
+    if (payload?.type === 'runtime-state') { activeTeams = Number(payload.activeTeams) || 0; protectExecution(activeTeams > 0); }
     const ui = getUI();
     if (ui && !ui.isDestroyed()) ui.webContents.send('company-runtime:stream', payload);
   });
@@ -96,5 +96,9 @@ export function createCompanyRuntime({ BrowserWindow, ipcMain, app, preload, url
     const win = worker; worker = null; ready = null;
     if (win && !win.isDestroyed()) win.destroy();
   });
-  return { start, command };
+  return { start, command,
+    /** Teams in play mode, as last reported by the supervised worker. */
+    activeTeams: () => activeTeams,
+    /** True only for the supervised hidden worker, never for another window. */
+    ownsSender: sender => !!worker && sender === worker.webContents };
 }
