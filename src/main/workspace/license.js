@@ -36,5 +36,5 @@ export function createWorkspaceLicense({ directory, publicKey, allowTest = false
 }
 // Keep existing data readable/exportable while locked. Writes and execution are gated in main.
 const namespaces = new Set(['companies','goals','issues','audit','automation','approvals','treasury','distribution','connectors','teams','gmao','gmaoMaintenance','purchasing','companyBilling','companySales','companyIntake','companyGrants','companyBrowser','recordOperations','companyPortability']);
-const reads = new Set(['get','list','listIds','getById','snapshot','read','readDocument','recent','all','filter','summarize','state','counts','export','exportDossier','exportSubcontractorDossier','documentHtml','monographicSheet','partsForOrders','messageTarget','directory','getDossier','searchWorkOrders','inspect']);
+const reads = new Set(['pending','attempts','get','list','listIds','getById','snapshot','read','readDocument','recent','all','filter','summarize','state','counts','export','exportDossier','exportSubcontractorDossier','documentHtml','monographicSheet','partsForOrders','messageTarget','directory','getDossier','searchWorkOrders','inspect']);
 export function needsWorkspaceLicense(channel) { const [, ns, method] = channel.split(':'); return namespaces.has(ns) && !reads.has(method) && !/^(get|list|read|search|export|count|healthSummary)/.test(method);  }

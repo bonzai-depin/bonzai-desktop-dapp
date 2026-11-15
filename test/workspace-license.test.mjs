@@ -16,7 +16,7 @@ test('workspace activation survives offline restart, rejects tampering and wrong
 });
 test('workspace writes are paid while existing records and personal creation stay accessible',()=>{
  for(const c of ['db:companies:save','db:companyBilling:recordPayment','db:companyGrants:advanceDossier','db:companyBrowser:fillForm','db:automation:begin','db:issues:create','db:companyPortability:import'])assert.equal(needsWorkspaceLicense(c),true,c);
- for(const c of ['db:companies:list','db:companyBilling:snapshot','db:companyPortability:export','db:generations:create','db:companions:save'])assert.equal(needsWorkspaceLicense(c),false,c);
+ for(const c of ['db:approvals:pending','db:issues:attempts','db:companies:list','db:companyBilling:snapshot','db:companyPortability:export','db:generations:create','db:companions:save'])assert.equal(needsWorkspaceLicense(c),false,c);
 });
 test('temporary access permits execution without creating a license and can be disabled',()=>{
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'workspace-bypass-'));
