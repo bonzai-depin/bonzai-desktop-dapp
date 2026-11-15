@@ -86,7 +86,7 @@
       </div>
 
       <CompanyToday v-else-if="active === 'overview'" :charter="charter" :state="state" :views="primaryViews" @open-view="openChannelByKey" @open-result="openWorkResult" />
-      <CompanyLiveFeed v-else-if="active === 'activity'" :charter="charter" :state="state" @open-view="openChannelByKey" @open-result="openWorkResult" />
+      <CompanyLiveFeed v-else-if="active === 'activity'" :charter="charter" :state="state" :export-message="auditExportMessage" @export-audit="exportAuditTrail" @open-view="openChannelByKey" @open-result="openWorkResult" />
       <CompanyGettingStarted v-else-if="active === 'getting-started'" :key="charter.id" :charter="charter" :views="primaryViews" :state="state" @open-view="openChannelByKey" />
       <CompanySales v-else-if="active === 'sales'" :key="charter.id" :company-id="charter.id" />
       <CompanyGrants v-else-if="active === 'grants'" ref="grantsWorkspace" :key="charter.id" :company-id="charter.id" @open-intake="openCompanyIntake" />
@@ -240,7 +240,7 @@
           </div>
         </div>
 
-        <CompanyPlanning :charter="charter" :goals="displayState.goals || []" @changed="store.refreshActive()" />
+        <CompanyPlanning :charter="charter" :goals="filteredGoals" @changed="store.refreshActive()" />
         <label class="company-search work-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input v-model="workQuery" :aria-label="$ui('Search work')" :placeholder="$ui('Search work')" /></label>
         <div class="work-status-tabs" aria-label="Work status filter">
           <button
@@ -282,7 +282,7 @@
                 <span v-if="item.type === 'issue'" class="company-pill" :class="priorityClass(item.issue.priority)">
                   {{ item.issue.priority }}
                 </span>
-                <span v-if="(item.type === 'goal' ? item.goal : item.issue).overdue" class="company-pill company-pill--danger" data-i18n-skip>{{ $t('companyPlan.overdue') }}</span>
+                <span v-if="item.goal?.overdue || item.issue?.overdue" class="company-pill company-pill--danger" data-i18n-skip>{{ $t('companyPlan.overdue') }}</span>
                 <span class="work-todo__role">
                   {{ item.type === 'issue' ? roleDisplayName(item.issue.assigneeRole) : (item.goal.createdBy === 'ceo' ? 'Coordinator outcome' : 'Owner outcome') }}
                 </span>

@@ -13,8 +13,13 @@
             {{ recentRate }} <small>/ min</small>
           </span>
         </div>
+        <button v-if="!compact" type="button" class="bz-btn bz-btn--sm bz-btn--ghost" :disabled="!filtered.length" @click="$emit('export-audit')">
+          <span class="material-symbols-outlined" aria-hidden="true">verified_user</span>
+          {{ $ui('Export audit trail') }}
+        </button>
       </div>
     </div>
+    <p v-if="exportMessage && !compact" class="live__export-status" role="status">{{ exportMessage }}</p>
 
     <!-- Filter chips -->
     <div v-if="!compact" class="live__filters">
@@ -240,8 +245,9 @@ import { formatRoleTitle } from "../../services/company/presentation.js";
 export default {
   name: "CompanyLiveFeed",
   components: { BzCloseButton, CompanyMarkdown, CompanyArtifactPreview },
-  emits: ["open-view", "open-result"],
+  emits: ["open-view", "open-result", "export-audit"],
   props: {
+    exportMessage: { type: String, default: "" },
     charter: { type: Object, required: true },
     state: { type: Object, required: true },
     compact: { type: Boolean, default: false },
@@ -495,6 +501,7 @@ export default {
 .live__rate { color: var(--bz-fg-mid); font-size: 20px; }
 .live__rate.is-active { color: var(--bz-success); }
 .live__rate small { color: var(--bz-fg-mid); font: 400 var(--bz-size-meta)/1 var(--bz-font-body); }
+.live__export-status { margin: 0; color: var(--bz-fg-mid); font: 400 var(--bz-size-meta)/1.4 var(--bz-font-body); }
 .live__head-right > .bz-btn { font: 400 var(--bz-size-meta)/1.3 var(--bz-font-body); }
 .live__filters { display: flex; gap: var(--bz-space-2); flex-wrap: wrap; padding: var(--bz-space-5) 0; }
 .live__chip { min-height: 36px; padding: var(--bz-space-2) var(--bz-space-3); border: 1px solid var(--bz-border); border-radius: var(--bz-r); background: transparent; color: var(--bz-fg-mid); cursor: pointer; font: 400 var(--bz-size-meta)/1.3 var(--bz-font-body); display: inline-flex; align-items: center; gap: var(--bz-space-2); transition: background var(--bz-dur-fast), border-color var(--bz-dur-fast), color var(--bz-dur-fast); }
