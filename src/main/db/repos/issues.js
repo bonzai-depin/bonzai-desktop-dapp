@@ -249,6 +249,20 @@ export function claimNextForRole(companyId, roleKey, currentCompanion) {
   const { db } = get();
   const now = Date.now();
   return db.transaction(() => {
+    // Work addressed to the agent that held this role when it was created follows
+    // the role when the owner replaces that agent; otherwise it would wait unseen.
+    // A funded job names its agent contractually and is surfaced instead.
+    if (currentCompanion) for (const stale of db.prepare(`SELECT id, labels, goal_id FROM issues WHERE company_id = ? AND status = 'open' AND assignee_role = ?
+        AND assignee_companion IS NOT NULL AND assignee_companion <> ?`).all(companyId, roleKey, currentCompanion)) {
+      if (String(stale.labels || '').includes('funded-job:')) {
+        const note = 'The agent this funded job was assigned to no longer fills the role. Restore that agent or cancel the task.';
+        db.prepare("UPDATE issues SET status = 'blocked', last_error = ?, updated_at = ? WHERE id = ? AND company_id = ?").run(note, now, stale.id, companyId);
+        audit.append(companyId, { kind: 'issue', role: roleKey, action: 'issue.blocked', status: 'blocked', issueId: stale.id, goalId: stale.goal_id, note });
+      } else {
+        db.prepare('UPDATE issues SET assignee_companion = ?, updated_at = ? WHERE id = ? AND company_id = ?').run(currentCompanion, now, stale.id, companyId);
+        audit.append(companyId, { kind: 'issue', role: roleKey, action: 'issue.reassigned', status: 'executed', issueId: stale.id, goalId: stale.goal_id, note: 'Reassigned to the agent now filling this role.' });
+      }
+    }
     const issue = db.prepare(`
       SELECT * FROM issues
       WHERE company_id = ? AND status = 'open' AND assignee_role = ?

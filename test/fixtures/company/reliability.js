@@ -130,6 +130,19 @@ const step = type => createTaskExecution([{ type }]);
   console.log('PASS: retries and crash recovery are bounded and escalate to the owner');
 }
 
+// 5b. Work pinned to a replaced agent follows the role instead of waiting unseen.
+{
+  const pinned = issues.create(id, { title: 'Answer supplier request', assigneeRole: 'COO', assigneeCompanion: 'former-agent' });
+  const funded = issues.create(id, { title: 'Funded job', assigneeRole: 'COO', assigneeCompanion: 'former-agent', externalJobReference: `1:0x${'a'.repeat(40)}:0x${'b'.repeat(64)}` });
+  const claimed = issues.claimNextForRole(id, 'COO', 'new-agent');
+  assert.equal(claimed.id, pinned.id, 'the role\u2019s current agent picks up work addressed to its predecessor');
+  assert.equal(claimed.assigneeCompanion, 'new-agent');
+  assert.equal(trail('issue.reassigned').length, 1);
+  assert.equal(issues.getById(id, funded.id).status, 'blocked', 'a contractually assigned job is surfaced, never silently handed over');
+  for (const taskId of [pinned.id, funded.id]) issues.update(id, taskId, { status: 'cancelled' });
+  console.log('PASS: tasks follow the role when its agent is replaced');
+}
+
 // 6. A wait on another team that cannot be answered becomes the owner's decision.
 {
   const waitOn = wait => {

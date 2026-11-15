@@ -26,6 +26,23 @@ test('approval continuation observes the approved result without replaying previ
   const done = await runAgentLoop({...options, execution:waiting, approval:{id:'approval',stepId:'step1',action:waiting.steps[0].resolvedAction}});
   assert.equal(calls,1);assert.equal(decisions,2);assert.equal(executionOutcome(done),'done');
 });
+test('a failed model turn is retried later instead of stopping the business task', async () => {
+  // Business reason: a busy shared model or an unreadable reply happens daily on a
+  // local device; no tool ran, so the task must resume by itself, not wait for a click.
+  let turns = 0;
+  const options = { ...base(), dispatch: async () => ({ id: 'draft', status: 'completed' }),
+    decide: async state => { if (++turns === 2) throw new Error('The assigned model is busy. Resume this task when it is available.');
+      return state.steps.length ? { kind: 'complete', summary: 'Draft saved.', evidence: ['step1'] } : { kind: 'act', action: { type: 'produce' } }; } };
+  const deferred = await runAgentLoop(options);
+  assert.equal(deferred.agent.status, 'running');
+  assert.equal(executionOutcome(deferred), 'retry');
+  assert.equal(deferred.steps[0].status, 'completed', 'completed work is kept');
+  let dispatched = 0;
+  const done = await runAgentLoop({ ...options, execution: deferred, dispatch: async () => { dispatched++; } });
+  assert.equal(executionOutcome(done), 'done');
+  assert.equal(dispatched, 0, 'the retry never repeats a completed effect');
+  assert.equal(done.agent.retry, undefined);
+});
 test('owner questions and cross-team waits yield without holding or polling the model', async () => {
   const asked = await runAgentLoop({...base(),decide:async()=>({kind:'ask',question:'Which client should receive the quote?'})});
   assert.equal(executionOutcome(asked),'waiting');

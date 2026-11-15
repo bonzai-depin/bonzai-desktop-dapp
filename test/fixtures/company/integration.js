@@ -313,6 +313,32 @@ assert.equal(goals.getById(nativeTeam.id,nativeGoal.id).status,'completed');
 assert.equal(decisions,3);
 console.log('PASS: native clarification → owner answer → real local report → evidence review → completed goal, isolated chat context');
 
+// A busy local model defers the task with backoff; it never needs an owner click.
+const busyTask = issues.create(nativeTeam.id,{title:'Prepare the October local financial report',assigneeRole:'CFO',maxAttempts:3});
+let busyTurns=0;
+window.electronAPI.chat=async()=>{
+  if(++busyTurns===1)throw new Error('The assigned model is busy. Resume this task when it is available.');
+  if(busyTurns===2)return JSON.stringify({kind:'act',action:{type:'publishFinancialReport',text:'Octobre 2026 : rapport local de test.',reason:'Prepare the requested local report.'}});
+  return JSON.stringify({kind:'complete',summary:'Rapport local préparé.',evidence:['step1']});
+};
+const deferredTick=await tickRole(nativeTeam,'CFO');
+assert.equal(deferredTick.deferred,1);assert.equal(deferredTick.error,0,'a deferred task is not a failed scheduler run');
+let busyRow=issues.getById(nativeTeam.id,busyTask.id);
+assert.equal(busyRow.status,'open');assert.equal(busyRow.attemptCount,1);assert.ok(busyRow.nextAttemptAt>Date.now());
+assert.equal((await tickRole(nativeTeam,'CFO')).executed??0,0,'the retry waits for its backoff');
+db.prepare('UPDATE issues SET next_attempt_at=1 WHERE id=?').run(busyTask.id);
+assert.equal((await tickRole(nativeTeam,'CFO')).queued,1,'the task resumes by itself and still asks for approval');
+await resumeApprovedTask(nativeTeam,approvals.pending(nativeTeam.id).find(item=>item.issueId===busyTask.id));
+assert.equal(issues.getById(nativeTeam.id,busyTask.id).status,'done');
+// Exhausted retries stop and are escalated to the owner in the audit trail.
+const stuckTask = issues.create(nativeTeam.id,{title:'Prepare the November local financial report',assigneeRole:'CFO',maxAttempts:2});
+window.electronAPI.chat=async()=>{throw new Error('Model not loaded');};
+for(let round=0;round<2;round++){db.prepare('UPDATE issues SET next_attempt_at=NULL WHERE id=?').run(stuckTask.id);await tickRole(nativeTeam,'CFO');}
+assert.equal(issues.getById(nativeTeam.id,stuckTask.id).status,'blocked');
+assert.equal(audit.filter(nativeTeam.id,{action:'issue.escalated',issueId:stuckTask.id}).length,1);
+issues.update(nativeTeam.id,stuckTask.id,{status:'cancelled'});
+console.log('PASS: busy or failing model turns retry with backoff, then escalate');
+
 // A reply that lands before the wait checkpoint must still resume the sender.
 const purchasingTeam={...structuredClone(nativeTeam),id:'native-purchasing',name:'Achats Martin'};
 companies.save(purchasingTeam);

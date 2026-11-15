@@ -42,6 +42,7 @@ export function executionOutcome(execution) {
     if (hasCompletedExecution(execution)) return 'done';
     if (steps.some(step => step.status === 'waiting_approval')) return 'queued';
     if (['waiting_team', 'waiting_owner'].includes(execution.agent.status)) return 'waiting';
+    if (execution.agent.retry && execution.agent.status === 'running' && steps.every(step => step.status === 'planned' || settledStep(step) || (step.status === 'failed' && step.safeToRevise === true))) return 'retry';
     if (!execution.pauseReason && execution.agent.status === 'running' && steps.every(step => step.status === 'planned' || settledStep(step))) return 'continue';
     return 'blocked';
   }

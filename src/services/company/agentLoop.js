@@ -61,6 +61,7 @@ export async function runAgentLoop({ execution, companyId, decide, save, gate, d
     await checkpoint(); return false;
   };
   if (['waiting_team', 'waiting_owner', 'complete', 'blocked'].includes(state.agent.status)) return state;
+  delete state.agent.retry;
   for (let turn = 0; turn < limits.turnsPerRun; turn++) {
     if (!await active()) return state;
     const unfinished = state.steps.find(step => !settledStep(step));
@@ -75,7 +76,14 @@ export async function runAgentLoop({ execution, companyId, decide, save, gate, d
     }
     let decision;
     try { decision = await decide(clone(state)); }
-    catch (error) { state.agent.status = 'blocked'; state.pauseReason = error.message || 'The model could not choose the next action.'; await checkpoint(); return state; }
+    catch (error) {
+      // No tool ran during a failed model turn (busy device, timeout, unreadable
+      // reply). Yield for a bounded, delayed retry; the scheduler stops and tells
+      // the owner once the task's attempts are exhausted.
+      state.pauseReason = error.message || 'The model could not choose the next action.';
+      state.agent.retry = { reason: state.pauseReason.slice(0, 500), at: Date.now() };
+      await checkpoint(); return state;
+    }
     if (!await active()) return state;
     state.agent.turns++;
     try {

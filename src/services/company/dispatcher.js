@@ -302,29 +302,15 @@ export async function tickRole(charter, roleKey, run = null) {
   };
 
   const cap = effectiveRoleBudget(charter, roleKey);
-  const builtInAllowed = ROLE_LIBRARY[roleKey].allowedActions;
   const roleMediaPipelines = _roleMediaPipelines(charter, roleKey);
 
   // Granted skills come from the role assignment (set by the template
   // wizard or owner edits). Each granted skill exposes its action types
   // to the LLM and adds them to the allowed-action mask.
-  const grantedSkills = [...new Set([...(charter.roles?.[roleKey]?.grantedSkills || []), "skill.team_communication", "skill.local_intake"])].filter(id => id !== "skill.brave_supplier_search" || roleKey === "PurchasingManager");
-  const skillActionLines = actionListForPrompt(grantedSkills);
-  const skillActionTypes = new Set();
-  for (const sid of grantedSkills) {
-    const m = (await import("./skillManifests.js")).getManifest(sid);
-    if (!m) continue;
-    for (const a of m.actions) skillActionTypes.add(a.type);
-  }
-  const workflowCatalog = await getAvailableAgentWorkflows();
-  const agent = smartAgentCatalog.agents.find(agent => agent.id === resolved.companion);
-  const agentWorkflows = new Set(getAgentWorkflowIds(agent, workflowCatalog));
-  const availableWorkflows = [...agentWorkflows];
-  const implemented = new Set(['produce', 'runFineTune', 'publishFinancialReport', 'publishProductReport', 'publishComplianceReport', 'publishExperimentReport', ...SUPPORTED_CONNECTOR_ACTIONS]);
-  const allowed = [...builtInAllowed, ...skillActionTypes].filter(type => implemented.has(type));
-  if (availableWorkflows.length) allowed.push('runWorkflow');
-  allowed.push('smartAgent.runWorker', 'smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings');
-  if (roleMediaPipelines.length && !allowed.includes("produce")) allowed.push("produce");
+  const { allowed, grantedSkills, workflowCatalog, availableWorkflows } = await _roleCapabilities(charter, roleKey, resolved.companion);
+  // Offer the model only actions that can actually run; an advertised action
+  // without an executor would block the task instead of doing the work.
+  const skillActionLines = actionListForPrompt(grantedSkills).filter(line => allowed.some(type => line.startsWith(`- ${type}:`)));
 
   // Hybrid roles get a different prompt framing — they coordinate a
   // human, they don't execute the work themselves.
@@ -478,6 +464,17 @@ async function executeIssuePlan(charter, issue, companion, allowed, approval = n
   }));
   const status = executionOutcome(execution);
   const error = execution.steps.find(step => step.error)?.error || execution.pauseReason || null;
+  if (status === 'retry') {
+    const policy = automationPolicy(charter);
+    const reason = `The model could not choose the next step: ${_friendlyError(new Error(execution.agent.retry.reason))}`;
+    await issues.finishAttempt(companyId, issue.id, {
+      status: 'error', retryable: true, retryBaseMs: policy.retryBaseMs, retryMaxMs: policy.retryMaxMs, error: reason,
+      result: { summary: `Work on “${issue.title}” is saved and will be retried.`, justification: 'No action ran during the failed model turn, so the task is safe to retry.',
+        objective: issue.title, actions: receipts, completedBy: companion, role: roleKey },
+    });
+    return { executed: execution.steps.filter(step => step.status === 'completed' && !previousResults.has(step.id)).length,
+      queued: 0, waiting: 0, continuing: 0, deferred: 1, error: 0, vetoed: 0, receipts };
+  }
   await issues.finishAttempt(companyId, issue.id, {
     status, retryable: false, error,
     result: {
@@ -492,6 +489,23 @@ async function executeIssuePlan(charter, issue, companion, allowed, approval = n
   if (status === 'done' && issue.goalId) await goals.maybeComplete(companyId, issue.goalId, await issues.list(companyId, { goalId: issue.goalId }));
   return { executed: execution.steps.filter(step => step.status === 'completed' && !previousResults.has(step.id)).length,
     queued: status === 'queued' ? 1 : 0, waiting: status === 'waiting' ? 1 : 0, continuing: status === 'continue' ? 1 : 0, error: status === 'blocked' ? 1 : 0, vetoed: 0, receipts };
+}
+
+/** What a role may do, derived once so first runs and approval resumes agree. */
+export async function _roleCapabilities(charter, roleKey, companion) {
+  const grantedSkills = [...new Set([...(charter.roles?.[roleKey]?.grantedSkills || []), "skill.team_communication", "skill.local_intake"])].filter(id => id !== "skill.brave_supplier_search" || roleKey === "PurchasingManager");
+  const skillActionTypes = new Set();
+  const { getManifest } = await import("./skillManifests.js");
+  for (const sid of grantedSkills) for (const a of getManifest(sid)?.actions || []) skillActionTypes.add(a.type);
+  const workflowCatalog = await getAvailableAgentWorkflows();
+  const agent = smartAgentCatalog.agents.find(agent => agent.id === companion);
+  const availableWorkflows = [...new Set(getAgentWorkflowIds(agent, workflowCatalog))];
+  const implemented = new Set(['produce', 'runFineTune', 'publishFinancialReport', 'publishProductReport', 'publishComplianceReport', 'publishExperimentReport', ...SUPPORTED_CONNECTOR_ACTIONS]);
+  const allowed = [...(ROLE_LIBRARY[roleKey]?.allowedActions || []), ...skillActionTypes].filter(type => implemented.has(type));
+  if (availableWorkflows.length) allowed.push('runWorkflow');
+  allowed.push('smartAgent.runWorker', 'smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings');
+  if (_roleMediaPipelines(charter, roleKey).length && !allowed.includes("produce")) allowed.push("produce");
+  return { allowed, grantedSkills, workflowCatalog, availableWorkflows };
 }
 
 export async function resumeApprovedTask(charter, pending) {
@@ -524,13 +538,11 @@ async function resumeApprovedTaskClaimed(charter, pending, run) {
     await issues.finishAttempt(charter.id, issue.id, { status: 'blocked', error: 'Approval could not be recorded. No action was executed.' });
     throw new Error('Approval could not be recorded. No action was executed.');
   }
-  const role = charter.roles?.[issue.assigneeRole] || {};
-  const allowed = [...(ROLE_LIBRARY[issue.assigneeRole]?.allowedActions || []), 'produce', 'runWorkflow',
-    'smartAgent.runWorker', 'smartAgent.acceptJob', 'smartAgent.submitResult', 'smartAgent.withdrawEarnings'];
-  for (const id of [...(role.grantedSkills || []), "skill.team_communication", "skill.local_intake"]) {
-    const manifest = (await import('./skillManifests.js')).getManifest(id);
-    allowed.push(...(manifest?.actions || []).map(action => action.type));
-  }
+  // The remaining steps keep exactly the authority the role had when the plan
+  // started; an approval of one step never widens what later steps may do.
+  await loadSmartAgents();
+  const { allowed } = await _roleCapabilities(charter, issue.assigneeRole, pending.requestedBy);
+  if (!allowed.includes(action.type)) allowed.push(action.type); // the owner approved this exact, already gated action
   return executeIssuePlan(charter, issue, pending.requestedBy, allowed, { id: pending.id, stepId: pending.stepId, action }, run);
 }
 
