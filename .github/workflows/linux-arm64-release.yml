@@ -2,9 +2,6 @@ name: "Release (Linux ARM64)"
 # NVIDIA DGX Spark and other aarch64 CUDA hosts. Manual dispatch only until the
 # installer has been validated on real hardware; add the `release` trigger then.
 on:
-  # TEMPORARY: build-only validation from this branch; remove before merge.
-  push:
-    branches: [claude/blissful-heisenberg-bc96ed]
   workflow_dispatch:
     inputs:
       tag:
