@@ -37,6 +37,8 @@
 import { parse } from "acorn";
 import { createLevelNavigation } from "./gen3d/levelNavigation.js";
 import { assemble } from './gen3d/parametricAssembly.js';
+import { worldHelpers } from './gen3d/worldKit.js';
+import { buildActor } from './gen3d/actorKit.js';
 import { constructionHelpers } from './gen3d/constructionHelpers.js';
 import { productionGeometry } from './gen3d/productionGeometry.js';
 import { inspectScene, qualityViews } from './gen3d/sceneInspection.js';
@@ -1048,6 +1050,9 @@ export default {
         ...productionGeometry,
         ...constructionHelpers,
         assemble,
+        // Planned worlds and ready-made game pieces: one call, no generated geometry code.
+        ...worldHelpers,
+        actor: (kind, options) => buildActor(kind, options, addUpdateCallback),
         // Reusable chamfered geometry; dimensions are centred like BoxGeometry.
         bevelBox: (width = 1, height = 1, depth = 1, radius = .04, segments = 3) =>
           new RoundedBoxGeometry(width, height, depth, Math.max(1, Math.min(6, segments)), Math.min(radius, Math.min(width, height, depth) * .49)),
@@ -6097,6 +6102,13 @@ export default {
           this.scene.add(result);
           if(result.userData.worldScale && !_engine.GAME?.active) this._configureLevel(result, this._getHeroBounds(result)?.box || generatedBounds);
           else this._applyGeneratedLookdev(result);
+          // A game played in a world-scale level brings its own ground: the object display
+          // floor would z-fight a floor at y = 0 and slice through terrain below it.
+          if (_engine.GAME?.active) {
+            let world = false;
+            result.traverse((node) => { if (node.userData?.worldScale) world = true; });
+            if (world) for (const key of ['ground','groundTint','grid']) { const item = this._sceneObjects.get(key); if (item) item.visible = false; }
+          }
           // Validate animation and compile an actual frame before emitting success.
           // Three.js normally only logs shader failures, leaving a blank "success".
           for (const callback of this._updateCallbacks) callback({ time: 0, deltaTime: 0 });
