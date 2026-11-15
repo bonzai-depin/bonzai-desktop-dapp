@@ -193,4 +193,6 @@ basicsr==1.4.2
 
 # Abliteration (training/abliterate endpoint) — removes refusal behaviors from LLMs.
 # Not on PyPI; install from git. Needs transformers/accelerate/torch (already present).
-obliteratus @ git+https://github.com/elder-plinius/OBLITERATUS.git
+# Pinned to the revision the last validated installers used. Later upstream
+# revisions require pillow>=13 and filelock>=4.2.1, which conflict with this lock.
+obliteratus @ git+https://github.com/elder-plinius/OBLITERATUS.git@b9252dce78f7efe51f0aa1eb68026b147cf6ed1d
