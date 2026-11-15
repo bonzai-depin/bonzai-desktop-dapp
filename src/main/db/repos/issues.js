@@ -30,6 +30,40 @@ const PRIORITY_ORDER = `CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WH
 const PRIORITIES = ["low", "normal", "high", "urgent"];
 const STATUSES = ["open", "in_progress", "blocked", "done", "cancelled"];
 
+export const PREREQUISITE_BLOCKED = 'A prerequisite task was cancelled or removed. Reopen or replace it, then reopen this task.';
+const TEAM_WAIT_ESCALATION_MS = 72 * 60 * 60_000;
+
+function charterOf(companyId) {
+  return _parseJSON(get().db.prepare('SELECT charter FROM companies WHERE id=?').get(companyId)?.charter) || {};
+}
+
+/** A dependent task can never be claimed once its prerequisite cannot finish.
+ * Surface that to the owner instead of leaving it open and silent. */
+function blockDependents(companyId, parentId, { unlink = false } = {}) {
+  const { db } = get();
+  const children = db.prepare("SELECT id, status FROM issues WHERE company_id = ? AND parent_issue_id = ?").all(companyId, parentId);
+  for (const child of children) {
+    if (child.status === 'open') {
+      db.prepare("UPDATE issues SET status = 'blocked', last_error = ?, next_attempt_at = NULL, updated_at = ? WHERE id = ? AND company_id = ?")
+        .run(PREREQUISITE_BLOCKED, Date.now(), child.id, companyId);
+      audit.append(companyId, { kind: 'issue', action: 'issue.blocked', status: 'blocked', issueId: child.id, note: PREREQUISITE_BLOCKED });
+    }
+    if (unlink) db.prepare('UPDATE issues SET parent_issue_id = NULL WHERE id = ? AND company_id = ?').run(child.id, companyId);
+  }
+}
+
+/** Stop an in-flight attempt without pretending its dispatched effect did or did not happen. */
+function interruptAttempt(companyId, issue, reason) {
+  const { db } = get();
+  const execution = issue.execution;
+  let changed = false;
+  for (const step of execution?.steps || []) if (step.status === 'running') {
+    step.status = 'unknown'; step.error = reason; changed = true;
+  }
+  db.prepare("UPDATE issue_attempts SET status = 'interrupted', finished_at = ?, error = ? WHERE issue_id = ? AND status = 'running'").run(Date.now(), reason, issue.id);
+  if (changed) db.prepare('UPDATE issues SET execution = ?, execution_revision = execution_revision + 1 WHERE id = ? AND company_id = ?').run(JSON.stringify(execution), issue.id, companyId);
+}
+
 export function create(companyId, input) {
   const { orm } = get();
   if (!input?.title?.trim()) throw new Error("title required");
@@ -121,12 +155,22 @@ export function update(companyId, issueId, patch) {
   if (patch.priority && !PRIORITIES.includes(patch.priority)) {
     throw new Error(`invalid priority: ${patch.priority}`);
   }
-  const { orm } = get();
+  const { orm, db } = get();
   const data = { ...patch, updatedAt: Date.now() };
   delete data.id; delete data.companyId; delete data.createdAt;
-  orm.update(issues).set(data)
-    .where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
-  return getById(companyId, issueId);
+  return db.transaction(() => {
+    const leaving = patch.status && patch.status !== cur.status;
+    // The executor's next checkpoint fails once the task leaves in_progress, so
+    // record the interruption here; a dispatched effect stays reviewable.
+    if (leaving && cur.status === 'in_progress') interruptAttempt(companyId, cur, 'The task was changed while this step was running. Verify the outcome before continuing.');
+    orm.update(issues).set(data)
+      .where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
+    if (leaving && patch.status === 'cancelled') {
+      db.prepare("UPDATE pending_approvals SET status = 'expired', decided_at = ? WHERE company_id = ? AND issue_id = ? AND status = 'pending'").run(Date.now(), companyId, issueId);
+      blockDependents(companyId, issueId);
+    }
+    return getById(companyId, issueId);
+  })();
 }
 
 export function reopen(companyId, issueId) {
@@ -140,10 +184,19 @@ export function reopen(companyId, issueId) {
   const execution = cur.execution ? { ...cur.execution, steps: cur.execution.steps.map(step =>
     ['completed','superseded'].includes(step.status) ? step : { id: step.id, action: step.action, status: 'planned' }) } : null;
   reviewHarness(execution);
-  const { orm } = get();
-  orm.update(issues).set({ status: 'open', attemptCount: 0, nextAttemptAt: null, lastError: null,
-    execution, executionRevision: cur.executionRevision + 1, updatedAt: Date.now() }).where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
-  return getById(companyId, issueId);
+  const { orm, db } = get();
+  return db.transaction(() => {
+    if (cur.parentIssueId) {
+      const parent = getById(companyId, cur.parentIssueId);
+      if (!parent || parent.status === 'cancelled') throw new Error('Reopen the prerequisite task first, or remove it to run this task on its own.');
+    }
+    orm.update(issues).set({ status: 'open', attemptCount: 0, nextAttemptAt: null, lastError: null,
+      execution, executionRevision: cur.executionRevision + 1, updatedAt: Date.now() }).where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
+    // Dependents blocked only by this task's cancellation follow it back.
+    db.prepare("UPDATE issues SET status = 'open', last_error = NULL, updated_at = ? WHERE company_id = ? AND parent_issue_id = ? AND status = 'blocked' AND last_error = ?")
+      .run(Date.now(), companyId, issueId, PREREQUISITE_BLOCKED);
+    return getById(companyId, issueId);
+  })();
 }
 
 // Owner resumption permits a fresh configuration check, never replay of completed
@@ -157,9 +210,18 @@ function reviewHarness(execution) {
 }
 
 export function remove(companyId, issueId) {
-  const { orm } = get();
-  orm.delete(issues).where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
-  return true;
+  const { orm, db } = get();
+  return db.transaction(() => {
+    const cur = getById(companyId, issueId);
+    if (!cur) return true;
+    if (cur.status === 'in_progress') throw new Error('This task is still running. Pause the team before deleting it.');
+    // Attempts and a pending approval have no meaning without their task.
+    db.prepare('DELETE FROM issue_attempts WHERE issue_id = ?').run(issueId);
+    db.prepare("UPDATE pending_approvals SET status = CASE WHEN status = 'pending' THEN 'expired' ELSE status END, decided_at = COALESCE(decided_at, ?), issue_id = NULL, step_id = NULL WHERE company_id = ? AND issue_id = ?").run(Date.now(), companyId, issueId);
+    blockDependents(companyId, issueId, { unlink: true });
+    orm.delete(issues).where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
+    return true;
+  })();
 }
 
 /**
@@ -286,9 +348,17 @@ export function finishAttempt(companyId, issueId, outcome) {
       lastError: outcome.error ?? (outcome.status === "error" ? "execution failed" : null),
     })
       .where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
+    // The business outcome is recorded with the task, not by a later renderer call
+    // that a crash could skip.
+    if (nextStatus === 'done' && cur.goalId) goalsRepo.maybeComplete(companyId, cur.goalId);
+    if (outcome.status === 'error' && !retryable && outcome.retryable !== false) {
+      audit.append(companyId, { kind: 'issue', role: cur.assigneeRole, action: 'issue.escalated', status: 'blocked', issueId, goalId: cur.goalId,
+        note: `Stopped after ${nextAttemptCount} failed attempt(s); owner review is required. ${outcome.error || ''}`.trim().slice(0, 500) });
+    }
   });
   tx();
-  wakeTeamWaits();
+  // The outcome above is committed; another team's malformed wait must not undo the report.
+  try { wakeTeamWaits(); } catch (error) { console.warn('[issues] team wait wake-up failed:', error?.message || error); }
   return getById(companyId, issueId);
 }
 
@@ -297,11 +367,28 @@ export function wakeTeamWaits(companyId = null) {
   const { db } = get();
   return db.transaction(() => {
     const rows = db.prepare("SELECT * FROM issues WHERE status='blocked' AND json_extract(execution,'$.agent.status')='waiting_team' AND (? IS NULL OR company_id=?)").all(companyId, companyId);
-    let count = 0;
+    let count = 0, escalated = 0;
+    const now = Date.now();
     for (const row of rows) {
-      const execution = _parseJSON(row.execution), wait = execution.agent.wait;
-      const thread = db.prepare('SELECT t.id, i.status AS task_status FROM team_threads t LEFT JOIN issues i ON i.id=t.issue_id WHERE t.id=? AND (t.source_company_id=? OR t.target_company_id=?)').get(wait.conversationId, row.company_id, row.company_id);
-      if (!thread) continue;
+      const execution = _parseJSON(row.execution), wait = execution?.agent?.wait || {};
+      const thread = wait.conversationId ? db.prepare('SELECT t.id, i.status AS task_status FROM team_threads t LEFT JOIN issues i ON i.id=t.issue_id WHERE t.id=? AND (t.source_company_id=? OR t.target_company_id=?)').get(wait.conversationId, row.company_id, row.company_id) : null;
+      const escalateAfter = Number(charterOf(row.company_id).automation?.teamWaitEscalationMs) || TEAM_WAIT_ESCALATION_MS;
+      const overdue = Number(wait.since) > 0 && now - Number(wait.since) >= Math.max(60_000, escalateAfter);
+      if (!thread || overdue) {
+        // A reply that can never arrive, or has not arrived in time, becomes the
+        // owner's decision instead of a task that waits forever.
+        if (!execution?.agent) continue;
+        const question = !thread
+          ? 'The conversation with the other team is no longer available. How should this task continue?'
+          : `The other team has not replied (${String(wait.reason || 'request pending').slice(0, 300)}). Keep waiting, or tell me how to continue.`;
+        execution.agent.status = 'waiting_owner';
+        execution.agent.events = [...(execution.agent.events || []), { type: 'team_wait_escalated', conversationId: wait.conversationId || null, reason: !thread ? 'conversation_unavailable' : 'no_reply', at: now }];
+        execution.agent.wait = { kind: 'owner', question, since: now, escalatedFrom: wait.conversationId || null };
+        db.prepare("UPDATE issues SET execution=?, execution_revision=execution_revision+1, last_error=?, updated_at=? WHERE id=? AND company_id=?").run(JSON.stringify(execution), question, now, row.id, row.company_id);
+        audit.append(row.company_id, { kind: 'issue', role: row.assignee_role, action: 'issue.escalated', status: 'blocked', issueId: row.id, goalId: row.goal_id, note: question });
+        escalated++;
+        continue;
+      }
       const message = db.prepare('SELECT * FROM team_messages WHERE thread_id=? AND company_id<>? ORDER BY created_at DESC, rowid DESC').all(thread.id, row.company_id)
         .find(message => !(wait.seenMessageIds || []).includes(message.id));
       const outcomeChanged = ['done', 'cancelled'].includes(thread.task_status) && thread.task_status !== wait.seenTaskStatus;
@@ -312,7 +399,7 @@ export function wakeTeamWaits(companyId = null) {
       db.prepare("UPDATE issues SET execution=?, execution_revision=execution_revision+1, status='open', last_error=NULL, updated_at=? WHERE id=? AND company_id=?").run(JSON.stringify(execution), Date.now(), row.id, row.company_id);
       count++;
     }
-    return { resumed: count };
+    return { resumed: count, escalated };
   })();
 }
 
@@ -327,6 +414,7 @@ export function answerQuestion(companyId, issueId, answer) {
     execution.agent.events.push({ type:'owner_answer', question:execution.agent.wait.question, text, at:Date.now() });
     execution.agent.status = 'running'; delete execution.agent.wait; delete execution.pauseReason;
     db.prepare("UPDATE issues SET execution=?, execution_revision=execution_revision+1, status='open', last_error=NULL, updated_at=? WHERE id=? AND company_id=?").run(JSON.stringify(execution),Date.now(),issueId,companyId);
+    audit.append(companyId, { kind: 'review', role: 'owner', action: 'answerQuestion', status: 'executed', issueId, goalId: task.goalId, note: 'Owner answered the agent\u2019s question; the task resumed.' });
     return getById(companyId, issueId);
   })();
 }
@@ -350,8 +438,15 @@ export function recoverStale(companyId, staleBefore = Date.now() - 600_000) {
       const blocked = !execution || waiting || execution.agent?.status === 'blocked' || execution.steps.some(step => step.status !== 'planned' && !settledStep(step) && !(execution.agent && step.status === 'failed' && step.safeToRevise));
       db.prepare("UPDATE issue_attempts SET status = 'interrupted', finished_at = ?, error = ? WHERE issue_id = ? AND status = 'running'")
         .run(Date.now(), 'App stopped before the attempt completed', row.id);
-      db.prepare('UPDATE issues SET status = ?, execution = ?, execution_revision = execution_revision + 1, next_attempt_at = NULL, last_error = ?, updated_at = ? WHERE id = ? AND company_id = ?')
-        .run(blocked ? 'blocked' : 'open', execution ? JSON.stringify(execution) : null, blocked && !waiting ? 'Review the interrupted outcome before resuming.' : null, Date.now(), row.id, companyId);
+      // A task that keeps stopping the app before any effect must not be reclaimed forever.
+      const attempts = Number(row.attempt_count || 0) + (blocked ? 0 : 1);
+      const exhausted = !blocked && attempts >= Number(row.max_attempts || AUTOMATION_DEFAULTS.maxAttempts);
+      const error = blocked ? (waiting ? null : 'Review the interrupted outcome before resuming.')
+        : exhausted ? `Interrupted ${attempts} times before any step completed. Review this task before retrying.` : null;
+      db.prepare('UPDATE issues SET status = ?, execution = ?, execution_revision = execution_revision + 1, attempt_count = ?, next_attempt_at = ?, last_error = ?, updated_at = ? WHERE id = ? AND company_id = ?')
+        .run(blocked || exhausted ? 'blocked' : 'open', execution ? JSON.stringify(execution) : null, attempts,
+          blocked || exhausted ? null : Date.now() + retryDelayMs(attempts, AUTOMATION_DEFAULTS, row.id), error, Date.now(), row.id, companyId);
+      if (blocked || exhausted) audit.append(companyId, { kind: 'issue', role: row.assignee_role, action: 'issue.interrupted', status: 'blocked', issueId: row.id, goalId: row.goal_id, note: error || 'Interrupted while waiting; the pending question or request is preserved.' });
     }
     return { recovered: rows.length };
   })();
@@ -365,7 +460,11 @@ export function reconcileExecution(companyId, issueId, stepId, input) {
     if (!issue || issue.status !== 'blocked') throw new Error('Only blocked tasks can be reviewed.');
     const execution = issue.execution;
     const step = execution?.steps?.find(step => step.id === stepId);
-    if (!step || !['unknown', 'failed', 'unsupported', 'rejected', 'requires_input', 'simulated'].includes(step.status)) throw new Error('This step does not need outcome review.');
+    // An approval decided or removed outside the task flow leaves a step that can
+    // neither be approved nor resumed; the owner states what actually happened.
+    const lostApproval = step?.status === 'waiting_approval'
+      && db.prepare('SELECT status FROM pending_approvals WHERE id = ? AND company_id = ?').get(step.approvalId, companyId)?.status !== 'pending';
+    if (!step || !(lostApproval || ['unknown', 'failed', 'unsupported', 'rejected', 'requires_input', 'simulated'].includes(step.status))) throw new Error('This step does not need outcome review.');
     const artifact = distribution.publish(companyId, { pipeline: 'text', prompt: `Owner review: ${issue.title}`, payload: input.evidence.trim(),
       role: issue.assigneeRole, companion: issue.assigneeCompanion, meta: { issueId, stepId, kind: 'owner-review', decision: input.decision, payloadEncoding: 'text' } });
     const previous = { status: step.status, output: step.output, error: step.error, approvalId: step.approvalId };
@@ -383,6 +482,8 @@ export function reconcileExecution(companyId, issueId, stepId, input) {
       .where(and(eq(issues.companyId, companyId), eq(issues.id, issueId))).run();
     orm.insert(issueAttempts).values({ id: uuid(), issueId, role: 'owner', status: 'reviewed', startedAt: Date.now(), finishedAt: Date.now(), result: {
       summary: input.decision === 'completed' ? 'Owner verified the result.' : 'Owner verified no action occurred; a fresh attempt is allowed.', contentIds: [artifact.id], actions: [{ type: step.action.type, status: step.status, contentId: artifact.id, output: step.output }] } }).run();
+    audit.append(companyId, { kind: 'review', role: 'owner', action: 'reconcileExecution', status: 'executed', issueId, goalId: issue.goalId, contentId: artifact.id,
+      note: `Owner reviewed ${step.action.type} (${previous.status}): ${input.decision === 'completed' ? 'confirmed completed' : 'confirmed not performed'}.` });
     if (completed && issue.goalId) goalsRepo.maybeComplete(companyId, issue.goalId);
     return getById(companyId, issueId);
   })();
