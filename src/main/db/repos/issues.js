@@ -486,6 +486,12 @@ export function reconcileExecution(companyId, issueId, stepId, input) {
     delete step.error; delete step.approvalId;
     if (input.decision === 'completed') {
       step.status = 'completed'; step.output = { id: artifact.id, pipeline: 'text', payload: artifact.payload, verifiedBy: 'owner', status: 'completed' };
+    } else if (execution.agent && previous.status === 'rejected') {
+      // The owner refused this action. Replaying it would ask for the same
+      // approval again; the agent must choose differently, knowing why.
+      step.status = 'superseded'; step.safeToRevise = true; delete step.output;
+      execution.agent.events = [...(execution.agent.events || []), { type: 'owner_rejection', stepId, action: step.action.type,
+        reason: String(previous.error || 'Owner rejected this action.').slice(0, 1000), guidance: input.evidence.trim().slice(0, 2000), at: Date.now() }];
     } else { step.status = 'planned'; delete step.resolvedAction; delete step.output; }
     // Preserve historical approval rows, but retire their unique active step key.
     db.prepare("UPDATE pending_approvals SET step_id = NULL, status = CASE WHEN status = 'pending' THEN 'expired' ELSE status END WHERE company_id = ? AND issue_id = ? AND step_id = ?").run(companyId, issueId, stepId);

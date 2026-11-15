@@ -52,10 +52,14 @@ const actionConnector = (actionType) => ({
  * configuration error before that point is safe to correct and retry, unlike
  * a failure after a request that may have been accepted. */
 export async function executeConnectorAction(companyId, actionType, params, idempotencyKey) {
-  const progress = { sent: false };
+  const progress = { requests: 0 };
   try { return await runConnectorAction(companyId, actionType, params, idempotencyKey, progress); }
   catch (error) {
-    if (!progress.sent && error && typeof error === 'object') error.beforeDispatch = true;
+    // Also safe: the only request never reached the provider (offline), or the
+    // provider refused it outright. After a second request, earlier ones stand.
+    const message = String(error?.message || '');
+    const refused = progress.requests === 1 && (/NOT_SENT:/.test(message) || /\bHTTP (400|401|403|404|422)\b/.test(message));
+    if ((progress.requests === 0 || refused) && error && typeof error === 'object') error.beforeDispatch = true;
     throw error;
   }
 }
@@ -70,7 +74,7 @@ async function runConnectorAction(companyId, actionType, params, idempotencyKey,
   const connector = params.connectorId ? await connectors.get(companyId, params.connectorId) : await connectors.getByKind(companyId, kind);
   if (connector && connector.kind !== kind) throw new Error("Connector kind does not match action");
   if (!connector) throw new Error(`${kind} connector is not active`);
-  const call = (spec) => { progress.sent = true; return connectors.request(companyId, connector, { ...spec, idempotencyKey }); };
+  const call = (spec) => { progress.requests++; return connectors.request(companyId, connector, { ...spec, idempotencyKey }); };
 
   if (FINANCE_ACTIONS[actionType]) return executeFinanceAction(actionType, params, call, idempotencyKey);
   if (actionType === "sourcing.searchSuppliers") return searchSuppliers(params, call);

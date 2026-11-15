@@ -86,6 +86,26 @@ const step = type => createTaskExecution([{ type }]);
   console.log('PASS: approvals cannot outlive, or be lost from, their task');
 }
 
+// 3b. A rejected action redirects the agent instead of asking again.
+{
+  const task = issues.create(id, { title: 'Offer a discount to the customer', assigneeRole: 'CMO' });
+  issues.claimNextForRole(id, 'CMO', 'agent');
+  const execution = createAgentExecution({ version: 1, teamId: id });
+  execution.steps.push({ id: 'step1', action: { type: 'email.send', to: 'customer@example.invalid', stepId: 'step1' }, status: 'planned' });
+  const approval = approvals.enqueue(id, { cls: 'email.send', action: execution.steps[0].action, role: 'CMO', requestedBy: 'agent', issueId: task.id, stepId: 'step1' });
+  Object.assign(execution.steps[0], { status: 'waiting_approval', approvalId: approval.id, resolvedAction: execution.steps[0].action });
+  issues.saveExecution(id, task.id, execution, 0);
+  issues.finishAttempt(id, task.id, { status: 'queued' });
+  approvals.reject(id, approval.id, 'No discounts this quarter.');
+  const redirected = issues.reconcileExecution(id, task.id, 'step1', { decision: 'not_performed', evidence: 'Propose a payment plan instead.' });
+  assert.equal(redirected.status, 'open');
+  assert.equal(redirected.execution.steps[0].status, 'superseded', 'the refused action is not queued for approval again');
+  const event = redirected.execution.agent.events.at(-1);
+  assert.deepEqual([event.type, event.reason, event.guidance], ['owner_rejection', 'No discounts this quarter.', 'Propose a payment plan instead.']);
+  issues.update(id, task.id, { status: 'cancelled' });
+  console.log('PASS: an owner rejection reaches the agent with its reason');
+}
+
 // 4. The business outcome is recorded atomically with the last task.
 {
   const goal = goals.create(id, { title: 'Customer receives the corrected quote' });
