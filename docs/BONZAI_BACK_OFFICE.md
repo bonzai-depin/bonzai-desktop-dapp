@@ -164,6 +164,18 @@ Each task stores an ordered, versioned execution plan in SQLite (`0016_company_e
 
 Approval requests reference the exact task, step and resolved inputs. Approval resumes the saved plan under an exclusive renewable company lease. Rejection blocks the task. A crash during an effect, or between approval and dispatch, requires outcome review; uncertain effects are never replayed automatically. The task's **Review outcome** control records the owner's evidence as a retained artifact. Confirming that nothing occurred allows a fresh attempt and fresh external approval. Company pause prevents subsequent steps.
 
+Failure handling is deterministic:
+
+- **Failed model turn** (busy shared model, timeout, unreadable reply): no tool ran, so the task returns to the queue with exponential backoff and stops as blocked, with an `issue.escalated` audit entry, after `automation.maxAttempts`. Work interrupted before any effect follows the same bound.
+- **Connector error before the first provider request, an unreachable provider (`NOT_SENT`), or a first request refused with HTTP 400/401/403/404/422**: nothing was performed; the step is correctable. Timeouts, 5xx and any failure after a second request remain uncertain outcomes for owner review. Only a rejected credential marks a connection expired.
+- **Owner rejection**: after the owner records that nothing was performed, an agent task retires the refused step and receives the rejection reason and guidance; it does not request the same approval again.
+- **Prerequisite cancelled or deleted**: dependent tasks are blocked with that reason and reopen with the prerequisite. Cancelling or deleting a task retires its pending approval; a running task cannot be deleted, and changing its status turns a running step into an uncertain outcome.
+- **Replaced agent**: open tasks addressed to the previous agent of a role move to the agent now filling it (`issue.reassigned`); funded jobs are blocked for the owner instead.
+- **Team wait**: a wait whose conversation no longer exists, or that is unanswered after `automation.teamWaitEscalationMs` (default 72 hours), becomes an owner question.
+- **Mailbox**: an oversized, linked or unreadable attachment flags that email for review; the mailbox continues.
+
+Goal completion commits in the same transaction as its final task. Owner reviews, answers and escalations are written to the audit trail by the main process.
+
 A task is done only after every step has a recorded result. Cancelled tasks do not complete goals. Unsupported handlers, simulations, empty acknowledgements, pending payments and missing interactive input remain incomplete. Generated reports and company artifacts are local drafts. Email and SMS submission receipts do not claim delivery. Payment and refund receipts require owner verification and ledger reconciliation; the local treasury is a recorded ledger, not a bank-balance feed.
 
 The goal rollup verifies completion of its recorded tasks, not the commercial success or semantic quality of their outputs. Owners must review deliverables against the intended business outcome.
