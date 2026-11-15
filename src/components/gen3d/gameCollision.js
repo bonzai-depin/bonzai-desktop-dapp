@@ -15,9 +15,13 @@ export function createGameCollisions(THREE) {
     add(id, object, options = {}) {
       if (!id || !object?.isObject3D) throw Error('GAME.solid requires an id and THREE.Object3D');
       object.updateWorldMatrix(true, true);
-      const bounds = new THREE.Box3().setFromObject(object);
+      // A declared box (object-local [minX,minY,minZ,maxX,maxY,maxZ]) lets one merged or
+      // instanced mesh carry many colliders without measuring its whole envelope.
+      const local = options.box == null ? null : new THREE.Box3(new THREE.Vector3(...options.box.slice(0, 3)), new THREE.Vector3(...options.box.slice(3, 6)));
+      if (local && (options.box.length !== 6 || !options.box.every(Number.isFinite) || local.isEmpty())) throw Error('GAME.solid box must be six finite numbers: min then max');
+      const bounds = local ? local.clone().applyMatrix4(object.matrixWorld) : new THREE.Box3().setFromObject(object);
       if (bounds.isEmpty() || !bounds.min.toArray().concat(bounds.max.toArray()).every(Number.isFinite)) throw Error('GAME.solid requires finite visible geometry');
-      const solid = { id, object, bounds, levelId: options.levelId };
+      const solid = { id, object, bounds, local, levelId: options.levelId };
       solids.set(id, solid); return solid;
     },
     move(object, delta, { radius = .3, height = 1.6, levelId } = {}) {
@@ -30,6 +34,7 @@ export function createGameCollisions(THREE) {
         body.max.set(position.x+radius,position.y+height,position.z+radius);
       }
       for (const solid of solids.values()) {
+        if (solid.local) { solid.bounds.copy(solid.local).applyMatrix4(solid.object.matrixWorld); continue; }
         solid.object.updateWorldMatrix(true,true);
         solid.bounds.setFromObject(solid.object);
       }
@@ -51,6 +56,17 @@ export function createGameCollisions(THREE) {
       if(object.parent)object.parent.worldToLocal(destination);
       object.position.copy(destination);object.updateWorldMatrix(false,true);
       return accepted;
+    },
+    /** Highest solid top under a footprint that the feet can stand on or step up to. */
+    support(x, z, feetY, { radius = .3, step = .35, levelId } = {}) {
+      let top = -Infinity;
+      for (const solid of solids.values()) {
+        const box = solid.bounds;
+        if (!visible(solid.object) || solid.levelId && solid.levelId !== levelId || box.isEmpty()) continue;
+        if (x + radius <= box.min.x || x - radius >= box.max.x || z + radius <= box.min.z || z - radius >= box.max.z) continue;
+        if (box.max.y <= feetY + step && box.max.y > top) top = box.max.y;
+      }
+      return top;
     },
     clear() { solids.clear(); },
   };

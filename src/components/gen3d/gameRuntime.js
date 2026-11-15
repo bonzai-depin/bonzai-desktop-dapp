@@ -7,10 +7,15 @@ const DEFAULT_INPUT = {
   right: ["KeyD", "ArrowRight"],
   sprint: ["ShiftLeft", "ShiftRight"],
   action: ["KeyE", "Space"],
+  jump: ["Space"],
+  restart: ["KeyR"],
   pause: ["Escape"],
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const GRAVITY = 22;
+// A hidden level hides its actors through the parent, not through their own flag.
+const shown = (object) => { for (let node = object; node; node = node.parent) if (!node.visible) return false; return true; };
 
 export function validateGameSpec(spec = {}) {
   const errors = [];
@@ -120,6 +125,8 @@ export function createGameRuntime({
     }));
     const clearGroups = (spec.clearGroups || []).map((group) => ({ mode: "all", objectiveIds: [], ...group, complete: false }));
     const checkpoints = new Map();
+    const grounds = new Map();
+    const groundAt = (x, z) => { const ground = grounds.get(session.activeLevelId) ?? grounds.get(""); return typeof ground === "function" ? ground(x, z) : ground ?? 0; };
     let autonomous = null;
     let phase = "ready";
     let disposed = false;
@@ -141,6 +148,8 @@ export function createGameRuntime({
         event.preventDefault?.();
         phase === "running" ? session.pause() : session.resume();
       }
+      // A finished run must be replayable from the keyboard: there is no other restart control.
+      if (fresh && actionDown("restart") && (phase === "won" || phase === "lost")) session.restart();
     };
     const onKeyUp = (event) => pressed.delete(event.code);
     const onBlur = () => { pressed.clear(); justPressed.clear(); };
@@ -238,6 +247,17 @@ export function createGameRuntime({
       return new THREE.Box3().setFromObject(a.object).intersectsBox(new THREE.Box3().setFromObject(b.object));
     }
 
+    // Shared by the player and by behaviours, so enemies respect the same walls.
+    function travel(actor, move) {
+      if (collisions.solids.size) move.copy(collisions.move(actor.object, move, { radius: actor.radius, height: actor.height, levelId: session.activeLevelId }));
+      else actor.object.position.add(move);
+      if (move.lengthSq() > 1e-10) actor.object.rotation.y = Math.atan2(move.x, move.z);
+      if (actor.id !== "player" && grounds.size) {
+        const world = actor.object.getWorldPosition(new THREE.Vector3());
+        actor.object.position.y += groundAt(world.x, world.z) - world.y + (actor.hover || 0);
+      }
+    }
+
     function tick({ deltaTime = 0, time = 0 } = {}) {
       if (disposed || phase !== "running") {
         justPressed.clear();
@@ -286,9 +306,7 @@ export function createGameRuntime({
         }
         if (move.lengthSq()) {
           move.normalize().multiplyScalar((player.speed ?? 3) * (actionDown("sprint") ? player.sprintMultiplier || 1.75 : 1) * dt);
-          if(collisions.solids.size)move.copy(collisions.move(player.object,move,{radius:player.radius,height:player.height,levelId:session.activeLevelId}));
-          else player.object.position.add(move);
-          player.object.rotation.y = Math.atan2(move.x, move.z);
+          travel(player, move);
           emit("move", { actor: player, movement: move });
         }
         if (actionPressed("action")) {
@@ -311,14 +329,65 @@ export function createGameRuntime({
         }
       }
 
+      if (player?.gravity && player.controller !== false) {
+        const feet = player.object.getWorldPosition(new THREE.Vector3());
+        if (player.jump > 0 && player.grounded && actionPressed("jump")) {
+          player.vy = Math.sqrt(2 * GRAVITY * player.jump);
+          player.grounded = false;
+          emit("jump", { actor: player });
+        }
+        player.vy = (player.vy || 0) - GRAVITY * dt;
+        const floor = Math.max(groundAt(feet.x, feet.z), collisions.support(feet.x, feet.z, feet.y, { radius: player.radius, levelId: session.activeLevelId }));
+        let y = feet.y + player.vy * dt;
+        // Walking downhill follows the ground instead of repeatedly falling a few centimetres.
+        if (y <= floor || player.grounded && player.vy <= 0 && y - floor < 0.4) { y = floor; player.vy = 0; player.grounded = true; }
+        else player.grounded = false;
+        player.object.position.y += y - feet.y;
+        if (y < (spec.killY ?? -25) && !player.fell) { player.fell = true; emit("fall", { actor: player }); }
+        if (phase !== "running") { justPressed.clear(); return; }
+      }
+
+      if (player) {
+        const origin = player.object.getWorldPosition(new THREE.Vector3()), position = new THREE.Vector3(), step = new THREE.Vector3();
+        for (const actor of actors.values()) {
+          if (actor === player || actor.collected || actor.health === 0 || !(actor.pickup || actor.behavior || actor.contactDamage) || !shown(actor.object)) continue;
+          actor.object.getWorldPosition(position);
+          let distance = Math.hypot(origin.x - position.x, origin.z - position.z);
+          const near = Math.abs(origin.y - position.y) < 2.5, behavior = actor.behavior;
+          if (behavior?.type === "chase" && near && distance <= (behavior.range ?? 12) && distance > (behavior.stop ?? 0.7)) {
+            step.set(origin.x - position.x, 0, origin.z - position.z).normalize().multiplyScalar(Math.min(distance, (behavior.speed ?? 2) * dt));
+            travel(actor, step);
+            distance -= step.length();
+          } else if (behavior?.type === "patrol" && behavior.points?.length) {
+            const target = behavior.points[(behavior.index ||= 0) % behavior.points.length];
+            step.set(target[0] - actor.object.position.x, 0, target[2] - actor.object.position.z);
+            if (step.length() < 0.15) behavior.index++;
+            else travel(actor, step.normalize().multiplyScalar((behavior.speed ?? 2) * dt));
+            distance = Math.hypot(origin.x - actor.object.position.x, origin.z - actor.object.position.z);
+          }
+          const reach = (actor.radius || 0.6) + (player.radius || 0.3);
+          if (!near || distance > reach) continue;
+          if (actor.pickup) {
+            if (actor.heal) { player.health = clamp(player.health + actor.heal, 0, player.maxHealth); state.health = player.health; }
+            session.collect(actor.id, 1, [...actor.tags][0]);
+          } else if (actor.contactDamage && state.elapsed - (actor.lastHit ?? -Infinity) >= (actor.contactCooldown ?? 0.8)) {
+            actor.lastHit = state.elapsed;
+            session.damage("player", actor.contactDamage, actor.id);
+          }
+          if (phase !== "running") { justPressed.clear(); return; }
+        }
+      }
+
       for (const trigger of triggers.values()) {
         if (
           !player ||
           trigger.once && trigger.fired ||
-          trigger.levelId && trigger.levelId !== session.activeLevelId
+          trigger.levelId && trigger.levelId !== session.activeLevelId ||
+          trigger.cooldown && state.elapsed - (trigger.lastFired ?? -Infinity) < trigger.cooldown
         ) continue;
         if (intersects(player, trigger)) {
           trigger.fired = true;
+          trigger.lastFired = state.elapsed;
           emit("reach", { id: trigger.id, trigger });
           updateObjectives("reach", { id: trigger.id });
           trigger.onEnter?.(session, trigger);
@@ -342,6 +411,14 @@ export function createGameRuntime({
       interactions,
       solids: collisions.solids,
       solid: (id, object, options) => collisions.add(id, object, options),
+      /** Height the player stands on: a number or (x, z) => y, optionally for one level. */
+      ground(height, levelId = "") {
+        if (typeof height !== "function" && !Number.isFinite(height)) throw new Error("GAME.ground requires a height or a (x, z) => height function");
+        grounds.set(levelId, height);
+        const player = actors.get("player");
+        if (player) player.gravity = true;
+        return session;
+      },
       input: {
         down: actionDown,
         pressed: actionPressed,
@@ -415,8 +492,10 @@ export function createGameRuntime({
           actor.object.visible = actor.spawnVisible;
           actor.health = actor.maxHealth;
           actor.collected = false;
+          actor.lastHit = undefined; actor.vy = 0; actor.fell = false;
+          if (actor.behavior) actor.behavior.index = 0;
         }
-        for(const trigger of triggers.values())trigger.fired=false;
+        for(const trigger of triggers.values()){trigger.fired=false;trigger.lastFired=undefined;}
         if(startLevelId)session.goToLevel(startLevelId);
         phase = "running";
         syncHud();
@@ -446,7 +525,11 @@ export function createGameRuntime({
         // The actor, HUD and restart snapshot must use the same health scale.
         state.health=health;initialState.health=health;
         state.maxHealth=health;initialState.maxHealth=health;
-        return session.actor("player", object, { tags: ["player"], ...options,health,cameraOffset });
+        const jump=options.jump??0;
+        if(!Number.isFinite(jump)||jump<0)throw Error('GAME player jump must be a non-negative height in metres');
+        // Space jumps when the player can jump, so it must stop doubling as the interact key.
+        if(jump>0&&!spec.input?.action)inputMap.action=inputMap.action.filter(code=>code!=='Space');
+        return session.actor("player", object, { tags: ["player"], ...options,health,cameraOffset,jump,gravity:options.gravity??(jump>0||grounds.size>0),grounded:true,vy:0 });
       },
       trigger(id, object, options = {}) {
         const trigger = { id, object, radius: 1, once: true, fired: false, ...options };
@@ -486,6 +569,7 @@ export function createGameRuntime({
         for (const level of levels.values()) level.object.visible = level.id === id;
         const player = actors.get("player");
         if (player && next.entry) player.object.position.copy(next.entry);
+        if (player) { player.vy = 0; player.grounded = true; player.fell = false; }
         session.activeLevelId = id;
         emit("level-change", { id, level: next });
         return next;
@@ -538,13 +622,13 @@ export function createGameRuntime({
       win(message = spec.winMessage || "Objective complete") {
         if (phase === "won" || phase === "lost" || disposed) return;
         phase = "won";
-        syncHud(message);
+        syncHud(`${message} · Press R to play again`);
         emit("win", { score: state.score, elapsed: state.elapsed });
       },
       lose(message = spec.loseMessage || "Run ended") {
         if (phase === "lost" || phase === "won" || disposed) return;
         phase = "lost";
-        syncHud(message);
+        syncHud(`${message} · Press R to try again`);
         emit("lose", { score: state.score, elapsed: state.elapsed });
       },
       dispose() {
@@ -559,7 +643,7 @@ export function createGameRuntime({
         actors.clear();
         triggers.clear();
         interactions.clear();
-        levels.clear(); checkpoints.clear(); collisions.clear();
+        levels.clear(); checkpoints.clear(); collisions.clear(); grounds.clear();
         sessions.delete(session);
         if (active === session) active = null;
       },
