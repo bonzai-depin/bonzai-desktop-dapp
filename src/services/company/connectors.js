@@ -171,7 +171,10 @@ export async function request(companyId, connector, spec) {
     return spec.includeResponseMetadata ? { data: result.data, status: result.status, headers: result.headers || {} } : result.data;
   } catch (error) {
     const message = error?.message || "Connector request failed";
-    const authFailure = /\b(401|403)\b|unauthori[sz]ed|forbidden|expired|invalid token/i.test(message);
+    // Only a rejected credential expires the connection. A 403 for a missing scope
+    // or rate limit, or business text such as "card expired", must not disable
+    // every later action of the team.
+    const authFailure = /\bHTTP 401\b|\b401 unauthori[sz]ed\b|invalid[_ ](token|grant|api[_ ]key)|token (has )?expired|expired[_ ]token/i.test(message);
     await update(companyId, connector.id, {
       status: authFailure ? "expired" : connector.status,
       error: message.slice(0, 240),

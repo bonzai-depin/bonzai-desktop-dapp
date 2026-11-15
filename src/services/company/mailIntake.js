@@ -23,11 +23,14 @@ async function gmailMessage(conn, id, get) {
     m.payload?.headers?.find((h) => h.name.toLowerCase() === name)?.value || "";
   const texts = [],
     html = [],
-    files = [];
+    files = [],
+    skipped = [];
   async function visit(p) {
     if (p.filename) {
-      if (p.body?.size > 30 * 1024 * 1024)
-        throw new Error("An attachment exceeds 30 MB. Import a smaller copy.");
+      if (p.body?.size > 30 * 1024 * 1024) {
+        skipped.push(`${p.filename}: exceeds 30 MB. Import a smaller copy.`);
+        return;
+      }
       let data = p.body?.data;
       if (!data && p.body?.attachmentId)
         data = (
@@ -35,8 +38,10 @@ async function gmailMessage(conn, id, get) {
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(p.body.attachmentId)}`,
           )
         ).data;
-      if (!data)
-        throw new Error("Attachment contents unavailable. Import the original file.");
+      if (!data) {
+        skipped.push(`${p.filename}: contents unavailable. Import the original file.`);
+        return;
+      }
       files.push(
         new File([decode64(data)], p.filename, { type: p.mimeType || "" }),
       );
@@ -54,28 +59,30 @@ async function gmailMessage(conn, id, get) {
     sender: h("from"),
     text: (texts.length ? texts : html).join("\n"),
     files,
+    skipped,
   };
 }
 async function outlookMessage(m, get) {
-  const files = [];
+  const files = [],
+    skipped = [];
   if (m.hasAttachments) {
     let url = `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}/attachments`;
     while (url) {
       const data = await get(url);
       for (const a of data.value || []) {
         if (a.isInline) continue;
-        if (a["@odata.type"] !== "#microsoft.graph.fileAttachment")
-          throw new Error(
-            "Linked or attached emails require a local file import.",
-          );
-        if (a.size > 30 * 1024 * 1024)
-          throw new Error(
-            "An attachment exceeds 30 MB. Import a smaller copy.",
-          );
-        if (!a.contentBytes)
-          throw new Error(
-            "Attachment contents unavailable. Import the original file.",
-          );
+        const problem =
+          a["@odata.type"] !== "#microsoft.graph.fileAttachment"
+            ? "linked or attached emails require a local file import."
+            : a.size > 30 * 1024 * 1024
+              ? "exceeds 30 MB. Import a smaller copy."
+              : !a.contentBytes
+                ? "contents unavailable. Import the original file."
+                : "";
+        if (problem) {
+          skipped.push(`${a.name || "Attachment"}: ${problem}`);
+          continue;
+        }
         files.push(
           new File([decode64(a.contentBytes)], a.name, {
             type: a.contentType || "",
@@ -94,6 +101,7 @@ async function outlookMessage(m, get) {
         ? plainHtml(m.body.content)
         : m.body?.content || "",
     files,
+    skipped,
   };
 }
 /** One persisted page per pass. Checkpoint only after every source is safely stored. */
@@ -160,6 +168,11 @@ export async function syncMailbox(
       chunks: chunkText(text),
       ...metadata,
       attachmentNames: message.files.map((f) => f.name),
+      // The email is kept and flagged for the owner; one unusable attachment
+      // must not stop the mailbox from ever advancing past this message.
+      ...(message.skipped?.length
+        ? { error: `Attachment not imported — ${message.skipped.join("; ")}`.slice(0, 500) }
+        : {}),
     });
     for (const file of message.files) {
       await checkCurrent();

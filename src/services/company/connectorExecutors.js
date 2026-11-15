@@ -48,7 +48,19 @@ const actionConnector = (actionType) => ({
   shopify: "shopify", notion: "notion", sourcing: "brave_search",
 })[actionType.split(".")[0]];
 
+/** Nothing left this device until the first provider request. A validation or
+ * configuration error before that point is safe to correct and retry, unlike
+ * a failure after a request that may have been accepted. */
 export async function executeConnectorAction(companyId, actionType, params, idempotencyKey) {
+  const progress = { sent: false };
+  try { return await runConnectorAction(companyId, actionType, params, idempotencyKey, progress); }
+  catch (error) {
+    if (!progress.sent && error && typeof error === 'object') error.beforeDispatch = true;
+    throw error;
+  }
+}
+
+async function runConnectorAction(companyId, actionType, params, idempotencyKey, progress) {
   const kind = actionConnector(actionType);
   if (!kind) throw new Error(`No production executor is registered for ${actionType}`);
   if (!params.connectorId && ["stripe", "qonto"].includes(kind)) {
@@ -58,7 +70,7 @@ export async function executeConnectorAction(companyId, actionType, params, idem
   const connector = params.connectorId ? await connectors.get(companyId, params.connectorId) : await connectors.getByKind(companyId, kind);
   if (connector && connector.kind !== kind) throw new Error("Connector kind does not match action");
   if (!connector) throw new Error(`${kind} connector is not active`);
-  const call = (spec) => connectors.request(companyId, connector, { ...spec, idempotencyKey });
+  const call = (spec) => { progress.sent = true; return connectors.request(companyId, connector, { ...spec, idempotencyKey }); };
 
   if (FINANCE_ACTIONS[actionType]) return executeFinanceAction(actionType, params, call, idempotencyKey);
   if (actionType === "sourcing.searchSuppliers") return searchSuppliers(params, call);
@@ -194,7 +206,7 @@ export async function executeConnectorAction(companyId, actionType, params, idem
     case "whatsapp.sendTemplate": {
       if (!connector.accountIdentifier) throw new Error("Twilio Account SID is required");
       if (!params.from) throw new Error("A Twilio sender number is required");
-      const whatsapp = actionType === "whatsapp.sendMessage";
+      const whatsapp = actionType.startsWith("whatsapp.");
       const body = encodeForm({
         To: whatsapp ? `whatsapp:${String(params.to).replace(/^whatsapp:/, "")}` : params.to,
         From: whatsapp ? `whatsapp:${String(params.from).replace(/^whatsapp:/, "")}` : params.from,
@@ -211,13 +223,19 @@ export async function executeConnectorAction(companyId, actionType, params, idem
       if (!connector.accountIdentifier) throw new Error("Twilio Account SID is required");
       if (!params.from) throw new Error("A Twilio sender number is required");
       if (!recipients.length) throw new Error("At least one recipient is required");
-      const sent = [];
+      const sent = [], delivered = [], failed = [];
       for (const to of recipients) {
         const body = encodeForm({ To: to, From: params.from, Body: params.body }).toString();
-        const data = await call({ url: `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(connector.accountIdentifier)}/Messages.json`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
-        sent.push(data.sid);
+        // One refused number must not hide which customers were already messaged:
+        // a blind retry of the whole list would message them twice.
+        try {
+          const data = await call({ url: `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(connector.accountIdentifier)}/Messages.json`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+          sent.push(data.sid); delivered.push(to);
+        } catch (error) { failed.push({ to, error: String(error?.message || error).slice(0, 200) }); }
       }
-      return { id: sent[0], ids: sent, status: 'submitted', summary: `${sent.length} messages accepted for delivery` };
+      if (!sent.length) throw new Error(`No message was accepted: ${failed[0].error}`);
+      return { id: sent[0], ids: sent, delivered, failed, status: 'submitted',
+        summary: `${sent.length} messages accepted for delivery${failed.length ? `; ${failed.length} not sent (${failed.map(item => item.to).join(', ')}). Send only to those recipients if a retry is needed.` : ''}` };
     }
     case "twilio.placeCall": {
       if (!connector.accountIdentifier || !params.from) throw new Error("Twilio Account SID and sender number are required");
