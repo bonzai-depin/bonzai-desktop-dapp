@@ -451,6 +451,10 @@ export function compileGameProject(project) {
       `await buildLevel${index}(levelRoot${index}, H.seededLevelMath(${JSON.stringify(level.seed || sceneSourceSeed(level.code))}));`,
       compileLevelParts(level, `levelRoot${index}`),
       `game.level(${JSON.stringify(level.id)}, levelRoot${index}, { entry: new THREE.Vector3(${vecArgs(level.entry)}) });`,
+      // Walls and terrain declared by the level become collision and footing; without
+      // them the player walks through every wall of a compiled game.
+      `H.worldColliders(levelRoot${index}).forEach((solid, i) => game.solid(${JSON.stringify(`${level.id}_solid_`)} + i, solid.object, { levelId: ${JSON.stringify(level.id)}, box: solid.box }));`,
+      `{ const ground = H.worldGround(levelRoot${index}); if (ground) game.ground(ground, ${JSON.stringify(level.id)}); }`,
       ``,
     );
 
@@ -463,14 +467,25 @@ export function compileGameProject(project) {
         `${placementVariable}.position.set(${vecArgs(placement.position)});`,
         `${placementVariable}.rotation.set(${vecArgs(placement.rotation)});`,
         `${placementVariable}.scale.set(${vecArgs(placement.scale, { x: 1, y: 1, z: 1 })});`,
-        `levelRoot${index}.add(${placementVariable});`,
+        // A level hides its root when another one is active, so the player lives beside the levels.
+        `${placement === playerPlacement ? "root" : `levelRoot${index}`}.add(${placementVariable});`,
       );
+      const settings = placement.settings || {};
+      // One hero plays the whole game; a later level's own hero placement is only its entry.
+      if (placement.role === "player" && placement !== playerPlacement) { lines.push(`${placementVariable}.visible = false;`); continue; }
       if (placement.role === "player") {
-        lines.push(`game.player(${placementVariable}, { speed: ${Number(placement.settings?.speed || 4.5)} });`);
+        const camera = Array.isArray(settings.camera) && settings.camera.length === 3 && settings.camera.every(Number.isFinite) ? `, cameraOffset: [${settings.camera.join(", ")}]` : "";
+        lines.push(`game.player(${placementVariable}, { speed: ${Number(settings.speed || 4.5)}, jump: ${Math.max(0, Number(settings.jump || 0))}${camera} });`);
       } else {
-        lines.push(
-          `game.actor(${JSON.stringify(placement.id)}, ${placementVariable}, { tags: ${JSON.stringify(placement.tags?.length ? placement.tags : [placement.role])}, health: ${placement.role === "enemy" ? Number(placement.settings?.health || 100) : 1}, controller: false });`,
-        );
+        // Roles carry their behaviour: pickups are collected on touch, enemies pursue and hurt on contact.
+        const options = { tags: placement.tags?.length ? placement.tags : [placement.role], health: placement.role === "enemy" ? Number(settings.health || 100) : 1, controller: false };
+        if (placement.role === "collectible" || placement.role === "buff") options.pickup = true;
+        if (placement.role === "buff") options.heal = Number(settings.heal || 25);
+        if (placement.role === "enemy") {
+          options.contactDamage = Number(settings.damage || 20);
+          if (settings.behavior !== "static") options.behavior = { type: "chase", speed: Number(settings.speed || 2.2), range: Number(settings.range || 11) };
+        }
+        lines.push(`game.actor(${JSON.stringify(placement.id)}, ${placementVariable}, ${JSON.stringify(options)});`);
       }
       if (placement.role === "collectible" || placement.role === "buff") {
         lines.push(
@@ -478,11 +493,14 @@ export function compileGameProject(project) {
         );
       } else if (placement.role === "enemy") {
         lines.push(
-          `game.interaction("player", ${JSON.stringify(placement.id)}, { type: "damages", amount: ${Number(placement.settings?.damage || 25)} });`,
+          `game.interaction("player", ${JSON.stringify(placement.id)}, { type: "damages", amount: ${Number(settings.hit || 34)} });`,
         );
+      } else if (placement.role === "platform") {
+        lines.push(`game.solid(${JSON.stringify(placement.id)}, ${placementVariable}, { levelId: ${JSON.stringify(level.id)} });`);
       } else if (placement.role === "trap" || placement.role === "debuff") {
+        // The cooldown turns standing on a trap into repeated hits instead of one hit per frame.
         lines.push(
-          `game.trigger(${JSON.stringify(`contact_${placement.id}`)}, ${placementVariable}, { levelId: ${JSON.stringify(level.id)}, radius: 0.8, once: false, onEnter: () => game.damage("player", ${Number(placement.settings?.damage || 20)}, ${JSON.stringify(placement.id)}) });`,
+          `game.trigger(${JSON.stringify(`contact_${placement.id}`)}, ${placementVariable}, { levelId: ${JSON.stringify(level.id)}, radius: 0.8, once: false, cooldown: 1, onEnter: () => game.damage("player", ${Number(settings.damage || 20)}, ${JSON.stringify(placement.id)}) });`,
         );
       } else if (placement.role === "checkpoint") {
         lines.push(
@@ -517,8 +535,7 @@ export function compileGameProject(project) {
 
   if (!playerPlacement) {
     lines.push(
-      `const player = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.8, 6, 12), new THREE.MeshStandardMaterial({ color: 0xf4ead3, roughness: 0.45, metalness: 0.15 }));`,
-      `player.castShadow = true;`,
+      `const player = H.actor("hero");`,
       `root.add(player);`,
       `game.player(player, { speed: 4.5 });`,
     );

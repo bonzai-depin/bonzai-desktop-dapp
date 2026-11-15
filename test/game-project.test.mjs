@@ -187,3 +187,26 @@ test("unfinished levels preview in build mode but remain blocked from publishing
   assert.equal(validateGameProject(project).ok, false);
   assert.match(compileGameProject(project), /Designing gameplay/);
 });
+
+test("placement roles compile to behaviour, not only to labels", () => {
+  // A placed enemy used to be inert, a trap removed its damage every frame, a platform could
+  // not be stood on, and nothing in a compiled game stopped the player at a wall.
+  const project = createGameProject({ title: "Roles" });
+  const level = addLevel(project, { title: "Yard", code: "root.add(new THREE.Mesh(new THREE.BoxGeometry(20,1,20)));" });
+  const asset = addObjectAsset(project, { title: "Piece", code: "root.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1)));" });
+  const place = (role, settings) => placeObject(project, level.id, asset.id, { role, settings });
+  const hero = place("player", { jump: 1.2, camera: [0, 8, 6] });
+  const enemy = place("enemy", { damage: 15, speed: 3 }), guard = place("enemy", { behavior: "static" });
+  const gem = place("collectible"), orb = place("buff", { heal: 40 }), trap = place("trap"), ledge = place("platform");
+  const code = compileGameProject(project), line = (text) => code.split("\n").find((row) => row.includes(text)) || "";
+  assert.match(line("game.player("), /jump: 1\.2, cameraOffset: \[0, 8, 6\]/);
+  assert.match(code, new RegExp(`root\\.add\\(placement0_0\\)`), "the hero is parented beside the levels");
+  assert.match(line(`game.actor("${enemy.id}"`), /"contactDamage":15,"behavior":\{"type":"chase","speed":3,"range":11\}/);
+  assert.doesNotMatch(line(`game.actor("${guard.id}"`), /behavior/);
+  assert.match(line(`game.actor("${gem.id}"`), /"pickup":true/);
+  assert.match(line(`game.actor("${orb.id}"`), /"pickup":true,"heal":40/);
+  assert.match(line(`contact_${trap.id}`), /once: false, cooldown: 1,/);
+  assert.match(code, new RegExp(`game\\.solid\\("${ledge.id}", placement0_6, \\{ levelId: "${level.id}" \\}\\)`));
+  assert.match(code, /H\.worldColliders\(levelRoot0\)\.forEach/);
+  assert.ok(hero.id);
+});

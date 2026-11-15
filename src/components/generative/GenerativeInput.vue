@@ -149,6 +149,8 @@ const props = defineProps({
   loading:           { type: Boolean, default: false },
   running:           { type: Boolean, default: false },
   disabled:          { type: Boolean, default: false },
+  // Blocks submitting while the brief stays editable (another action may still use it).
+  submitDisabled:    { type: Boolean, default: false },
 
   // Optional in-flight progress (0–100)
   progressPercent:   { type: Number, default: null },
@@ -191,7 +193,7 @@ const negativeText = computed({
 });
 
 const canSubmit = computed(
-  () => !props.disabled && !props.loading && !props.running && text.value.trim().length > 0,
+  () => !props.disabled && !props.submitDisabled && !props.loading && !props.running && text.value.trim().length > 0,
 );
 
 function autosize() {

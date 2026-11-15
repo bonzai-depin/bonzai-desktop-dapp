@@ -192,10 +192,45 @@
                   :submit-label="creationMode === 'game' ? 'Generate game' : creationMode === 'level' ? 'Generate level' : objectInputMode === 'image' ? 'Reconstruct object' : 'Generate object'"
                   running-label="Building"
                   :running="isLoading"
-                  :disabled="!canSubmitWithAccess || !isModel"
+                  :disabled="creationMode === 'object' && (!canSubmitWithAccess || !isModel)"
+                  :submit-disabled="!canSubmitWithAccess || !isModel"
                   shortcut-hint="⌘⏎"
                   @submit="onSubmit"
                 />
+
+                <!-- INSTANT BUILD: planned locally, no model required -->
+                <div v-if="creationMode !== 'object'" class="bz-3d-control-group bz-3d-instant">
+                  <div class="bz-3d-control-head">
+                    <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+                    <span>{{ $t('levelEditor.instant') }}</span>
+                  </div>
+                  <div class="bz-3d-instant__body">
+                    <div v-if="creationMode === 'game'" class="bz-3d-selector" role="group" :aria-label="$t('levelEditor.instantRules')">
+                      <button
+                        v-for="template in gameTemplates"
+                        :key="template.id"
+                        type="button"
+                        class="bz-3d-option"
+                        :class="{ 'is-selected': instantTemplate === template.id }"
+                        :aria-pressed="instantTemplate === template.id"
+                        @click="instantTemplate = template.id"
+                      >
+                        <span class="material-symbols-outlined" aria-hidden="true">{{ template.icon }}</span>
+                        <span>{{ $t(`levelEditor.template_${template.id}`) }}</span>
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      class="bz-btn bz-btn--ghost fira-sans-condensed-black-italic"
+                      :disabled="isLoading || instantBusy || editorBusy"
+                      @click="creationMode === 'game' ? buildInstantGame() : buildInstantLevel()"
+                    >
+                      <span class="material-symbols-outlined" aria-hidden="true">{{ creationMode === 'game' ? 'sports_esports' : 'landscape' }}</span>
+                      {{ creationMode === 'game' ? $t('levelEditor.instantGame') : $t('levelEditor.instantLevel') }}
+                    </button>
+                    <p v-if="instantStatus" class="bz-3d-instant__status" role="status">{{ instantStatus }}</p>
+                  </div>
+                </div>
 
                 <!-- REFINE MODE -->
                 <div
@@ -712,6 +747,7 @@ import {
   updatePlacement,
   validateGameProject,
 } from "./gen3d/gameProject.js";
+import { createInstantGame, createInstantLevel, GAME_TEMPLATES } from "./gen3d/gameTemplates.js";
 import { routeFlaskRequest } from "../services/inferenceRouter.service.js";
 import useClipboard from "vue-clipboard3";
 import axios from "axios";
@@ -1599,6 +1635,9 @@ export default {
     const editingBusy = ref(false);
     const buildingPreview = ref(false);
     const editUndo = ref([]), editRedo = ref([]);
+    const gameTemplates = GAME_TEMPLATES;
+    const instantTemplate = ref(GAME_TEMPLATES[0].id), instantBusy = ref(false), instantStatus = ref("");
+    let instantVariation = 0;
     let editCancelled = false, editDisposed = false;
     const pendingPaletteItemId = ref("");
     const buildTool = ref("select");
@@ -3364,6 +3403,52 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       }catch(error){try{await previewLevelEditor(true,current);}catch{}projectStatus.value=error.message;}
     };
     const undoLevelEdit=()=>travelLevelEdit('undo'),redoLevelEdit=()=>travelLevelEdit('redo');
+    // Planned locally from the brief: no model, download or network is involved.
+    const buildInstantLevel = async () => {
+      if (isLoading.value || instantBusy.value) return;
+      instantBusy.value = true; instantStatus.value = "";
+      const started = performance.now();
+      try {
+        const viewer = await waitForViewerReady();
+        if (!viewer) throw new Error("3D viewer is not ready");
+        const { title, code: userCode } = createInstantLevel({ prompt: form.prompt, variation: instantVariation++ });
+        const code = normalizeLLMCode(userCode);
+        await viewer.applyModuleCode(code, "replace", { kind: "level" });
+        restoreViewerEnvironmentControls();
+        lastGeneratedCode.value = userCode; lastGeneratedBrief.value = title; lastAssemblyContract.value = null;
+        const elapsedMs = Math.round(performance.now() - started);
+        const snapshot = await captureViewerSnapshot("Level");
+        const record = await addObjectInference(title, code, { success: true, assetKind: "level", mode: "level", title, elapsedMs,
+          model: "instant", screenshots: snapshot ? [snapshot] : [], thumbnail: snapshot?.dataUrl || "", qualityStatus: "unreviewed" });
+        const level = materializeBuildAsset({ libraryId: `history:${record.id}`, inferenceId: record.id, kind: "level", title, code: userCode, thumbnail: snapshot?.dataUrl || "", source: "history" });
+        forgeLevelId.value = level.id;
+        instantStatus.value = t("levelEditor.instantLevelReady", { seconds: (elapsedMs / 1000).toFixed(1) });
+      } catch (error) {
+        instantStatus.value = error.message;
+      } finally { instantBusy.value = false; }
+    };
+
+    // Each build adds one playable level; an existing project is extended, never replaced.
+    const buildInstantGame = async () => {
+      if (isLoading.value || instantBusy.value || editorBusy.value) return;
+      instantBusy.value = true; instantStatus.value = "";
+      const started = performance.now(), previous = cloneProject(gameProject.value);
+      try {
+        const instant = createInstantGame({ prompt: form.prompt, template: instantTemplate.value, variation: instantVariation++ });
+        if (!gameProject.value.levels.length) { gameProject.value = instant; forgeLevelId.value = instant.levelOrder[0]; }
+        else forgeLevelId.value = importLevelSnapshot(gameProject.value, { level: instant.levels[0], objects: instant.objects, interactions: [] }).id;
+        editUndo.value = []; editRedo.value = [];
+        buildEditorReady.value = true; workspaceTab.value = "build";
+        await nextTick();
+        await previewGameProject();
+        isPlaytesting.value = true;
+        projectStatus.value = t("levelEditor.instantGameReady", { seconds: ((performance.now() - started) / 1000).toFixed(1) });
+      } catch (error) {
+        gameProject.value = previous; forgeLevelId.value = previous.levelOrder?.[0] || "";
+        instantStatus.value = projectStatus.value = error.message;
+      } finally { instantBusy.value = false; }
+    };
+
     const openLevelEditor = async () => {
       if(editorBusy.value)return;
       if(!activeLevel.value && lastGeneratedCode.value){
@@ -5071,6 +5156,7 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
       gameplayInstruction,
       gameplayUpdating,
       gameplaySuggestions,
+      gameTemplates, instantTemplate, instantBusy, instantStatus, buildInstantLevel, buildInstantGame,
       selectedBuildLevelLibraryId,
       selectedBuildObjectLibraryIds,
       buildEditorReady,
@@ -5184,6 +5270,11 @@ RETRY: The previous output was invalid: ${renderCheck.reason || 'incomplete code
 </script>
 
 <style scoped>
+/* The playtest bar spans the top of the canvas; the game HUD sits below it. */
+.viewer-container.is-build .viewer-wrapper.has-builder :deep(.bonzai-game-hud) { top: 76px; }
+.bz-3d-instant { margin-top: var(--bz-space-3, 12px); }
+.bz-3d-instant__body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bz-space-2, 8px); min-width: 0; }
+.bz-3d-instant__status { flex: 1 1 100%; margin: 0; color: var(--bz-fg-low); font-size: var(--bz-size-meta, 13px); font-weight: 400; text-align: left; overflow-wrap: anywhere; }
 /* Keep editing controls compact so the canvas remains in the working viewport. */
 .three-controls-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:16px; align-items:stretch; }
 .three-controls-layout > * { min-width:0; margin:0 !important; max-height:32vh; overflow:auto; scrollbar-gutter:stable; }
