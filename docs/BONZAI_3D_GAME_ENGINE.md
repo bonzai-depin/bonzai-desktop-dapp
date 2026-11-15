@@ -488,6 +488,73 @@ The runtime currently provides:
 - accessible HUD
 - automatic cleanup when a new generation replaces the current one
 - companion-controlled objective navigation and combat
+- gravity, jumping (`Space`) and a fall-out-of-world event when the player sets `jump`
+- ground from `session.ground(height | (x, z) => height, levelId)` and standing on solids
+- actor options `pickup`, `heal`, `contactDamage` and `behavior` (`chase`, `patrol`),
+  which move through the same collision as the player
+- repeating triggers (`cooldown`) and `R` to replay a finished run
+
+## Instant levels and games
+
+A level or a complete game can be built with no model call. This is the fast path
+and the reason it exists is the measurement below: the model-written path takes
+minutes and failed the quality gate.
+
+```text
+brief -> planWorld() -> blueprint {v, theme, size, seed, title}
+      -> layoutWorld() (pure: rooms or terrain, spawn, exit, slots, colliders)
+      -> H.world(blueprint, MAT) (merged and instanced Three.js geometry)
+```
+
+| File | Responsibility |
+| --- | --- |
+| `gen3d/worldLayout.js` | Themes, sizes, seeded planning, layout and the reachability check. Pure, no Three.js. |
+| `gen3d/worldKit.js` | `H.world`, `H.worldColliders`, `H.worldGround`. |
+| `gen3d/actorKit.js` | `H.actor(kind, options)`: `hero`, `sentinel`, `slime`, `crystal`, `coin`, `orb`, `portal`, `spikes`, `beacon`. |
+| `gen3d/gameTemplates.js` | `createInstantLevel`, `createInstantGame`, `addGamePieces`, `ruleCondition`. |
+
+Rules that keep it correct:
+
+- A blueprint is five fields. The saved level source is one `H.world(...)` call, so
+  history, the level editor, World Forge and export treat it as an ordinary level.
+- The same blueprint always builds the same world. Words in the brief choose the
+  theme and size (English and French); the seed varies only what the brief leaves open.
+- `layoutWorld` flood-fills from the spawn on a half-metre grid and throws when the
+  exit cannot be reached. Slots offered to gameplay are reachable ones only.
+- Themes are `dungeon`, `station`, `temple` (rooms) and `forest`, `desert`, `snow`,
+  `moon` (terrain). Surfaces use the bundled photographic materials.
+- A game template (`collect`, `hunt`, `survive`, `escape`) places built-in actors on
+  layout slots and writes ordinary World Forge placements, roles and clear
+  conditions. Objective pieces take their slots first so every game can be won.
+- In the Build tab, **Add game pieces** adds the built-in actors a project lacks
+  (matched by kind) and the rule buttons add a win condition; both work on
+  model-written levels as well.
+
+Measured on an Apple M1 Max (32 GB) in Chrome against the real `Generative3D`
+view, 16 November 2026:
+
+| Path | Time | Result |
+| --- | --- | --- |
+| Model-written level (17 October record, 27B) | 10 min 41 s | Failed visual review |
+| Instant level | 0.4–1.9 s | 11–15 draw calls, 6k–171k triangles, 60 FPS, no inspection warnings |
+| Model-written game (17 October record, 27B) | 19 min 15 s | Runtime failure, not playable |
+| Instant game, click to playable | 0.9–2.0 s | Playable, collision and win verified, 58–61 FPS |
+
+The first build in a session is the slow end of each range because it loads the
+material textures. A sweep of 10,080 generated games (every template, theme, size,
+difficulty and 30 seeds) found none that could not be won.
+
+Limits, stated plainly:
+
+- Instant worlds are stylised geometry with photographic surfaces. They are not
+  AAA assets: no authored meshes, skeletal animation, baked lighting or audio.
+- Variety is seven themes and two layouts. A brief outside them falls back to a
+  theme chosen from the seed.
+- Object generation is unchanged and still bound by local model speed.
+- The model path for levels and games has not been taught to emit blueprints or
+  `H.actor`; doing so needs a measured run with the code model.
+- Verification used macOS only. `test/instant-game.browser.test.mjs` runs the flow
+  in a real browser when `BONZAI_UI_URL` points at the Vite renderer.
 
 ## World Forge compiler
 
