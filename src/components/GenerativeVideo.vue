@@ -371,6 +371,7 @@
 </template>
 
 <script>
+import { mediaHistory, persistMediaHistory, loadMediaHistory } from '../stores/mediaHistory.js';
 import GenerationDrafts from "./generative/GenerationDrafts.vue";
 import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { videoPromptInstruction } from '../services/videoPrompt.js';
@@ -622,7 +623,7 @@ export default {
     // Use shallowRef for inferences - video data is large
     const includeRoleplay = ref(localStorage.getItem('bonzai:history:roleplay') !== 'false');
     watch(includeRoleplay, value => { localStorage.setItem('bonzai:history:roleplay', String(value)); displayedCount.value = 12; });
-    const inferences = shallowRef([]);
+    const inferences = mediaHistory('video');
     const hasCopy = shallowRef([]);
     const planReq = reactive({ controller: null, seq: 0 });
 
@@ -828,18 +829,8 @@ export default {
       showScrollTop.value = scrollTop > 400;
     });
 
-    // Debounced persistence
-    const persistInferences = debounce(async (data) => {
-      try {
-        // Use JSON.parse/stringify to ensure proper serialization
-        await window.electronAPI?.store?.set?.(
-          "videoInferences",
-          JSON.parse(JSON.stringify(data))
-        );
-      } catch (e) {
-        console.error("[GenerativeVideo] Failed to persist inferences:", e);
-      }
-    }, 500);
+    // Save independently of the view lifecycle.
+    const persistInferences = (data) => persistMediaHistory('video', data).catch(error => console.error('[History] Could not save video result', error));
 
     // ------------ access control -----------
     const accessRef = ref(null);
@@ -1927,7 +1918,7 @@ export default {
       // Update shallowRef by replacing arrays
       inferences.value = inferences.value.filter((_, i) => i !== idx);
       hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
-      // Debounced persistence
+      // Save independently of the view lifecycle.
       persistInferences([...inferences.value]);
     };
 
@@ -2040,10 +2031,7 @@ export default {
 
     const loadHistory = async () => {
       try {
-        const saved = await window.electronAPI?.store?.get?.(
-          "videoInferences",
-          []
-        );
+        const saved = await loadMediaHistory('video');
         if (Array.isArray(saved)) {
           inferences.value = saved;
           hasCopy.value = new Array(saved.length).fill(false);

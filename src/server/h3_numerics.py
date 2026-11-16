@@ -75,7 +75,10 @@ def watch_transformer(model, detailed=False):
         # Opt-in: these checks synchronize accelerators, so keep the normal
         # path at block granularity. Inputs matter: quantization can otherwise
         # turn non-finite activations into finite integers and hide the origin.
-        if detailed and name.startswith("transformer_blocks.") and name.count(".") >= 2:
+        # Inspect the reported failing region by default without synchronizing
+        # every layer of all 50 blocks on every step.
+        trace_region = name.startswith(("transformer_blocks.38.", "transformer_blocks.39."))
+        if (detailed or trace_region) and name.startswith("transformer_blocks.") and name.count(".") >= 2:
             def before_part(_module, args, kwargs, label=name):
                 require_finite(args, f"denoising step {step[0]}, {label} inputs")
                 # Attention masks may legitimately contain -inf.

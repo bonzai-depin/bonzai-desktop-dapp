@@ -1,5 +1,6 @@
 <template>
   <BzDatePicker />
+  <GenerationCelebration :show="generationToast.show" :title="generationToast.title" :description="generationToast.desc" @dismiss="generationToast.show = false" />
   <Transition name="notif">
     <div v-if="authState.isAwaitingSignature" key="auth" class="bz-notif bz-notif--warning">
       <div class="bz-notif__body">
@@ -19,15 +20,6 @@
       </div>
       <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click.stop="skillStore.updateActivity()" />
     </div>
-
-    <div v-else-if="generationToast.show" key="generation" class="bz-notif bz-notif--success">
-      <div class="bz-notif__body">
-        <span class="bz-notif__title">{{ generationToast.title }}</span>
-        <span class="bz-notif__desc">{{ generationToast.desc }}</span>
-      </div>
-      <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click="generationToast.show = false" />
-    </div>
-
 
     <span v-else key="none"></span>
   </Transition>
@@ -77,6 +69,7 @@
             <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'roleplay' }" title="Roleplay" aria-label="Roleplay" @click="goToCompanionChat"><span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">theater_comedy</span><span class="bz-sidebar__item-label">{{ $ui('Roleplay') }}</span></button>
         </div>
 
         <div class="bz-sidebar__group">
@@ -183,6 +176,7 @@
       <GenerativeTraining v-if="modelMode == 'datasets'" key="datasets" mode="tune" initial-tab="datasets" />
       <GenerativeTraining v-if="modelMode == 'finetune'" key="finetune" mode="tune" />
       <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" mode="tune" />
+      <RoleplayView v-if="modelMode === 'roleplay'" />
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
       <ContributionOwnershipDashboard v-if="modelMode == 'economy'" key="economy" />
       <Markets v-if="modelMode == 'markets'" key="markets" />
@@ -313,10 +307,12 @@ import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
 import ContributionOwnershipDashboard from "./components/ContributionOwnershipDashboard.vue";
 import Markets from "./components/Markets.vue";
+import GenerationCelebration from "./components/GenerationCelebration.vue";
 import ApplicationActivityBar from "./components/ApplicationActivityBar.vue";
 import Company from "./components/Company.vue";
 import HarnessView from "./components/HarnessView.vue";
 import ModelLicenses from "./components/ModelLicenses.vue";
+import RoleplayView from "./components/RoleplayView.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiPulse from "./components/BonzaiPulse.vue";
 import BzCloseButton from "./components/BzCloseButton.vue";
@@ -356,9 +352,9 @@ const MemoryGraph = defineAsyncComponent(() => import("./components/MemoryGraph.
 
 export default {
   name: "App",
-  components: { ThemeGallery, ApplicationActivityBar, BzDatePicker,
+  components: { GenerationCelebration, ThemeGallery, ApplicationActivityBar, BzDatePicker,
     GenerativeText, GenerativeImage, GenerativeVideo, GenerativeAudio,
-    PerformanceBenchmark, Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView,
+    PerformanceBenchmark, Generative3D, GenerativeTraining, RoleplayView, SmartAgent, Company, HarnessView,
     ContributionOwnershipDashboard, Markets, MemoryGraph, ModelLicenses, AgentJobBoard, LanguageSelector,
     BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
     GenerationInspector, RewardsView, NetworkSettings, MeshPresence,
@@ -425,7 +421,7 @@ export default {
     const trainItems = computed(() => [
       { id: "tune", label: i18n.t('nav.tune'), icon: "tune" }, { id: "uncensor", label: i18n.t('nav.uncensor'), icon: "lock_open" },
     ]);
-    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "rewards", "memory", "licenses", "benchmark"]);
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "roleplay", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "rewards", "memory", "licenses", "benchmark"]);
     const handleEarnAction = (id) => {
       if (id === "rewards") modelMode.value = "rewards";
       if (id === "economy") modelMode.value = "economy";
@@ -528,10 +524,9 @@ export default {
     };
 
     const goToCompanionChat = () => {
-      skillStore.requestSkillNavigation("roleplay-companion-v1.0.0");
       skillStore.clearMissedMessages();
       skillStore.updateActivity();
-      modelMode.value = "agent";
+      modelMode.value = "roleplay";
     };
 
     const showBrowseModels = () => {
@@ -590,6 +585,7 @@ const {
 
     const currentModelName = computed(() => modelStore.state.current?.modelname || selectPreferredModel(listAllLLMs(), modelStore.state.preferredFilename)?.name || null);
     const teamActivityTarget = ref(null);
+const onOpenCompany = event => { if (typeof event.detail?.companyId === 'string') openTeamActivity(event.detail.companyId); };
 function openTeamActivity(id) {
   teamActivityTarget.value = { id, revision: Date.now() };
   modelMode.value = 'company';
@@ -749,6 +745,7 @@ const companyModelSummary = computed(() => {
       initOpenClawHandler();
       window.addEventListener("bonzai:open-browse-models", showBrowseModels);
       window.addEventListener("bonzai:set-mode", onSetModeEvent);
+      window.addEventListener("bonzai:open-company", onOpenCompany);
       window.addEventListener("navigate-to-tab", onNavigateToTab);
       window.addEventListener("bonzai:hire-smart-agent", onHireSmartAgent);
       window.addEventListener("bonzai:run-agent-workflow", onRunAgentWorkflow);
@@ -789,6 +786,7 @@ const companyModelSummary = computed(() => {
       modelStore.stopListening();
       window.removeEventListener("bonzai:open-browse-models", showBrowseModels);
       window.removeEventListener("bonzai:set-mode", onSetModeEvent);
+      window.removeEventListener("bonzai:open-company", onOpenCompany);
       window.removeEventListener("navigate-to-tab", onNavigateToTab);
       window.removeEventListener("bonzai:hire-smart-agent", onHireSmartAgent);
       window.removeEventListener("bonzai:run-agent-workflow", onRunAgentWorkflow);
@@ -822,7 +820,7 @@ const companyModelSummary = computed(() => {
             generationToast.desc = i18n.t('generation.resultReady');
             generationToast.show = true;
             if (generationToastTimer) clearTimeout(generationToastTimer);
-            generationToastTimer = setTimeout(() => { generationToast.show = false; }, 6000);
+            generationToastTimer = setTimeout(() => { generationToast.show = false; }, 4000);
             break;
           }
         }

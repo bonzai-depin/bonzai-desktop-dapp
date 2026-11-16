@@ -16,3 +16,10 @@ test('creation prompt makes native borderless composition explicit after identit
   assert.match(negativePrompt, /border, frame, polaroid, white margins/);
   assert.match(prompt, /Silver hair and glasses/);
 });
+test('scenic identity descriptions cannot set the collection background or distant framing', () => {
+  const {prompt, negativePrompt} = buildCompanionPortraitPrompt({appearance:'Swedish woman with red hair',imagePromptBase:'Hiking in mountains in daylight'});
+  assert.match(prompt, /ignore its setting, landscape, activity, outfit and camera directions/);
+  assert.match(prompt, /Mandatory setting.*Japanese room at night/);
+  assert.match(prompt, /tight head-and-shoulders close-up/);
+  assert.match(negativePrompt, /outdoor landscape, mountains/);
+});

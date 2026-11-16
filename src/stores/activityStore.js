@@ -36,7 +36,7 @@ export function startActivityTracking() {
     }
     if (event.stage !== 'queued') { delete state.operations[id]; return; }
     const media = event.path === '/audio/music' ? 'music' : event.path?.split('/')[1] || 'generation';
-    reportOperation({ id, source: 'queue', title: `Queued ${media}`, status: 'queued',
+    reportOperation({ id, metadata: event.meta || {}, source: 'queue', title: `Queued ${media}`, status: 'queued',
       stage: 'Waiting for the device', progress: null, location: 'On this device' });
   };
   const handlers = {
@@ -55,7 +55,7 @@ export function startActivityTracking() {
       reportOperation({id,stage:e.stage,status:e.stage==='queued'?'queued':'running',progress:e.pct??null,step:e.step,total:e.total});
     },
     gen_finished: e => reportOperation({id:`generation:${e.generation_id}`,status:'completed',stage:'Ready',progress:100}),
-    gen_error: e => reportOperation({id:`generation:${e.generation_id}`,status:'failed',stage:'Failed',error:e.error}),
+    gen_error: e => reportOperation({id:`generation:${e.generation_id}`,status:'failed',stage:'Failed',error:e.error,debugError:e.debug_error || e.error}),
     gen_snapshot: e => {
       const seen = new Set();
       for (const job of e.operations || []) {

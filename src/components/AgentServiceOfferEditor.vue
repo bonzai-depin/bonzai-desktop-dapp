@@ -1,9 +1,9 @@
 <template>
   <Teleport to="body"><div class="bz-modal-overlay" @click.self="close">
-    <section ref="dialog" class="bz-modal service-editor" role="dialog" aria-modal="true" :aria-label="$ui('Offer My Agent')" data-i18n-skip>
-      <header class="bz-modal__header"><div><p class="bz-eyebrow">{{ $ui('Provider') }}</p><h2 class="bz-h2">{{ $ui('Offer My Agent') }}</h2></div><BzCloseButton :disabled="busy" @click="close" /></header>
+    <section ref="dialog" class="bz-modal service-editor" role="dialog" aria-modal="true" :aria-label="$ui('Augment agent')" data-i18n-skip>
+      <header class="bz-modal__header"><div><p class="bz-eyebrow">{{ $ui('Provider') }}</p><h2 class="bz-h2">{{ $ui('Augment agent') }}</h2></div><BzCloseButton :disabled="busy" @click="close" /></header>
       <form @submit.prevent="publish">
-        <label>{{ $ui('Smart Agent') }}<select v-model="agentId" required :disabled="busy"><option value="">{{ $ui('Choose an agent') }}</option><option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select></label>
+        <label>{{ $ui('Smart Agent') }}<select v-model="agentId" required :disabled="busy || !!initialAgentId"><option value="">{{ $ui('Choose an agent') }}</option><option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select></label>
         <p v-if="!agents.length" class="bz-meta">{{ $ui('Tokenize a custom agent and issue its social token to offer paid services.') }}</p>
         <div class="service-editor__pair"><label>{{ $ui('Service title') }}<input v-model="draft.title" maxlength="100" required :placeholder="$ui('Maintenance specialist')" /></label><label>{{ $ui('Price per job · agent tokens') }}<input v-model="draft.price" required inputmode="decimal" placeholder="100" /></label></div>
         <label>{{ $ui('What the customer receives') }}<textarea v-model="draft.outcome" maxlength="600" required :placeholder="$ui('A diagnosis grounded in my maintenance library, with cited sources and a recommended action plan.')" /></label>
@@ -35,7 +35,7 @@ import {useModalAccessibility} from '../composables/useModalAccessibility.js';
 import {publishWorker} from '../services/agentWorkers.service.js';
 import {operationError} from '../i18n/operations.js';
 import {useI18n} from '../i18n/index.js';
-const props=defineProps({agents:{type:Array,default:()=>[]}}),emit=defineEmits(['close','published']);
+const props=defineProps({agents:{type:Array,default:()=>[]},initialAgentId:{type:String,default:''}}),emit=defineEmits(['close','published']);
 const i18n=useI18n();
 const dialog=ref(null),agentId=ref(''),busy=ref(false),inspecting=ref(''),error=ref(''),notice=ref(''),inventory=ref([]),sources=reactive({}),choices=reactive({}),capability=ref('text');
 const draft=reactive({title:'',outcome:'',price:'',rightsConfirmed:false});
@@ -55,7 +55,7 @@ async function publish(){busy.value=true;error.value='';try{const assets=selecte
   if(capability.value==='assets' && assets.some(a=>a.use!=='delivery')) throw new Error('An original delivery offer may contain only assets licensed for delivery.');
   const descriptor=await publishWorker(props.agents.find(a=>a.id===agentId.value),[capability.value],[],{},null,{...draft,assets});await save();emit('published',descriptor);emit('close');
 }catch(e){error.value=operationError(e,i18n.locale.value);}finally{busy.value=false;}}
-onMounted(loadAssets);
+onMounted(async()=>{await loadAssets();agentId.value=props.initialAgentId;});
 </script>
 <style scoped>
 .service-editor{width:min(820px,calc(100vw - 32px));max-height:calc(100dvh - 32px);display:flex;flex-direction:column;overflow:hidden;color:var(--bz-fg)}

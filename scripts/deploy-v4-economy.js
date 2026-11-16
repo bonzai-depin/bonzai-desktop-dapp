@@ -36,8 +36,6 @@ async function main() {
   const bonzaiToken = required("BONZAI_TOKEN_ADDRESS");
   const usdc = required("BONZAI_USDC_ADDRESS");
   const treasury = required("BONZAI_TREASURY_ADDRESS");
-  const companions = required("BONZAI_COMPANIONS_ADDRESS");
-  const companionFactory = required("BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS");
   const smartAgents = required("BONZAI_SMART_AGENTS_ADDRESS");
   const workerFactory = required("BONZAI_AGENT_TOKEN_FACTORY_ADDRESS");
   const fineTuneFactory = required("BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS");
@@ -45,7 +43,7 @@ async function main() {
   const mintPool = required("BONZAI_MINT_POOL_ADDRESS");
   const serviceTime = required("BONZAI_SERVICE_TIME_ADDRESS");
   const providerRegistry = required("BONZAI_PROVIDER_REGISTRY_ADDRESS");
-  for (const [name, address] of Object.entries({ bonzaiToken, usdc, companions, companionFactory, smartAgents, workerFactory, fineTuneFactory,  collectiblesFactory, mintPool, serviceTime, providerRegistry })) {
+  for (const [name, address] of Object.entries({ bonzaiToken, usdc, smartAgents, workerFactory, fineTuneFactory,  collectiblesFactory, mintPool, serviceTime, providerRegistry })) {
     if (!ethers.isAddress(address) || address === ethers.ZeroAddress) throw new Error(`Invalid ${name} address`);
     if (await ethers.provider.getCode(address) === '0x') throw new Error(`${name} has no deployed bytecode on chain ${chainId}`);
   }
@@ -69,15 +67,12 @@ async function main() {
     throw new Error('MintPool uses a different BONZAI token; its new staking vault would be rejected');
   }
   if (await existingPool.basketRewards() !== ethers.ZeroAddress) throw new Error('MintPool already has a basket; use its existing canonical deployment');
-  const socialFactory = new ethers.Contract(companionFactory, ['function getToken(uint256) view returns(address)', 'function companionContract() view returns(address)'], ethers.provider);
-  await socialFactory.getToken(0n);
-  if (ethers.getAddress(await socialFactory.companionContract()) !== ethers.getAddress(companions)) throw new Error('Social token factory uses a different smart-agent registry');
   const workerRegistry = new ethers.Contract(workerFactory, ['function companionContract() view returns(address)'], ethers.provider);
   if (ethers.getAddress(await workerRegistry.companionContract()) !== ethers.getAddress(smartAgents)) throw new Error('Worker token factory uses a different smart-agent collection');
   const workerCollection = new ethers.Contract(smartAgents, ['function launcher() view returns(address)'], ethers.provider);
   if (ethers.getAddress(await workerCollection.launcher()) !== ethers.getAddress(workerFactory)) throw new Error('Smart-agent collection launcher does not match the worker factory');
   // Check every privileged wiring call before paying to deploy new contracts.
-  for (const [name, address] of Object.entries({ collectiblesFactory, mintPool, serviceTime, providerRegistry, companions, companionFactory, workerFactory, fineTuneFactory })) {
+  for (const [name, address] of Object.entries({ collectiblesFactory, mintPool, serviceTime, providerRegistry, workerFactory, fineTuneFactory })) {
     const owner = await new ethers.Contract(address, ['function owner() view returns(address)'], ethers.provider).owner();
     if (ethers.getAddress(owner) !== ethers.getAddress(deployer.address)) throw new Error(`Deployer does not own ${name}; prepare its authorized governance wiring before deployment`);
   }
@@ -104,7 +99,7 @@ async function main() {
 
   await (await basketRewards.setRewardCurrency(usdc, true)).wait();
   // Each factory deploys its immutable vault once. Admit those vaults before issuing tokens.
-  for (const factory of [workerFactory, companionFactory, fineTuneFactory]) {
+  for (const factory of [workerFactory, fineTuneFactory]) {
     await call(factory,["function configureLiquidityVault(address,address)"],"configureLiquidityVault",[treasury,await basketRewards.getAddress()]);
     await (await basketRewards.setLiquidityFactory(factory,true)).wait();
   }
@@ -118,8 +113,6 @@ async function main() {
   await call(mintPool, ["function setServiceTimeContract(address)"], "setServiceTimeContract", [serviceTime]);
   await call(serviceTime, ["function setProviderRegistry(address)"], "setProviderRegistry", [providerRegistry]);
   await call(providerRegistry, ["function setPaymentContract(address)"], "setPaymentContract", [serviceTime]);
-  await call(companions, ["function setCompanionTokenFactory(address)"], "setCompanionTokenFactory", [companionFactory]);
-  await call(companionFactory, ["function setCompanionContract(address)"], "setCompanionContract", [companions]);
   await call(fineTuneFactory, ["function setContentContract(address)"], "setContentContract", [collectiblesFactory]);
   const legacyEnabled = await new ethers.Contract(fineTuneFactory, ["function legacyLaunchEnabled() view returns(bool)"], deployer).legacyLaunchEnabled();
   if (legacyEnabled) await call(fineTuneFactory, ["function disableLegacyLaunch()"], "disableLegacyLaunch");
@@ -132,8 +125,6 @@ async function main() {
     bonzaiToken,
     usdc,
     treasury,
-    companions,
-    companionTokenFactory: companionFactory,
     smartAgents,
     agentTokenFactory: workerFactory,
     fineTuneTokenFactory: fineTuneFactory,
@@ -161,8 +152,6 @@ async function main() {
     VITE_BONZAI_USDC_ADDRESS: addresses.usdc,
     VITE_BONZAI_SMART_AGENTS_ADDRESS: addresses.smartAgents,
     VITE_BONZAI_AGENT_TOKEN_FACTORY_ADDRESS: addresses.agentTokenFactory,
-    VITE_BONZAI_COMPANIONS_ADDRESS: addresses.companions,
-    VITE_BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS: addresses.companionTokenFactory,
     VITE_BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS: addresses.fineTuneTokenFactory,
     VITE_BONZAI_COLLECTIBLES_FACTORY_ADDRESS: addresses.collectiblesFactory,
     VITE_BONZAI_MINT_POOL_ADDRESS: addresses.mintPool,

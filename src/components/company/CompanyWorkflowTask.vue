@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
-    <div class="company-workflow-overlay company-screen" @click.self="!busy && $emit('close')" @keydown.esc="!busy && $emit('close')">
-      <section ref="dialog" class="company-workflow-dialog" role="dialog" aria-modal="true" aria-labelledby="company-workflow-title" tabindex="-1">
+    <dialog ref="taskDialog" aria-labelledby="company-workflow-title" class="company-workflow-overlay company-screen" @click.self="!busy && $emit('close')" @keydown.esc="!busy && $emit('close')">
+      <section ref="dialog" class="company-workflow-dialog" tabindex="-1">
         <header>
           <div><p class="bz-eyebrow">{{ charter.name }} · {{ $ui('New task') }}</p><h2 id="company-workflow-title" class="bz-h2 fira-sans-condensed-black-italic">{{ skill.name }}</h2></div>
           <button class="bz-iconbtn" :disabled="busy" :aria-label="$ui('Close')" @click="$emit('close')"><span class="material-symbols-outlined" aria-hidden="true">close</span></button>
@@ -21,7 +21,7 @@
         <p v-if="skill.execution?.managesGeneration" class="production-approval-note">{{ $ui('Review the execution request to start. Finished files are saved in this team’s Results.') }}</p>
         <p v-if="error" role="alert">{{ $ui(error) }}</p>
       </section>
-    </div>
+    </dialog>
   </Teleport>
 </template>
 <script setup>
@@ -37,6 +37,7 @@ import { workflowBridgeReady, WORKFLOW_BRIDGE_MESSAGE } from '../../services/com
 import { useModalAccessibility } from '../../composables/useModalAccessibility.js'
 const props = defineProps({ charter: Object, roleKey: String, skill: Object, initialInputs: { type: Object, default: () => ({}) } })
 const emit = defineEmits(['close', 'queued'])
+const taskDialog = ref(null);
 const runner = ref(null), dialog = ref(null), busy = ref(false), error = ref(''), taskName = ref('')
 const assignedWorker = computed(() => props.charter?.roles?.[props.roleKey]?.companion)
 const presentation = computed(() => workflowTeamPresets([props.skill])[0] || { firstValue: 'Provide the inputs for this task.', deliverables: ['Saved workflow result'] })
@@ -81,11 +82,11 @@ async function openInteractive() {
     emit('queued'); emit('close')
   } catch (cause) { error.value = cause.message } finally { busy.value = false }
 }
-onMounted(() => dialog.value?.focus())
+onMounted(() => { taskDialog.value?.showModal(); dialog.value?.focus(); })
 </script>
 <style scoped>
 .company-workflow-dialog, .company-workflow-dialog * { box-sizing: border-box; }
-.company-workflow-overlay { position: fixed; inset: 0; z-index: 1200; background: var(--bz-overlay); backdrop-filter: blur(8px); display: grid; place-items: center; padding: var(--bz-space-5); }
+.company-workflow-overlay { margin:0; width:100vw; height:100dvh; max-width:none; max-height:none; box-sizing:border-box; border:0; position: fixed; inset: 0; z-index: 1200; background: var(--bz-overlay); backdrop-filter: blur(8px); display: grid; place-items: center; padding: var(--bz-space-5); }
 .company-workflow-dialog { width: min(800px, 100%); max-height: calc(100dvh - 48px); overflow: auto; background: var(--bz-panel); color: var(--bz-fg); border: 1px solid var(--bz-border-strong); border-radius: var(--bz-r-lg); padding: var(--bz-space-6); scrollbar-width: thin; scrollbar-color: var(--bz-border-strong) transparent; animation: bz-fade-in var(--bz-dur-base) var(--bz-ease-out); }
 .company-workflow-dialog header { display: flex; justify-content: space-between; gap: var(--bz-space-5); align-items: start; margin-bottom: var(--bz-space-5); padding-bottom: var(--bz-space-5); border-bottom: 1px solid var(--bz-border); }
 .company-workflow-dialog header > div { min-width: 0; }

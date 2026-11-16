@@ -40,6 +40,8 @@
         <span><strong>{{ modeLabel }}</strong></span>
       </div>
 
+      <MeshDevices compact settings />
+
       <div class="mesh-presence__activity">
         <p class="bz-eyebrow">{{ i18n.t('rc.mesh.activity') }}</p>
         <ol v-if="store.state.events.length">
@@ -58,6 +60,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, useId } from "vue";
 import meshStore from "../stores/meshStore.js";
+import MeshDevices from "./MeshDevices.vue";
 
 defineProps({
   embedded: { type: Boolean, default: false },
@@ -145,6 +148,7 @@ function relativeTime(ts) {
 .mesh-presence__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; overflow: hidden; background: var(--bz-border); border: 1px solid var(--bz-border); border-radius: var(--bz-r-sm); }
 .mesh-presence__stats span { display: grid; gap: 2px; padding: var(--bz-space-3); color: var(--bz-fg-low); background: var(--bz-raised); font-size: var(--bz-size-micro); }
 .mesh-presence__stats strong { color: var(--bz-fg); font: 400 var(--bz-size-meta)/1.2 var(--bz-font-mono); }
+.mesh-presence__panel .mesh-devices { margin-top: var(--bz-space-4); }
 .mesh-presence__activity { padding-top: var(--bz-space-4); }
 .mesh-presence__activity ol { list-style: none; margin: var(--bz-space-2) 0 0; padding: 0; max-height: 246px; overflow: auto; }
 .mesh-presence__activity li { display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: var(--bz-space-2); padding: 10px 0; border-bottom: 1px solid var(--bz-border); color: var(--bz-fg-mid); font-size: var(--bz-size-meta); }

@@ -13,7 +13,7 @@ test('X mentions produce persisted, reviewable replies with real media conversio
   try {
     const outfile = path.join(folder, 'integration.mjs');
     await build({ entryPoints: ['test/fixtures/company/publicSessions.js'], outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external', logLevel: 'silent', plugins: [{ name: 'isolated-public-database', setup(builder) {
-      builder.onResolve({ filter: /connection\.js$/ }, args => args.importer.includes('/src/main/db/') ? { path: path.resolve('test/fixtures/company/connection.js') } : null);
+      builder.onResolve({ filter: /connection\.js$/ }, args => args.importer.includes('/src/main/') ? { path: path.resolve('test/fixtures/company/connection.js') } : null);
       builder.onResolve({ filter: /smartAgentCatalog\.js$/ }, () => ({ path: 'agents', namespace: 'test-runtime' }));
       builder.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'test-runtime' }));
       builder.onResolve({ filter: /skill\.service\.js$/ }, () => ({ path: 'skills', namespace: 'test-runtime' }));

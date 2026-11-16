@@ -29,7 +29,7 @@ test('slot review reads live sale terms and purchase sends exactly one slot at t
 test('closed sale, wallet limits, changed prices and changed wallets cannot reach signing',async()=>{
  const review=await readSlotSale(wallet);sent=null;
  try {
-  now=200;await assert.rejects(mintAgentSlot(review),/ended/);assert.equal(sent,null);
+  now=200;await assert.rejects(mintAgentSlot(review),/Stopped before wallet submission/);assert.equal(sent.value,ethers.parseEther('2'));sent=null;
   now=150;minted=3n;await assert.rejects(mintAgentSlot(review),/limit/);assert.equal(sent,null);
   minted=0n;price=ethers.parseEther('3');await assert.rejects(mintAgentSlot(review),/terms changed/);assert.equal(sent,null);
   price=ethers.parseEther('2');signerWallet=collection;await assert.rejects(mintAgentSlot(review),/Wallet changed/);assert.equal(sent,null);

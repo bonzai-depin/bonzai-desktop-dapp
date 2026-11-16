@@ -5,7 +5,7 @@
       <li><span class="agent-next__number">1</span><div><h3>{{ $ui('Attach an agent slot') }}</h3>
         <p v-if="attached">{{ network }} · #{{ agent.tokenId }}</p>
         <template v-else>
-          <p>{{ $ui('Choose an unissued slot owned by your connected wallet.') }}</p>
+          <p>{{ $ui('Use an NFT slot minted on OpenSea or in BonzAI Desktop. Your local agent remains free to use.') }}</p>
           <button v-if="!connected" class="bz-btn bz-btn--secondary" @click="connect">{{ $ui('Connect wallet') }}</button>
           <div v-else class="agent-next__slot"><select v-model="slotId" :disabled="busy || !slots.length" :aria-label="$ui('Agent slot')"><option value="">{{ $ui('Select a slot') }}</option><option v-for="slot in slots" :key="slot.tokenId" :value="slot.tokenId">#{{ slot.tokenId }}{{ slot.name ? ' · ' + slot.name : '' }}</option></select>
           <button class="bz-btn bz-btn--secondary" :disabled="busy || !agent" @click="refresh">{{ $ui('Find my slots') }}</button></div>

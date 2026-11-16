@@ -1,6 +1,7 @@
 <template scoped>
   <div v-if="!companyWorkflowId" class="background"></div>
 
+  <AgentServiceOfferEditor v-if="offeringService" :agents="serviceAgents.filter(agent => agent.id === augmentAgentId)" :initial-agent-id="augmentAgentId" @close="offeringService = false" />
   <!-- Status Notification Toast -->
   <Transition name="notification-slide">
     <div
@@ -123,6 +124,7 @@
             </RoleplayChat>
           </div>
 
+          <MyAgents v-if="activeTab === 'my-agents'" :agents="personalAgents" @use="startAgentRoleplay" @staff="hireCompanion" @augment="augmentAgentId = $event.id; offeringService = true" @create="selectAgentMode('browseAgents')" @setup="setupOwnedAgent" />
           <!-- MY SKILLS TAB -->
           <div v-if="activeTab === 'my-skills' && !companyWorkflowFinished" class="agent-runner-view">
             <!-- Always show skill UI - gating happens inside the skill component -->
@@ -758,6 +760,9 @@
 </template>
 
 <script>
+import MyAgents from "./MyAgents.vue";
+import AgentServiceOfferEditor from "./AgentServiceOfferEditor.vue";
+import { openRoleplay } from "../services/roleplayNavigation.js";
 import CompanyWorkflowContext from './company/CompanyWorkflowContext.vue';
 import { createWorkflowResultCapture } from '../services/company/workflowResults.js';
 import { createWorkflowRecovery, workflowBridgeReady, WORKFLOW_RECOVERED_MESSAGE } from '../services/company/workflowRecovery.js';
@@ -796,6 +801,7 @@ import { loadSmartAgents, smartAgentCatalog } from "../services/smartAgentCatalo
 import DownloadRequirement from "./DownloadRequirement.vue";
 import RobinhoodCouncil from "./RobinhoodCouncil.vue";
 import {
+  DEFAULT_COMPANIONS,
   getSkillModelRequirements,
   MODEL_REQUIREMENTS,
   SKILL_MODEL_REQUIREMENTS,
@@ -1006,6 +1012,7 @@ const SKILL_RUNNER_PROFILES = {
 export default {
   name: "SmartAgent",
   components: {
+    AgentServiceOfferEditor, MyAgents,
     CompanyWorkflowContext,
     VueMarkdown,
     SkillRunner,
@@ -1039,13 +1046,17 @@ export default {
     const web3Store = useWeb3Store();
 
     // Tab state
+    const offeringService = ref(false);
+    const augmentAgentId = ref('');
+    const personalAgents = computed(() => smartAgentCatalog.agents.filter(agent => agent.isCustom || !agent.isLocal || !DEFAULT_COMPANIONS.some(item => item.id === agent.id)));
+    const serviceAgents = computed(() => smartAgentCatalog.agents.filter(agent => !agent.isLocal));
     const activeTab = ref("browseAgents");
     const companionCreator = ref(null);
     const isCompanionDemo = new URLSearchParams(window.location.search).get("demo")?.startsWith("companion-") || false;
     const isAgentRailCollapsed = ref(true);
     const agentTabs = [
-      { value: "browseAgents", label: "Agents", icon: "groups" },
-      { value: "my-skills", label: "Roleplay", icon: "play_arrow" },
+      { value: "browseAgents", label: "Create Agent", icon: "person_add" },
+      { value: "my-agents", label: "My Agents", icon: "groups" },
     ];
 
     // Notifications
@@ -2079,23 +2090,19 @@ Return ONLY the JSON, no explanation.`;
       });
     }));
     const agentRailItems = computed(() => [
-      { value: "browseAgents", label: "Smart agents", icon: "person", count: null },
-      {
-        value: "my-skills",
-        label: "Roleplay",
-        icon: "play_arrow",
-        count: !isCompanionDemo && hasMissingModels.value ? missingModels.value.length : null,
-      },
+      { value: "browseAgents", label: "Create Agent", icon: "person_add", count: null },
+      { value: "my-agents", label: "My Agents", icon: "groups", count: null },
     ]);
     const activeAgentTab = computed(() => agentTabs.find((tab) => tab.value === activeTab.value) || agentTabs[0]);
     const agentModeEyebrow = computed(() => {
-      if (activeTab.value === "browseAgents") return "Create & roleplay";
+      if (["browseAgents", "my-agents"].includes(activeTab.value)) return "Smart Agents";
       if (activeTab.value === "my-skills") return "Roleplay";
       return "Automate";
     });
     const agentModeIcon = computed(() => activeAgentTab.value.icon);
     const agentModeTitle = computed(() => {
-      if (activeTab.value === "browseAgents") return "Smart agents";
+      if (activeTab.value === "browseAgents") return "Create Agent";
+      if (activeTab.value === "my-agents") return "My Agents";
       if (activeTab.value === "my-skills") return selectedSkill.value?.name || "Roleplay";
       return "Workflows";
     });
@@ -2147,19 +2154,26 @@ Return ONLY the JSON, no explanation.`;
 
     const selectAgentMode = (mode) => {
       if (props.companyWorkflowId) return;
-      if (!["browseAgents", "my-skills"].includes(mode)) return;
+      if (!["browseAgents", "my-agents", "my-skills"].includes(mode)) return;
       if (mode === "browseAgents" || mode === "my-skills") selectSkillById(roleplayCompanion.id);
       activeTab.value = mode;
+    };
+
+    const setupOwnedAgent = async slot => {
+      selectAgentMode('browseAgents');
+      await nextTick();
+      try { await companionCreator.value.prepareOwnedSlot(slot); }
+      catch { showNotification('This agent could not be opened. Refresh your wallet holdings and try again.', 'danger'); }
     };
 
     const refreshCompanionRoster = () => loadSmartAgents().catch(error => {
       showNotification(error.message || 'Unable to refresh smart agents', 'danger');
     });
+    onMounted(() => window.addEventListener('bonzai:agents-changed', refreshCompanionRoster));
+    onBeforeUnmount(() => window.removeEventListener('bonzai:agents-changed', refreshCompanionRoster));
     const roleplayStartAgent = ref(null);
     const startAgentRoleplay = companion => {
-      roleplayStartAgent.value = companion;
-      selectSkillById('roleplay-companion-v1.0.0');
-      activeTab.value = 'my-skills';
+      openRoleplay(companion);
     };
     const hireCompanion = async (companion) => {
       try {
@@ -2904,6 +2918,7 @@ Provide a concise analysis covering:
     );
 
     return {
+      personalAgents, offeringService, serviceAgents, augmentAgentId, setupOwnedAgent,
       companyTaskContext,
       updateWorkflowModelRequirements,
       savingWorkflowResult,

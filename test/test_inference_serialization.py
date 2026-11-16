@@ -10,6 +10,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/server"))
 from inference_serialization import install_inference_serialization
 
 class InferenceSerializationTests(unittest.TestCase):
+    def test_every_media_submission_replaces_saved_seed_and_records_actual_seed(self):
+        from flask import request
+        app = Flask(__name__)
+        install_inference_serialization(app)
+        for path in ['/image/turbo', '/image/image/turbo', '/audio/music', '/video/sota']:
+            app.add_url_rule(path, path, lambda: {'used_seed': request.get_json()['seed']}, methods=['POST'])
+        seeds = []
+        with patch('inference_serialization.device_lease'), app.test_client() as client:
+            for path in ['/image/turbo', '/image/image/turbo', '/audio/music', '/video/sota'] * 2:
+                data = client.post(path, json={'prompt': 'same prompt', 'seed': 0}).get_json()
+                self.assertEqual(data['seed'], data['used_seed'])
+                seeds.append(data['seed'])
+        self.assertEqual(len(set(seeds)), len(seeds))
+
     def test_qwen_alias_uses_the_same_device_lease_as_turbo(self):
         app = Flask(__name__)
         install_inference_serialization(app)

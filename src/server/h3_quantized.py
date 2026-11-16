@@ -83,6 +83,10 @@ class H3QuantizedLinear(nn.Linear):
             # first loses precision (and can overflow FP16) before scaling can
             # protect the INT8 conversion. The temporary remains token-bounded.
             values = x[token_start:token_stop].float()
+            # Casting NaN/Inf to INT8 would silently turn a failed activation
+            # into plausible integers and hide the first broken operation.
+            if not bool(torch.isfinite(values).all()):
+                raise RuntimeError('MiniMax H3 numerical failure before activation quantization')
             if self.rotation_size:
                 h = _rotation(self.rotation_size, str(x.device), torch.float32)
                 values = (values.reshape(-1, self.rotation_size) @ h).reshape(-1, self.in_features)

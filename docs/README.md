@@ -9,6 +9,7 @@ This directory contains concise references for implemented BonzAI systems. Publi
 | [Media Mint pipeline](MINTING.md) | Selected media, preview, license validation, metadata and confirmation handling |
 | [Model transfers](MODEL_TRANSFERS.md) | Parallel downloads, recovery and explicit Hugging Face publishing |
 | [Desktop releases](DESKTOP_RELEASES.md) | Native build validation, signing, release assets and size limits |
+| [Linked devices and pooled inference](LOCAL_MESH.md) | Local discovery, code pairing, lending, memory pooling across the user's devices, trust boundaries and verification limits |
 | [Inference memory lifecycle](INFERENCE_MEMORY.md) | Staged model loading, packed weight streaming, cache ownership, and validation limits |
 | [MiniMax H3](MINIMAX_H3.md) | Hybrid INT8/W4 and GGUF loading, MPS execution, sampling and validation |
 | [Video enhancement](VIDEO_ENHANCEMENT.md) | SeedVR2 setup, endpoint controls, downloads, output validation and legacy fallback |

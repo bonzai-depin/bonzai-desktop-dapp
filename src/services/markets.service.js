@@ -9,7 +9,7 @@ const chainId = CONFIG.stakingEconomy.chainId
 const HISTORY_KEY = marketHistoryKey(chainId)
 const readHistory = () => { try { const value = JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {} } catch { return {} } }
 
-async function marketFor(address, timeout, signal) {
+export async function marketFor(address, timeout = 6000, signal) {
   const controller = new AbortController()
   const abort = () => controller.abort()
   signal?.addEventListener('abort', abort, { once: true })

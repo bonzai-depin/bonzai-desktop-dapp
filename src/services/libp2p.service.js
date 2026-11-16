@@ -22,6 +22,7 @@ import { withPacedPeerRouting } from './pacedPeerRouting.js';
 import { secureCertifiedPeerRecords } from './certifiedPeerRecords.js';
 import { multiaddr } from '@multiformats/multiaddr';
 import { peerIdFromString } from '@libp2p/peer-id';
+import { createEd25519PeerId, createFromProtobuf, exportToProtobuf } from '@libp2p/peer-id-factory';
 
 // Protocol identifiers
 export const PROTOCOLS = {
@@ -32,6 +33,8 @@ export const PROTOCOLS = {
   PIPELINE: '/bonzai/v2/pipeline',          // Pipeline negotiation (JSON)
   RPC_TUNNEL: '/bonzai/v2/rpc-tunnel',      // Raw TCP tunnel for llama.cpp RPC traffic
   SHARD_TUNNEL: '/bonzai/v2/shard-tunnel',  // Raw stream for sharded DiT activation frames
+  MESH_PAIR: '/bonzai/v2/mesh-pair',        // One-time code exchange that links the user's own devices
+  MESH_DEVICE: '/bonzai/v2/mesh-device',    // Linked-device profile, status and unlink notices
 };
 
 // Default configuration
@@ -80,7 +83,10 @@ class BonzaiP2PNode {
     }
 
     this.config = { ...DEFAULT_CONFIG, ...options };
-    const { listenPort, enableRelay, maxRelayReservations, bootstrapNodes, announceAddresses } = this.config;
+    const { listenPort, enableRelay, maxRelayReservations, bootstrapNodes, announceAddresses, identity } = this.config;
+    // A stored identity keeps this device's peer ID stable across restarts,
+    // which is what linked devices recognize. Without one the ID is random.
+    const storedPeerId = identity ? await createFromProtobuf(identity) : undefined;
 
     console.log('[libp2p] Starting node...');
     console.log('[libp2p] Config:', {
@@ -131,6 +137,7 @@ class BonzaiP2PNode {
     // Create the node
     this.node = await createLibp2p({
       start: false,
+      ...(storedPeerId ? { peerId: storedPeerId } : {}),
       addresses: {
         listen: [
           `/ip4/0.0.0.0/tcp/${listenPort}`,
@@ -426,6 +433,45 @@ class BonzaiP2PNode {
     }
   }
 
+  /**
+   * Send one small JSON message and read one JSON reply. Used by the
+   * linked-device protocols, which must fail fast and stay bounded.
+   */
+  async requestJson(peerId, protocol, message, { timeoutMs = 15000, maxBytes = 256 * 1024 } = {}) {
+    if (!this.isStarted) throw new Error('Node not started');
+    const connection = await this.dial(peerId);
+    const stream = await connection.newStream(protocol);
+    const timer = setTimeout(() => stream.abort(new Error('Peer request timed out.')), timeoutMs);
+    try {
+      await pipe([fromString(JSON.stringify(message ?? {}))], stream.sink);
+      let data = '';
+      const decoder = new TextDecoder();
+      await pipe(stream.source, async function (source) {
+        for await (const chunk of source) {
+          data += decoder.decode(chunk.subarray(), { stream: true });
+          if (data.length > maxBytes) throw new Error('Peer response is too large.');
+        }
+      });
+      data += decoder.decode();
+      return JSON.parse(data);
+    } finally {
+      clearTimeout(timer);
+      await stream.close().catch(() => {});
+    }
+  }
+
+  /** Register a JSON request handler: (message, remotePeerId) => reply. */
+  async onJson(protocol, handler) {
+    this.handlers.set(protocol, handler);
+    if (this.isStarted) await this._registerProtocolHandler(protocol, handler);
+  }
+
+  /** Peer IDs with a live connection right now. */
+  getConnectedPeerIds() {
+    if (!this.node) return [];
+    return [...new Set(this.node.getConnections().map((connection) => connection.remotePeer.toString()))];
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // PRIVATE METHODS
   // ═══════════════════════════════════════════════════════════════════════════
@@ -617,6 +663,15 @@ export async function stopP2PNode() {
   if (instance) {
     await instance.stop();
   }
+}
+
+/**
+ * Create a new device identity. The returned bytes contain the private key:
+ * store them only through the OS-protected facility, then pass them back as
+ * `identity` when starting the node.
+ */
+export async function createNodeIdentity() {
+  return exportToProtobuf(await createEd25519PeerId());
 }
 
 /**

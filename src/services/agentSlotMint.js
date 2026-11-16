@@ -7,7 +7,6 @@ import { confirmedReceipt } from './transactionReceipt.js';
 export function slotSaleState({ start, end, now, supply, maxSupply, minted, limit, launcher }) {
   if (!ethers.isAddress(launcher || '') || launcher === ethers.ZeroAddress) return 'Token launcher is not configured.';
   if (!start || now < start) return 'The slot sale has not started.';
-  if (now >= end) return 'The slot sale has ended.';
   if (BigInt(supply) >= BigInt(maxSupply)) return 'All slots have been minted.';
   if (BigInt(minted) >= BigInt(limit)) return 'This wallet has reached its slot mint limit.';
   return '';

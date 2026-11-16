@@ -12,10 +12,13 @@ test('v4 RC metadata and first-run experience stay aligned', () => {
   const lock = JSON.parse(read('package-lock.json'))
   const welcome = read('src/components/FirstRunWelcome.vue')
 
-  assert.equal(pkg.version, '4.0.0-rc.1')
-  assert.equal(pkg.productName, 'BonzAI v4.0.0 RC')
+  // The installer name, lockfile and manifest must describe the same v4 release.
+  assert.match(pkg.version, /^4\.\d+\.\d+(?:-rc\.\d+)?$/)
+  assert.ok(pkg.productName.startsWith('BonzAI'))
+  assert.ok(pkg.productName.includes(pkg.version.replace(/-rc\.\d+$/, '')))
   assert.equal(lock.version, pkg.version)
-  assert.match(welcome, /onboarding\.meshTitle/)
+  // First run introduces the local mesh by letting the user link their devices.
+  assert.match(welcome, /<MeshDevices\b/)
   assert.match(welcome, /onboarding\.audioTitle/)
   assert.match(welcome, /onboarding\.threeTitle/)
 })

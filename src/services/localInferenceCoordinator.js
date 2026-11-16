@@ -16,17 +16,17 @@ export class InferenceCoordinator {
   snapshot() { return [...this.records.values()].map(record => ({ ...record })); }
   publish(item, status) {
     const record = { id: item.id, kind: item.kind, title: item.title,
-      status, revision: ++this.revision, activityId: item.activityId, startedAt: item.queuedAt, updatedAt: Date.now() };
+      metadata: item.metadata, error: item.error, debugError: item.debugError, status, revision: ++this.revision, activityId: item.activityId, startedAt: item.queuedAt, updatedAt: Date.now() };
     this.records.set(item.id, record);
     const ended = [...this.records.values()].filter(row => ['completed','failed','cancelled'].includes(row.status));
     for (const row of ended.slice(0, Math.max(0, ended.length - 30))) this.records.delete(row.id);
     for (const listener of this.listeners) { try { this.context.exit(() => listener({ ...record })); } catch { /* UI cannot interrupt inference. */ } }
   }
-  async acquire(kind, { signal, priority = kind === 'workflow' ? 0 : 10, title, activityId } = {}) {
+  async acquire(kind, { signal, priority = kind === 'workflow' ? 0 : 10, title, activityId, metadata } = {}) {
     if (signal?.aborted) throw signal.reason || new Error('Inference cancelled');
     if (this.pending.length >= 32) throw new Error('The inference queue is full. Please wait for a task to finish.');
     return new Promise((resolve, reject) => {
-      const item = { id: randomBytes(12).toString('hex'), kind, title, activityId, priority, resolve, reject, signal, queuedAt: Date.now() };
+      const item = { id: randomBytes(12).toString('hex'), kind, title, activityId, metadata, priority, resolve, reject, signal, queuedAt: Date.now() };
       item.abort = () => {
         const i = this.pending.indexOf(item);
         if (i >= 0) { this.pending.splice(i, 1); this.publish(item, 'cancelled'); reject(signal.reason || new Error('Inference cancelled')); }
@@ -67,6 +67,8 @@ export class InferenceCoordinator {
       });
     } catch (error) {
       status = options.signal?.aborted || error?.name === 'AbortError' ? 'cancelled' : 'failed';
+      owner.error = error?.message || String(error);
+      owner.debugError = error?.stack || owner.error;
       throw error;
     } finally { release(options.signal?.aborted ? 'cancelled' : status); }
   }

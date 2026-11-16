@@ -402,22 +402,9 @@
 
                       <!-- Seed -->
                       <div class="param-item">
-                        <label class="param-label" for="audio-musicSeed">
-                          <span class="material-symbols-outlined">casino</span>
-                          Seed
-                        </label>
-                        <div class="param-control">
-                          <input id="audio-musicSeed"
-                            type="number"
-                            v-model.number="musicSeed"
-                            min="-1"
-                            class="input is-small"
-                            placeholder="-1 for random"
-                          />
-                        </div>
-                        <p class="param-help">
-                          -1 = random, or set for reproducibility
-                        </p>
+                        <span class="param-label"><span class="material-symbols-outlined">casino</span>Variation</span>
+                        <div class="param-control">Fresh every generation</div>
+                        <p class="param-help">The seed used is saved with the result.</p>
                       </div>
 
                       <!-- Shift -->
@@ -921,6 +908,7 @@
 </template>
 
 <script>
+import { mediaHistory, persistMediaHistory, loadMediaHistory } from '../stores/mediaHistory.js';
 import GenerationDrafts from "./generative/GenerationDrafts.vue";
 import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
@@ -1265,25 +1253,12 @@ export default {
     // breaks Electron IPC structured clone serialization on persist.
     const includeRoleplay = ref(localStorage.getItem('bonzai:history:roleplay') !== 'false');
     watch(includeRoleplay, value => { localStorage.setItem('bonzai:history:roleplay', String(value)); displayedCount.value = 12; });
-    const inferences = shallowRef([]);
+    const inferences = mediaHistory('audio');
     const hasCopy = shallowRef([]);
     const promptInput = ref(null);
 
-    // Debounce persistence to avoid excessive writes
-    let _persistTimer = null;
-    const persistInferences = (data) => {
-      clearTimeout(_persistTimer);
-      _persistTimer = setTimeout(async () => {
-        try {
-          await window.electronAPI?.store?.set?.(
-            "audioInferences",
-            JSON.parse(JSON.stringify(data)),
-          );
-        } catch (e) {
-          console.error("[GenerativeAudio] Failed to persist inferences:", e);
-        }
-      }, 500);
-    };
+    // Save independently of the view lifecycle.
+    const persistInferences = (data) => persistMediaHistory('audio', data).catch(error => console.error('[History] Could not save audio result', error));
 
     // ------------ lazy loading pagination ----------------
     const ITEMS_PER_PAGE = 10;
@@ -3023,10 +2998,7 @@ Use singable, genre-appropriate meter and structure tags. Write in ${targetLang}
       ensureGenerationSocket();
       await resumeActiveDownloadIfAny();
       try {
-        const saved = await window.electronAPI?.store?.get?.(
-          "audioInferences",
-          [],
-        );
+        const saved = await loadMediaHistory('audio');
         console.log(
           "[GenerativeAudio] Loading saved inferences:",
           saved?.length || 0,

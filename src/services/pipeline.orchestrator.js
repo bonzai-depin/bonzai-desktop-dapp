@@ -162,6 +162,10 @@ export function readGGUFMetadata(modelPath) {
  */
 async function ensureSession(modelPath, privacyConfig, onStatus) {
   const config = { ...DEFAULT_PRIVACY_CONFIG, ...privacyConfig };
+  // Settings store the local share as a percentage (25); the math below uses
+  // a fraction (0.25). Accept both and keep it inside a usable range.
+  const share = Number(config.localProportion);
+  config.localProportion = Math.min(0.9, Math.max(0.05, share > 1 ? share / 100 : share || DEFAULT_PRIVACY_CONFIG.localProportion));
 
   // Reuse existing session if same model and llama-server is still alive.
   // The subprocess is owned by llamaServer.manager; we check its state
@@ -226,22 +230,33 @@ async function ensureSession(modelPath, privacyConfig, onStatus) {
     const p2pNode = getP2PNode();
     const selectedProviders = config.selectedProviders || [];
 
-    // Filter to LAN providers with known addresses
-    const lanShardPeers = selectedProviders.filter(p => p.lanAddress);
+    // LAN peers the user chose: selected providers and their own linked
+    // devices. Being discovered on the network is not consent to receive
+    // tensor traffic, so other nearby peers are never used.
+    const linked = new Set(config.linkedPeerIds || []);
+    const lanShardPeers = selectedProviders.filter(p => p.lanAddress && p.peerId);
+    for (const lp of p2pNode?.getLANPeers() || []) {
+      if (linked.has(lp.peerId) && !lanShardPeers.some(s => s.peerId === lp.peerId)) lanShardPeers.push(lp);
+    }
 
-    // Also check auto-discovered LAN peers not in selection
-    const discoveredLAN = (p2pNode?.getLANPeers() || []).filter(p => p.lanAddress);
-    for (const lp of discoveredLAN) {
-      if (!lanShardPeers.some(s => s.peerId === lp.peerId)) {
-        lanShardPeers.push(lp);
+    // Reach each one through the encrypted libp2p tunnel. Their rpc-server
+    // listens on loopback only, so there is no direct LAN port to use.
+    for (const peer of lanShardPeers.slice(0, 3)) {
+      try {
+        session.tunnels.push(await createRPCTunnel(p2pNode, peer.peerId));
+      } catch (e) {
+        status(`LAN peer ${String(peer.peerId).slice(-6)} is not available: ${e.message}`);
       }
     }
 
-    if (lanShardPeers.length > 0) {
-      status(`Found ${lanShardPeers.length} LAN shard provider(s) (free, direct connection)`);
-      rpcAddresses = lanShardPeers.map(p => `${p.lanAddress}:50052`).join(',');
-      tensorSplit = `${localPct},${remotePct}`;
-      status(`LAN pipeline: tensor-split ${tensorSplit}, rpc ${rpcAddresses}`);
+    if (session.tunnels.length > 0) {
+      const count = session.tunnels.length;
+      const perPeerPct = Math.floor(remotePct / count);
+      const splits = [localPct];
+      for (let i = 0; i < count; i++) splits.push(i === count - 1 ? remotePct - perPeerPct * (count - 1) : perPeerPct);
+      tensorSplit = splits.join(',');
+      rpcAddresses = session.tunnels.map((t) => `127.0.0.1:${t.localPort}`).join(',');
+      status(`LAN pipeline: ${count} peer(s) over encrypted tunnels, tensor-split ${tensorSplit}`);
     } else {
       // 2. Check if local rpc-server is running (Self Service mode — same machine testing)
       let localRpcAvailable = false;

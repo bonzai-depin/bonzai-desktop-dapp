@@ -238,6 +238,7 @@
 </template>
 
 <script>
+import { mediaHistory, persistMediaHistory, loadMediaHistory } from '../stores/mediaHistory.js';
 import GenerationDrafts from "./generative/GenerationDrafts.vue";
 import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
@@ -412,7 +413,7 @@ export default {
     // Use shallowRef for inferences - base64 images are large and don't need deep reactivity
     const includeRoleplay = ref(localStorage.getItem('bonzai:history:roleplay') !== 'false');
     watch(includeRoleplay, value => { localStorage.setItem('bonzai:history:roleplay', String(value)); displayedCount.value = 12; });
-    const inferences = shallowRef([]);
+    const inferences = mediaHistory('image');
     const hasCopy = shallowRef([]);
 
     // ------------ lazy loading pagination ----------------
@@ -634,18 +635,8 @@ export default {
       showScrollTop.value = scrollTop > 400;
     });
 
-    // Debounced persistence to avoid excessive writes
-    const persistInferences = debounce(async (data) => {
-      try {
-        // Use JSON.parse/stringify to ensure proper serialization
-        await window.electronAPI?.store?.set?.(
-          "imageInferences",
-          JSON.parse(JSON.stringify(data)),
-        );
-      } catch (e) {
-        console.error("[GenerativeImage] Failed to persist inferences:", e);
-      }
-    }, 500);
+    // Save independently of the view lifecycle.
+    const persistInferences = (data) => persistMediaHistory('image', data).catch(error => console.error('[History] Could not save image result', error));
 
     // ------------ image editing state -----
     const pickedImageName = ref("");
@@ -1363,7 +1354,7 @@ export default {
           // Update shallowRef by replacing array (triggers reactivity)
           inferences.value = [...inferences.value, newInference];
           hasCopy.value = [...hasCopy.value, false];
-          // Debounced persistence
+          // Save independently of the view lifecycle.
           persistInferences([...inferences.value]);
 
           // Save to unified inference store with performance metadata
@@ -1544,7 +1535,7 @@ export default {
       // Update shallowRef by replacing arrays
       inferences.value = inferences.value.filter((_, i) => i !== idx);
       hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
-      // Debounced persistence
+      // Save independently of the view lifecycle.
       persistInferences([...inferences.value]);
     };
 
@@ -1662,10 +1653,7 @@ export default {
       ensureGenerationSocket();
       await resumeActiveDownloadIfAny();
       try {
-        const saved = await window.electronAPI?.store?.get?.(
-          "imageInferences",
-          [],
-        );
+        const saved = await loadMediaHistory('image');
         if (Array.isArray(saved)) {
           // Load into shallowRef by replacing the array
           inferences.value = saved;

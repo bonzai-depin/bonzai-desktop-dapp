@@ -1,15 +1,15 @@
 <template>
-  <section class="heartbeat-studio" aria-label="Heartbeat and social studio">
-    <header class="studio-heading"><div><span class="bz-eyebrow">Companion activity</span><h3 class="fira-sans-condensed-black-italic">Heartbeat & Social Studio</h3></div><span class="studio-status">{{ active ? 'Heartbeat enabled' : 'Heartbeat paused' }}</span></header>
-    <nav class="studio-tabs" aria-label="Companion activity"><button v-for="item in ['Heartbeat', 'Social studio']" :key="item" class="bz-btn bz-btn--sm" :aria-pressed="tab === item" @click="tab = item">{{ item }}</button></nav>
-    <div v-if="tab === 'Heartbeat'" class="heartbeat-body">
+  <section class="heartbeat-studio" aria-label="Companion capabilities">
+    <header class="studio-heading"><div><span class="bz-eyebrow">Companion activity</span><h3 class="fira-sans-condensed-black-italic">{{ section === 'social' ? 'Social Networks' : 'Out of Office' }}</h3></div><span v-if="section !== 'social'" class="studio-status">{{ active ? 'Out of Office enabled' : 'Out of Office paused' }}</span></header>
+    <nav v-if="!section" class="studio-tabs" aria-label="Companion activity"><button v-for="item in ['Out of Office', 'Social Networks']" :key="item" class="bz-btn bz-btn--sm" :aria-pressed="tab === item" @click="tab = item">{{ item }}</button></nav>
+    <div v-if="section === 'away' || (!section && tab === 'Out of Office')" class="heartbeat-body">
       <p>Continue the scene while you’re away. Updates stay in this conversation; nothing is posted to social networks.</p>
       <div class="heartbeat-fields">
         <label>Wait until I’m away<select :value="config.idleTimeout" :disabled="active" @change="change('idleTimeout', $event)"><option v-for="n in [1,3,5,10,15,30,60]" :value="n" :key="n">{{ n }} minutes</option></select></label>
         <label>Time between updates<select :value="config.messageInterval" :disabled="active" @change="change('messageInterval', $event)"><option v-for="n in [5,10,15,30,60,120]" :value="n" :key="n">{{ n }} minutes</option></select></label>
         <label>Stop after<select :value="config.maxMessages" :disabled="active" @change="change('maxMessages', $event)"><option v-for="n in [1,3,6,12,24,48]" :value="n" :key="n">{{ n }} updates</option></select></label>
       </div>
-      <div class="studio-footer"><span>{{ count }} / {{ config.maxMessages }} updates · {{ generating ? 'Creating an update…' : active ? 'Waiting for inactivity' : 'Ready when you are' }}</span><button v-if="inSession" class="bz-btn" :class="active ? 'bz-btn--secondary' : 'bz-btn--primary'" :disabled="busy" @click="$emit('toggle', !active)">{{ active ? 'Pause heartbeat' : 'Enable heartbeat' }}</button><span v-else>Enable heartbeat after starting your scene.</span></div>
+      <div class="studio-footer"><span>{{ count }} / {{ config.maxMessages }} updates · {{ generating ? 'Creating an update…' : active ? 'Waiting for inactivity' : 'Ready when you are' }}</span><button v-if="inSession" class="bz-btn" :class="active ? 'bz-btn--secondary' : 'bz-btn--primary'" :disabled="busy" @click="$emit('toggle', !active)">{{ active ? 'Pause Out of Office' : 'Enable Out of Office' }}</button><span v-else>Enable Out of Office after starting your scene.</span></div>
       <p class="studio-hint">BonzAI must remain open and your device awake. Uses the scene’s image and voice settings; video is off. Pause before changing the schedule. Pausing stops future updates; an update already running may finish.</p>
     </div>
     <div v-else class="social-body">
@@ -39,9 +39,9 @@
 import { ref, computed, watch } from 'vue';
 import { readSocialDraft, saveSocialDraft } from '../../services/social/draftStore.js';
 import { heartbeatConfig } from '../../services/roleplayHeartbeat.js';
-const props = defineProps({ companion: { type: Object, required: true }, config: { type: Object, required: true }, active: Boolean, count: { type: Number, default: 0 }, generating: Boolean, inSession: Boolean, busy: Boolean });
+const props = defineProps({ section: { type: String, default: '' }, companion: { type: Object, required: true }, config: { type: Object, required: true }, active: Boolean, count: { type: Number, default: 0 }, generating: Boolean, inSession: Boolean, busy: Boolean });
 const emit = defineEmits(['update:config', 'toggle']);
-const tab = ref('Heartbeat'), connected = ref({}), working = ref(false), error = ref(''), notice = ref(''), brief = ref(''), platform = ref('x'), format = ref('text'), draft = ref(null), history = ref([]);
+const tab = ref('Out of Office'), connected = ref({}), working = ref(false), error = ref(''), notice = ref(''), brief = ref(''), platform = ref('x'), format = ref('text'), draft = ref(null), history = ref([]);
 const networks = [{id:'x',name:'X'}, {id:'instagram',name:'Instagram'}, {id:'tiktok',name:'TikTok'}];
 const mediaPreview = computed(() => draft.value?.media ? `data:${draft.value.mediaType || (draft.value.type === 'image' ? 'image/jpeg' : 'video/mp4')};base64,${draft.value.media}` : '');
 const formats = computed(() => platform.value === 'x' ? ['text','image','video'] : platform.value === 'instagram' ? ['image','video'] : ['video']);

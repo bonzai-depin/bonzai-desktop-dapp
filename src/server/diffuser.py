@@ -92,7 +92,8 @@ import torchaudio as ta
 from PIL import Image
 
 from appdirs import user_data_dir
-from flask import Flask, request, jsonify, send_file, Response
+import traceback
+from flask import Flask, request, jsonify, send_file, Response, has_request_context
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 
@@ -1248,11 +1249,16 @@ class GenerationTracker:
         self._lock = threading.RLock()
 
     def new(self, kind: str, meta: Optional[Dict[str, Any]] = None, gen_id: Optional[str] = None) -> str:
+        # Local diagnostics only: retain text/settings, never credentials or media blobs.
+        fields = {"prompt", "text", "lyrics", "caption", "negative_prompt", "steps", "seed", "width", "height", "duration", "bpm", "guidance_scale", "pipeline", "model", "sampler", "scheduler", "fps"}
+        body = request.get_json(silent=True) if has_request_context() else {}
+        details = {key: value for key, value in (body or {}).items() if key in fields and isinstance(value, (str, int, float, bool))}
+        details = {**(meta or {}), **details}
         gid = gen_id or hashlib.md5(f"{kind}_{time.time()}".encode()).hexdigest()[:16]
         with self._lock:
             self._started[gid] = time.perf_counter()
-            self._meta[gid] = {"generation_id": gid, "kind": kind, "ts": time.time(), "stage": "starting", "status": "running"}
-        socket_emit("gen_started", {"generation_id": gid, "kind": kind, "meta": meta or {}}, "/generation")
+            self._meta[gid] = {"generation_id": gid, "kind": kind, "ts": time.time(), "stage": "starting", "status": "running", "meta": details}
+        socket_emit("gen_started", {"generation_id": gid, "kind": kind, "meta": details}, "/generation")
         socket_emit("gen_progress", {"generation_id": gid, "stage": "loading", "step": 0, "total": 1, "pct": 0}, "/generation")
         return gid
 
@@ -1278,9 +1284,15 @@ class GenerationTracker:
         socket_emit("gen_finished", {"generation_id": generation_id, "elapsed_ms": elapsed_ms,
                     "payload": {**(payload or {}), "elapsed_ms": elapsed_ms}}, "/generation")
 
-    def error(self, generation_id: str, message: str):
+    def error(self, generation_id: str, message: str, debug_error: Optional[str] = None):
+        if not debug_error and sys.exc_info()[0] is not None:
+            debug_error = traceback.format_exc()
         elapsed_ms = self._end(generation_id, "failed", message)
-        socket_emit("gen_error", {"generation_id": generation_id, "error": message, "elapsed_ms": elapsed_ms}, "/generation")
+        if debug_error:
+            with self._lock:
+                if generation_id in self._meta:
+                    self._meta[generation_id]["debug_error"] = debug_error
+        socket_emit("gen_error", {"generation_id": generation_id, "error": message, "debug_error": debug_error or message, "elapsed_ms": elapsed_ms}, "/generation")
 
     def _end(self, generation_id, status, error=None):
         with self._lock:
@@ -1294,7 +1306,7 @@ class GenerationTracker:
             return elapsed_ms
 
     def snapshot(self):
-        # Operational metadata only; prompts and generated content stay private.
+        # Device-local activity snapshot. Never forward to peers or discovery.
         with self._lock:
             return {"operations": [dict(job) for job in self._meta.values()]}
 
@@ -3641,7 +3653,7 @@ def image_qwen_21(edit=False, turbo=False):
         lora_scale = 1.0
         width, height = int(data.get("width", 768)), int(data.get("height", 768))
         steps, cfg = (8, 1.0) if turbo else (25, 4.0)
-        seed = int(data.get("seed", 0))
+        seed = int(data["seed"]) if data.get("seed") is not None else secrets.randbelow(2**31)
         model_name = QWEN_IMAGE_21_TURBO_GGUF_NAME if turbo else QWEN_IMAGE_21_GGUF_NAME
         if any(n < 256 or n > 4096 or n % 16 for n in (width, height)):
             raise ValueError("Width and height must be multiples of 16 between 256 and 4096")
@@ -4755,7 +4767,7 @@ def audio_music():
         logger.exception("ACE-Step v1.5 music generation failed")
         memory_limited = isinstance(e, MemoryError) or "out of memory" in str(e).lower()
         message = "Not enough free memory for this music request. Close other apps or try a shorter track." if memory_limited else "Music generation could not finish. Please try again."
-        genbus.error(gen_id, message)
+        genbus.error(gen_id, message, traceback.format_exc())
         return jsonify({"error": message, "code": "insufficient_memory" if memory_limited else "generation_failed"}), 503
     finally:
         # Release references before reclaiming; empty_cache alone cannot free live weights.
@@ -5874,7 +5886,7 @@ def minimax_h3_video():
     except Exception as exc:
         logger.exception("[MiniMax H3] Generation failed; settings=%s", diagnostic_settings)
         message = "The video could not be generated. Please try again with a different seed or a shorter clip."
-        genbus.error(gen_id, message)
+        genbus.error(gen_id, message, traceback.format_exc())
         return jsonify({"error": message, "generation_id": gen_id}), 500
     finally:
         pipe = model = state = None

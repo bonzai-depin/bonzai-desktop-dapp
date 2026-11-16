@@ -16,6 +16,7 @@ export const generationLabels = {video:'Generating video',music:'Generating audi
 export function generationPatch(event) {
   const mode = generationKind(event.kind);
   return { id: `generation:${event.generation_id}`, source: 'generation', title: /enhance/i.test(event.kind || '') ? 'Enhancing video' : generationLabels[mode], mode,
+    metadata: event.meta || {}, debugError: event.debug_error,
     status: event.stage === 'queued' ? 'queued' : 'running', stage: event.stage || 'starting',
     progress: event.pct ?? null, step: event.step, total: event.total,
     startedAt: event.ts ? event.ts * 1000 : Date.now(), location: 'On this device' };

@@ -1,3 +1,4 @@
+import { freshGenerationSeed } from '../services/generationSeed.js';
 /** Dedicated media APIs: never infer output capabilities from accepted inputs. */
 export function mediaCategory(pipeline) {
   if (/^image_/.test(pipeline)) return 'image';
@@ -97,7 +98,8 @@ export function createOpenRouterMedia({ request, status, models, store, saveMedi
     const prompt = String(params.text || params.prompt || '').trim();
     if (!prompt && category !== 'vision') throw new Error('Enter a prompt before generating.');
     const started = Date.now();
-    const post = async (path, body) => request(path, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(600000) });
+    const seed = freshGenerationSeed();
+    const post = async (path, body) => request(path, { method: 'POST', body: JSON.stringify({ ...body, ...(model.supported_parameters?.includes('seed') ? {seed} : {}) }), signal: AbortSignal.timeout(600000) });
     let output, usage;
     if (category === 'image') {
       const body = { model: modelId, prompt, n: 1 };

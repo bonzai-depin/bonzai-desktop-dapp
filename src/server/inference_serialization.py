@@ -2,9 +2,11 @@
 import threading
 import time
 import uuid
+import secrets
+import itertools
 from collections import deque
 from urllib.error import HTTPError, URLError
-from flask import request, g, jsonify
+from flask import request, g, jsonify, has_request_context
 from inference_coordinator import device_lease
 
 _PATHS = {
@@ -17,6 +19,12 @@ _PATHS = {
     "/forecast", "/workflows/finger-frame/analyze", "/workflows/finger-frame/composite",
     "/vision/ocr/unload", "/vision/caption/unload", "/memory/clear",
 }
+
+# Random starting point and a process-wide sequence: even simultaneous requests
+# receive distinct seeds, rather than inheriting saved form values or seed zero.
+_seed_sequence = itertools.count(secrets.randbelow(2**31))
+def fresh_generation_seed():
+    return next(_seed_sequence) % (2**31)
 
 class FairDeviceLock:
     """FIFO also when the media server is used without Electron's broker."""
@@ -68,6 +76,11 @@ def install_inference_serialization(app, on_acquired=None, on_queue=None):
 
     def publish(job_id, path, stage, background=False):
         event = {'id': job_id, 'path': path, 'stage': stage, 'background': background}
+        if has_request_context():
+            body = request.get_json(silent=True)
+            fields = {'prompt', 'text', 'lyrics', 'caption', 'steps', 'seed', 'width', 'height', 'duration', 'bpm', 'guidance_scale', 'pipeline', 'model', 'fps'}
+            if isinstance(body, dict):
+                event['meta'] = {key: value for key, value in body.items() if key in fields and isinstance(value, (str, int, float, bool))}
         with queue_lock:
             if stage == 'queued' or (background and stage == 'running'):
                 queued[event['id']] = event
@@ -89,6 +102,9 @@ def install_inference_serialization(app, on_acquired=None, on_queue=None):
         if request.method == "POST" and request.path in _PATHS:
             g.bonzai_request_started = time.perf_counter()
             body = request.get_json(silent=True)
+            if isinstance(body, dict) and request.path.startswith(('/image/', '/audio/', '/video')):
+                body['seed'] = fresh_generation_seed()
+                g.bonzai_generation_seed = body['seed']
             benchmark = isinstance(body, dict) and body.get('_benchmark') is True
             if request.path != "/memory/clear":
                 g.bonzai_queue_id = uuid.uuid4().hex
@@ -133,6 +149,8 @@ def install_inference_serialization(app, on_acquired=None, on_queue=None):
             payload = response.get_json(silent=True)
             if isinstance(payload, dict):
                 payload.update(timing)
+                if g.get('bonzai_generation_seed') is not None:
+                    payload['seed'] = g.bonzai_generation_seed
                 response.set_data(app.json.dumps(payload))
         return response
 

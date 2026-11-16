@@ -201,6 +201,19 @@ export function saveCompanions(companions) {
   return _withCompanionStorage(() => _saveCompanions(companions));
 }
 
+/** Merge one completed background creation without overwriting intervening roster edits. */
+export function upsertCompanion(companion) {
+  return _withCompanionStorage(async () => {
+    const roster = await _loadCompanions();
+    const index = roster.findIndex(item => item.id === companion.id);
+    const record = serializeCompanionData(companion);
+    if (index < 0) roster.push(record);
+    else roster[index] = { ...roster[index], ...record };
+    await _saveCompanions(roster);
+    return roster;
+  });
+}
+
 async function _saveCompanions(companions) {
   if (!Array.isArray(companions)) throw new TypeError('Companion roster must be an array.');
   const list = serializeCompanionData(companions);

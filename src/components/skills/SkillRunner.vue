@@ -270,7 +270,7 @@ export default {
     const initializeInputs = () => {
       if (props.skill?.inputs) {
         Object.entries(props.skill.inputs).forEach(([key, field]) => {
-          localInputs[key] = props.initialInputs[key] ?? (key === 'h3Accepted' ? localStorage.getItem('bonzai:minimax-h3-terms') === 'accepted' : structuredClone(field.default));
+          localInputs[key] = props.initialInputs[key] ?? (key === 'h3Accepted' ? localStorage.getItem('bonzai:minimax-h3-terms') === 'accepted' : (field.default === undefined ? undefined : JSON.parse(JSON.stringify(field.default))));
         });
       }
     };

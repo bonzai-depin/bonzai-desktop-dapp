@@ -76,12 +76,12 @@
       <CompanyMission v-show="active === 'mission'" :charter="charter" :goals="state.goals" :store="store" @open-view="openChannelByKey" />
       <!-- Interactive production owns in-progress inputs, streams and media.
            Mount it only when opened, then retain it while browsing this team. -->
-      <CompanyWorkflowStudio ref="workflowStudio" class="company-production" v-if="studioOpened" v-show="active === 'studio'" :charter="charter" :state="state" @open-view="openChannelByKey" @refresh="$emit('reload')">
+      <div v-if="studioOpened" v-show="active === 'studio'"><CompanyWorkflowStudio ref="workflowStudio" class="company-production" :charter="charter" :state="state" @open-view="openChannelByKey" @refresh="$emit('reload')">
         <template #controls><CompanyTeamStatus :health="automationHealth" :members="filledRoles.length" :playing="charter.status === 'active'" :fullscreen="isFullscreen" @toggle-execution="toggleExecution" @toggle-fullscreen="isFullscreen = !isFullscreen" /></template>
         <template #requirements>
           <DownloadRequirement v-if="missingRoleModels.length" class="company-model-requirements company-model-requirements--studio" category="language" :items="roleDownloadItems" :active="missingRoleModelsDownloading" :progress="roleDownloadProgress" :error="roleDownloadError" cancellable :cancelling="isCancellingRoleDownloads" :disabled="isCancellingRoleDownloads" @download="downloadMissingRoleModels" @cancel="cancelRoleDownloads" />
         </template>
-      </CompanyWorkflowStudio>
+      </CompanyWorkflowStudio></div>
       <!-- ─── Command center ─── -->
       <div v-if="active === 'command'" class="company-command">
         <CompanyGoalRoom :charter="charter" :state="state" @open-view="openChannelByKey" @open-maintenance="openChannelByKey" @open-result="openWorkResult" />

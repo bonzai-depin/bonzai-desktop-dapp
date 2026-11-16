@@ -4503,7 +4503,7 @@ Only reference IDs present in CURRENT PROJECT. Preserve unrelated levels and pla
       const generationStarted = performance.now();
       const activityId = `3d:${crypto.randomUUID()}`;
       beginGenerationTrace(activityId);
-      reportOperation({id:activityId,title:"Generating 3D",mode:"game",status:"running",stage:"Preparing",location:"3D"});
+      reportOperation({id:activityId,title:"Generating 3D",mode:"game",status:"running",stage:"Preparing",location:"3D",metadata:{prompt:form.prompt,mode:creationMode.value}});
       lastStatus.value = "Preparing...";
       lastAssemblyContract.value = null;assemblyPlanningDiagnostics.value=[];
       const submittedPrompt = form.prompt.trim() ||

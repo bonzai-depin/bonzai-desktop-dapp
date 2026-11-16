@@ -57,6 +57,8 @@ import {
 } from "electron";
 import Store from "electron-store";
 import { createWalletCredentialStore, assertPublicStoreKey } from "./main/security/walletCredentials.js";
+import { createMeshDevices } from "./main/meshDevices.js";
+import { createMeshController } from "./main/meshController.js";
 import { resolveDevelopmentPython } from "./main/pythonRuntime.js";
 import { waitForServer } from "./main/serverReadiness.js";
 import os from "os";
@@ -1731,6 +1733,29 @@ function requireAuthLevel(minLevel) {
 // Provider concurrency: one consumer request at a time
 let _providerBusy = false;
 
+// Linked devices: the user's own computers, paired once with a code.
+const meshDevices = createMeshDevices({ store, secureStorage: safeStorage });
+const meshController = createMeshController({
+  devices: meshDevices,
+  node: () => getP2PNode(),
+  systemInformation: () => systemInformation(),
+  version: () => app.getVersion(),
+  networkMode: () => store.get("p2p.networkMode", "local"),
+  startRpcServer: (port) => startRpcServer(port),
+  rpcServerRunning: () => !!rpcServerProcess && rpcServerProcess.exitCode === null,
+  notify: (activity) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("mesh-activity", { ts: Date.now(), ...activity });
+  },
+});
+// A pooled model's tunnels end with its llama-server process.
+llamaServer.onExit(() => { meshController.releasePool().catch(() => {}); });
+ipcMain.handle("mesh-state", () => meshController.state());
+ipcMain.handle("mesh-invite", () => meshController.invite());
+ipcMain.handle("mesh-invite-cancel", () => meshController.cancelInvite());
+ipcMain.handle("mesh-join", (_event, code) => meshController.join(code));
+ipcMain.handle("mesh-unlink", (_event, peerId) => meshController.unlink(String(peerId || "")));
+ipcMain.handle("mesh-settings", (_event, patch) => meshController.updateSettings(patch));
+
 /**
  * Start the P2P node for distributed inference
  * @param {Object} options Configuration options
@@ -1753,7 +1778,9 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       };
     }
 
-    const peerId = await startP2PNode(options);
+    // The stored identity keeps this device recognizable to linked devices.
+    const identity = await meshController.identity();
+    const peerId = await startP2PNode({ ...options, identity });
 
     // Register inference handler that routes to local servers (only once)
     const startedNode = getP2PNode();
@@ -1922,6 +1949,9 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
         mainWindow.webContents.send("lan-peer-discovered", { peerId: discoveredPeerId, lanIP });
       }
     };
+
+    try { await meshController.attach(); }
+    catch (err) { console.warn("[P2P] linked-device protocols failed to start:", err.message); }
 
     startedNode._onNetworkEvent = (activity) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2265,15 +2295,11 @@ ipcMain.handle("p2p-shard-metadata", async (_event, { modelPath }) => {
   }
 });
 
-// Shard provider mode: spawn local rpc-server and register tunnel handler
-ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
-  if (rpcServerProcess && !rpcServerProcess.killed) {
-    return { ok: false, error: "rpc-server already running" };
-  }
+// Spawn the local llama.cpp rpc-server. It binds to loopback only: remote
+// devices reach it exclusively through the authorized libp2p tunnel.
+async function startRpcServer(rpcPort = 50052) {
+  if (rpcServerProcess && rpcServerProcess.exitCode === null) return { ok: true, rpcPort, alreadyRunning: true };
 
-  const rpcPort = options.port || 50052;
-
-  // Find rpc-server binary
   const platform = { darwin: "macos", win32: "windows", linux: "linux" }[process.platform] || process.platform;
   const arch = process.arch;
   const ext = process.platform === "win32" ? ".exe" : "";
@@ -2287,7 +2313,7 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
     process.resourcesPath ? path.join(process.resourcesPath, "server", "llama-runtime", `${platform}-${arch}`, binName) : null,
   ].filter(Boolean);
 
-  let binPath = searchPaths.find(p => fs.existsSync(p));
+  const binPath = searchPaths.find(p => fs.existsSync(p));
   if (!binPath) {
     return { ok: false, error: `rpc-server binary not found at: ${searchPaths.join(', ')}` };
   }
@@ -2299,35 +2325,52 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
     } catch {}
   }
 
-  console.log(`[Pipeline Shard] Starting rpc-server on port ${rpcPort}...`);
-  rpcServerProcess = child_process.spawn(binPath, ["-p", String(rpcPort)], {
+  console.log(`[Pipeline Shard] Starting rpc-server on 127.0.0.1:${rpcPort}...`);
+  const child = child_process.spawn(binPath, ["-H", "127.0.0.1", "-p", String(rpcPort)], {
     stdio: ["ignore", "pipe", "pipe"],
   });
+  rpcServerProcess = child;
 
-  rpcServerProcess.stdout.on("data", (d) => {
+  child.stdout.on("data", (d) => {
     const line = d.toString().trim();
     if (line) console.log(`[rpc-server] ${line}`);
   });
-  rpcServerProcess.stderr.on("data", (d) => {
+  child.stderr.on("data", (d) => {
     const line = d.toString().trim();
     if (line) console.log(`[rpc-server:err] ${line}`);
   });
-  rpcServerProcess.on("exit", (code) => {
+  child.on("error", (err) => {
+    console.warn(`[Pipeline Shard] rpc-server failed: ${err.message}`);
+    if (rpcServerProcess === child) rpcServerProcess = null;
+  });
+  child.on("exit", (code) => {
     console.log(`[Pipeline Shard] rpc-server exited with code ${code}`);
-    rpcServerProcess = null;
+    if (rpcServerProcess === child) rpcServerProcess = null;
   });
 
-  // Register libp2p tunnel handler to bridge incoming streams to rpc-server
+  return { ok: true, rpcPort };
+}
+
+// Shard provider mode: spawn local rpc-server and register tunnel handler
+ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
+  const rpcPort = options.port || 50052;
+  const result = await startRpcServer(rpcPort);
+  if (!result.ok) return result;
+
+  // Bridge incoming libp2p streams to rpc-server. Every stream is checked:
+  // linked devices that this device lends to, or anyone while in Provider mode.
   const node = getP2PNode();
   if (node?.isStarted) {
     const { registerRPCTunnelHandler } = await getPipelineTunnel();
-    await registerRPCTunnelHandler(node, rpcPort);
+    await registerRPCTunnelHandler(node, rpcPort, { authorize: meshController.authorizeTunnel });
   }
 
   return { ok: true, rpcPort };
 });
 
 ipcMain.handle("p2p-shard-stop", async () => {
+  // Leaving Provider mode must not cut off linked devices this device lends to.
+  if (await meshController.ensureLending()) return { ok: true, keptForLinkedDevices: true };
   if (rpcServerProcess && !rpcServerProcess.killed) {
     rpcServerProcess.kill("SIGTERM");
     await new Promise((r) => setTimeout(r, 1000));
@@ -2737,6 +2780,7 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
           epsilon: store.get("p2p.pipeline.epsilon", 8),
           localTest: store.get("p2p.pipeline.localTest", false),
           selectedProviders: Array.isArray(selectedProvidersList) ? selectedProvidersList : [],
+          linkedPeerIds: meshController.linkedPeerIds(),
         };
 
         const result = await runPipelineInference({
@@ -6715,7 +6759,7 @@ async function loadModel(_event, currentModel) {
 
   // Launch llama-server.
   const resourcesPath = app.isPackaged ? process.resourcesPath : null;
-  const { port } = await llamaServer.startModel({
+  const launchSpec = {
     modelPath,
     mmprojPath,
     draftPath,
@@ -6729,7 +6773,28 @@ async function loadModel(_event, currentModel) {
     specType: currentModel.specType || null,
     specDraftNMax: currentModel.specDraftNMax || null,
     mtp: currentModel.mtp === true,
-  }, { resourcesPath });
+  };
+  // A model too large for this device borrows memory from linked devices.
+  // llama.cpp places layers by the memory each device reports, so no manual
+  // split is passed. Models that fit stay entirely local.
+  let meshPool = null;
+  try {
+    meshPool = await meshController.preparePool({ filesizeBytes: currentModel.filesizeBytes, localBudget: sysInfo.memBudget });
+  } catch (err) {
+    console.warn("[LLM] Linked-device pooling unavailable:", err.message);
+  }
+  let port;
+  if (meshPool) {
+    console.log(`[LLM] Pooling memory with ${meshPool.devices.map(d => d.name).join(", ")}`);
+    try {
+      ({ port } = await llamaServer.startModel({ ...launchSpec, rpcPeers: meshPool.rpcPeers }, { resourcesPath }));
+    } catch (err) {
+      console.warn(`[LLM] Pooled start failed (${err.message}); loading on this device only.`);
+      await meshController.releasePool();
+      meshPool = null;
+    }
+  }
+  if (!meshPool) ({ port } = await llamaServer.startModel(launchSpec, { resourcesPath }));
 
   currentLoadedModel = {
     ...currentModel,
@@ -6979,7 +7044,7 @@ function runLLMRequest(input, operation, signal) {
     } finally {
       if (history) { chatHistory = history; currentSystemPrompt = systemPrompt; }
     }
-  }, { title: input?.taskLabel || 'Generating text', activityId: input?.activityId, signal });
+  }, { title: input?.taskLabel || 'Generating text', activityId: input?.activityId, signal, metadata: { prompt: typeof input === 'string' ? input : input?.message, model: selected?.name || selected?.filename, maxTokens: input?.maxTokens, temperature: input?.temperature, seed: input?.seed } });
 }
 
 async function chat(_event, input) {

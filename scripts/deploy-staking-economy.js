@@ -14,7 +14,7 @@ async function main() {
   if (!ethers.isAddress(bonzaiToken) || bonzaiToken === ethers.ZeroAddress) throw new Error('Canonical BONZAI token address required for this chain');
   if (await ethers.provider.getCode(bonzaiToken) === '0x') throw new Error('BONZAI token has no deployed bytecode on selected chain');
   if (await new ethers.Contract(bonzaiToken, ['function decimals() view returns(uint8)'], ethers.provider).decimals() !== 18n) throw new Error('BONZAI must have 18 decimals');
-  const companionFactory = process.env.BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS || economyAddress(process.env, 'COMPANION_TOKEN_FACTORY', chainId);
+  const companionFactory = process.env.BONZAI_AGENT_TOKEN_FACTORY_ADDRESS || economyAddress(process.env, 'AGENT_TOKEN_FACTORY', chainId);
   const usdc = process.env.BONZAI_USDC_ADDRESS || economyAddress(process.env, 'USDC', chainId);
   for (const [name, address] of Object.entries({ companionFactory, usdc })) {
     if (!ethers.isAddress(address) || address === ethers.ZeroAddress || await ethers.provider.getCode(address) === '0x') throw new Error(`Verified ${name} contract required on the selected chain`);

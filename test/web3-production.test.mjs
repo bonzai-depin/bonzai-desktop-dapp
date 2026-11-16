@@ -46,14 +46,14 @@ test('preflight checks actual eth_chainId even if provider reports a static netw
 });
 
 test('missing bytecode and inconsistent cross-contract wiring fail production readiness', async () => {
-  const empty = await verifyProduction(minimal(new Map([['COMPANIONS', address]])), { provider: { send: async () => '0x1237', getCode: async () => '0x' } });
+  const empty = await verifyProduction(minimal(new Map([['SMART_AGENTS', address]])), { provider: { send: async () => '0x1237', getCode: async () => '0x' } });
   assert.match(empty.failures.join('\n'), /no deployed bytecode/);
-  const iface = new ethers.Interface(['function mintPool() view returns(address)', 'function companionTokenFactory() view returns(address)']);
-  const wrongWiring = await verifyProduction(minimal(new Map([['COMPANIONS', address], ['MINT_POOL', other]])), { provider: {
+  const iface = new ethers.Interface(['function launcher() view returns(address)', 'function companionTokenFactory() view returns(address)']);
+  const wrongWiring = await verifyProduction(minimal(new Map([['SMART_AGENTS', address], ['AGENT_TOKEN_FACTORY', other]])), { provider: {
     send: async () => '0x1237', getCode: async a => a === address ? '0x01' : '0x',
-    call: async () => iface.encodeFunctionResult('mintPool', [address]),
+    call: async () => iface.encodeFunctionResult('launcher', [address]),
   } });
-  assert.match(wrongWiring.failures.join('\n'), /COMPANIONS.mintPool is .* expected/);
+  assert.match(wrongWiring.failures.join('\n'), /SMART_AGENTS.launcher is .* expected/);
 });
 
 test('provider claims cannot launch without independently verified receipts', async () => {

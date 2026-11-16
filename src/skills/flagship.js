@@ -5086,7 +5086,7 @@ async function generateImage(prompt, options = {}) {
   const endpoint = reference ? "/image/image/turbo" :
     options.quality || options.advanced ? "/image/quality" : "/image/turbo";
   return await callFlaskEndpoint(endpoint, {
-    prompt: reference ? "Use the reference image as the identity reference. Preserve the same face, facial proportions, age, skin tone, hair and body identity. Clothing, pose and setting may change. " + prompt : prompt,
+    prompt: reference ? "Use the reference image as the identity reference. Preserve the same face, facial proportions, age, skin tone and body identity. Adapt clothing, hairstyle, makeup, accessories, pose and setting to the current scene; do not copy the portrait styling or background. " + prompt : prompt,
     ...(reference && { image_base64: reference }),
     negative_prompt: options.negativePrompt || IMAGE_NEG_BASE,
     width: options.width || 1024,
@@ -9143,6 +9143,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
 
         if (textToSpeak.length > 0) {
           context.updateStatus?.(`${companion.name} is speaking...`);
+          context.onProgress?.({type:"media-status",media:"audio",message:"Preparing voice"});
           try {
             // Use Chatterbox V3 for a high-quality companion voice.
             const audioResult = await generateNarration(textToSpeak, {
@@ -9187,6 +9188,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
       // Generate character image based on content level (only if warranted)
       if (shouldGenerateImage && response.imagePrompt) {
         context.updateStatus?.(`Visualizing ${companion.name}...`);
+          context.onProgress?.({type:"media-status",media:"image",message:"Preparing scene image"});
         try {
           let imageResult;
 
@@ -9494,6 +9496,7 @@ Now write YOUR own JSON in the same shape, in character as ${companion.name}, re
 
       if (includeVideo && response.image && isPeakEmotion) {
         context.updateStatus?.(`Preparing cinematic video...`);
+          context.onProgress?.({type:"media-status",media:"video",message:"Preparing video"});
         try {
           // Aggressively clear memory BEFORE video generation (preserve TTS for voice consistency)
           await clearGenerationMemory(true, true); // Use aggressive mode but preserve TTS

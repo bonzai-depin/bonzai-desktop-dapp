@@ -1,3 +1,4 @@
+import { freshGenerationSeed } from '../services/generationSeed.js';
 import { createOpenRouterMedia } from './openrouterMedia.js';
 /** Optional, user-funded inference transport. Credentials never cross back into the renderer. */
 export const OPENROUTER_HEADERS = Object.freeze({
@@ -79,6 +80,7 @@ export function createOpenRouter({ store, safeStorage, fetchImpl = globalThis.fe
     if (messages.some(m => Array.isArray(m.content) && m.content.some(part => part.type === 'image_url')) && !model.input.includes('image')) throw new Error('Choose an OpenRouter model that supports images.');
     const start = Date.now();
     const body = { model: model.id, messages, max_tokens: Math.max(1, Math.min(Math.floor(Number(maxTokens) || settings.maxTokens), settings.maxTokens)), stream: Boolean(onToken), ...(Number.isFinite(temperature) ? { temperature } : {}) };
+    if (model.supported.includes('seed')) body.seed = freshGenerationSeed();
     const response = await request('/chat/completions', { method: 'POST', body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000) });
     let text = '', usage = null, finishReason = null;
     if (!onToken) {

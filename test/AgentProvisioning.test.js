@@ -97,7 +97,10 @@ describe('Smart-agent reserved NVDA launch',function(){
   await expect(f.agents.connect(f.buyer).issueToken(1,1,(await time.latest())-1)).to.be.revertedWith('Invalid execution bounds');
   await expect(f.agents.setLauncher(await f.swapper.getAddress())).to.be.reverted;
   await expect(f.factory.launch(1,'Rose','ROSE','ipfs://portrait',f.wallet.address,1,(await time.latest())+30,{value:ETH('1')})).to.be.revertedWith('Only slot contract');
-  await time.increase(4000);await expect(f.mint()).to.be.revertedWith('Drop not active');
+  await time.increase(4000);await f.mint();
+  expect(await f.agents.totalSupply()).to.equal(2);
+  expect(await f.agents.reserveOf(2)).to.equal(ETH('1'));
+  await f.mint();await expect(f.mint()).to.be.revertedWith('Wallet mint limit');
  });
  it('encodes exact-input Universal Router NVDA purchase and rejects insufficient output',async()=>{
   const f=await loadFixture(fixture),Router=await ethers.getContractFactory('MockAgentRouter'),router=await Router.deploy();

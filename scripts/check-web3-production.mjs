@@ -7,8 +7,8 @@ import { economyChainId, economyAddress, ECONOMY_NETWORK_KEYS } from '../src/con
 
 export const requiredContracts = [
   'SKILL_REGISTRY', 'SKILL_OWNERSHIP', 'COLLECTIBLES', 'COLLECTIBLES_FACTORY',
-  'MINT_POOL', 'ROYALTY_SPLITTER', 'FINE_TUNE_TOKEN_FACTORY', 'COMPANIONS',
-  'COMPANION_TOKEN_FACTORY', 'PROVIDER_REGISTRY', 'SERVICE_TIME', 'STAKING_VAULT',
+  'MINT_POOL', 'ROYALTY_SPLITTER', 'FINE_TUNE_TOKEN_FACTORY',
+  'PROVIDER_REGISTRY', 'SERVICE_TIME', 'STAKING_VAULT',
   'REVENUE_ROUTER', 'CONTRIBUTION_REGISTRY', 'DATASET_REGISTRY', 'MODEL_REGISTRY',
   'EVALUATION_REGISTRY', 'CONTRIBUTION_SCORE_ORACLE',
   'GAME_REGISTRY', 'GAME_TOKEN_FACTORY', 'BASKET_REWARDS', 'JOB_ESCROW',
@@ -62,12 +62,12 @@ export const wiringChecks = [
   ['NVDA_SWAP', 'router', 'UNISWAP_V4_UNIVERSAL_ROUTER'],
   ['STAKING_VAULT', 'bonzaiToken', 'TOKEN'],
   ['BASKET_REWARDS', 'stakingVault', 'STAKING_VAULT'],
-  ['BASKET_REWARDS', 'socialTokenFactory', 'COMPANION_TOKEN_FACTORY'],
-  ['BASKET_REWARDS', 'smartAgents', 'COMPANIONS'],
+  ['BASKET_REWARDS', 'socialTokenFactory', 'AGENT_TOKEN_FACTORY'],
+  ['BASKET_REWARDS', 'smartAgents', 'SMART_AGENTS'],
   ['REVENUE_ROUTER', 'basketRewards', 'BASKET_REWARDS'],
   ['MINT_POOL', 'basketRewards', 'BASKET_REWARDS'],
-  ['JOB_ESCROW', 'socialTokenFactory', 'COMPANION_TOKEN_FACTORY'],
-  ['JOB_ESCROW', 'smartAgents', 'COMPANIONS'],
+  ['JOB_ESCROW', 'socialTokenFactory', 'AGENT_TOKEN_FACTORY'],
+  ['JOB_ESCROW', 'smartAgents', 'SMART_AGENTS'],
   ['JOB_ESCROW', 'basketRewards', 'BASKET_REWARDS'],
   ['JOB_ESCROW', 'revenueRouter', 'REVENUE_ROUTER'],
   ['REVENUE_ROUTER', 'stakingVault', 'STAKING_VAULT'],
@@ -80,23 +80,20 @@ export const wiringChecks = [
   ['MINT_POOL', 'stakingVault', 'STAKING_VAULT'],
   ['MINT_POOL', 'royaltySplitter', 'ROYALTY_SPLITTER'],
   ['MINT_POOL', 'collectiblesFactory', 'COLLECTIBLES_FACTORY'],
-  ['MINT_POOL', 'companionContract', 'COMPANIONS'],
+  ['MINT_POOL', 'companionContract', 'SMART_AGENTS'],
   ['MINT_POOL', 'serviceTimeContract', 'SERVICE_TIME'],
   ['ROYALTY_SPLITTER', 'mintPool', 'MINT_POOL'],
   ['SERVICE_TIME', 'bonzaiToken', 'TOKEN'],
   ['SERVICE_TIME', 'mintPool', 'MINT_POOL'],
   ['SERVICE_TIME', 'providerRegistry', 'PROVIDER_REGISTRY'],
   ['PROVIDER_REGISTRY', 'paymentContract', 'SERVICE_TIME'],
-  ['COMPANIONS', 'mintPool', 'MINT_POOL'],
-  ['COMPANIONS', 'companionTokenFactory', 'COMPANION_TOKEN_FACTORY'],
-  ['COMPANION_TOKEN_FACTORY', 'companionContract', 'COMPANIONS'],
   ['FINE_TUNE_TOKEN_FACTORY', 'contentContract', 'COLLECTIBLES_FACTORY'],
   ['SKILL_REGISTRY', 'skillOwnershipContract', 'SKILL_OWNERSHIP'],
   ['SKILL_OWNERSHIP', 'skillRegistry', 'SKILL_REGISTRY'],
-  ['SKILL_OWNERSHIP', 'companionNFT', 'COMPANIONS'],
-  ['SKILL_OWNERSHIP', 'companionTokenFactory', 'COMPANION_TOKEN_FACTORY'],
+  ['SKILL_OWNERSHIP', 'companionNFT', 'SMART_AGENTS'],
+  ['SKILL_OWNERSHIP', 'companionTokenFactory', 'AGENT_TOKEN_FACTORY'],
   ['SKILL_OWNERSHIP', 'bonzaiToken', 'TOKEN'],
-  ...['COMPANION_TOKEN_FACTORY', 'FINE_TUNE_TOKEN_FACTORY', 'GAME_TOKEN_FACTORY'].flatMap(name => [
+  ...['AGENT_TOKEN_FACTORY', 'FINE_TUNE_TOKEN_FACTORY', 'GAME_TOKEN_FACTORY'].flatMap(name => [
     [name, 'poolManager', 'UNISWAP_V4_POOL_MANAGER'], [name, 'positionManager', 'UNISWAP_V4_POSITION_MANAGER'],
     [name, 'permit2', 'UNISWAP_V4_PERMIT2'],
   ]),
@@ -129,9 +126,7 @@ export async function verifyProduction(config, { provider, offline = false } = {
       if (await provider.getCode(address) === '0x') failures.push(`${name} has no deployed bytecode at ${address}`);
       else { deployed.add(name); deployedContractsVerified += 1; }
     })));
-    for (const [name, getter, legacyExpected] of wiringChecks) {
-      const expected = ['JOB_ESCROW', 'BASKET_REWARDS'].includes(name) && config.addresses.has('SMART_AGENTS')
-        ? ({ COMPANIONS: 'SMART_AGENTS', COMPANION_TOKEN_FACTORY: 'AGENT_TOKEN_FACTORY' }[legacyExpected] || legacyExpected) : legacyExpected;
+    for (const [name, getter, expected] of wiringChecks) {
       if (!deployed.has(name) || !config.addresses.has(expected)) continue;
       await check(`${name}.${getter}`, async () => {
         const actual = ethers.getAddress(await read(name, `function ${getter}() view returns(address)`, getter));
@@ -185,7 +180,7 @@ export async function verifyProduction(config, { provider, offline = false } = {
     if (deployed.has('STAKING_VAULT') && config.addresses.has('CONTRIBUTION_SCORE_ORACLE')) await check('score attestor authorization', async () => {
       if (!await read('STAKING_VAULT', 'function scoreAttestors(address) view returns(bool)', 'scoreAttestors', [config.addresses.get('CONTRIBUTION_SCORE_ORACLE')])) failures.push('Contribution score oracle is not authorized by the staking vault');
     });
-    for (const name of ['AGENT_TOKEN_FACTORY','COMPANION_TOKEN_FACTORY','FINE_TUNE_TOKEN_FACTORY','GAME_TOKEN_FACTORY']) {
+    for (const name of ['AGENT_TOKEN_FACTORY','FINE_TUNE_TOKEN_FACTORY','GAME_TOKEN_FACTORY']) {
       if(!deployed.has(name)) continue;
       await check(`${name} immutable liquidity vault`,async()=>{
         const factory=config.addresses.get(name);

@@ -1,3 +1,4 @@
+import { delegatePublicWorkflow, collectPublicWorkflow } from './teamDelivery.js';
 import * as repo from '../db/repos/publicSessions.js';
 import * as blobs from '../db/blobs.js';
 import { XClient, publicReplyText } from '../../services/social/xClient.js';
@@ -60,6 +61,8 @@ export function registerXChannel({ ipcMain, store, transport, ffmpegPath }) {
     } catch (error) { repo.pollError(agentId, error.message); throw error; }
     finally { polling.delete(agentId); }
   });
+  ipcMain.handle('social:public-team', (_e, id, task) => delegatePublicWorkflow(id, task));
+  ipcMain.handle('social:public-team-result', (_e, id) => collectPublicWorkflow(id));
   ipcMain.handle('social:public-claim', (_e, id) => repo.claim(id));
   ipcMain.handle('social:public-complete', (_e, id, result, error) => {
     if (!error && (!result?.version || !Array.isArray(result.artifacts) || (!result.text && !result.artifacts.length))) throw new Error('No deliverable was produced.');

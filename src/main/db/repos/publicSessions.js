@@ -14,7 +14,8 @@ export function configure(agentId, account, settings) {
     persona: String(settings.persona || '').trim().slice(0, 2000),
     media: [...new Set((settings.media || []).filter(type => ['image', 'audio', 'music', 'video'].includes(type)))],
     workflows: [...new Set((settings.workflows || []).filter(id => typeof id === 'string').slice(0, 30))],
-    dailyLimit: Math.max(1, Math.min(50, Math.floor(Number(settings.dailyLimit) || 5))),
+    teamRoutes: (Array.isArray(settings.teamRoutes) ? settings.teamRoutes : []).filter(item => typeof item?.teamId === 'string' && typeof item?.workflowId === 'string').slice(0,30).map(({teamId,workflowId}) => ({teamId,workflowId})),
+    dailyLimit: Math.max(0, Math.min(50, Math.floor(Number(settings.dailyLimit) || 0))),
     // Review is intentionally the default. Automatic activation requires a distinct explicit setting.
     automatic: settings.automatic === true && settings.platformApproved === true,
     platformApproved: settings.platformApproved === true,
@@ -49,7 +50,7 @@ export function ingest(agentId, response) {
       const stop = /^(stop|unsubscribe|opt out|do not reply|don't reply)[.!\s]*$/i.test(clean);
       if (stop) {
         db.prepare('INSERT OR IGNORE INTO public_agent_optouts(agent_id,author_id) VALUES(?,?)').run(agentId, post.author_id);
-        db.prepare("UPDATE public_agent_requests SET status='skipped',error='User opted out',updated_at=? WHERE agent_id=? AND author_id=? AND status IN ('pending','generating','review','preparing','failed')").run(Date.now(), agentId, post.author_id);
+        db.prepare("UPDATE public_agent_requests SET status='skipped',error='User opted out',updated_at=? WHERE agent_id=? AND author_id=? AND status IN ('pending','generating','waiting_team','review','preparing','failed')").run(Date.now(), agentId, post.author_id);
       }
       const optedOut = db.prepare('SELECT 1 FROM public_agent_optouts WHERE agent_id=? AND author_id=?').get(agentId, post.author_id);
       const invited = /[?？]|\b(please|create|make|generate|draw|send|give|meditate|help|tell|explain|can you|could you|want|need)\b|^\//i.test(clean);
@@ -73,8 +74,8 @@ export function claim(id, phase = 'generating') {
     const active = row && session(row.agent_id);
     if (!active?.settings.enabled) throw new Error('Public session is paused.');
     if (get().db.prepare('SELECT 1 FROM public_agent_optouts WHERE agent_id=? AND author_id=?').get(row.agent_id, row.author_id)) throw new Error('This user opted out.');
-    const count = get().db.prepare("SELECT COUNT(*) AS count FROM public_agent_requests WHERE agent_id=? AND updated_at>=? AND status IN ('generating','review','preparing','publishing','posted','unknown','failed')").get(row.agent_id, Date.now() - 86400000).count;
-    if (phase === 'generating' && count >= active.settings.dailyLimit) throw new Error('The daily generation limit has been reached.');
+    const count = get().db.prepare("SELECT COUNT(*) AS count FROM public_agent_requests WHERE agent_id=? AND updated_at>=? AND status IN ('generating','waiting_team','review','preparing','publishing','posted','unknown','failed')").get(row.agent_id, Date.now() - 86400000).count;
+    if (phase === 'generating' && active.settings.dailyLimit > 0 && count >= active.settings.dailyLimit) throw new Error('The daily generation limit has been reached.');
     return transition(id, phase === 'generating' ? ['pending'] : ['review'], phase);
   })();
 }

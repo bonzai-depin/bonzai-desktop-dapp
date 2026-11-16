@@ -818,6 +818,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
   p2pLANPeers: () => ipcRenderer.invoke("p2p-lan-peers"),
 
   /**
+   * Linked devices: the user's own computers, paired once with a code.
+   * Linking is the only way to grant another device access to this one's compute.
+   */
+  mesh: {
+    state: () => ipcRenderer.invoke("mesh-state"),
+    invite: () => ipcRenderer.invoke("mesh-invite"),
+    cancelInvite: () => ipcRenderer.invoke("mesh-invite-cancel"),
+    join: (code) => ipcRenderer.invoke("mesh-join", code),
+    unlink: (peerId) => ipcRenderer.invoke("mesh-unlink", peerId),
+    updateSettings: (patch) => ipcRenderer.invoke("mesh-settings", patch),
+  },
+
+  /**
    * Route an inference request — automatically sends to selected provider (LAN/remote)
    * or falls back to local Flask/OpenClaw.
    * @param {string} pipeline - Pipeline name (e.g. 'image_turbo', 'audio_turbo', 'llm')
@@ -962,6 +975,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     publicEdit: (id, text) => ipcRenderer.invoke('social:public-edit', id, text),
     publicPoll: (agentId) => ipcRenderer.invoke('social:public-poll', agentId),
     publicClaim: (id) => ipcRenderer.invoke('social:public-claim', id),
+    publicTeam: (id, task) => ipcRenderer.invoke('social:public-team', id, task),
+    publicTeamResult: (id) => ipcRenderer.invoke('social:public-team-result', id),
     publicComplete: (id, result, error) => ipcRenderer.invoke('social:public-complete', id, result, error),
     publicDismiss: (id) => ipcRenderer.invoke('social:public-dismiss', id),
     publicRetry: (id) => ipcRenderer.invoke('social:public-retry', id),

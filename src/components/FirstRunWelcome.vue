@@ -16,13 +16,18 @@
           <div class="welcome-art" aria-hidden="true"><img src="../assets/bonzai_brand_background.jpg" alt="" /><img class="welcome-logo" src="../assets/bonzai_logo-full.png" alt="" /></div>
             <div class="welcome-copy">
             <p>{{ i18n.t('onboarding.intro') }}</p>
-            <div class="welcome-mesh">
-              <span class="material-symbols-outlined" aria-hidden="true">hub</span>
-              <div>
-                <strong>{{ i18n.t('onboarding.meshTitle') }}</strong>
-                <p>{{ i18n.t('onboarding.meshCopy') }}</p>
+            <section class="welcome-recommendation" aria-live="polite">
+              <span class="material-symbols-outlined">memory</span>
+              <div><p class="bz-eyebrow">{{ recommendation?.pooled ? i18n.t('meshDevices.withLinked') : $ui('Selected for your device') }}</p>
+                <h2>{{ detecting ? $ui('Checking your hardware…') : recommendation?.model.name || $ui('Choose your first model') }}</h2>
+                <p v-if="recommendation?.pooled">{{ i18n.t('meshDevices.pooledCopy') }}</p>
+                <p v-else-if="recommendation">{{ $ui('Quality-first local intelligence. Your conversations stay on this device.') }}</p>
+                <p v-else>{{ $ui('Explore the model library to choose a model for your device.') }}</p>
+                <p v-if="recommendation?.pooled && recommendation.local" class="welcome-alone">{{ i18n.t('meshDevices.aloneModel', { model: recommendation.local.model.name }) }}</p>
+                <div v-if="recommendation" class="welcome-specs"><span><strong class="bz-metric">{{ (recommendation.required / 1e9).toFixed(1) }} GB</strong> {{ $ui('estimated memory') }}</span><span><strong class="bz-metric">8K</strong> {{ $ui('context estimate') }}</span><span>{{ $ui('Free local inference') }}</span></div>
               </div>
-            </div>
+            </section>
+            <MeshDevices class="welcome-devices" />
           </div>
 
           <div class="welcome-tools" :aria-label="i18n.t('onboarding.choose')">
@@ -57,16 +62,33 @@
 </template>
 
 <script setup>
-import { ref, useId } from 'vue'
+import { computed, ref, useId, onMounted } from 'vue'
+import { recommendFirstRunModel } from '../services/modelRecommendation.js'
+import { listAllLLMs } from '../skills/flagship.js'
+import modelStore from '../stores/modelStore.js'
+import { MODEL_PREFERENCE_KEY } from '../config/modelDefaults.js'
 import { version } from '../../package.json'
 import { useModalAccessibility } from '../composables/useModalAccessibility.js'
 import LanguageSelector from './LanguageSelector.vue'
+import MeshDevices from './MeshDevices.vue'
+import meshStore from '../stores/meshStore.js'
 import { useI18n } from '../i18n/index.js'
 
 const emit = defineEmits(['complete'])
 const i18n = useI18n()
 const titleId = useId()
 const dialogRef = ref(null)
+const hardware = ref(null), detecting = ref(true)
+// Linking a device during onboarding immediately raises what can be recommended.
+const recommendation = computed(() => {
+  try { return recommendFirstRunModel(listAllLLMs(), hardware.value, { pooledBudget: meshStore.state.pooledBudget }) }
+  catch { return null }
+})
+onMounted(async () => {
+  try { hardware.value = await window.electronAPI?.systemInformation?.() }
+  catch { hardware.value = null }
+  finally { detecting.value = false }
+})
 useModalAccessibility(dialogRef, { onClose: () => start('chat') })
 const tools = [
   { mode: 'chat', icon: 'chat', title: 'onboarding.textTitle', copy: 'onboarding.textCopy' },
@@ -77,6 +99,7 @@ const tools = [
 ]
 
 function start(mode) {
+  try { if (recommendation.value && !localStorage.getItem(MODEL_PREFERENCE_KEY)) modelStore.setPreferred(recommendation.value.model) } catch { /* Keep onboarding usable with unavailable storage. */ }
   emit('complete', mode)
 }
 </script>
@@ -124,6 +147,14 @@ function start(mode) {
   font-family: var(--bz-font-mono);
   font-size: var(--bz-size-meta);
 }
+.welcome-recommendation{display:flex;gap:20px;padding:24px 0;border-top:1px solid var(--bz-border);margin-bottom:20px}
+.welcome-recommendation > span{font-size:36px;color:var(--bz-accent)}
+.welcome-recommendation h2{margin:8px 0;font:900 italic 30px var(--bz-font-metric)}
+.welcome-recommendation p{margin:8px 0;color:var(--bz-fg-mid)}
+.welcome-alone{font-size:13px}
+.welcome-devices{margin-bottom:20px}
+.welcome-specs{display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;font-size:13px}
+.welcome-specs strong{font-size:20px;margin-right:5px}
 .welcome-copy { padding: var(--bz-space-5) var(--bz-space-6) 0; }
 .welcome-copy > p {
   max-width: 72ch;
@@ -192,6 +223,10 @@ function start(mode) {
 }
 
 .welcome-header { align-items: flex-start; }
+.welcome-header :deep(.bz-sidebar__theme-picker){display:flex;align-items:center;gap:8px;flex-shrink:0}
+.welcome-header :deep(.bz-sidebar__theme-display){display:flex;align-items:center;justify-content:center;gap:6px;min-width:80px}
+.welcome-header :deep(.bz-sidebar__theme-arrow){display:grid;place-items:center;width:32px;height:32px;border:1px solid var(--bz-border);border-radius:8px;background:var(--bz-panel);color:var(--bz-fg);cursor:pointer}
+
 .welcome-header > div { min-width: 0; }
 .welcome-header h1 { font-size: var(--bz-size-h1); overflow-wrap: anywhere; }
 .welcome-art { position: relative; height: 150px; overflow: hidden; background: var(--bz-canvas); }

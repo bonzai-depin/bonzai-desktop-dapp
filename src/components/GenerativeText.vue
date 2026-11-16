@@ -389,6 +389,7 @@
 </template>
 
 <script>
+import { mediaHistory } from "../stores/mediaHistory.js";
 import GenerationDrafts from "./generative/GenerationDrafts.vue";
 import { useGenerationDraft } from "../composables/useGenerationDraft.js";
 import { visibleText } from "../shared/visibleText.js";
@@ -1166,7 +1167,7 @@ export default {
     };
 
     // Use shallowRef for better performance with large chat histories
-    const inferences = shallowRef([]);
+    const inferences = mediaHistory('text');
     const hasCopy = shallowRef([]);
 
     // Get text content from any format
@@ -1740,6 +1741,7 @@ export default {
     // Guarantee every inference has an id so the history rail and
     // activeInference lookup never fail.
     const loadHistory = async () => {
+      if (inferences.value.length) return;
       try {
         let saved = await loadInferencesFromDb();
         if (!saved.length) {
@@ -1798,7 +1800,7 @@ export default {
       // Create the inference entry immediately so streaming text appears
       const inferenceId = uuid();
       const activityId = `chat:${inferenceId}`;
-      reportOperation({id:activityId,title:"Generating text",mode:"chat",status:"running",stage:"Generating",location:"Chat"});
+      reportOperation({id:activityId,title:"Generating text",mode:"chat",status:"running",stage:"Generating",location:"Chat",metadata:{prompt,model:currentModel.value,...chatParams}});
       const answerId = uuid();
       const activeBranch = branchDraft.value ? { ...branchDraft.value } : null;
       streamingInferenceId.value = answerId;
