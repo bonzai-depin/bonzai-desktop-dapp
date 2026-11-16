@@ -526,9 +526,9 @@ Rules that keep it correct:
 - A game template (`collect`, `hunt`, `survive`, `escape`) places built-in actors on
   layout slots and writes ordinary World Forge placements, roles and clear
   conditions. Objective pieces take their slots first so every game can be won.
-- In the Build tab, **Add game pieces** adds the built-in actors a project lacks
-  (matched by kind) and the rule buttons add a win condition; both work on
-  model-written levels as well.
+- In the Build tab, **Add game pieces** on the asset shelf adds the built-in actors
+  a project lacks (matched by kind), and **Rules & Goals** adds win conditions by
+  hand; both work on model-written levels as well.
 
 Measured on an Apple M1 Max (32 GB) in Chrome against the real `Generative3D`
 view, 16 November 2026:
