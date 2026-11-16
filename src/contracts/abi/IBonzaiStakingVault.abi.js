@@ -3,16 +3,16 @@ export const IBonzaiStakingVaultABI = [
     "inputs": [
       {
         "internalType": "address",
-        "name": "user",
+        "name": "wallet",
         "type": "address"
       }
     ],
-    "name": "utilityTier",
+    "name": "utilityWeight",
     "outputs": [
       {
-        "internalType": "uint8",
+        "internalType": "uint256",
         "name": "",
-        "type": "uint8"
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",

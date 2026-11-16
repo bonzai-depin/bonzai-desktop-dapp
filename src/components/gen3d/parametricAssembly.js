@@ -24,7 +24,10 @@ const serializable=(value,depth=0)=>{
  if(Array.isArray(value)&&value.length<=256){value.forEach(v=>serializable(v,depth+1));return;}
  throw Error('Assembly options must be finite JSON values or arrays; callbacks are not allowed');
 };
-export function assemble({parts,materials={}}={}) {
+export function assemble(spec = {}) {
+ if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw Error('Assembly requires an object with parts and a material map');
+ const {parts, materials = {}} = spec;
+ if (!materials || typeof materials !== 'object' || Array.isArray(materials)) throw Error('Assembly materials must be a map of material names to THREE.Material instances');
  if(!Array.isArray(parts)||!parts.length||parts.length>64)throw Error('Assembly requires 1–64 parts');
  const specs=new Map();
  for(const part of parts){

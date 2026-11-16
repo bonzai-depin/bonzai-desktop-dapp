@@ -1,0 +1,26 @@
+<script setup>
+import { computed, ref, watch } from 'vue';
+import { workflowDemo } from '../../services/company/workflowDemo.js';
+import CompanyBusinessDemo from './CompanyBusinessDemo.vue';
+const props = defineProps({ workflows: { type: Array, default: () => [] }, initialId: String });
+const emit = defineEmits(['choose-template']);
+const selectedId = ref(props.initialId || ''), step = ref(0);
+watch(() => props.initialId, id => { selectedId.value = id; });
+watch(selectedId, () => { step.value = 0; });
+const selected = computed(() => props.workflows.find(item => item.id === selectedId.value) || props.workflows[0]);
+const steps = computed(() => selected.value ? workflowDemo(selected.value) : []);
+</script>
+<template>
+  <section v-if="selected" class="workflow-demo" aria-labelledby="workflow-demo-title">
+    <header><div><p class="bz-eyebrow">{{ $ui('Guided Examples') }}</p><h2 id="workflow-demo-title">{{ $ui('Try A Workflow') }}</h2></div><label><span class="sr-only">{{ $ui('Demo workflow') }}</span><select v-model="selectedId" :aria-label="$ui('Demo workflow')"><option v-for="workflow in workflows" :key="workflow.id" :value="workflow.id">{{ $ui(workflow.catalogTitle) }}</option></select></label></header>
+    <p class="demo-caption">{{ $ui('Explore an example with sample content. No models, downloads or connected accounts are needed.') }}</p>
+    <div class="demo-stage">
+      <nav :aria-label="$ui('Demo steps')"><button v-for="(item,index) in steps" :key="item.title" :aria-current="step === index ? 'step' : undefined" @click="step = index"><span class="bz-metric">{{ index + 1 }}</span>{{ $ui(item.title) }}<span class="material-symbols-outlined" aria-hidden="true">{{ item.icon }}</span></button></nav>
+      <article aria-live="polite"><span class="demo-label">{{ $ui('Illustrative Example') }} · {{ step + 1 }} / {{ steps.length }}</span><h3>{{ $ui(steps[step].title) }}</h3><p class="sample-content">{{ $ui(steps[step].text) }}</p><ul><li v-for="item in steps[step].items" :key="item"><span class="material-symbols-outlined" aria-hidden="true">{{ step === 2 ? 'draft' : 'chevron_right' }}</span>{{ $ui(item) }}</li></ul><footer><button class="bz-btn bz-btn--ghost" :disabled="step === 0" @click="step--">{{ $ui('Previous') }}</button><button v-if="step < steps.length - 1" class="bz-btn bz-btn--primary" @click="step++">{{ $ui('Next step') }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button><button v-else class="bz-btn bz-btn--primary" @click="emit('choose-template', selected.id)">{{ $ui('Use this template') }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button></footer></article>
+    </div>
+    <CompanyBusinessDemo v-if="selected.demoKind" :key="selected.id" :kinds="[selected.demoKind]" embedded />
+  </section>
+</template>
+<style scoped>
+.workflow-demo{display:grid;gap:20px;border-top:1px solid var(--bz-border);padding-top:32px;min-width:0}.workflow-demo header{display:flex;justify-content:space-between;align-items:center;gap:24px}.workflow-demo h2{font:900 italic 30px/1.2 var(--bz-font-metric);margin:8px 0 0}.workflow-demo select{width:100%;min-height:48px;padding:12px 44px 12px 14px;border:1px solid var(--bz-border);border-radius:var(--bz-r);background-color:var(--bz-panel);color:var(--bz-fg);font:inherit}.workflow-demo header label{width:min(420px,50%)}.demo-caption{margin:0;color:var(--bz-fg-mid);font-size:14px}.demo-stage{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,2fr);border:1px solid var(--bz-border);border-radius:var(--bz-r-lg);overflow:hidden}.demo-stage nav{display:grid;align-content:start;padding:16px;gap:8px;border-right:1px solid var(--bz-border)}.demo-stage nav button{display:flex;gap:12px;align-items:center;background:transparent;color:var(--bz-fg);font:inherit;border:1px solid transparent;border-radius:var(--bz-r);padding:16px;text-align:left;cursor:pointer}.demo-stage nav button[aria-current]{background:var(--bz-accent-soft);border-color:var(--bz-accent)}.demo-stage nav button>.material-symbols-outlined{margin-left:auto;font-size:20px;color:var(--bz-accent)}.demo-stage article{padding:28px;min-width:0;background:var(--bz-panel)}.demo-stage h3{font:900 italic 24px/1.2 var(--bz-font-metric);margin:14px 0 20px}.demo-label{font-size:12px;color:var(--bz-fg-mid)}.sample-content{white-space:pre-line;line-height:1.7;color:var(--bz-fg);overflow-wrap:anywhere}.demo-stage ul{list-style:none;padding:0;display:grid;gap:10px;margin:24px 0}.demo-stage li{display:flex;gap:10px;align-items:center;color:var(--bz-fg-mid);font-size:14px}.demo-stage li .material-symbols-outlined{color:var(--bz-accent);font-size:18px}.demo-stage footer{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--bz-border);padding-top:20px}.workflow-demo summary{cursor:pointer;padding:12px 0}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:700px){.workflow-demo header{align-items:stretch;flex-direction:column}.workflow-demo header label{width:100%}.demo-stage{grid-template-columns:1fr}.demo-stage nav{border-right:0;border-bottom:1px solid var(--bz-border)}.demo-stage article{padding:20px}}
+</style>

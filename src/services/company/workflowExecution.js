@@ -1,3 +1,5 @@
+import { remoteRequirementSatisfied } from '../../stores/remoteInference.js';
+import { agentModelOverride } from './teamCapabilities.js';
 import { getAvailableAgentWorkflows } from '../agentWorkflows.js';
 import { loadSmartAgents, smartAgentCatalog } from '../smartAgentCatalog.js';
 import { executeCreation } from './createCapabilities.js';
@@ -11,7 +13,7 @@ function hasResult(value) {
   if (value && typeof value === 'object') return Object.entries(value).some(([key, item]) => !RESULT_METADATA.has(key) && hasResult(item));
   return typeof value === 'number' && Number.isFinite(value);
 }
-const failedResult = value => value?.success === false || value?.isError === true || Boolean(value?.error) || ['failed', 'error', 'cancelled'].includes(value?.status);
+const failedResult = value => value?.ok === false || value?.success === false || value?.isError === true || Boolean(value?.error) || ['failed', 'error', 'cancelled', 'canceled', 'pending', 'queued', 'running', 'processing', 'rejected', 'unknown', 'requires_input', 'unsupported'].includes(value?.status);
 const MEDIA_RESULT_KEYS = new Set(['image', 'imageSrc', 'imageUrl', 'image_base64', 'image_path', 'audio', 'audioSrc', 'audio_base64', 'audio_path', 'narration', 'video', 'videoSrc', 'videoUrl', 'video_base64', 'video_path']);
 function incompleteResults(value, location = 'result', depth = 0) {
   if (!value || typeof value !== 'object') return [];
@@ -131,7 +133,7 @@ export async function executeCompanyWorkflow(charter, roleKey, companion, action
     checkModels: checkWorkflowModels,
     lock: async () => {
       const generation = await import('../../stores/generationStore.js');
-      if (!generation.canStartGeneration() || !generation.startGeneration('text')) throw new Error('Another creation is running. Try again when the device is available.');
+      if (!generation.startGeneration('text')) throw new Error('Another creation is running. Try again when the device is available.');
       return () => generation.stopGeneration('text');
     },
   };
@@ -150,11 +152,14 @@ export async function executeCompanyWorkflow(charter, roleKey, companion, action
   let artifacts, failures = [];
   if (mode === 'prompt') {
     const prepared = service.prepareSkillExecution(workflow.id, validation.normalizedInputs);
-    const creation = await runtime.create({ type: 'produce', pipeline: 'text', prompt: prepared.taskPrompt }, { ...context, instructions: prepared.systemPrompt, llm: charter.roles?.[roleKey]?.llm });
+    const creation = await runtime.create({ type: 'produce', pipeline: 'text', prompt: prepared.taskPrompt }, { ...context, instructions: prepared.systemPrompt, llm: agentModelOverride(charter, roleKey, await runtime.agents()) });
+    if (failedResult(creation) || !['text', 'code'].includes(creation?.pipeline) || typeof creation?.payload !== 'string' || !creation.payload.trim()) {
+      return { ok: false, status: 'requires_input', workflowId: workflow.id, error: creation?.error || 'The workflow did not produce a usable text result.' };
+    }
     if (ctx.workerExecution) return { ...creation, ok: true, status: 'completed', scope: 'local_draft', workflowId: workflow.id };
     artifacts = [creation];
   } else {
-    const release = await runtime.lock();
+    const release = workflow.execution?.managesGeneration ? () => {} : await runtime.lock();
     try {
       const result = await service.executeSkill(workflow.id, validation.normalizedInputs, context);
       ({ artifacts, failures } = collectResults(workflow, result));
@@ -175,10 +180,13 @@ async function checkWorkflowModels(workflow, inputs = {}) {
     return;
   }
   const { getSkillModelRequirements } = await import('../../skills/flagship.js');
-  const requirements = getSkillModelRequirements(workflow.id).filter(model => workflow.id !== 'chart-forecaster-v1.0.0' || model.key === 'forecast_quality');
+  const requirements = getSkillModelRequirements(workflow.id).filter(model => !(inputs.soundtrack && (model.key === 'music_fast' || model.parentKey === 'music_fast'))).filter(model => workflow.id !== 'chart-forecaster-v1.0.0' || model.key === 'forecast_quality');
   const pipelines = { audio_quality: 'audio_quality_persona', vision: 'vision', forecast_quality: 'forecast', music_fast: 'music', image_advanced: 'image_quality' };
+  const remote = await window.electronAPI?.openRouter?.status?.();
   for (const model of requirements) {
+    if (remote && remoteRequirementSatisfied(model, remote)) continue;
     if (model.type === 'llm') {
+      if (!model.parentKey && (await window.electronAPI?.openRouter?.status?.())?.active) continue;
       if (!await window.electronAPI?.checkModel?.(model.filename)) throw Object.assign(new Error('A language download is required. Open the workflow to download it first.'), { beforeDispatch: true });
     } else {
       const response = await fetch(`${window.electronAPI?.env?.API_BASE || 'http://127.0.0.1:65000'}/pipelines/plan`, {

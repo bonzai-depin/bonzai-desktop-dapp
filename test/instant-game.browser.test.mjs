@@ -64,7 +64,7 @@ test('one click builds a playable game without a model, and it can then be edite
   assert.equal((await game(page)).score,0);
 
   // Edit: the same project opens in the level editor with its pieces in the palette.
-  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await page.getByRole('button',{name:'Back to Build',exact:true}).click();
   await page.waitForFunction(()=>!window.vm.isPlaytesting&&window.vm.editorRevision>0&&!window.vm.editorBusy);
   const before=await page.evaluate(()=>({crystals:window.vm.activeLevel.placements.filter(x=>x.role==='collectible').length,objects:window.vm.gameProject.objects.length}));
   await page.getByRole('button',{name:'Add game pieces',exact:true}).click();
@@ -75,9 +75,10 @@ test('one click builds a playable game without a model, and it can then be edite
   await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
   await page.waitForFunction(count=>!window.vm.editorBusy&&window.vm.activeLevel.placements.filter(x=>x.role==='collectible').length===count+1,before.crystals);
   // A hand-added rule, with no model call.
-  await page.locator('details.build-gameplay summary').first().click();
-  await page.getByRole('button',{name:'Survive for 60 seconds',exact:true}).click();
-  assert.equal(await page.evaluate(()=>window.vm.activeLevel.clearConditions.at(-1).type),'survive');
+  await page.locator('.level-editor__tabs').getByRole('button',{name:'Rules & Goals'}).click();
+  await page.locator('.game-rules__presets button').nth(2).click();
+  await page.getByRole('button',{name:'Add objective',exact:true}).click();
+  await page.waitForFunction(()=>!window.vm.editorBusy&&window.vm.activeLevel.clearConditions.at(-1).type==='survive');
   assert.equal(await page.evaluate(()=>window.chatCalls),0);
 
   // Building again extends the project with a second level instead of replacing it.

@@ -1,6 +1,7 @@
 """Verified standalone model mirrors. Keep local filenames and adapter settings stable."""
 MODEL_CDN = "https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models"
-MODEL_FILES = {'ema_vae_fp16.safetensors': {'sha256': '20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1',
+MODEL_FILES = {'qwen-image-2.1-lora.safetensors': {'sha256': '83aba822ad8ee10a1e836828f5088259d93bce7b5f3419b46dbc0258c2be46a9', 'size': 79744352},
+ 'ema_vae_fp16.safetensors': {'sha256': '20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1',
                               'size': 501324814},
  'flux-2-klein-9b-lora-extra.safetensors': {'sha256': '97140b103cb601f83db8ecb854ee804bd4261fba056ecf7802c65359525b0a8a',
                                             'size': 1090563784},

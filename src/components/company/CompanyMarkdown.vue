@@ -175,6 +175,7 @@ onBeforeUnmount(() => clearTimeout(timer));
 }
 .company-markdown :deep(th) {
   background: var(--bz-panel);
+  color: var(--bz-fg);
   font-weight: 600;
 }
 .company-markdown :deep(code) {

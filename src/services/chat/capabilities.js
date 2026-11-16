@@ -49,13 +49,19 @@ export async function runChatCapability(request, { agent, channel = 'local', ima
     if (channel === 'x' && ['3d', 'vision'].includes(request.pipeline)) throw new Error('This output needs the local chat workspace. X cannot attach a 3D project or accept a private local image.');
     updateStatus?.(`Creating ${request.pipeline}…`);
     const identityImage = request.pipeline === 'image' && referenceImage;
+    const h3Video = request.pipeline === 'video' && mediaModes.video === 'sota';
+    if (h3Video && globalThis.localStorage?.getItem('bonzai:minimax-h3-terms') !== 'accepted') {
+      throw new Error('Accept the MiniMax H3 license in roleplay settings before generating video.');
+    }
     const output = await deps.create({
       type: 'produce', pipeline: request.pipeline,
       prompt: identityImage ? 'If depicting the companion, preserve the reference face and identity; clothing and setting may change. ' + request.prompt : request.prompt,
       ...(mediaModes[request.pipeline] && { mode: mediaModes[request.pipeline] }),
       ...(request.pipeline === 'audio' && { mode: 'turbo' }),
       ...(identityImage && { mode: 'turbo_edit' }),
-      params: identityImage ? { image_base64: referenceImage }
+      params: h3Video ? { ...(image && { image_base64: image }), width: 512, height: 288,
+        num_frames: 124, num_inference_steps: 8, guidance_scale: 1, license_accepted: true }
+        : identityImage ? { image_base64: referenceImage }
         : image && ['vision', 'video'].includes(request.pipeline) ? { image_base64: image } : {},
     }, context);
     title = `${request.pipeline === '3d' ? '3D' : request.pipeline} creation`;

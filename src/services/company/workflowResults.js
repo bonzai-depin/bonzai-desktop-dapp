@@ -78,6 +78,13 @@ export function workflowResultArtifacts(workflowId, result, workflowName = 'Work
   if (readable && typeof readable === 'object' && !Array.isArray(readable)) delete readable.createdAt;
   let text = typeof readable === 'string' ? readable : JSON.stringify(JSON.parse(stableJson(readable)), null, 2);
   const meta = { payloadEncoding: 'text', kind: 'workflow-result', title };
+  if (['podcast-studio-v1.0.0', 'music-video-forge-v1.0.0', 'manga-to-anime-v1.0.0'].includes(workflowId)) {
+    text = result.script?.trim() ? `# ${title}\n\n${result.script.trim()}` : media.length ? '' : text;
+    for (const item of media) {
+      item.meta.title = title;
+      if (Number(result.durationSeconds) > 0) item.meta.durationSeconds = Number(result.durationSeconds);
+    }
+  }
   if (typeof result.createdAt === 'string') meta.generatedAt = result.createdAt;
   const generationId = result.generation_id || result.generationId || result.sourceId || result.id;
   if (typeof generationId === 'string' || typeof generationId === 'number') meta.generationId = String(generationId);

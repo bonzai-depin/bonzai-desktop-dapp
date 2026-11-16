@@ -383,3 +383,14 @@ test('connector roster reads regenerated portraits from SQLite instead of its st
   assert.equal(actual.image,'data:image/webp;base64,bmV3');
   assert.equal(actual.name,original.name);
 }));
+
+test('background completion merges with the latest roster instead of replacing edits made during inference', async () => fixture(async () => {
+  await store.saveCompanions([{id:'existing',name:'Updated while generation ran'}]);
+  await Promise.all([
+    store.upsertCompanion({id:'created-a',name:'New agent A',isCustom:true}),
+    store.upsertCompanion({id:'created-b',name:'New agent B',isCustom:true}),
+  ]);
+  const roster = await store.loadCompanions();
+  assert.equal(roster.length,3);
+  assert.equal(roster.find(agent=>agent.id==='existing').name,'Updated while generation ran');
+}));

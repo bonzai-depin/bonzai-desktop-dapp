@@ -158,6 +158,8 @@
       </div>
 
       <!-- Network Address Translation (provider mode, below Node Status) -->
+      <OpenRouterSettings v-if="networkMode === 'consumer'" />
+
       <div class="mt-5 mb-5" v-if="networkMode === 'provider'">
         <h2 id="net-nat" class="section-title">Network Address Translation</h2>
         <div class="orchestration-controls mt-4">
@@ -194,7 +196,7 @@
       </div>
 
       <!-- LAN Providers (auto-discovered via mDNS, free) -->
-      <div class="consumer-section mt-5" v-if="networkMode === 'consumer' && lanProviders.length > 0">
+      <div class="consumer-section mt-5" v-if="networkMode === 'consumer' && !remoteInference.active && lanProviders.length > 0">
         <h2 id="net-local-providers" class="section-title">
           <span class="material-symbols-outlined mr-2" style="vertical-align: middle">wifi</span>
           Local Network Providers
@@ -280,10 +282,10 @@
         </div>
       </div>
 
-      <hr v-if="networkMode === 'consumer'" />
+      <hr v-if="networkMode === 'consumer' && !remoteInference.active" />
 
       <!-- Consumer Mode: Remote Provider Selection -->
-      <div class="consumer-section mt-5" v-if="networkMode === 'consumer'">
+      <div class="consumer-section mt-5" v-if="networkMode === 'consumer' && !remoteInference.active">
         <h2 id="net-remote-providers" class="section-title">
           Remote Providers
         </h2>
@@ -398,10 +400,10 @@
         </div>
       </div>
 
-      <hr v-if="networkMode === 'consumer'" />
+      <hr v-if="networkMode === 'consumer' && !remoteInference.active" />
 
       <!-- Private Networking (Consumer Mode — after providers) -->
-      <div class="pipeline-section mt-5 mb-5" v-if="networkMode === 'consumer'">
+      <div class="pipeline-section mt-5 mb-5" v-if="networkMode === 'consumer' && !remoteInference.active">
         <h2 id="net-privacy" class="section-title">Private Networking</h2>
         <div class="description-card pipeline">
           <span class="material-symbols-outlined">lock</span>
@@ -463,10 +465,10 @@
         <PipelineStatus class="mt-4" />
       </div>
 
-      <hr v-if="networkMode === 'consumer' || networkMode === 'provider'" />
+      <hr v-if="(networkMode === 'consumer' && !remoteInference.active) || networkMode === 'provider'" />
 
       <!-- Agentic Orchestration (consumer + provider) -->
-      <div class="orchestration-section mt-5 mb-5" v-if="networkMode === 'consumer' || networkMode === 'provider'">
+      <div class="orchestration-section mt-5 mb-5" v-if="(networkMode === 'consumer' && !remoteInference.active) || networkMode === 'provider'">
         <h2 id="net-orchestration" class="section-title">Agentic Orchestration</h2>
         <div class="description-card orchestration">
           <span class="material-symbols-outlined">info</span>
@@ -732,6 +734,8 @@
 </template>
 
 <script setup>
+import { remoteInference } from '../stores/remoteInference.js';
+import OpenRouterSettings from "./OpenRouterSettings.vue";
 import meshStore from "../stores/meshStore.js";
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { getProviderPerformanceStats } from "../stores/inferenceStore.js";
@@ -758,10 +762,10 @@ const _allSections = [
   { id: "net-mode",             label: "Mode",            visible: () => true },
   { id: "net-status",           label: "Mesh Presence",   visible: () => true },
   { id: "net-nat",              label: "NAT",             visible: () => networkMode.value === "provider" },
-  { id: "net-local-providers",  label: "Local Providers", visible: () => networkMode.value === "consumer" && lanProviders.value && lanProviders.value.length > 0 },
-  { id: "net-remote-providers", label: "Remote Providers",visible: () => networkMode.value === "consumer" },
-  { id: "net-privacy",          label: "Privacy",         visible: () => networkMode.value === "consumer" },
-  { id: "net-orchestration",    label: "Orchestration",   visible: () => networkMode.value === "consumer" || networkMode.value === "provider" },
+  { id: "net-local-providers",  label: "Local Providers", visible: () => networkMode.value === "consumer" && !remoteInference.active && lanProviders.value && lanProviders.value.length > 0 },
+  { id: "net-remote-providers", label: "Remote Providers",visible: () => networkMode.value === "consumer" && !remoteInference.active },
+  { id: "net-privacy",          label: "Privacy",         visible: () => networkMode.value === "consumer" && !remoteInference.active },
+  { id: "net-orchestration",    label: "Orchestration",   visible: () => networkMode.value === "consumer" && !remoteInference.active || networkMode.value === "provider" },
   { id: "net-self-test",        label: "Self-Test",       visible: () => p2pStatus.value?.started },
   { id: "net-peer-test",        label: "Peer Test",       visible: () => p2pStatus.value?.started },
   { id: "net-service-time",     label: "Service Time",    visible: () => networkMode.value === "provider" },

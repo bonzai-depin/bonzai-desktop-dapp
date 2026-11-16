@@ -185,30 +185,31 @@ SHA-256 before completion, then verify public HEAD size. Delete the temporary
 Actions artifact after use; never commit or share its signed links. Do not start
 upload preparation until the local transfer is ready to run.
 
-## Host validated test installers without rebuilding
+## Host validated installers without rebuilding
 
 The manual **Host validated installers** workflow accepts a successful desktop build run ID.
 It checks the workflow outcome, rejects split payloads, verifies the build's saved SHA-256,
-and uploads complete installers to `releases/test-builds/<source-sha>/`. It downloads each
+and uploads complete installers to `releases/`. It downloads each
 public installer in full and verifies its checksum before publishing a per-run JSON manifest
-and links in the Actions summary. Existing objects with different contents are rejected.
-These are explicitly unsigned test builds (macOS is not notarized), not signed releases.
+under `releases/manifests/<source-sha>/` and links in the Actions summary. Existing objects with different contents are rejected.
+These installers are unsigned (macOS is not notarized); hosting does not change their signing status.
 This path allows tested artifacts to be hosted without rerunning compilation or requiring
 local copies of bucket credentials. Artifact retention still applies before promotion.
 
-## Publish an explicitly unsigned release candidate without rebuilding
+## Publish an explicitly unsigned release without rebuilding
 
 After all four native installer jobs pass for one source commit, use **Host
 validated installers** for each of the three build runs. This verifies the full
-public downloads and writes immutable manifests under `releases/test-builds/`.
+public downloads and writes immutable manifests under `releases/manifests/<source-sha>/`.
 
-**Publish validated unsigned RC** accepts the full source commit, its matching
-`vX.Y.Z-rc.N` tag and the three successful build run IDs. It verifies checkout
+**Publish validated unsigned release** (`publish-validated-rc.yml`) accepts the full source commit, its matching
+`vX.Y.Z-rc.N` tag and the three successful build run IDs. For an explicitly authorized
+stable release, set `allow_stable_release: true` and use `vX.Y.Z`; the default remains an RC. It verifies checkout
 provenance, all four hosted installers, checksums and version before creating a
-GitHub prerelease with direct R2 links and checksum manifests. Release notes live
+GitHub release (a prerelease for RC tags) with direct R2 links and checksum manifests. Release notes live
 in `.github/release-notes/<tag>.md`. It refuses conflicting existing tags.
 
-This route requires explicit approval of an unsigned, non-notarized macOS RC.
+This route requires explicit approval of an unsigned, non-notarized macOS installer.
 It does not change the signing requirements of normal release workflows. The
 publisher uses GitHub's workflow token, so publishing the validated artifacts
 does not trigger redundant native builds. The release tag identifies the actual

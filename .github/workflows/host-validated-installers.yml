@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run:
-        description: 'Desktop build run ID (waits for success before publishing an unsigned test build)'
+        description: 'Desktop build run ID (waits for success before uploading complete installers to releases/)'
         required: true
         type: string
 permissions:

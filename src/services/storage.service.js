@@ -44,25 +44,33 @@ import { ethers } from "ethers";
 const PINATA_API = "https://api.pinata.cloud";
 const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs";
 
-// Auth: JWT (preferred), falls back to API Key + Secret
-function getAuthHeaders() {
-  const jwt = import.meta.env.VITE_PINATA_JWT;
-  if (jwt) {
-    return { Authorization: `Bearer ${jwt}` };
-  }
-  const apiKey = import.meta.env.VITE_PINATA_API_KEY;
-  const apiSecret = import.meta.env.VITE_PINATA_API_SECRET;
-  if (apiKey && apiSecret) {
-    return {
-      pinata_api_key: apiKey,
-      pinata_secret_api_key: apiSecret,
-    };
-  }
-  throw new Error(
-    "Pinata credentials not configured. Set VITE_PINATA_JWT (or VITE_PINATA_API_KEY + VITE_PINATA_API_SECRET) in your .env file.",
-  );
+// Desktop credentials stay encrypted in main. Web credentials last only for this tab.
+let sessionJWT = '';
+let sessionReceipts = [];
+function rememberSession(receipt, name) { sessionReceipts = [{ ...receipt, name }, ...sessionReceipts.filter(row => row.cid !== receipt.cid)].slice(0, 100); return receipt; }
+const bridge = () => globalThis.window?.electronAPI?.publicStorage;
+export async function storageStatus() {
+  return bridge() ? bridge().status() : { configured: Boolean(sessionJWT), persistent: false };
 }
-
+export async function configureStorage(jwt) {
+  if (typeof jwt !== 'string' || !jwt.trim() || /\s/.test(jwt.trim()) || jwt.length > 16384) throw new Error('Enter a valid Pinata JWT.');
+  if (bridge()) return bridge().configure(jwt.trim());
+  sessionJWT = jwt.trim();
+  return storageStatus();
+}
+export async function removeStorageCredentials() {
+  sessionJWT = ''; _initialized = false;
+  return bridge() ? bridge().disconnect() : storageStatus();
+}
+export async function storageReceipts() { return bridge() ? bridge().receipts() : sessionReceipts.map(row => ({ ...row })); }
+function getAuthHeaders() {
+  if (!sessionJWT) throw new Error('Set up IPFS storage in Ownership → Web3 Guide → Decentralized Storage.');
+  return { Authorization: `Bearer ${sessionJWT}` };
+}
+function validateReceipt(result) {
+  if (!/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/.test(result.IpfsHash || '')) throw new Error('Invalid IPFS receipt. Check Pinata before retrying.');
+  return result;
+}
 const STORAGE_CONFIG = {
   gateways: {
     primary: PINATA_GATEWAY,
@@ -87,7 +95,7 @@ let _initialized = false;
  */
 export async function initStorage(_provider) {
   // Verify credentials are available
-  getAuthHeaders();
+  if (!(await storageStatus()).configured) throw new Error('Set up IPFS storage in Ownership → Web3 Guide → Decentralized Storage.');
   _initialized = true;
   return true;
 }
@@ -106,19 +114,19 @@ export function disconnect() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FUNDING (no-ops — Pinata uses API plan, no per-upload funding)
+// FUNDING (Pinata plan billing; no onchain funding)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function getBalance() {
-  return "unlimited";
+  return null; // Quota depends on the user’s Pinata plan; it is not a wallet balance.
 }
 
 export async function fund(_amount) {
-  return { id: "pinata-no-funding-needed" };
+  throw new Error('Storage is billed by your Pinata plan; there is no onchain storage funding action.');
 }
 
 export async function estimateCost(_bytes) {
-  return "0";
+  return null; // Do not promise free storage without reading the provider plan.
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -174,7 +182,7 @@ function extFromMime(contentType) {
  * @returns {Record<string, string>} Key-value pairs for Pinata metadata
  */
 function buildKeyValues(generation = {}, attribution = {}) {
-  const kv = { "App-Name": "BonzAI", "App-Version": "2.0.0" };
+  const kv = { "App-Name": "BonzAI", "App-Version": "4" };
   if (generation.type) kv["Generation-Type"] = generation.type;
   if (generation.model) kv["Model-ID"] = generation.model;
   if (generation.modelVersion) kv["Model-Version"] = generation.modelVersion;
@@ -208,6 +216,7 @@ export async function uploadContent({
 }) {
   let uploadData = data;
   if (data instanceof Blob) {
+    if (!data.size || data.size > 512 * 1024 * 1024) throw new Error('Choose a non-empty file up to 512 MiB.');
     const arrayBuffer = await data.arrayBuffer();
     uploadData = new Uint8Array(arrayBuffer);
   } else {
@@ -215,8 +224,10 @@ export async function uploadContent({
   }
 
   const ext = extFromMime(contentType);
-  const fileName = `bonzai-${generation.type || "content"}-${Date.now()}.${ext}`;
+  const fileName = typeof data?.name === "string" ? data.name.slice(0, 200) : `bonzai-${generation.type || "content"}-${Date.now()}.${ext}`;
 
+  if (!uploadData.byteLength || uploadData.byteLength > 512 * 1024 * 1024) throw new Error('Choose a non-empty file up to 512 MiB.');
+  if (bridge()) return bridge().upload({ data: uploadData, contentType, name: fileName, keyvalues: buildKeyValues(generation, attribution) });
   const formData = new FormData();
   formData.append("file", new Blob([uploadData], { type: contentType }), fileName);
   formData.append(
@@ -233,21 +244,22 @@ export async function uploadContent({
 
   const res = await fetch(`${PINATA_API}/pinning/pinFileToIPFS`, {
     method: "POST",
+    redirect: "error", signal: AbortSignal.timeout(180000),
     headers: getAuthHeaders(),
     body: formData,
   });
 
   if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Pinata upload failed (${res.status}): ${errBody}`);
+    throw new Error(`Pinata upload failed (HTTP ${res.status}). Check your credentials and plan in Storage settings.`);
   }
 
-  const result = await res.json();
+  const result = validateReceipt(await res.json());
   const cid = result.IpfsHash;
 
 
-  return {
+  return rememberSession({
     transactionId: cid,
+    cid,
     timestamp: result.Timestamp,
     signature: null,
     url: `ipfs://${cid}`,
@@ -256,7 +268,7 @@ export async function uploadContent({
     tags: Object.entries(buildKeyValues(generation, attribution)).map(
       ([name, value]) => ({ name, value }),
     ),
-  };
+  }, fileName);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -276,8 +288,11 @@ export async function uploadMetadata(
   generation = {},
   attribution = {},
 ) {
+  if (bridge()) return bridge().uploadMetadata({ metadata, keyvalues: buildKeyValues(generation, attribution) });
+  if (!metadata || typeof metadata !== 'object' || JSON.stringify(metadata).length > 8 * 1024 * 1024) throw new Error('Choose JSON metadata up to 8 MiB.');
   const res = await fetch(`${PINATA_API}/pinning/pinJSONToIPFS`, {
     method: "POST",
+    redirect: "error", signal: AbortSignal.timeout(180000),
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
@@ -293,23 +308,23 @@ export async function uploadMetadata(
   });
 
   if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Pinata metadata upload failed (${res.status}): ${errBody}`);
+    throw new Error(`Pinata metadata upload failed (HTTP ${res.status}). Check your credentials and plan in Storage settings.`);
   }
 
-  const result = await res.json();
+  const result = validateReceipt(await res.json());
   const cid = result.IpfsHash;
 
 
-  return {
+  return rememberSession({
     transactionId: cid,
+    cid,
     timestamp: result.Timestamp,
     signature: null,
     url: `ipfs://${cid}`,
     gatewayUrl: `${PINATA_GATEWAY}/${cid}`,
     size: result.PinSize,
     tags: [],
-  };
+  }, 'bonzai-metadata.json');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -425,6 +440,7 @@ export async function fetchWithProvenance(cid) {
  */
 export async function verifyContentIntegrity(cid, expectedHash) {
   const response = await fetchContent(cid);
+  if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
   const buffer = await response.arrayBuffer();
   const hash = ethers.keccak256(new Uint8Array(buffer));
   return hash === expectedHash;
@@ -450,6 +466,7 @@ export async function uploadJSON(json, generation = {}, attribution = {}) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const storageService = {
+  storageStatus, configureStorage, removeStorageCredentials, storageReceipts,
   // Init
   initStorage,
   getStorage,

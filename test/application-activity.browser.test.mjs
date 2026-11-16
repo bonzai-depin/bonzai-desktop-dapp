@@ -21,15 +21,27 @@ test('global activity survives navigation, reconnects truthfully and controls aw
  await page.evaluate(async()=>{
   const {createApp,h,reactive}=await import('/node_modules/.vite/deps/vue.js');
   window.fixtureSkills=reactive({autonomousMode:true,isGeneratingAutonomous:false,autonomousMessageCount:2,autonomousConfig:{idleTimeout:5,messageInterval:15,maxMessages:12},lastActiveTime:Date.now(),lastHeartbeatAt:Date.now(),autonomousSession:{sessionKey:'sakura',settings:{},companion:{name:'Sakura'}},toggleAutonomousMode(value){this.autonomousMode=value}});
-  window.electronAPI={getActiveDownloads:async()=>[],onDownloadProgress:callback=>{window.emitDownload=data=>callback(null,data);return()=>{}}};
+  window.electronAPI={inferenceQueueSnapshot:async()=>[],onInferenceQueueChanged:callback=>{window.emitInference=callback;return()=>{}},getActiveDownloads:async()=>[],onDownloadProgress:callback=>{window.emitDownload=data=>callback(null,data);return()=>{}}};
   const {default:Bar}=await import('/src/components/ApplicationActivityBar.vue');
+  const {default:Inspector}=await import('/src/components/GenerationInspector.vue');
   window.fixtureServer=reactive({type:'starting'});window.openedMode=null;
-  const app=createApp({render:()=>h('div',{},[h(Bar,{server:window.fixtureServer,onOpenMode:mode=>window.openedMode=mode}),h('div',{style:'padding:32px;color:white'},'Current workspace')])});
+  const app=createApp({render:()=>h('div',{},[h(Inspector),h(Bar,{server:window.fixtureServer,onOpenMode:mode=>window.openedMode=mode}),h('div',{style:'padding:32px;color:white'},'Current workspace')])});
   app.config.globalProperties.$ui=text=>text;app.mount('#fixture');
  });
  await page.getByRole('button',{name:/Local AI/}).click();
  assert.match(await page.locator('#application-activity-panel').innerText(),/Starting BonzAI/);
- await page.evaluate(()=>{window.fixtureServer.type='ready';window.fireGeneration('gen_started',{generation_id:'video1',kind:'wan_video'});window.fireGeneration('gen_progress',{generation_id:'video1',stage:'denoising',step:3,total:4,pct:75});});
+ await page.evaluate(()=>window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'queued',revision:1,startedAt:Date.now(),updatedAt:Date.now()}));
+ const lyrics = page.locator('[data-operation-id="inference:lyrics"]');
+ assert.match(await lyrics.innerText(), /Generating lyrics/);
+ assert.match(await lyrics.innerText(), /Waiting for the device/);
+ await page.evaluate(()=>{
+  window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'running',revision:2,startedAt:Date.now(),updatedAt:Date.now()});
+  window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'queued',revision:1,startedAt:Date.now(),updatedAt:Date.now()});
+ });
+ assert.doesNotMatch(await lyrics.innerText(), /Waiting for the device/);
+ await page.evaluate(()=>window.emitInference({id:'lyrics',kind:'llm',title:'Generating lyrics',status:'completed',revision:3,startedAt:Date.now(),updatedAt:Date.now()}));
+
+ await page.evaluate(()=>{window.fixtureServer.type='ready';window.fireGeneration('gen_started',{generation_id:'video1',kind:'wan_video',meta:{prompt:'A fox crossing the snow',seed:42}});window.fireGeneration('gen_progress',{generation_id:'video1',stage:'denoising',step:3,total:4,pct:75});});
  assert.match(await page.locator('.app-activity__strip').innerText(),/75%/);
  await page.screenshot({path:'/tmp/bonzai-activity-running.png'});
  await page.getByRole('button',{name:'Pause heartbeat',exact:true}).click();
@@ -39,6 +51,14 @@ test('global activity survives navigation, reconnects truthfully and controls aw
  await page.getByRole('button',{name:'Resume heartbeat',exact:true}).click();
  assert.equal(await page.evaluate(()=>window.fixtureSkills.autonomousMode),true);
  assert.equal(await page.locator('.app-activity__heartbeat').count(),1);
+ const video = page.locator('[data-operation-id="generation:video1"]');
+ await video.getByRole('button',{name:'Info',exact:true}).click();
+ await page.getByRole('complementary').waitFor();
+ assert.match(await page.getByRole('complementary').innerText(), /A fox crossing the snow/);
+ assert.match(await page.getByRole('complementary').innerText(), /42/);
+ await page.getByRole('button',{name:'Close inspector'}).click();
+ assert.equal(await page.locator('#application-activity-panel').isVisible(),true);
+
  assert.equal(await page.evaluate(()=>window.fixtureSkills.autonomousSession.companion.name),'Sakura');
  await page.locator('.app-activity__item').filter({hasText:'Generating video'}).getByRole('button',{name:'Open',exact:true}).click();
  assert.equal(await page.evaluate(()=>window.openedMode),'video');
@@ -55,6 +75,12 @@ test('global activity survives navigation, reconnects truthfully and controls aw
  assert.match(await page.locator('.app-activity__strip').innerText(),/Downloading model/);
  await page.evaluate(()=>window.emitDownload({filename:'test.gguf',percent:1,status:'failed',error:'Checksum mismatch'}));
  assert.match(await page.locator('#application-activity-panel').innerText(),/Checksum mismatch/);
+ await page.locator('.app-activity__item').filter({hasText:'Checksum mismatch'}).getByRole('button',{name:'Logs',exact:true}).click();
+ assert.match(await page.getByRole('dialog').innerText(),/Checksum mismatch/);
+ await page.screenshot({path:'/tmp/bonzai-activity-terminal.png'});
+ await page.getByRole('dialog').getByRole('button',{name:'Close'}).click();
+ assert.equal(await page.locator('#application-activity-panel').isVisible(),true);
+
  await page.locator('.app-activity__item').filter({hasText:'Checksum mismatch'}).getByRole('button',{name:'Dismiss'}).click();
  assert.equal(await page.locator('#application-activity-panel').getByText('Checksum mismatch').count(),0);
  await page.screenshot({path:'/tmp/bonzai-activity-desktop.png'});

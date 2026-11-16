@@ -9,6 +9,8 @@ test('RC shell, modal keyboard paths and constrained layouts', { skip: !url, tim
     const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
     const pageErrors = []
     page.on('pageerror', error => pageErrors.push(error.stack || error.message))
+    // Opening any creation view must remain safe while the local AI server is offline.
+    await page.route('**/pipelines/plan', route => route.abort('connectionrefused'))
     await page.goto(url)
     const welcome = page.locator('.welcome-window')
     await welcome.waitFor()

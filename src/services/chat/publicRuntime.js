@@ -24,6 +24,14 @@ export async function processPublicRequest(session, request, history, deps = {})
   try {
     const task = chatRequest(request.text, catalog);
     let result;
+    if (task?.kind === 'workflow') {
+      if (!api.publicTeam) throw new Error('Restart BonzAI to enable team delivery.');
+      const delegated = await api.publicTeam(request.id, task);
+      const ref = delegated.result.teamTask;
+      const start = deps.startTeam || (async (id, role) => (await import('../company.service.js')).tickRoleNow(id, role));
+      void Promise.resolve(start(ref.companyId, ref.roleKey)).catch(() => {});
+      return;
+    }
     if (task) result = await (deps.run || runChatCapability)(task, { agent, channel: 'x', enabledMedia: session.settings.media, workflowIds: session.settings.workflows });
     else {
       const output = await (deps.create || executeCreation)({ pipeline: 'text', prompt: request.text }, { channel: 'x', source: 'chat', agentId: agent.id, instructions: publicConversationContext(session, request, history) });
@@ -46,6 +54,7 @@ export async function tickPublicSessions() {
       try {
         await api.publicPoll(session.agent_id);
         const history = await api.publicRequests(session.agent_id);
+        for (const item of history.filter(item => item.status === 'waiting_team')) await api.publicTeamResult?.(item.id);
         const pending = await api.publicNext(session.agent_id);
         if (pending) await processPublicRequest(session, pending, history);
       } catch (error) {

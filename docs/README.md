@@ -4,19 +4,24 @@ This directory contains concise references for implemented BonzAI systems. Publi
 
 | Document | Scope |
 | --- | --- |
+| [OpenRouter consumer inference](OPENROUTER.md) | Optional remote LLM routing, credentials, spending controls and attribution |
 | [Inference engine comparison](INFERENCE_ENGINE_BENCHMARK.md) | Reproducible local server timing, workloads and comparison limits |
 | [Media Mint pipeline](MINTING.md) | Selected media, preview, license validation, metadata and confirmation handling |
 | [Model transfers](MODEL_TRANSFERS.md) | Parallel downloads, recovery and explicit Hugging Face publishing |
 | [Desktop releases](DESKTOP_RELEASES.md) | Native build validation, signing, release assets and size limits |
+| [Linked devices and pooled inference](LOCAL_MESH.md) | Local discovery, code pairing, lending, memory pooling across the user's devices, trust boundaries and verification limits |
 | [Inference memory lifecycle](INFERENCE_MEMORY.md) | Staged model loading, packed weight streaming, cache ownership, and validation limits |
 | [MiniMax H3](MINIMAX_H3.md) | Hybrid INT8/W4 and GGUF loading, MPS execution, sampling and validation |
 | [Video enhancement](VIDEO_ENHANCEMENT.md) | SeedVR2 setup, endpoint controls, downloads, output validation and legacy fallback |
 | [Company finance](COMPANY_FINANCE.md) | Paperasse teams, Qonto/Stripe capabilities, local evidence and verification |
+| [CMMS casework and archive acceptance](CMMS_CASEWORK.md) | Historical imports, field evidence, equipment outcomes, parts, refrigerants and versioned contract pricing |
+| [Workflow acceptance](WORKFLOW_ACCEPTANCE.md) | User acceptance cases, outcome evidence, failure recovery and release sign-off |
 | [BonzAI Company](BONZAI_BACK_OFFICE.md) | Company rooms, work records, artifacts, connectors, and local persistence |
 | [3D and game engine](BONZAI_3D_GAME_ENGINE.md) | Object and level generation, gameplay runtime, and ownership workflow |
 | [Smart-agent chat channels](SMART_AGENT_CHAT.md) | Local media/workflow results, X public sessions, isolation and delivery recovery |
 | [Locked liquidity](LOCKED_LIQUIDITY.md) | Shared agent/model/game custody, trading-fee accounting and deployment wiring |
 | [Protocol configuration](PROTOCOL_CONFIGURATION.md) | Shared public addresses, GitHub build configuration, secrets and verification boundaries |
+| [Economy simulation](ECONOMY_SIMULATION.md) | Reproducible Q4/Q1 acquisition and fee-allocation scenarios, assumptions and limits |
 | [Protocol architecture](BONZAI_V4_ARCHITECTURE.md) | Implemented protocol and economic layers |
 | [Smart-agent workers](SMART_AGENT_WORKERS.md) | Signed peer assignments, escrow verification, company backlog and delivery boundaries |
 | [Smart-agent provisioning](SMART_AGENT_PROVISIONING.md) | Reserved agent slots, NVDA issuance, immutable liquidity, and deployment boundaries |

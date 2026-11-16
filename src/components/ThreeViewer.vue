@@ -5292,7 +5292,7 @@ export default {
           }
         }
         if (this._levelNavigation?.enabled) this._levelNavigation.update(dt);
-        else if (this.controls) this.controls.update();
+        else if (this.controls?.enabled && !this._activeEngine?.GAME?.active) this.controls.update();
         // CSM must update its cascade frustums each frame so the shadow
         // maps stay aligned with the moving camera.
         if (this._csm) this._csm.update();
@@ -6100,6 +6100,17 @@ export default {
           // Preserve authored ambience without injecting stars, glow or flares.
           result.name = "GeneratedObject";
           this.scene.add(result);
+          if (_engine.GAME?.active) {
+            // A playable world supplies its own floor. The studio floor at y=0
+            // otherwise covers the level, causing flicker or a dark play view.
+            for (const key of ['ground', 'groundTint', 'grid']) {
+              const item = this._sceneObjects.get(key);
+              if (item) item.visible = false;
+            }
+            this._lightingMetrics = { box: generatedBounds.clone(), center: generatedBounds.getCenter(new THREE.Vector3()), size: generatedSize, radius: generatedSize.length()/2 };
+            this._retargetLookdevRig(this._lightingMetrics);
+            _engine.GAME.active.framePlayer();
+          }
           if(result.userData.worldScale && !_engine.GAME?.active) this._configureLevel(result, this._getHeroBounds(result)?.box || generatedBounds);
           else this._applyGeneratedLookdev(result);
           // A game played in a world-scale level brings its own ground: the object display
@@ -6227,8 +6238,8 @@ export default {
 :deep(.bonzai-game-hud__metrics b) {
   margin-left: var(--bz-space-1);
   color: var(--bz-fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--bz-font-metric);
+  font-size: 18px;
 }
 
 :deep(.bonzai-game-hud__message) {

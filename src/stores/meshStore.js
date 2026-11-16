@@ -10,6 +10,15 @@ const state = shallowReactive({
   events: [],
   unread: 0,
   error: null,
+  // Linked devices: the user's own computers, paired once with a code.
+  self: null,
+  devices: [],
+  nearby: 0,
+  invitation: null,
+  settings: { sharing: true, pooling: "auto", name: "" },
+  pool: { active: false, devices: [] },
+  pooledBudget: 0,
+  devicesReady: false,
 });
 
 let modeRevision = 0;
@@ -36,6 +45,10 @@ function describe(event) {
     peer_disconnected: `${peer} went offline`,
     inference_requested: `${peer} requested ${event.pipeline || "inference"}`,
     inference_completed: `${event.pipeline || "Inference"} completed for ${peer}`,
+    device_linked: "A device was linked",
+    device_unlinked: "A device was unlinked",
+    pool_started: `Running with ${(event.devices || []).join(", ") || "linked devices"}`,
+    pool_stopped: "Running on this device only",
   };
   return labels[event.type] || "Mesh activity updated";
 }
@@ -61,6 +74,57 @@ async function refresh() {
     state.connectedPeers = status.connectedPeers || 0;
     state.lanPeers = status.lanPeers || 0;
   }
+}
+
+const DEVICE_EVENTS = new Set(["device_linked", "device_unlinked", "pool_started", "pool_stopped", "peer_discovered", "peer_disconnected"]);
+
+/** Linked-device view. Safe to call without the desktop bridge. */
+async function refreshDevices() {
+  const api = window.electronAPI?.mesh;
+  if (!api?.state) return;
+  try {
+    const view = await api.state();
+    if (!view?.ok) return;
+    state.self = view.self || null;
+    state.devices = view.devices || [];
+    state.nearby = view.nearby || 0;
+    state.invitation = view.invitation || null;
+    state.settings = view.settings || state.settings;
+    state.pool = view.pool || { active: false, devices: [] };
+    state.pooledBudget = view.pooledBudget || 0;
+    state.devicesReady = true;
+  } catch {
+    // The linked-device view is additive; local use never depends on it.
+  }
+}
+
+async function invite() {
+  const result = await window.electronAPI.mesh.invite();
+  await refreshDevices();
+  return result;
+}
+
+async function cancelInvite() {
+  await window.electronAPI.mesh.cancelInvite();
+  await refreshDevices();
+}
+
+async function join(code) {
+  const result = await window.electronAPI.mesh.join(code);
+  await refreshDevices();
+  return result;
+}
+
+async function unlink(peerId) {
+  const result = await window.electronAPI.mesh.unlink(peerId);
+  await refreshDevices();
+  return result;
+}
+
+async function updateDeviceSettings(patch) {
+  const result = await window.electronAPI.mesh.updateSettings(patch);
+  await refreshDevices();
+  return result;
 }
 
 async function discoverRegistryPeers() {
@@ -90,15 +154,19 @@ async function init() {
   const api = window.electronAPI;
   if (!api?.p2pStart) return;
 
-  unsubscribe = api.onMeshActivity?.((_event, activity) => push(activity));
+  unsubscribe = api.onMeshActivity?.((_event, activity) => {
+    push(activity);
+    if (DEVICE_EVENTS.has(activity?.type)) refreshDevices();
+  });
   try {
     const discoveryEnabled = await api.store.get("p2p.discoveryEnabled", true);
     if (discoveryEnabled) {
       await api.p2pStart({ listenPort: 4002, enableRelay: false, bootstrapNodes: [] });
     }
     await refresh();
+    await refreshDevices();
     await discoverRegistryPeers();
-    pollTimer = setInterval(refresh, 15000);
+    pollTimer = setInterval(() => { refresh(); refreshDevices(); }, 15000);
     discoveryTimer = setInterval(discoverRegistryPeers, 60000);
   } catch (error) {
     state.error = error?.message || String(error);
@@ -129,6 +197,12 @@ export const meshStore = {
   presenceLabel,
   init,
   refresh,
+  refreshDevices,
+  invite,
+  cancelInvite,
+  join,
+  unlink,
+  updateDeviceSettings,
   setMode,
   markRead,
   teardown,

@@ -66,9 +66,8 @@ test("the renderer can read, verify and export the trail but never rewrite it", 
   assert.match(ipc, /db:companies:dissolve/);
 });
 
-test("a locked workspace can still verify and export history, not dissolve or append", () => {
-  for (const channel of ["db:audit:verify", "db:audit:export", "db:audit:recent"])
+test("audit history needs no workspace license to verify, export, append or dissolve", () => {
+  // Local workflows are free since 4.1.0; no channel is gated by a workspace license.
+  for (const channel of ["db:audit:verify", "db:audit:export", "db:audit:recent", "db:companies:dissolve", "db:audit:append"])
     assert.equal(needsWorkspaceLicense(channel), false, channel);
-  for (const channel of ["db:companies:dissolve", "db:audit:append"])
-    assert.equal(needsWorkspaceLicense(channel), true, channel);
 });

@@ -1,3 +1,4 @@
+import { MEDIA_TEAM_ROLES } from '../../skills/mediaProduction.js';
 import { PAPERASSE_TEMPLATES } from "./paperasseTeams.js";
 const CORE_CHANNELS = Object.freeze({
   approvals: { key: "approvals", label: "Approvals", icon: "rule", view: "approvals", group: "conversations", badge: "approvals", description: "Sensitive actions waiting for a human decision." },
@@ -127,7 +128,7 @@ export function buildWorkspaceBlueprint(input = {}) {
     source: input.workflowId ? "workflow" : input.templateId ? "template" : "inferred",
     defaultChannel: domainChannels[0].key,
     channels: [...domainChannels.map((item) => ({ ...item })), CORE_CHANNELS.team, CORE_CHANNELS.tools, CORE_CHANNELS.settings].map((item) => ({ ...item })),
-    recommendedRoles: input.executionWorkflowId ? ["CEO"] : PAPERASSE_TEMPLATES[input.templateId] ? Object.keys(PAPERASSE_TEMPLATES[input.templateId].defaultRoles) : [...definition.roles],
+    recommendedRoles: input.executionWorkflowId ? (MEDIA_TEAM_ROLES[input.executionWorkflowId] || ["CEO"]) : PAPERASSE_TEMPLATES[input.templateId] ? Object.keys(PAPERASSE_TEMPLATES[input.templateId].defaultRoles) : [...definition.roles],
   };
 }
 

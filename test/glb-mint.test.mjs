@@ -1,3 +1,4 @@
+import { confirmedReceipt } from '../src/services/transactionReceipt.js';
 import {buildMintGLBViewer} from '../src/services/mintGLBViewer.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ let exportFails=false, uploadFails=false, requests=[], metadata=null, switches=0
 const bytes=new Uint8Array(20), header=new DataView(bytes.buffer);
 header.setUint32(0,0x46546c67,true);header.setUint32(4,2,true);header.setUint32(8,20,true);
 const mocks={
- buildMintGLBViewer,
+ buildMintGLBViewer,confirmedReceipt,
  mintLicenseStatus,mintMediaBytes,validateMintFormat,
  getSigner:async()=>({getAddress:async()=> '0x0000000000000000000000000000000000000001'}),
  markAsMinted:async()=>{throw new Error('Local disk unavailable');},
@@ -23,7 +24,7 @@ const mocks={
  exportCodeGLB:async code=>{assert.equal(code,'selected-history-source');if(exportFails)throw new Error('Export failed');return bytes;},uploadGLBArtifact,
  storageService:{disconnect(){},async initStorage(){},async uploadContent(args){requests.push(args);if(uploadFails)throw new Error('GLB upload failed');return {url:`ipfs://file-${requests.length}`,gatewayUrl:`https://gateway/file-${requests.length}`,transactionId:`file-${requests.length}`};},async uploadMetadata(value){metadata=value;if(stopAtMetadata)throw new Error('Stop before transaction');return {url:'ipfs://metadata',gatewayUrl:'https://gateway/metadata'};}},
  checkAllLevels:async()=>{},canMintContentType:()=>({canMint:true}),switchNetwork:async()=>{switches++;},getEip1193Provider:()=>({}),
- mintStore:{state:{network:'test'},activeMintNetwork:{value:{label:'test'}}},CONFIG:{networks:{configured:{explorer:'https://explorer.test'}},treasury:{address:'test'},contentNFT:{economy:{factoryAddress:'test'}}},ECONOMY_NETWORK_KEY:'configured',
+ mintStore:{state:{network:'test'},activeMintNetwork:{value:{label:'test'}}},CONFIG:{networks:{configured:{explorer:'https://explorer.test'}},treasury:{address:'test'},contentNFT:{economy:{factoryAddress:'0x0000000000000000000000000000000000000003'}}},ECONOMY_NETWORK_KEY:'configured',
  buildBonzaiUtilitySnapshot:()=>({}),buildContributionManifest:()=>({}),CONTENT_TYPE_MAP:{object:4,image:1,audio:2,video:3,text:0,training:5},COLLECTIBLES_CLONE_ABI:[],
 };
 globalThis.__glbMintMocks=mocks;
@@ -87,4 +88,19 @@ test('confirmed mint survives local persistence failure and uncertain confirmati
  confirmationFails=true;
  const uncertain=await mintContent(args);
  assert.equal(uncertain.success,false);assert.equal(uncertain.confirmationPending,true);assert.equal(uncertain.transactionHash,'0xsubmitted');
+});
+
+test('missing mint configuration stops before uploading or requesting a wallet signature', async()=>{
+ const original=mocks.CONFIG.contentNFT.economy.factoryAddress;
+ try { mocks.CONFIG.contentNFT.economy.factoryAddress=null;requests=[];const result=await mintContent(args);assert.equal(result.success,false);assert.match(result.error,/not configured/);assert.equal(requests.length,0); }
+ finally {mocks.CONFIG.contentNFT.economy.factoryAddress=original;}
+});
+test('a changed signing account cannot mint previously reviewed attribution', async()=>{
+ // Simulate the account reviewed for attribution differing from the final signer.
+ const originalGetAddress=mocks.ethers.BrowserProvider.prototype.getSigner;
+ try {
+  mocks.ethers.BrowserProvider.prototype.getSigner=async()=>({address:'0x0000000000000000000000000000000000000099'});
+  stopAtMetadata=false;confirmationFails=false;exportFails=false;uploadFails=false;
+  const result=await mintContent(args);assert.equal(result.success,false);assert.match(result.error,/Wallet changed/);
+ } finally {mocks.ethers.BrowserProvider.prototype.getSigner=originalGetAddress;}
 });

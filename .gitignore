@@ -123,3 +123,6 @@ workspace-checkout-ledger.json*
 # Machine-specific public protocol overrides and private operator credentials
 config/protocol.local.env
 config/protocol.secrets.env
+
+# Generated from the release-pinned llama.cpp source by build:rpc
+src/server/scripts/

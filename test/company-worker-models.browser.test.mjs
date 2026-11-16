@@ -9,7 +9,7 @@ async function mount(page) {
   await page.setContent(`<html data-theme="waveform"><head>
     <link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css">
     <link rel="stylesheet" href="/src/assets/buttons.css"><link rel="stylesheet" href="/src/assets/fields.css"><link rel="stylesheet" href="/src/assets/fonts/fonts.css">
-    <style>*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bz-canvas);color:var(--bz-fg);font-family:var(--bz-font-body)}#app{max-width:340px}</style>
+    <style>*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bz-canvas);color:var(--bz-fg);font-family:var(--bz-font-body)}#app{position:fixed;inset:0;z-index:9999;padding:24px;background:var(--bz-canvas)}</style>
     </head><body><div id="app"></div></body></html>`);
   await page.evaluate(async () => {
     window.localModels = new Set(); window.downloads = []; window.savedModels = []; window.failDownload = false; window.failSave = false;
@@ -32,8 +32,11 @@ async function mount(page) {
     const source = await (await fetch('/src/components/company/CompanyWorkerModel.vue')).text();
     const i18nUrl = source.match(/from ["']([^"']*\/i18n\/index\.js(?:\?[^"']*)?)["']/)[1];
     const { i18n,createI18nPlugin } = await import(i18nUrl);i18n.setLocale('en');
+    const catalogUrl = source.match(/from ["']([^"']*\/services\/smartAgentCatalog\.js(?:\?[^"']*)?)["']/)[1];
+    const {smartAgentCatalog}=await import(catalogUrl);
+    smartAgentCatalog.agents=[{id:'custom-finance',isCustom:true}];
     window.pickerState=reactive({model:'llm_qwen3_5_4b_q4',role:'CFO'});window.pickerI18n=i18n;
-    window.pickerApp=createApp({render:()=>h(Picker,{modelValue:window.pickerState.model,roleKey:window.pickerState.role,roleLabel:'Finance',save:async key=>{if(window.failSave)throw new Error('Disk full');window.savedModels.push(key);},'onUpdate:modelValue':key=>{window.pickerState.model=key;}})}).use(createI18nPlugin());
+    window.pickerApp=createApp({render:()=>h(Picker,{workerId:'custom-finance',modelValue:window.pickerState.model,roleKey:window.pickerState.role,roleLabel:'Finance',save:async key=>{if(window.failSave)throw new Error('Disk full');window.savedModels.push(key);},'onUpdate:modelValue':key=>{window.pickerState.model=key;}})}).use(createI18nPlugin());
     window.pickerApp.mount('#app');
   });
 }

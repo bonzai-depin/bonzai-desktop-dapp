@@ -1,6 +1,8 @@
 /** Local-first HVAC GMAO repository. Main process only. */
 
 
+import * as casework from './gmaoCasework.js';
+import { normalizeVisit } from '../../../shared/maintenanceEvidence.js';
 import { calculateGasContractQuote, gasProfileApplies } from "../../../services/company/gmaoProcess.js";
 import { calculateContractQuote } from '../../../services/company/contractPricing.js';
 import * as localBlobs from "../blobs.js";
@@ -428,6 +430,7 @@ export function snapshot(companyId, now = Date.now()) {
   );
   return {
     ...operationsSnapshot(companyId),
+    casework: casework.snapshot(companyId),
     fetchedAt: now,
     contract,
     sites,
@@ -1063,6 +1066,7 @@ export function transitionWorkOrder(companyId, id, toStatus, input = {}) {
   const current = getWorkOrder(companyId, id);
   if (!current) throw new Error("Ordre de travail introuvable.");
   assertTransition(current.status, toStatus);
+  if (['restored','completed'].includes(toStatus)) casework.assertCaseRestorable(companyId,current);
   if (current.status === toStatus) return current;
   assertScheduleChange(companyId, current, input);
   validateSchedule(companyId, id, input, current);
@@ -1272,7 +1276,7 @@ export function recordAttachmentSheet(companyId, workOrderId, input = {}) {
     )
       throw new Error("Chaque photo doit être un fichier local du dossier.");
   }
-  const waiting = input.waiting === true;
+  const waiting = input.waiting === true || !!input.blocker;
   const resolved = !waiting && input.resolved === true;
   const repairMode = waiting ? workOrder.repairMode || "none" : resolved ? workOrder.repairMode || "none" : input.repairMode;
   if (!resolved && !waiting && !["without_quote", "with_quote"].includes(repairMode)) {
@@ -1283,7 +1287,8 @@ export function recordAttachmentSheet(companyId, workOrderId, input = {}) {
   if (!Number.isFinite(arrival) || arrival <= 0 || !Number.isFinite(now) || now < arrival) throw new Error('Les heures d’arrivée et de départ doivent être valides et ordonnées.');
   const contractPolicy = policyFor(companyId, workOrder.siteId);
   const sticker = contractPolicy?.campaignColor ? {campaign: contractPolicy.campaignName || "contract",color:contractPolicy.campaignColor} : campaignForDate(now);
-  const details = input.details || fieldDetails(companyId, workOrderId);
+  const details = { ...(input.details || fieldDetails(companyId, workOrderId)) };
+  if (input.segments?.length) details.timeEvidence = normalizeVisit({segments:input.segments,workPerformed:input.workPerformed});
   if (contractPolicy?.enabled) {
     for (const field of ["siteRepresentative", "causes", "finalState"]) if (!String(details[field] || "").trim()) throw new Error(`Complétez le rapport terrain : ${field}`);
     if (details.safetyConfirmed !== true || details.userInformed !== true || details.registerUpdated !== true) throw new Error("Confirmez mise en sécurité, information des usagers et mise à jour du registre.");
@@ -1327,6 +1332,8 @@ export function recordAttachmentSheet(companyId, workOrderId, input = {}) {
     updatedAt: now,
   };
   const run = db.transaction(() => {
+    if (input.blocker) casework.saveRecord(companyId,{kind:'blocker',workOrderId,data:input.blocker});
+    for (const equipment of input.equipmentOutcomes || []) casework.saveRecord(companyId,{kind:'equipment',workOrderId,id:equipment.id,revision:equipment.revision,data:equipment});
     db.prepare(
       `INSERT INTO gmao_attachment_sheets (
       id, company_id, work_order_id, visit_number, technician_name, started_at, ended_at,
@@ -2016,9 +2023,32 @@ export function createQuote(companyId, workOrderId, input = {}) {
     vatRate: input.vatRate ?? clientContract?.vat_rate ?? contract.vatRate,
   };
   const profile = clientContract?.settings ? JSON.parse(clientContract.settings).gasFranchise : null;
-  const useGasProfile = gasProfileApplies(profile, asset && {domainCode:asset.domain_code,technicalSection:asset.technical_section}, priced.quoteType);
-  const pricingProfile = clientContract?.settings ? JSON.parse(clientContract.settings).pricingProfile : null;
-  const usePricingProfile = pricingProfile && priced.quoteType === 'outside_bpu' && asset?.domain_code !== 'REG';
+  let useGasProfile = gasProfileApplies(profile, asset && {domainCode:asset.domain_code,technicalSection:asset.technical_section}, priced.quoteType);
+  const pricingDate = input.pricingDate || new Date(workOrder.reportedAt).toISOString().slice(0,10);
+  const versioned = clientContract && casework.snapshot(companyId).records.filter(r=>r.kind==='pricing' && r.contractId===clientContract.id);
+  const pricingProfile = versioned?.length ? casework.pricingFor(companyId,clientContract.id,pricingDate) : clientContract?.settings ? JSON.parse(clientContract.settings).pricingProfile : null;
+  if (versioned?.length && !pricingProfile) throw new Error('Aucun profil tarifaire validé pour la date de cette intervention.');
+  if(input.partsFromEvidence===true) {
+    const summary=casework.partCostSummary(companyId,{workOrderId});
+    if(summary.partsCents==null) throw new Error('Coûts de pièces à vérifier : '+summary.missing.join(', '));
+    priced.partsCents=summary.partsCents;priced.partsEvidence=summary;
+  }
+  if (pricingProfile?.id==='contract' && priced.quoteType==='outside_bpu') for (const key of ['partsCents','laborCents','travelCents','accessCents','laborHours']) {
+    if ((key!=='partsCents' || !input.partsFromEvidence) && (input[key] == null || input[key] === '')) throw new Error('Renseignez les coûts réels, y compris les postes nuls. Un coût inconnu ne vaut pas zéro.');
+  }
+  if(pricingProfile?.id==='contract' && priced.quoteType==='outside_bpu') {
+    const evidence={};
+    for(const key of ['parts','labor','travel','access']) {
+      if(key==='parts' && input.partsFromEvidence){evidence.parts='Pièces du dossier : versions conservées';continue;}
+      const reference=String(input.costEvidence?.[key]||'').trim();
+      if(priced[key+'Cents']>0 && (!reference || reference.length>1000))throw new Error('Indiquez le justificatif de chaque poste chiffré.');
+      if(reference)evidence[key]=reference;
+    }
+    priced.costEvidence=evidence;
+  }
+  priced.pricingDate = pricingDate;
+  const usePricingProfile = pricingProfile && priced.quoteType === 'outside_bpu' && (pricingProfile.id==='contract' || asset?.domain_code !== 'REG');
+  if(usePricingProfile && pricingProfile.id==='contract') useGasProfile=false;
   const computed = useGasProfile ? calculateGasContractQuote(priced, profile)
     : usePricingProfile ? calculateContractQuote(priced, pricingProfile, asset && {technicalSection: asset.technical_section, domainCode: asset.domain_code})
     : calculateQuoteDomain(priced);

@@ -1,3 +1,4 @@
+import { routeFlaskRequest } from '../inferenceRouter.service.js';
 import { DEFAULT_3D_LLM_ID, DEFAULT_3D_LLM_TIER } from '../../config/modelDefaults.js';
 import { visibleText } from '../../shared/visibleText.js';
 /** The same local creation engines used by Create, exposed as typed agent actions. */
@@ -52,13 +53,25 @@ export async function executeCreation(action, context = {}, dependencies = {}) {
       const system = request.pipeline === '3d'
         ? 'Return only JavaScript: export default async function generate(params) { const THREE = params.THREE; const root = new THREE.Group(); /* build the complete scene here */ params.scene.add(root); return root; }. No imports, fetch, network, filesystem, eval, or external assets. Use built-in Three.js geometry and materials. Only THREE and scene are supplied. Do not assume a gameplay runtime or other injected helpers.'
         : request.pipeline === 'skill' ? 'Draft a complete, readable skill specification in Markdown with inputs, steps, permissions and outputs. Do not execute it or claim it is installed.' : '';
-      const response = await deps.chat([system, context.instructions, request.prompt].filter(Boolean).join('\n\n'), { maxTokens: request.pipeline === '3d' ? 8192 : 4096, llmModel: request.pipeline === '3d' ? `llm_${DEFAULT_3D_LLM_ID}_${DEFAULT_3D_LLM_TIER}` : context.llm || undefined });
+      const response = await deps.chat([system, context.instructions, request.prompt].filter(Boolean).join('\n\n'), { maxTokens: request.pipeline === '3d' ? 8192 : 4096, localOnly:context.localOnly, serviceModel:context.serviceModel, llmModel: request.pipeline === '3d' ? `llm_${DEFAULT_3D_LLM_ID}_${DEFAULT_3D_LLM_TIER}` : context.llm || undefined });
       const text = visibleText(typeof response === 'string' ? response : response?.text);
       if (!String(text || '').trim()) throw new Error('The creation engine returned no output.');
-      result = { text };
+      result = { text, ...(response?.source === "openrouter" ? { metadata: { source: response.source, model: response.model, usage: response.usage, elapsedMs: response.elapsedMs } } : {}) };
       if (request.pipeline === '3d') result.text = text.replace(/^```(?:javascript|js)?\s*/i, '').replace(/\s*```$/, '');
     } else {
-      result = await deps.request(request.endpoint, request.params);
+      let payload = request.params;
+      if (context.instructions && context.localOnly) {
+        // Reference excerpts are private reasoning context, never a speech script
+        // or a media-engine prompt verbatim. Produce the approved deliverable first.
+        const directive = request.pipeline === 'audio'
+          ? 'Write only the requested narration, ready for speech synthesis.'
+          : `Write only a complete ${request.pipeline} generation prompt for the requested result.`;
+        const planned = await deps.chat([directive, 'Use the licensed references only to inform the requested result. Do not reproduce the reference bundle or these instructions.', context.instructions, request.prompt].join('\n\n'), {maxTokens:4096,localOnly:true,serviceModel:context.serviceModel});
+        const mediaPrompt = visibleText(typeof planned === 'string' ? planned : planned?.text);
+        if (!mediaPrompt?.trim()) throw new Error('The agent could not prepare this creation.');
+        payload = {...request.params, prompt:mediaPrompt, ...(request.params.text ? {text:mediaPrompt} : {})};
+      }
+      result = await deps.request(request.endpoint, payload, {localOnly:context.localOnly});
       if (result?.error || result?.success === false) throw new Error(result.error || 'Creation failed.');
       if (request.pipeline === 'fineTune') {
         if (!result?.training_id) throw new Error('Training was not accepted by the local server.');
@@ -86,16 +99,21 @@ async function defaultDependencies() {
   const history = await import('../../stores/inferenceStore.js');
   const modality = pipeline => ['music'].includes(pipeline) ? 'audio' : ['vision', 'skill', 'fineTune'].includes(pipeline) ? 'text' : pipeline;
   return {
-    acquire: pipeline => generation.canStartGeneration() && generation.startGeneration(modality(pipeline)),
+    acquire: pipeline => generation.startGeneration(modality(pipeline)),
     release: pipeline => generation.stopGeneration(modality(pipeline)),
     async chat(prompt, options) {
+      if (options.serviceModel) return window.electronAPI.agentServiceAssetUse(options.serviceModel.binding,options.serviceModel.asset,prompt);
       if (options.llmModel && window.electronAPI?.ensureModel) {
         const loaded = await window.electronAPI.ensureModel(options.llmModel);
         if (loaded?.ok === false || loaded?.success === false || loaded?.error) throw new Error(loaded.error || `Download and load ${options.llmModel.toLowerCase()} before running this smart agent.`);
       }
-      return window.electronAPI.chat(prompt, { ...options, isolated: true });
+      return window.electronAPI.chat(prompt, { ...options, isolated: true, returnMetadata: true });
     },
-    async request(endpoint, payload) {
+    async request(endpoint, payload, options = {}) {
+      if (!options.localOnly && !endpoint.startsWith('/training/')) {
+        const routed = await routeFlaskRequest(endpoint, payload);
+        if (routed.handled) return routed.result;
+      }
       const base = window.electronAPI?.env?.API_BASE || import.meta.env?.VITE_API_BASE || 'http://127.0.0.1:65000';
       // Company data stays local by default. Remote providers are not selected implicitly.
       const post = async () => {

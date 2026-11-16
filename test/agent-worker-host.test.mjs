@@ -60,3 +60,13 @@ test('a claimed signer cannot impersonate the owner with another wallet signatur
  const f=await fixture();const forged=await f.envelope({},f.stranger);forged.signer=f.owner.address;
  await assert.rejects(f.host.handle(forged),/signature/);assert.equal(f.count(),0);
 });
+
+test('a signed service carries its package into execution and keeps a durable receipt for the customer',async()=>{
+ const {serviceOffer}=await import('../src/services/agentServiceOffer.js');const f=await fixture();
+ const offer=serviceOffer({title:'Expert',outcome:'Diagnosis',price:'10',assets:[{chainId:4663,collection:f.descriptor.grant.collection,tokenId:'3',title:'Manual',kind:'text',digest:ethers.id('original'),use:'knowledge',license:'Job use'}]});
+ const grant={...f.descriptor.grant,offer};await f.host.publish({grant,signature:await f.owner.signMessage(workerGrantMessage(grant))},{agentId:'rose',assets:[{id:'private-original-id'}]});
+ assert.doesNotMatch(JSON.stringify(await f.host.discover()),/private-original-id/);
+ await f.host.handle(await f.envelope());f.finish({pipeline:'text',text:'Diagnosis',serviceCitations:['source:1']});await new Promise(setImmediate);
+ const result=(await f.host.handle(await f.envelope({action:'status'}))).result;
+ assert.equal(result.serviceReceipt.offerHash,offer.hash);assert.deepEqual(result.serviceReceipt.citations,['source:1']);assert.equal(result.serviceReceipt.verification,'provider-declared');
+});

@@ -52,6 +52,44 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
     }
 
     mapping(bytes32 => Route) private routes;
+    bytes32[] private routeIds;
+    mapping(bytes32 => address[]) private routeCurrencies;
+    mapping(bytes32 => mapping(address=>bool)) private seenCurrency;
+    function getRouteCurrencies(bytes32 id,uint256 offset,uint256 limit) external view returns(address[] memory result) {
+        require(limit<=100,"Page too large");
+        uint256 count=offset>=routeCurrencies[id].length?0:routeCurrencies[id].length-offset;
+        if(count>limit)count=limit;
+        result=new address[](count);
+        for(uint256 i;i<count;i++)result[i]=routeCurrencies[id][offset+i];
+    }
+    function routeBasket(bytes32 id) external view returns(address) {return routes[id].rewardBasket;}
+
+    mapping(address => uint256) public nativeTreasuryClaimable;
+    mapping(address => mapping(address => uint256)) public pendingBasket;
+    event BasketRevenuePending(address indexed basket,address indexed currency,uint256 amount);
+    event BasketRevenueForwarded(address indexed basket,address indexed currency,uint256 amount);
+    function routeCount() external view returns(uint256) { return routeIds.length; }
+    function getRouteIds(uint256 offset,uint256 limit) external view returns(bytes32[] memory result) {
+        require(limit<=100,"Page too large");
+        uint256 count=offset>=routeIds.length?0:routeIds.length-offset;
+        if(count>limit) count=limit;
+        result=new bytes32[](count);
+        for(uint256 i;i<count;i++)result[i]=routeIds[offset+i];
+    }
+    function claimTreasury(address payable recipient) external nonReentrant {
+        require(recipient!=address(0),"Invalid recipient");
+        uint256 amount=nativeTreasuryClaimable[msg.sender];
+        if(amount==0) revert NothingToClaim();
+        nativeTreasuryClaimable[msg.sender]=0;
+        (bool ok,)=recipient.call{value:amount}("");require(ok,"Payment failed");
+    }
+    function forwardBasket(address basket,address currency) external nonReentrant {
+        uint256 amount=pendingBasket[basket][currency];require(amount>0,"No rewards");
+        pendingBasket[basket][currency]=0;
+        if(currency==address(0)) IRevenueBasketRewards(basket).depositNative{value:amount}();
+        else { IERC20(currency).forceApprove(basket,amount);IRevenueBasketRewards(basket).depositToken(currency,amount);IERC20(currency).forceApprove(basket,0); }
+        emit BasketRevenueForwarded(basket,currency,amount);
+    }
     mapping(bytes32 => mapping(address => uint256)) public claimable;
     mapping(bytes32 => uint256) public routedRevenue;
     mapping(bytes32 => mapping(address => mapping(address => uint256))) public tokenClaimable;
@@ -133,6 +171,7 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
         }
         if (totalBps != BPS) revert InvalidBps();
 
+        routeIds.push(assetId);
         emit RouteRegistered(assetId, msg.sender, metadataURI, wallets.length);
     }
 
@@ -152,8 +191,7 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
         route.totalReceived += msg.value;
         routedRevenue[assetId] += contributorAmount;
 
-        (bool sentTreasury, ) = treasury.call{value: treasuryAmount}("");
-        require(sentTreasury, "Treasury transfer failed");
+        nativeTreasuryClaimable[treasury] += treasuryAmount;
 
         uint256 allocated = 0;
         uint256 lastPositive;
@@ -169,7 +207,8 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
         }
 
         if (route.rewardBasket != address(0)) {
-            if (stakingRewardAmount > 0) IRevenueBasketRewards(route.rewardBasket).depositNative{value: stakingRewardAmount}();
+            pendingBasket[route.rewardBasket][address(0)] += stakingRewardAmount;
+            emit BasketRevenuePending(route.rewardBasket,address(0),stakingRewardAmount);
             emit RevenueReceived(assetId, msg.sender, msg.value, treasuryAmount, contributorAmount, stakingRewardAmount);
             return;
         }
@@ -188,8 +227,7 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
         }
 
         if (totalWeight == 0) {
-            (bool sentUnusedBonus, ) = treasury.call{value: stakingRewardAmount}("");
-            require(sentUnusedBonus, "Bonus transfer failed");
+            nativeTreasuryClaimable[treasury] += stakingRewardAmount;
         } else {
             uint256 bonusAllocated = 0;
             for (uint256 i = 0; i < route.recipients.length; ) {
@@ -211,13 +249,13 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
         Route storage route = routes[assetId];
         if (!route.active) revert RouteNotFound(assetId);
         require(currency != address(0) && amount > 0 && route.rewardBasket != address(0), "Basket currency route required");
-        require(IRevenueBasketRewards(route.rewardBasket).rewardCurrencyEnabled(currency), "Currency unavailable");
         uint256 beforeBalance = IERC20(currency).balanceOf(address(this));
         IERC20(currency).safeTransferFrom(msg.sender, address(this), amount);
         require(IERC20(currency).balanceOf(address(this)) - beforeBalance == amount, "Unsupported transfer fee");
         uint256 treasuryAmount = amount * route.treasuryFeeBps / BPS;
         uint256 holderAmount = amount * route.stakingBonusBps / BPS;
         uint256 contributorAmount = amount - treasuryAmount - holderAmount;
+        if(!seenCurrency[assetId][currency]) {seenCurrency[assetId][currency]=true;routeCurrencies[assetId].push(currency);}
         tokenRevenueReceived[assetId][currency] += amount;
         tokenTreasuryClaimable[currency][treasury] += treasuryAmount;
         uint256 allocated;
@@ -230,9 +268,8 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
             tokenClaimable[assetId][currency][recipient.wallet] += share;
         }
         if (holderAmount > 0) {
-            IERC20(currency).forceApprove(route.rewardBasket, holderAmount);
-            IRevenueBasketRewards(route.rewardBasket).depositToken(currency, holderAmount);
-            IERC20(currency).forceApprove(route.rewardBasket, 0);
+            pendingBasket[route.rewardBasket][currency] += holderAmount;
+            emit BasketRevenuePending(route.rewardBasket,currency,holderAmount);
         }
         emit TokenRevenueReceived(assetId, currency, msg.sender, amount, treasuryAmount, contributorAmount, holderAmount);
     }
@@ -263,10 +300,17 @@ contract BonzaiRevenueRouter is Ownable, ReentrancyGuard, Pausable {
     }
 
     function claim(bytes32 assetId) external nonReentrant {
+        _claimNative(assetId,payable(msg.sender));
+    }
+    function claimTo(bytes32 assetId,address payable recipient) external nonReentrant {
+        require(recipient!=address(0),"Invalid recipient");
+        _claimNative(assetId,recipient);
+    }
+    function _claimNative(bytes32 assetId,address payable recipient) private {
         uint256 amount = claimable[assetId][msg.sender];
         if (amount == 0) revert NothingToClaim();
         claimable[assetId][msg.sender] = 0;
-        (bool sent, ) = msg.sender.call{value: amount}("");
+        (bool sent, ) = recipient.call{value: amount}("");
         require(sent, "Claim transfer failed");
         emit Claimed(assetId, msg.sender, amount);
     }

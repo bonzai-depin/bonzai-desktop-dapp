@@ -61,10 +61,10 @@ export const rcShellMessages = {
         "generating": "Generating…",
         "environment": "Advanced · environment and performance",
         "imageModes": {
-          "turbo": "FLUX.2 Klein · 4 steps for quick image drafts.",
-          "standard": "SDXL + refiner · two-stage image generation.",
+          "turbo": "Qwen Image 2.1 Turbo · 8-step image generation.",
+          "standard": "Qwen Image 2.1 · 25-step image generation.",
           "quality": "Z-Image-Turbo · 9 denoising steps for detailed images.",
-          "turbo_edit": "FLUX.2 Klein · 4 steps to transform a reference image."
+          "turbo_edit": "Qwen Image 2.1 Turbo · 8 steps to transform a reference image."
         },
         "videoModes": {
           "fast": "LTX-2 · prompt or image to video.",
@@ -137,10 +137,10 @@ export const rcShellMessages = {
         "generating": "Génération…",
         "environment": "Avancé · environnement et performances",
         "imageModes": {
-          "turbo": "FLUX.2 Klein · 4 étapes pour une première image rapide.",
-          "standard": "SDXL + affineur · génération d’image en deux phases.",
+          "turbo": "Qwen Image 2.1 Turbo · Génération d’images en 8 étapes.",
+          "standard": "Qwen Image 2.1 · Génération d’images en 25 étapes.",
           "quality": "Z-Image-Turbo · 9 étapes de débruitage pour des images détaillées.",
-          "turbo_edit": "FLUX.2 Klein · 4 étapes pour transformer une image de référence."
+          "turbo_edit": "Qwen Image 2.1 Turbo · 8 étapes pour transformer une image de référence."
         },
         "videoModes": {
           "fast": "LTX-2 · vidéo à partir d’un texte ou d’une image.",
@@ -213,10 +213,10 @@ export const rcShellMessages = {
         "generating": "Generando…",
         "environment": "Avanzado · entorno y rendimiento",
         "imageModes": {
-          "turbo": "FLUX.2 Klein · 4 pasos para borradores de imagen rápidos.",
-          "standard": "SDXL + refinador · generación de imágenes en dos fases.",
+          "turbo": "Qwen Image 2.1 Turbo · Generación de imágenes en 8 pasos.",
+          "standard": "Qwen Image 2.1 · Generación de imágenes en 25 pasos.",
           "quality": "Z-Image-Turbo · 9 pasos de eliminación de ruido para imágenes detalladas.",
-          "turbo_edit": "FLUX.2 Klein · 4 pasos para transformar una imagen de referencia."
+          "turbo_edit": "Qwen Image 2.1 Turbo · 8 pasos para transformar una imagen de referencia."
         },
         "videoModes": {
           "fast": "LTX-2 · vídeo a partir de texto o imagen.",
@@ -289,10 +289,10 @@ export const rcShellMessages = {
         "generating": "Генерация…",
         "environment": "Дополнительно · окружение и производительность",
         "imageModes": {
-          "turbo": "FLUX.2 Klein · 4 шага для быстрых эскизов.",
-          "standard": "SDXL + refiner · создание изображений в два этапа.",
+          "turbo": "Qwen Image 2.1 Turbo · Генерация изображений за 8 шагов.",
+          "standard": "Qwen Image 2.1 · Генерация изображений за 25 шагов.",
           "quality": "Z-Image-Turbo · 9 шагов удаления шума для детальных изображений.",
-          "turbo_edit": "FLUX.2 Klein · 4 шага для преобразования исходного изображения."
+          "turbo_edit": "Qwen Image 2.1 Turbo · 8 шагов для преобразования исходного изображения."
         },
         "videoModes": {
           "fast": "LTX-2 · видео из текста или изображения.",
@@ -365,10 +365,10 @@ export const rcShellMessages = {
         "generating": "正在生成…",
         "environment": "高级 · 环境与性能",
         "imageModes": {
-          "turbo": "FLUX.2 Klein · 4 步快速生成图像草稿。",
-          "standard": "SDXL + 精修模型 · 两阶段图像生成。",
+          "turbo": "Qwen Image 2.1 Turbo · 8 步生成图像。",
+          "standard": "Qwen Image 2.1 · 25 步生成图像。",
           "quality": "Z-Image-Turbo · 9 步去噪生成细致图像。",
-          "turbo_edit": "FLUX.2 Klein · 4 步转换参考图像。"
+          "turbo_edit": "Qwen Image 2.1 Turbo · 8 步转换参考图像。"
         },
         "videoModes": {
           "fast": "LTX-2 · 从提示词或图像生成视频。",
@@ -441,10 +441,10 @@ export const rcShellMessages = {
         "generating": "生成中…",
         "environment": "詳細設定 · 環境とパフォーマンス",
         "imageModes": {
-          "turbo": "FLUX.2 Klein · 4 ステップで画像の下書きを作成。",
-          "standard": "SDXL + リファイナー · 2 段階の画像生成。",
+          "turbo": "Qwen Image 2.1 Turbo · 8 ステップで画像の下書きを作成。",
+          "standard": "Qwen Image 2.1 · 25 ステップで画像の下書きを作成。",
           "quality": "Z-Image-Turbo · 9 ステップのノイズ除去で詳細な画像を生成。",
-          "turbo_edit": "FLUX.2 Klein · 4 ステップで参照画像を変換。"
+          "turbo_edit": "Qwen Image 2.1 Turbo · 8 ステップで参照画像を変換。"
         },
         "videoModes": {
           "fast": "LTX-2 · テキストまたは画像から動画を生成。",
@@ -517,10 +517,10 @@ export const rcShellMessages = {
         "generating": "생성 중…",
         "environment": "고급 · 환경 및 성능",
         "imageModes": {
-          "turbo": "FLUX.2 Klein · 4단계로 빠르게 이미지 초안을 만듭니다.",
-          "standard": "SDXL + 리파이너 · 2단계 이미지 생성.",
+          "turbo": "Qwen Image 2.1 Turbo · 8단계로 이미지를 생성합니다.",
+          "standard": "Qwen Image 2.1 · 25단계로 이미지를 생성합니다.",
           "quality": "Z-Image-Turbo · 9단계 노이즈 제거로 정교한 이미지를 만듭니다.",
-          "turbo_edit": "FLUX.2 Klein · 4단계로 참조 이미지를 변환합니다."
+          "turbo_edit": "Qwen Image 2.1 Turbo · 8단계로 참조 이미지를 변환합니다."
         },
         "videoModes": {
           "fast": "LTX-2 · 텍스트 또는 이미지로 동영상을 만듭니다.",

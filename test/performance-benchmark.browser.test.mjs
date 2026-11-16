@@ -65,8 +65,8 @@ test(
                 methodology: "One first pass, two measured passes.",
                 cases: [
                   {
-                    id: "image-klein",
-                    label: "Image · Klein 512²",
+                    id: "image-qwen-21",
+                    label: "Image · Qwen Image 2.1 512²",
                     pipeline: "/image/turbo",
                     status: "completed",
                     comparisonKey: "same",

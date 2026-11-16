@@ -1,38 +1,123 @@
 """Serialize device inference and unloading across Flask request threads."""
 import threading
 import time
-from urllib.error import HTTPError
-from flask import request, g, jsonify
+import uuid
+import secrets
+import itertools
+from collections import deque
+from urllib.error import HTTPError, URLError
+from flask import request, g, jsonify, has_request_context
 from inference_coordinator import device_lease
 
 _PATHS = {
     "/image/standard", "/image/quality", "/image/advanced", "/image/turbo",
-    "/image/image/turbo", "/image/experimental/klein-9b",
+    "/image/image/turbo", "/image/qwen-2.1", "/image/sdxl", "/image/image/standard", "/image/experimental/klein-9b",
     "/audio/turbo", "/audio/quality/design", "/audio/quality/clone",
     "/audio/quality/persona", "/audio/music",
     "/video", "/video/sota", "/video/quality", "/video/test", "/video/enhance",
     "/vision/analyze", "/vision/ocr", "/vision/caption", "/vision/unload",
-    "/forecast",
+    "/forecast", "/workflows/finger-frame/analyze", "/workflows/finger-frame/composite",
     "/vision/ocr/unload", "/vision/caption/unload", "/memory/clear",
 }
 
-def install_inference_serialization(app, on_acquired=None):
-    lock = threading.Lock()
+# Random starting point and a process-wide sequence: even simultaneous requests
+# receive distinct seeds, rather than inheriting saved form values or seed zero.
+_seed_sequence = itertools.count(secrets.randbelow(2**31))
+def fresh_generation_seed():
+    return next(_seed_sequence) % (2**31)
+
+class FairDeviceLock:
+    """FIFO also when the media server is used without Electron's broker."""
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.waiting = deque()
+        self.busy = False
+
+    def acquire(self, blocking=True):
+        with self.condition:
+            if not blocking:
+                if self.busy or self.waiting:
+                    return False
+                self.busy = True
+                return True
+            ticket = object()
+            self.waiting.append(ticket)
+            try:
+                self.condition.wait_for(lambda: not self.busy and self.waiting[0] is ticket)
+                self.waiting.popleft()
+                self.busy = True
+                return True
+            except BaseException:
+                self.waiting.remove(ticket)
+                self.condition.notify_all()
+                raise
+
+    def release(self):
+        with self.condition:
+            self.busy = False
+            self.condition.notify_all()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *_args):
+        self.release()
+
+
+def install_inference_serialization(app, on_acquired=None, on_queue=None):
+    lock = FairDeviceLock()
+    queued = {}
+    queue_lock = threading.Lock()
+    def snapshot():
+        with queue_lock:
+            return list(queued.values())
+    app.extensions['bonzai_inference_queue'] = snapshot
+
+    def publish(job_id, path, stage, background=False):
+        event = {'id': job_id, 'path': path, 'stage': stage, 'background': background}
+        if has_request_context():
+            body = request.get_json(silent=True)
+            fields = {'prompt', 'text', 'lyrics', 'caption', 'steps', 'seed', 'width', 'height', 'duration', 'bpm', 'guidance_scale', 'pipeline', 'model', 'fps'}
+            if isinstance(body, dict):
+                event['meta'] = {key: value for key, value in body.items() if key in fields and isinstance(value, (str, int, float, bool))}
+        with queue_lock:
+            if stage == 'queued' or (background and stage == 'running'):
+                queued[event['id']] = event
+            else:
+                queued.pop(event['id'], None)
+        if on_queue is not None:
+            try:
+                on_queue(event)
+            except Exception:
+                # Progress transport must never strand the device lock.
+                app.logger.exception('Could not publish inference queue status')
+
+    def report(stage):
+        if g.get('bonzai_queue_id'):
+            publish(g.bonzai_queue_id, request.path, stage)
 
     @app.before_request
     def acquire_device():
         if request.method == "POST" and request.path in _PATHS:
             g.bonzai_request_started = time.perf_counter()
             body = request.get_json(silent=True)
+            if isinstance(body, dict) and request.path.startswith(('/image/', '/audio/', '/video')):
+                body['seed'] = fresh_generation_seed()
+                g.bonzai_generation_seed = body['seed']
             benchmark = isinstance(body, dict) and body.get('_benchmark') is True
             if request.path != "/memory/clear":
+                g.bonzai_queue_id = uuid.uuid4().hex
+                report('queued')
                 lease = device_lease(benchmark=benchmark)
                 try:
                     lease.__enter__()
                 except HTTPError as error:
                     if error.code == 409:
                         return jsonify({'error': 'Local inference is busy'}), 409
-                    raise
+                    return jsonify({'error': 'The inference queue is unavailable. Please try again.'}), 503
+                except (URLError, OSError):
+                    return jsonify({'error': 'The inference queue is unavailable. Please try again.'}), 503
                 g.bonzai_external_lease = lease
             if benchmark:
                 if not lock.acquire(blocking=False):
@@ -43,6 +128,7 @@ def install_inference_serialization(app, on_acquired=None):
             g.bonzai_execution_started = time.perf_counter()
             if on_acquired is not None and request.path != "/memory/clear":
                 on_acquired(request.path)
+            report("running")
 
     @app.after_request
     def measure_request(response):
@@ -63,11 +149,14 @@ def install_inference_serialization(app, on_acquired=None):
             payload = response.get_json(silent=True)
             if isinstance(payload, dict):
                 payload.update(timing)
+                if g.get('bonzai_generation_seed') is not None:
+                    payload['seed'] = g.bonzai_generation_seed
                 response.set_data(app.json.dumps(payload))
         return response
 
     @app.teardown_request
     def release_device(_error):
+        report("finished")
         if g.pop("bonzai_device_lock", False):
             lock.release()
         lease = g.pop("bonzai_external_lease", None)
@@ -76,9 +165,22 @@ def install_inference_serialization(app, on_acquired=None):
 
     def run_background(task, path):
         """Hold the device for the worker lifetime, not its HTTP 202 response."""
-        with device_lease(background=True), lock:
-            if on_acquired is not None:
-                on_acquired(path)
-            return task()
+        job_id = uuid.uuid4().hex
+        publish(job_id, path, 'queued', background=True)
+        status = 'completed'
+        try:
+            with device_lease(), lock:
+                if on_acquired is not None:
+                    on_acquired(path)
+                publish(job_id, path, 'running', background=True)
+                result = task()
+                if result is False:
+                    status = 'failed'
+                return result
+        except BaseException:
+            status = 'failed'
+            raise
+        finally:
+            publish(job_id, path, status, background=True)
 
     return run_background

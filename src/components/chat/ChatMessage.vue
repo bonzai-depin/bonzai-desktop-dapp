@@ -74,14 +74,14 @@
       <button
         v-if="role === 'assistant' && !error && mintable"
         type="button"
-        class="bz-msg__action"
-        :title="minted ? 'Already minted' : 'Mint answer as NFT'"
-        :aria-label="minted ? 'Already minted' : 'Mint answer'"
+        class="bz-msg__action bz-msg__action--label"
+        :title="minted ? 'Already tokenized' : 'Tokenize answer'"
+        :aria-label="minted ? 'Already tokenized' : 'Tokenize answer'"
         @click="$emit('mint')"
       >
         <span class="material-symbols-outlined" aria-hidden="true">
           {{ minted ? 'check_circle' : 'token' }}
-        </span>
+        </span><span>{{ minted ? 'Tokenized' : 'Tokenize' }}</span>
       </button>
       <button
         v-if="role === 'assistant' && error"
@@ -123,6 +123,7 @@
       >
         <span class="material-symbols-outlined" aria-hidden="true">delete</span>
       </button>
+      <slot name="actions" />
     </div>
 
     <!-- Footer — attachments / tool call summary / error notice -->
@@ -136,7 +137,7 @@
       </div>
       <div v-if="error" class="bz-msg__error">
         <span class="material-symbols-outlined" aria-hidden="true">error</span>
-        <span class="bz-msg__error-body">{{ errorMessage || "Generation failed" }}</span>
+        <span class="bz-msg__error-body">{{ userFacingError(errorMessage) }}</span>
         <span v-if="role === 'assistant'" class="bz-msg__error-actions">
           <button type="button" class="bz-msg__error-btn" @click="$emit('retry')">
             Retry
@@ -177,6 +178,7 @@
 
 <script setup>
 import { ref, computed } from "vue";
+import { userFacingError } from "../../services/userFacingError.js";
 import { i18n } from "../../i18n/index.js";
 
 const props = defineProps({
@@ -400,7 +402,7 @@ function copyWithTextarea(text) {
 }
 
 /* Error state */
-.bz-msg--error { border-left: 3px solid var(--bz-error, #d32f2f); }
+.bz-msg--error { border-left: 0; }
 
 .bz-msg__error {
   display: flex;
@@ -632,4 +634,8 @@ function copyWithTextarea(text) {
   font-size: var(--bz-size-micro);
   color: var(--bz-fg-mid);
 }
+</style>
+
+<style scoped>
+.bz-msg__actions{flex-wrap:wrap;gap:4px}.bz-msg__action--label{width:auto;gap:5px;padding-inline:7px;font-size:12px;color:var(--bz-fg-mid)}
 </style>

@@ -19,6 +19,10 @@ interface IBonzaiStakePositions {
         uint32 contributionScore
     );
 }
+interface IServiceTimeTotals {
+    function totalServiceTime(uint256 epoch, uint8 pool) external view returns (uint256);
+}
+
 interface IMintBasketRewards {
     function stakingVault() external view returns (address);
     function depositNative() external payable;
@@ -36,7 +40,8 @@ interface IMintBasketRewards {
  * Balance verification:
  *   The configured chain's staking vault holds the BONZAI position. Holder
  *   registration requires its non-transferable lock to cover the entire next
- *   epoch (the claim window), so one balance cannot register in many wallets.
+ *   epoch (the minimum anti-reuse lock), so one balance cannot register in many wallets.
+ *   Earned claims remain available indefinitely after that lock expires.
  *
  * Holder path:
  *   - User calls registerForEpoch() during the current epoch; their BONZAI
@@ -67,6 +72,17 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice BonzaiServiceTime contract — exclusive withdrawer for provider side.
     address public serviceTimeContract;
+    // A contract wallet that rejects native currency can select another receiver.
+    mapping(address => address payable) public rewardRecipient;
+    event RewardRecipientSet(address indexed wallet, address indexed recipient);
+    function setRewardRecipient(address payable recipient) external {
+        require(recipient != address(0), "Invalid recipient");
+        rewardRecipient[msg.sender] = recipient;
+        emit RewardRecipientSet(msg.sender, recipient);
+    }
+    function _recipient(address wallet) private view returns (address payable) {
+        return rewardRecipient[wallet] == address(0) ? payable(wallet) : rewardRecipient[wallet];
+    }
 
     uint256 public constant NUM_POOLS = 6;
     uint256 public constant MIN_CLAIM_BLOCK_GAP = 256;
@@ -283,12 +299,9 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
     function confirmClaim(uint256 epochId) external {
         require(isEpochFinalized(epochId), "Epoch not ended yet");
-        require(currentEpoch() == epochId + 1, "Claim window closed");
         uint256 registeredBal = registeredBalances[epochId][msg.sender];
         require(registeredBal > 0, "Not registered for this epoch");
 
-        uint256 currentBalance = _eligibleStake(msg.sender);
-        require(currentBalance >= registeredBal, "Balance dropped since registration");
 
         claimConfirmedBlock[epochId][msg.sender] = block.number;
         emit ClaimConfirmed(epochId, msg.sender, registeredBal, block.number);
@@ -347,11 +360,10 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // HOLDER CLAIM
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function claimEpoch(uint256 epochId, uint8 poolIndex) external nonReentrant whenNotPaused {
+    function claimEpoch(uint256 epochId, uint8 poolIndex) external nonReentrant {
         require(poolIndex < NUM_POOLS, "Invalid pool index");
         require(isEpochFinalized(epochId), "Epoch not ended yet");
         require(!hasClaimed[epochId][msg.sender][poolIndex], "Already claimed");
-        require(currentEpoch() == epochId + 1, "Claim window closed");
 
         uint256 confirmedBlock = claimConfirmedBlock[epochId][msg.sender];
         require(confirmedBlock > 0, "Must call confirmClaim first");
@@ -359,7 +371,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
-        require(_eligibleStake(msg.sender) >= balance, "Balance dropped since registration");
 
         uint256 threshold = epochThresholdSnapshotted[epochId]
             ? epochThresholds[epochId][poolIndex]
@@ -385,7 +396,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         epochClaimedPerPool[epochId][poolIndex] += amount;
         totalClaimed += amount;
 
-        (bool ok, ) = msg.sender.call{value: amount}("");
+        (bool ok, ) = _recipient(msg.sender).call{value: amount}("");
         require(ok, "ETH transfer failed");
         emit EpochClaimed(epochId, poolIndex, msg.sender, amount);
     }
@@ -393,9 +404,8 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     function claimEpochBatch(
         uint256 epochId,
         uint8[] calldata poolIndices
-    ) external nonReentrant whenNotPaused {
+    ) external nonReentrant {
         require(isEpochFinalized(epochId), "Epoch not ended yet");
-        require(currentEpoch() == epochId + 1, "Claim window closed");
 
         uint256 confirmedBlock = claimConfirmedBlock[epochId][msg.sender];
         require(confirmedBlock > 0, "Must call confirmClaim first");
@@ -403,7 +413,6 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
 
         uint256 balance = registeredBalances[epochId][msg.sender];
         require(balance > 0, "Not registered for this epoch");
-        require(_eligibleStake(msg.sender) >= balance, "Balance dropped since registration");
 
         EpochData storage epoch = epochs[epochId];
         uint256 totalWeight = totalWeightedRegistered[epochId];
@@ -444,7 +453,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         require(totalAmount > 0, "Nothing to claim");
         totalClaimed += totalAmount;
 
-        (bool ok, ) = msg.sender.call{value: totalAmount}("");
+        (bool ok, ) = _recipient(msg.sender).call{value: totalAmount}("");
         require(ok, "ETH transfer failed");
     }
 
@@ -452,17 +461,41 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // PROVIDER WITHDRAWAL (BonzaiServiceTime only)
     // ═══════════════════════════════════════════════════════════════════════════
 
+    event EmptyAllocationRolled(uint256 indexed fromEpoch,uint256 indexed toEpoch,uint8 indexed pool,bool providerSide,uint256 amount);
+
+    /// @notice Only allocations provably earned by nobody may be reused. Never sweeps an earned claim.
+    function rollEmptyAllocation(uint256 epochId,uint8 poolIndex,bool providerSide) external nonReentrant {
+        require(poolIndex<NUM_POOLS && isEpochFinalized(epochId),"Invalid closed pool");
+        uint256 amount;
+        uint256 destination=currentEpoch();
+        if(providerSide){
+            require(serviceTimeContract.code.length>0,"Accounting not configured");
+            require(IServiceTimeTotals(serviceTimeContract).totalServiceTime(epochId,poolIndex)==0,"Providers earned rewards");
+            amount=epochs[epochId].providerDeposits[poolIndex];
+            epochs[epochId].providerDeposits[poolIndex]=0;
+            epochs[destination].providerDeposits[poolIndex]+=amount;
+        }else{
+            require(totalWeightedRegistered[epochId]==0,"Holders earned rewards");
+            amount=epochs[epochId].holderDeposits[poolIndex];
+            epochs[epochId].holderDeposits[poolIndex]=0;
+            if(address(basketRewards)==address(0)) epochs[destination].holderDeposits[poolIndex]+=amount;
+            else {pendingBasketRewards+=amount;_tryForwardBasket(amount);}
+        }
+        require(amount>0,"No unearned allocation");
+        // Cumulative liabilities are unchanged: this is a move, never a second deposit.
+        emit EmptyAllocationRolled(epochId,destination,poolIndex,providerSide,amount);
+    }
+
     function withdrawProviderShare(
         uint256 epochId,
         uint8 poolIndex,
         address provider,
         uint256 providerTime,
         uint256 totalTime
-    ) external nonReentrant whenNotPaused returns (uint256 amount) {
+    ) external nonReentrant returns (uint256 amount) {
         require(msg.sender == serviceTimeContract, "Only ServiceTime");
         require(poolIndex < NUM_POOLS, "Invalid pool index");
         require(isEpochFinalized(epochId), "Epoch not finalized");
-        require(currentEpoch() == epochId + 1, "Claim window closed");
         require(!epochSwept[epochId], "Epoch already settled");
         require(provider != address(0), "Invalid provider");
         require(providerTime > 0 && totalTime > 0, "No service time");
@@ -475,11 +508,11 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         require(amount > 0, "Claim amount too small");
         require(epochProviderWithdrawn[epochId][poolIndex] + amount <= pool, "Provider pool exhausted");
 
-        // Track cumulative withdrawals so sweep accounting stays correct.
+        // Keep cumulative payouts within the original provider allocation.
         epochProviderWithdrawn[epochId][poolIndex] += amount;
         totalProviderWithdrawn += amount;
 
-        (bool ok, ) = provider.call{value: amount}("");
+        (bool ok, ) = _recipient(provider).call{value: amount}("");
         require(ok, "ETH transfer failed");
 
         emit ProviderShareWithdrawn(epochId, poolIndex, provider, amount, providerTime, totalTime);
@@ -524,7 +557,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     function previewHolderClaim(uint256 epochId, uint8 poolIndex, address user) external view returns (uint256) {
         if (poolIndex >= NUM_POOLS) return 0;
         if (!isEpochFinalized(epochId)) return 0;
-        if (currentEpoch() != epochId + 1 || epochSwept[epochId] || hasClaimed[epochId][user][poolIndex]) return 0;
+        if (epochSwept[epochId] || hasClaimed[epochId][user][poolIndex]) return 0;
         EpochData storage epoch = epochs[epochId];
         uint256 balance = registeredBalances[epochId][user];
         if (balance == 0) return 0;
@@ -606,6 +639,7 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════════════
 
     function setServiceTimeContract(address _svc) external onlyOwner {
+        require(_svc.code.length > 0 && (serviceTimeContract == address(0) || serviceTimeContract == _svc), "ServiceTime is immutable");
         address old = serviceTimeContract;
         serviceTimeContract = _svc;
         emit ServiceTimeContractUpdated(old, _svc);
@@ -739,51 +773,9 @@ contract BonzaiMintPool is Ownable, ReentrancyGuard, Pausable {
         emit PoolThresholdUpdated(poolIndex, old, newThreshold);
     }
 
-    function sweepUnclaimed(uint256 epochId) external onlyOwner nonReentrant {
-        require(isEpochFinalized(epochId), "Epoch not ended");
-        require(currentEpoch() >= epochId + 2, "Claim window still open");
-        require(!epochSwept[epochId], "Already swept or recirculated");
-        epochSwept[epochId] = true;
-        uint256 sweepAmount = 0;
-        EpochData storage epoch = epochs[epochId];
-        for (uint8 i = 0; i < NUM_POOLS; ) {
-            uint256 holderUnclaimed = epoch.holderDeposits[i] - epochClaimedPerPool[epochId][i];
-            uint256 providerUnclaimed = epoch.providerDeposits[i] - epochProviderWithdrawn[epochId][i];
-            sweepAmount += holderUnclaimed + providerUnclaimed;
-            unchecked { i++; }
-        }
-        if (sweepAmount > 0) {
-            totalSwept += sweepAmount;
-            (bool ok, ) = treasury.call{value: sweepAmount}("");
-            require(ok, "Sweep transfer failed");
-            emit UnclaimedSwept(epochId, sweepAmount);
-        }
-    }
-
-    function recirculateUnclaimed(uint256 epochId) external onlyOwner {
-        uint256 current = currentEpoch();
-        require(current >= epochId + 2, "Claim window still open");
-        require(!epochSwept[epochId], "Already swept or recirculated");
-        epochSwept[epochId] = true;
-        uint256 totalRecirculated;
-        for (uint8 i = 0; i < NUM_POOLS; ) {
-            uint256 holderUnclaimed = epochs[epochId].holderDeposits[i] - epochClaimedPerPool[epochId][i];
-            uint256 providerUnclaimed = epochs[epochId].providerDeposits[i] - epochProviderWithdrawn[epochId][i];
-            if (holderUnclaimed > 0) {
-                epochs[current].holderDeposits[i] += holderUnclaimed;
-                // Moving an existing liability does not create a new deposit.
-                totalRecirculated += holderUnclaimed;
-            }
-            if (providerUnclaimed > 0) {
-                epochs[current].providerDeposits[i] += providerUnclaimed;
-                totalRecirculated += providerUnclaimed;
-            }
-            unchecked { ++i; }
-        }
-        if (totalRecirculated > 0) {
-            emit UnclaimedRecirculated(epochId, current, totalRecirculated);
-        }
-    }
+    // Accrued entitlements have no expiry and cannot be confiscated or reused.
+    function sweepUnclaimed(uint256) external pure { revert("Earned rewards never expire"); }
+    function recirculateUnclaimed(uint256) external pure { revert("Earned rewards never expire"); }
 
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }

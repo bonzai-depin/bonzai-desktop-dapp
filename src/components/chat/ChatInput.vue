@@ -110,6 +110,7 @@
         <span class="bz-input__shortcut bz-mono bz-meta">
           {{ sendHint }}
         </span>
+        <slot name="before-submit" />
         <button
           v-if="streaming"
           type="button"

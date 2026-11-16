@@ -38,6 +38,7 @@ const stakingVault = '0x0000000000000000000000000000000000000002';
 const contractCalls = [];
 const calls = [];
 const iface = new ethers.Interface([
+  'event ModelTokenLaunched(address contentCollection,uint256 indexed contentTokenId,address indexed token,bytes32 indexed poolId,string symbol,uint256 ethLiquidity,uint256 positionId,address creator,uint256 timestamp)',
   'function currentEpoch() view returns(uint256)',
   'function epochDuration() view returns(uint256)',
   'function genesisTime() view returns(uint256)',
@@ -55,6 +56,12 @@ const iface = new ethers.Interface([
   'function claimConfirmedBlock(uint256,address) view returns(uint256)',
   'function MIN_CLAIM_BLOCK_GAP() view returns(uint256)',
   'function claimsPaused() view returns(bool)',
+  'function paused() view returns(bool)',
+  'function isEpochFinalized(uint256) view returns(bool)',
+  'function getEpochProviderDeposits(uint256) view returns(uint256[6])',
+  'function providerServiceTime(uint256,uint8,address) view returns(uint256)',
+  'function totalServiceTime(uint256,uint8) view returns(uint256)',
+  'function providerClaimed(uint256,uint8,address) view returns(bool)',
   'function serviceTimeAttestor() view returns(address)',
   'function stakingVault() view returns(address)',
   'function LVL1_THRESHOLD() view returns(uint256)',
@@ -92,6 +99,10 @@ const provider = { getBlockNumber: async () => blockNumber, call: async ({ data,
   if (fn.name === 'getPoolConfig') return iface.encodeFunctionResult(fn, [wallet, ethers.ZeroAddress, 1n, 5n, true]);
   if (fn.name === 'routeIdFor') return iface.encodeFunctionResult(fn, [ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address', 'bytes32'], args))]);
   if (fn.name === 'getModelProfile') return iface.encodeFunctionResult(fn, ['ipfs://model', 'A tested model', 'ipfs://image', 'fine_tuned', ethers.id('validation')]);
+  if (fn.name === 'paused' || fn.name === 'providerClaimed') return iface.encodeFunctionResult(fn, [false]);
+  if (fn.name === 'getEpochProviderDeposits') return iface.encodeFunctionResult(fn, [Array(6).fill(ethers.parseEther('2'))]);
+  if (fn.name === 'providerServiceTime') return iface.encodeFunctionResult(fn, [10n]);
+  if (fn.name === 'totalServiceTime') return iface.encodeFunctionResult(fn, [20n]);
   if (fn.name === 'claimsPaused') return iface.encodeFunctionResult(fn, [claimsPaused]);
   if (fn.name === 'serviceTimeAttestor') return iface.encodeFunctionResult(fn, [wallet]);
   if (fn.name === 'stakingVault') return iface.encodeFunctionResult(fn, [stakingVault]);
@@ -335,4 +346,43 @@ test('provider and skill registry client ABIs match the compiled Solidity contra
       }
     }
   }
+});
+
+
+test('provider reward preview preserves earned claims after unstaking and honors the explicit claims pause', async () => {
+  const originalStake = stakeAmount, originalPaused = claimsPaused;
+  try {
+    claimsPaused = false; stakeAmount = ethers.parseEther('1000');
+    let result = await serviceTime.fetchProviderRewards(wallet, 0);
+    assert.equal(result.rows.length, 6);
+    assert.equal(result.rows[0].amount, '1.0');
+    assert.equal(result.rows[0].canClaim, true);
+    stakeAmount = 0n;
+    result = await serviceTime.fetchProviderRewards(wallet, 0);
+    assert.equal(result.stakeEligible, false);
+    assert.equal(result.rows[0].canClaim, true);
+    stakeAmount = ethers.parseEther('1000'); claimsPaused = true;
+    assert.equal((await serviceTime.fetchProviderRewards(wallet, 0)).rows[0].canClaim, false);
+    await assert.rejects(serviceTime.claimProviderRewards(0, 0, wallet), /paused/);
+    await assert.rejects(serviceTime.fetchProviderRewards(wallet, 2), /existing reward period/);
+  } finally { stakeAmount = originalStake; claimsPaused = originalPaused; }
+});
+
+
+test('model launch recovery verifies the factory receipt and never resubmits liquidity', async () => {
+  const original = provider.getTransactionReceipt;
+  try {
+    provider.getTransactionReceipt = async () => null;
+    assert.deepEqual(await fineTuneTokenService.recoverLaunch(collectionA, 1, ethers.id('tx')), { pending: true });
+    provider.getTransactionReceipt = async () => ({status:0});
+    assert.deepEqual(await fineTuneTokenService.recoverLaunch(collectionA, 1, ethers.id('tx')), { reverted: true });
+    const log = iface.encodeEventLog(iface.getEvent('ModelTokenLaunched'), [collectionA, 1, modelTokenA, ethers.id('pool'), 'MODEL', ethers.parseEther('0.01'), 1, wallet, 100]);
+    provider.getTransactionReceipt = async () => ({status:1,hash:ethers.id('tx'),logs:[{...log,address:wallet}]});
+    const result = await fineTuneTokenService.recoverLaunch(collectionA, 1, ethers.id('tx'));
+    assert.equal(result.tokenAddress.toLowerCase(),modelTokenA);
+    assert.equal(result.contributionRouting.mode,'allocation-pending');
+    await assert.rejects(fineTuneTokenService.recoverLaunch(collectionB, 1, ethers.id('tx')), /No matching model launch/);
+    provider.getTransactionReceipt = async () => ({status:1,hash:ethers.id('tx'),logs:[{...log,address:collectionB}]});
+    await assert.rejects(fineTuneTokenService.recoverLaunch(collectionA, 1, ethers.id('tx')), /No matching model launch/);
+  } finally {provider.getTransactionReceipt = original;}
 });

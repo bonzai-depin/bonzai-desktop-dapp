@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 import {getLiquidityVault,transactLiquidityFees} from './liquidityVault.service.js';
 import {mintLicenseStatus} from './mintValidation.js';
 // Social-token reads and minted-agent-only reserve issuance.
@@ -58,9 +59,9 @@ const economyNetwork = () => ECONOMY_NETWORK_KEY;
  * @returns {Promise<ethers.Contract>}
  */
 async function getFactoryContract(withSigner = false) {
-  const factoryAddress = CONFIG.companionTokenFactory?.contractAddress || CONFIG.smartAgentIssuance?.factoryAddress;
+  const factoryAddress = CONFIG.smartAgentIssuance?.factoryAddress;
   if (!factoryAddress) {
-    throw new Error('Companion token factory not deployed. Set CONFIG.companionTokenFactory.contractAddress');
+    throw new Error('Smart Agent token issuance is not configured.');
   }
 
   const provider = await web3Service.getProvider(economyNetwork());
@@ -90,7 +91,7 @@ async function getFactoryContract(withSigner = false) {
  */
 async function verifyMint(companion) {
   if (!hasMintReference(companion)) throw new Error('Mint an agent slot onchain first.');
-  const allowed = [CONFIG.smartAgentIssuance, CONFIG.companionNFT_BASE].find(entry =>
+  const allowed = [CONFIG.smartAgentIssuance].find(entry =>
     entry?.contractAddress?.toLowerCase() === companion.contractAddress.toLowerCase() && Number(entry.chainId) === Number(companion.chainId));
   if (!allowed) throw new Error('This agent is not from a configured collection on this network.');
   const provider = await web3Service.getProvider(economyNetwork());
@@ -107,7 +108,7 @@ async function verifyMint(companion) {
 }
 
 // Read owned slots from the configured collection; imports never establish ownership.
-async function getOwnedAgentSlots() {
+async function getOwnedAgentSlots({ includeIssued = false } = {}) {
   const config = CONFIG.smartAgentIssuance;
   const wallet = web3Service.state.walletAddress;
   if (!wallet) throw new Error('Connect the wallet that owns your agent slot.');
@@ -121,7 +122,7 @@ async function getOwnedAgentSlots() {
     const ref = { tokenId: String(id), contractAddress: config.contractAddress, chainId: Number(config.chainId) };
     await verifyMintedAgent(ref, { collection: config.contractAddress, chainId: config.chainId, provider, contract, wallet });
     const [identity, token] = await Promise.all([contract.getIdentity(id), contract.socialToken(id)]);
-    if (token === ethers.ZeroAddress) slots.push({ ...ref, ready: identity.ready, name: identity.name, owner: wallet });
+    if (includeIssued || token === ethers.ZeroAddress) slots.push({ ...ref, ready: identity.ready, name: identity.name, symbol: identity.symbol, image: identity.imageURI, agentWallet: identity.wallet, tokenAddress: token === ethers.ZeroAddress ? null : token, owner: wallet });
   }
   if (wallet.toLowerCase() !== web3Service.state.walletAddress?.toLowerCase()) throw new Error('Wallet changed. Refresh your slots.');
   return slots;
@@ -160,7 +161,7 @@ async function personalizeAgent(companion) {
   if (!uri || !image) throw new Error('Public metadata upload did not return a URI.');
   await assertLaunchWallet(web3Service, config.chainId, expectedWallet);
   const tx = await contract.personalize(id, uri, name, symbol, image, wallet.address);
-  const receipt = await tx.wait();
+  const receipt = await confirmedReceipt(tx);
   if (Number(receipt.status) !== 1) throw new Error('Agent personalization reverted.');
   return { agentWallet: wallet.address, tokenSymbol: symbol, metadataURI: uri, isBare: false, needsSetup: false };
 }
@@ -213,7 +214,7 @@ async function launchToken(companion, options = {}) {
     submitted = { txHash: tx.hash, tokenLaunchTx: tx.hash, tokenLaunchStatus: 'pending' };
     Object.assign(companion, { tokenLaunchTx: tx.hash, tokenLaunchStatus: 'pending' });
     if (options.onSubmitted) await options.onSubmitted(submitted);
-    const receipt = await tx.wait();
+    const receipt = await confirmedReceipt(tx);
     return await issuanceResult(companion, receipt);
   } catch (error) {
     state.error = error.message;
@@ -308,7 +309,7 @@ async function getTokenInfo(tokenAddress) {
 const LOG_PREFIX = 'CompanionToken';
 const getPoolInfo = (poolId) => _getPoolInfo(poolId, LOG_PREFIX);
 const getUnclaimedFees = (addr, token) => getLiquidityVault(token, 'companion', addr);
-const claimFees = (token, currency) => transactLiquidityFees({token, kind:'companion', action:'claim', currency});
+const claimFees = (token, currency) => transactLiquidityFees({token, kind:'companion', action:'claim', currency, expectedWallet:web3Service.state.walletAddress});
 
 /**
  * Get minimum ETH required for liquidity
@@ -323,7 +324,7 @@ async function getMinEthLiquidity() {
  * @returns {Promise<string[]>} Array of token addresses
  */
 async function getAllTokenAddresses({ strict = false } = {}) {
-  const addresses = [...new Set([CONFIG.companionTokenFactory?.contractAddress, CONFIG.smartAgentIssuance?.factoryAddress].filter(Boolean))];
+  const addresses = [...new Set([CONFIG.smartAgentIssuance?.factoryAddress].filter(Boolean))];
   if (!addresses.length) {
     if (strict) throw new Error('No agent token factory is configured.');
     return [];

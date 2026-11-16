@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 /**
  * BonzAI Skill Ownership Service
  *
@@ -148,7 +149,7 @@ export async function registerCompanionForSkill(skillId, companionTokenId, compa
     deadline,
     signature
   );
-  return await tx.wait();
+  return await confirmedReceipt(tx);
 }
 
 /**
@@ -160,7 +161,7 @@ export async function registerCompanionForSkill(skillId, companionTokenId, compa
 export async function deregisterCompanionFromSkill(skillId, companionTokenId) {
   const contract = await getContract(true);
   const tx = await contract.deregisterCompanion(skillId, companionTokenId);
-  return await tx.wait();
+  return await confirmedReceipt(tx);
 }
 
 /**
@@ -197,7 +198,7 @@ export async function updateCompanionRegistration(
     deadline,
     signature
   );
-  return await tx.wait();
+  return await confirmedReceipt(tx);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -211,7 +212,7 @@ export async function updateCompanionRegistration(
 export async function claimAllRevenue() {
   const contract = await getContract(true);
   const tx = await contract.claimRevenue();
-  return await tx.wait();
+  return await confirmedReceipt(tx);
 }
 
 /** Do not silently spend from an obsolete USDC action. */
@@ -518,7 +519,7 @@ export async function syncAttestationSignerToContract() {
   }
   const contract = await getContract(true);
   const tx = await contract.setAttestationSigner(localAddress);
-  const receipt = await tx.wait();
+  const receipt = await confirmedReceipt(tx);
   console.log('[SkillOwnership] Attestation signer synced to contract:', localAddress, 'tx:', receipt.hash);
   return receipt;
 }

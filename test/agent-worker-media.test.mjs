@@ -14,6 +14,7 @@ test('media delivery persists bytes, strips paths, bounds reads and supports mul
     const input = Buffer.from('test audio binary\u0000data');
     const result = await media.prepare({ text: 'Meditation transcript', artifacts: [{ pipeline: 'audio', payload: input.toString('base64'), meta: { payloadEncoding: 'base64' } }] }, {});
     assert.equal(result.artifacts.length, 1); assert.equal(result.artifacts[0].sha256, mediaHash(input));
+    assert.equal(result.artifacts[0].pipeline, 'audio');
     assert.equal(JSON.stringify(result).includes(root), false);
     assert.deepEqual(await media.read(result.artifacts[0], 5, 4), input.subarray(5, 9));
     await fs.writeFile(path.join(root, 'generated.mp3'), input);
@@ -23,6 +24,12 @@ test('media delivery persists bytes, strips paths, bounds reads and supports mul
     const image = await media.prepare({ pipeline: 'image', payload: webp.toString('base64') }, {});
     assert.equal(image.artifacts[0].mimeType, 'image/webp');
     assert.equal(image.artifacts[0].ext, 'webp');
+    const originals = await media.prepare({ artifacts: [
+      { pipeline: 'text', payload: 'Licensed handbook', meta: { licensedOriginal: true } },
+      { pipeline: '3d', payload: 'const root = new THREE.Group();', meta: { licensedOriginal: true } },
+    ] }, {});
+    assert.deepEqual(originals.artifacts.map(a => [a.pipeline, a.ext, a.mimeType]), [['text','txt','text/plain'], ['3d','js','text/javascript']]);
+    assert.equal((await media.read(originals.artifacts[0], 0, 100)).toString(), 'Licensed handbook');
     await assert.rejects(() => media.prepare({ pipeline: 'audio', payload: '/etc/hosts', meta: { payloadEncoding: 'path' } }, {}), /outside/);
     await assert.rejects(() => media.read({ id: '../secret', ext: 'wav' }, 0, 4), /Invalid/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }

@@ -1,33 +1,23 @@
 /** Pure, deterministic assistance used before optional local-LLM enrichment. */
 
 const DOCUMENT_PATTERNS = Object.freeze({
-  work_order: [/ordre d['’ ]intervention/i, /\b(?:oi|ot)[ _:#-]*\d{4,}\b/i, /statut\s+oi/i],
-  attachment_sheet: [/feuille d['’ ]attachement/i, /signature technicien/i, /date d['’ ]arriv[ée]e/i],
-  supplier_proforma: [/\bpro\s?forma\b/i, /fournisseur/i],
-  quote: [/\bdevis\b/i, /validit[ée]\s*:/i, /bon pour accord/i],
-  purchase_order: [/bon de commande/i, /\bbc\s*(?:n[°o]|#)/i],
-  service_acceptance: [/service fait/i, /\bsf\s*(?:n[°o]|#|:)/i],
-  invoice: [/\bfacture\b/i, /total\s+ttc/i, /date d['’ ][ée]mission/i],
+  work_order: [/demande (?:d['’ ]+)?intervention/i, /ordre d['’ ](?:intervention|travail)/i, /statut\s+oi/i],
+  attachment_sheet: [/bon d['’ ]intervention/i, /\bBON\s*N[°o][\s:#-]*\d+/i, /feuille d['’ ]attachement/i, /compte[- ]rendu d['’ ]intervention/i],
+  supplier_proforma: [/\bpro\s?forma\b/i],
+  quote: [/^\s*devis(?:\s+n[°o]|\s*[:#]|\s*$)/im, /bon pour accord/i],
+  purchase_order: [/^\s*bon de commande/im],
+  service_acceptance: [/^\s*(?:attestation|certificat) de service fait/im],
+  invoice: [/^\s*facture(?:\s+n[°o]|\s*[:#]|\s*$)/im],
 });
-
 export function classifyGmaoDocument(input = {}) {
-  const text = `${input.filename || ""}\n${input.text || ""}`.replace(/\s+/g, " ").trim();
-  const scores = Object.entries(DOCUMENT_PATTERNS).map(([type, patterns]) => ({
-    type,
-    matches: patterns.filter((pattern) => pattern.test(text)).length,
-    total: patterns.length,
-  })).sort((a, b) => b.matches - a.matches || b.total - a.total);
-  const winner = scores[0];
-  const documentType = winner?.matches ? winner.type : "unknown";
-  const confidence = winner?.matches ? Math.min(0.98, 0.45 + winner.matches / winner.total * 0.5) : 0.15;
-  const extracted = extractDocumentFields(text, documentType);
-  return {
-    documentType,
-    confidence: round(confidence),
-    extracted,
-    evidence: scores.filter((item) => item.matches > 0),
-    needsReview: confidence < 0.82 || documentType === "unknown",
-  };
+  // Printed accounting fields and a misleading filename must not turn a DI into a bill.
+  const body = String(input.text || '').replace(/\r/g,'');
+  const scores = Object.entries(DOCUMENT_PATTERNS).map(([type, patterns]) => ({type,matches:patterns.filter(p=>p.test(body)).length,total:patterns.length})).sort((a,b)=>b.matches-a.matches);
+  const matched=scores.filter(s=>s.matches>0);
+  const winner=matched[0];
+  const documentType=winner?.type || 'unknown';
+  const confidence=matched.length===1 ? 0.94 : matched.length>1 ? 0.65 : 0.15;
+  return {documentType,confidence,extracted:extractDocumentFields(body,documentType),evidence:matched,needsReview:confidence<0.82 || ['work_order','attachment_sheet','service_acceptance'].includes(documentType)};
 }
 
 export function extractDocumentFields(text, documentType = "unknown") {
@@ -47,12 +37,12 @@ export function extractDocumentFields(text, documentType = "unknown") {
   };
   return {
     documentType,
-    clientOiNumber: field([/\bN[°o]\s*(?:OI)?\s*[:#-]?\s*([A-Z0-9/-]{5,})/i, /\bOI[_ :#-]+([A-Z0-9/-]{5,})/i]),
+    clientOiNumber: field([/\b(?:DI|OI|OT)\s*[:#]\s*((?:DI|OI|OT)[-_/]\d[\dA-Z/-]*)/i,/\b(?:DI|OI|OT)\s*(?:n[°o])?\s*[:#-]?\s*(\d[\dA-Z/-]*)/i, /(?:demande|ordre) d['’ ]intervention[^\n]{0,35}?n[°o]\s*[:#-]?\s*(\d[\dA-Z/-]*)/i]),
     quoteNumber: field([/devis\s*(?:n[°o]|#)?\s*[:#-]?\s*([A-Z0-9/-]{5,})/i]),
     purchaseOrder: field([/bon de commande\s*(?:n[°o]|#)?\s*[:#-]?\s*([A-Z0-9/-]{3,})/i]),
     serviceAcceptanceReference: field([/(?:service fait|\bSF)\s*(?:n[°o]|#)?\s*[:#-]?\s*([A-Z0-9/-]{3,})/i]),
     invoiceNumber: field([/facture\s*(?:n[°o]|#)?\s*[:#-]?\s*([A-Z0-9/-]{3,})/i]),
-    siteTrigram: field([/\bsite\s*[:#-]?\s*([A-Z]{2,5})\b/i]),
+    siteTrigram: field([/(?:site|formation|organisme)\s*[:#-]\s*([A-Z]{2,5})\b/, /^\s*(FMD|FSL|GER|PAE|PAH|PDS|SRS|CAOME)\s*$/m]),
     buildingCode: field([/\b(?:b[aâ]timent|composant)\s*[:#-]?\s*([A-Z0-9]{3,12})/i]),
     equipmentNumber: field([/n(?:um[ée]ro|[°o])\s*(?:de l['’ ]?)?[ée]quipement\s*[:#-]?\s*([A-Z0-9/-]{3,})/i]),
     requester: field([/(?:demandeur|client|raison sociale)\s*[:#-]?\s*([^\n;]{3,80})/i]),

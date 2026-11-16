@@ -73,8 +73,9 @@ test("a schedule that could silently skip a month or run at no real time is reje
   assert.deepEqual(validateCadence({ every: "week", weekday: "2", at: "09:00", extra: 1 }), { every: "week", weekday: 2, at: "09:00" });
 });
 
-test("a locked workspace can read its schedules but cannot create recurring work or record outcomes", async () => {
+test("schedules need no workspace license to read, create or record outcomes", async () => {
+  // Local workflows are free since 4.1.0; no channel is gated by a workspace license.
   const { needsWorkspaceLicense } = await import("../src/main/workspace/license.js");
-  for (const channel of ["db:schedules:create", "db:schedules:update", "db:schedules:remove", "db:schedules:runDue", "db:goals:recordOutcome"]) assert.equal(needsWorkspaceLicense(channel), true, channel);
+  for (const channel of ["db:schedules:create", "db:schedules:update", "db:schedules:remove", "db:schedules:runDue", "db:goals:recordOutcome"]) assert.equal(needsWorkspaceLicense(channel), false, channel);
   assert.equal(needsWorkspaceLicense("db:schedules:list"), false);
 });

@@ -186,7 +186,16 @@ test(
         window.__calls = calls;
         window.__data = data;
         const store = {
+          state: {activeId:"qa-cmms", companies:[]},
+          refreshActive: async()=>{},
           runGmaoAutomation: async () => ({}),
+          createGmaoWorkOrder: async input => {
+            calls.push({action:'create-work-order',input});
+            if (window.__failWorkOrder) throw new Error('Enregistrement impossible');
+            const record={...input,id:'qa-new-wo',status:'reported',repairMode:'none',workOrderNumber:'OT-QA-004',reportedAt:Date.now()};
+            data.workOrders.push(record);
+            return record;
+          },
           saveGmaoClient: async (input) => {
             calls.push({ action: "client", input });
             const c = { id: "new-client", ...input };
@@ -415,6 +424,26 @@ test(
         "settings form mobile",
       );
       await page.keyboard.press("Escape");
+      // Exercise the same intake form that previously leaked purchasing defaults.
+      await page.setViewportSize({width:1440,height:1000});
+      await page.getByRole('navigation',{name:'Navigation maintenance'}).getByRole('button',{name:'Interventions',exact:true}).click();
+      await page.getByRole('button',{name:'Nouvelle intervention',exact:true}).click();
+      const intake=page.getByRole('dialog').filter({has:page.getByRole('heading',{name:'Nouvelle intervention',exact:true})});
+      await intake.getByLabel('Objet de l’intervention',{exact:true}).fill('QA — rétablir la ventilation');
+      await intake.getByRole('combobox',{name:/^Site/}).selectOption('s1');
+      await page.evaluate(()=>window.__failWorkOrder=true);
+      await intake.getByRole('button',{name:'Enregistrer',exact:true}).click();
+      await intake.getByText('Enregistrement impossible',{exact:true}).waitFor();
+      assert.equal(await intake.getByLabel('Objet de l’intervention',{exact:true}).inputValue(),'QA — rétablir la ventilation');
+      await page.evaluate(()=>window.__failWorkOrder=false);
+      await intake.getByRole('button',{name:'Enregistrer',exact:true}).click();
+      await intake.waitFor({state:'hidden'});
+      assert.equal(await page.evaluate(()=>window.__data.workOrders.filter(row=>row.id==='qa-new-wo').length),1);
+      const submitted=await page.evaluate(()=>window.__calls.filter(row=>row.action==='create-work-order').at(-1).input);
+      assert.equal(submitted.status,undefined);
+      assert.equal(submitted.repairMode,undefined);
+      assert.equal(submitted.siteId,'s1');
+      await page.getByRole('heading',{name:'QA — rétablir la ventilation',exact:true}).waitFor();
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

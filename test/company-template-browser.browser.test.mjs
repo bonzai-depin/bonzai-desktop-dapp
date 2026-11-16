@@ -47,7 +47,7 @@ test('template browser has useful categories, scrolls independently and keeps se
   for(const [width,theme,language] of [[1440,'light','fr'],[1024,'dark','en'],[390,'dark','fr']]){
    await page.setViewportSize({width,height:900});
    await page.evaluate(({theme,language})=>{document.documentElement.dataset.theme=theme;window.wizardLocale.setLocale(language);},{theme,language});
-   await page.waitForFunction(language=>document.querySelector('.wiz__title').textContent===(language==='fr'?'Composez votre équipe':'Build your team'),language);
+   await page.waitForFunction(language=>document.querySelector('.wiz__title')?.textContent===(language==='fr'?'Créer un workflow intelligent':'Create a smart workflow'),language);
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    if(language==='fr') assert.match(await page.locator('.template-categories').innerText(),/Bien-être et audio/);
    if(theme==='light') await page.screenshot({path:'/tmp/bonzai-template-browser-light.png'});
@@ -59,15 +59,15 @@ test('template browser has useful categories, scrolls independently and keeps se
   await page.getByRole('button',{name:'Next',exact:true}).click();
   assert.equal(await scroller.evaluate(e=>e.scrollTop),0,'each setup step starts at the top');
   await page.setViewportSize({width:1440,height:1000});
-  await page.getByLabel('Project name *',{exact:true}).fill('Evening meditation');
+  await page.getByLabel('Workspace name (optional)',{exact:true}).fill('Evening meditation');
   await page.getByLabel('Standing instructions (optional)',{exact:true}).fill('A calm ten-minute session for beginners.');
   await page.screenshot({path:'/tmp/bonzai-template-browser-context.png'});
   await page.getByRole('button',{name:'Next',exact:true}).click();
-  await page.getByLabel('Team name',{exact:true}).fill('Evening studio');
+  await page.getByRole('heading',{name:'Evening meditation',exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:/Open workspace/}).isEnabled(),true);
   await page.screenshot({path:'/tmp/bonzai-template-browser-review.png'});
   await page.getByRole('button',{name:/Back/}).click();
-  assert.equal(await page.getByLabel('Project name *',{exact:true}).inputValue(),'Evening meditation');
+  assert.equal(await page.getByLabel('Workspace name (optional)',{exact:true}).inputValue(),'Evening meditation');
   assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 });

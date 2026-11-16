@@ -31,6 +31,30 @@ assert.equal(await page.evaluate(()=>window.audioPreview.canGenerate),true,'manu
 await page.locator('.bz-download-requirement').filter({hasText:'Lyrics writer'}).getByRole('button',{name:'Download',exact:true}).click();
 await page.waitForFunction(()=>window.audioPreview.lyricsModelReady);
 assert.equal(await draft.isDisabled(),false,'boolean model-check must enable the lyrics writer after download');
+await page.evaluate(()=>{
+ window.electronAPI.getModelInfo=async()=>({loaded:false});
+ window.electronAPI.loadModel=async model=>{window.lyricsLoadedModel=model;};
+ window.electronAPI.chat=async(prompt,options)=>{window.lyricsRequest={prompt,options};return '<think>private</think>[verse]\nThe last train carries your name';};
+});
+await draft.click();
+await page.waitForFunction(()=>window.lyricsRequest);
+const lyricRun=await page.evaluate(()=>({model:window.lyricsRequest.options.model,request:window.lyricsRequest,lyrics:window.audioPreview.musicLyrics}));
+assert.equal(lyricRun.model.filename,'qwen3.5-9b-ud-q4_k_xl.gguf');
+assert.equal(lyricRun.model.context,8192);
+assert.equal(lyricRun.request.options.maxTokens,2048);
+assert.match(lyricRun.request.prompt,/second verse must reveal something new/);
+assert.doesNotMatch(lyricRun.lyrics,/think|private/);
+assert.equal(await page.evaluate(()=>window.audioPreview.durationFromLyrics),true);
+const estimated=await page.evaluate(()=>window.audioPreview.musicDuration);
+assert.equal(await page.locator('.params-grid > .music-duration-estimate').count(),0,'estimate must not occupy a fader column');
+assert.equal(await page.locator('.music-duration-estimate').count(),1);
+await page.evaluate(()=>window.audioPreview.musicBPM=60);
+await page.waitForFunction(()=>window.audioPreview.musicDuration>10);
+assert.ok(await page.evaluate(()=>window.audioPreview.musicDuration)>=estimated);
+await page.locator('#audio-musicDuration').evaluate(el=>{el.value='180';el.dispatchEvent(new Event('input',{bubbles:true}));});
+await page.evaluate(()=>window.audioPreview.musicBPM=100);
+assert.equal(await page.evaluate(()=>window.audioPreview.musicDuration),180,'manual duration is retained');
+
 
 await page.evaluate(()=>document.documentElement.dataset.theme='midnight');
 await page.screenshot({path:'/tmp/bonzai-music-studio.png',fullPage:true});

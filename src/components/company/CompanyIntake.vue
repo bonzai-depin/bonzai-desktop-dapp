@@ -1,5 +1,6 @@
 <script setup>
 import "./company-design.css";
+import MaintenanceArchiveReview from './MaintenanceArchiveReview.vue';
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import {useCompanyDraft} from "../../services/company/viewDrafts.js";
 import { i18n } from "../../i18n/index.js";
@@ -32,6 +33,8 @@ const state = ref({ sources: [], mailboxes: [], counts: [] }),
 useCompanyDraft(()=>props.companyId+':intake',{pasted,drafts});
 const partsRequests=ref([]);
 const connectingMailbox = ref(null);
+const importMode=ref('current'),importingBatch=ref(false);
+async function nativeBatch(folder=false){importingBatch.value=true;try{await perform(async()=>{const batch=await api().importBatch(props.companyId,{folder,mode:importMode.value});if(batch)notice.value=t('Batch saved locally. Review its files below.','Lot enregistré localement. Vérifiez les fichiers ci-dessous.');});}finally{importingBatch.value=false;}}
 async function loadMailboxes() {
   available.value = (await connectors.list(props.companyId)).filter(c => ['gmail', 'outlook_mail'].includes(c.kind));
 }
@@ -172,12 +175,12 @@ async function importFiles(event) {
   const files = [...event.target.files];
   event.target.value = "";
   await perform(async () => {
-    let duplicates = 0;
+    let duplicates = 0; const failures=[];const batchId=crypto.randomUUID();
     for (const f of files) {
-      const s = await importIntakeFile(props.companyId, f);
-      duplicates += Number(!!s.duplicate);
-      source.value = s;
+      try { const s = await importIntakeFile(props.companyId, f,{mode:importMode.value,batchId,relativePath:f.webkitRelativePath||f.name}); duplicates += Number(!!s.duplicate);source.value = s; }
+      catch(e){failures.push(f.name+': '+e.message);}
     }
+    if(failures.length) error.value=failures.join('\n');
     notice.value = t(
       `${files.length} file(s) saved locally; ${duplicates} already imported. The team processes them in the background.`,
       `${files.length} fichier(s) enregistré(s) ; ${duplicates} déjà importé(s). L’équipe les traite en arrière-plan.`,
@@ -269,7 +272,7 @@ watch(
 onMounted(async () => {
   await perform(load);
   unsubscribe = api()?.onChanged?.((e) => {
-    if (e.companyId === props.companyId && !busy.value)
+    if (e.companyId === props.companyId && (!busy.value||importingBatch.value))
       load().catch((e) => (error.value = e.message));
   });
   timer = setInterval(() => {
@@ -297,6 +300,9 @@ onUnmounted(() => {
         </p>
       </div>
       <div class="intake-buttons">
+        <label>{{t('Import mode','Mode d’import')}}<select v-model="importMode"><option value="current">{{t('Current operations','Opérations courantes')}}</option><option value="historical">{{t('Historical records · review only','Reprise historique · vérification obligatoire')}}</option></select></label>
+        <button class="bz-btn" :disabled="busy" @click="nativeBatch(true)">{{t('Import folder','Importer un dossier')}}</button>
+        <button class="bz-btn" :disabled="busy" @click="nativeBatch(false)">{{t('Files / ZIP','Fichiers / ZIP')}}</button>
         <button class="bz-btn bz-btn--ghost" @click="showMail">
           <span class="material-symbols-outlined" aria-hidden="true">mail</span
           >{{ t("Mailboxes", "Boîtes email") }}</button
@@ -316,6 +322,7 @@ onUnmounted(() => {
     </header>
     <p v-if="error" class="intake-error" role="alert">{{ error }}</p>
     <p v-if="notice" role="status">{{ notice }}</p>
+    <details v-if="state.batches?.length" class="intake-card"><summary>{{t('Import batches','Lots d’import')}}</summary><section v-for="batch in state.batches" :key="batch.id"><strong>{{batch.items.filter(i=>i.status==='saved').length}} {{t('saved','enregistrés')}} · {{batch.items.filter(i=>i.status==='duplicate').length}} {{t('duplicates','doublons')}} · {{batch.items.filter(i=>i.status==='failed').length}} {{t('failed','échecs')}}</strong><p v-if="batch.error">{{batch.error}}</p><ul><li v-for="(item,index) in batch.items" :key="index">{{item.name}} · {{item.error || ({saved:t('Saved','Enregistré'),duplicate:t('Already imported','Déjà importé'),pending:t('Pending','En attente'),skipped:t('Skipped','Ignoré')})[item.status]}}</li></ul></section></details>
     <section v-if="mail" class="intake-card">
       <header class="intake-head">
         <h4>{{ t("Email intake", "Import des emails") }}</h4>
@@ -517,6 +524,7 @@ onUnmounted(() => {
                 )
           }}
         </p>
+        <button v-if="source.blobId && source.status !== 'processing' && !source.actions?.some(a=>a.data.type==='maintenance_document' && a.status!=='dismissed')" class="bz-btn" :disabled="busy" @click="perform(async()=>{source=await api().prepareArchive(companyId,{id:source.id});})">{{t('Enter archive from the original','Saisir l’archive depuis l’original')}}</button>
         <section v-for="a in source.actions" :key="a.id" class="intake-action">
           <header class="intake-head">
             <h4>
@@ -540,7 +548,8 @@ onUnmounted(() => {
             }}
           </p>
           <form v-if="drafts[a.id]" @submit.prevent="review(a, 'apply')">
-            <div class="intake-fields">
+            <MaintenanceArchiveReview v-if="a.data.type==='maintenance_document'" v-model="drafts[a.id]" :company-id="companyId" :source="source" />
+            <div v-else class="intake-fields">
               <template v-for="key in INTAKE_FIELDS[a.data.type]" :key="key"
                 ><fieldset v-if="key === 'lines'" class="intake-lines">
                   <legend>{{ label(key) }}</legend>
@@ -643,7 +652,7 @@ onUnmounted(() => {
         </section>
         <details>
           <summary>{{ t("Source text", "Texte source") }}</summary>
-          <pre>{{ source.text }}</pre>
+          <div v-for="page in source.pages||[]" :key="page.page"><strong>{{t('Page','Page')}} {{page.page}} · {{page.method==='ocr'?'OCR':t('Text','Texte')}}</strong><pre>{{page.text}}</pre></div><pre v-if="!source.pages?.length">{{ source.text }}</pre>
         </details>
       </article>
       <article v-else class="intake-card intake-empty">

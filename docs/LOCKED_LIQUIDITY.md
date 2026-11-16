@@ -6,13 +6,13 @@ Each factory creates one immutable `BonzaiLiquidityVault` during its one-time co
 
 | Asset | Initial supply | Allocation | Collected trading-fee split |
 | --- | --- | --- | --- |
-| Smart agent | 1 billion | 96% liquidity budget; 4% agent wallet | 40% current execution wallet, 40% current NFT owner, 10% treasury, 10% reward basket |
-| Model, including fine-tunes and abliterations | 1 billion | 96% liquidity budget; 4% declared creator | 80% declared creator, 10% treasury, 10% reward basket |
-| Game | 1 billion | 96% liquidity budget; 4% issuing creator | 80% issuing creator, 10% treasury, 10% reward basket |
+| Smart agent | 1 billion | 96% liquidity budget; 4% agent wallet | 35% current execution wallet, 35% current NFT owner, 20% treasury, 10% reward basket |
+| Model, including fine-tunes and abliterations | 1 billion | 96% liquidity budget; 4% declared creator | 70% declared creator, 20% treasury, 10% reward basket |
+| Game | 1 billion | 96% liquidity budget; 4% issuing creator | 70% issuing creator, 20% treasury, 10% reward basket |
 
-Model/game creators may irrevocably assign their 80% creator allocation to up to 64 explicit recipients with `setCreatorRecipients`, once per position. The Training screen uses the saved contributor plan; the vault does not infer attribution. Before assignment, fees accrue to the launch creator. Assignment affects future collections only, never existing credits, and incurs no second protocol deduction. Agent recipients are resolved at collection, and already credited fees never move when the NFT or execution wallet changes. Integer rounding is conserved in the reward remainder (and within the agent creator allocation).
+Model/game creators may irrevocably assign their 70% creator allocation to up to 64 explicit recipients with `setCreatorRecipients`, once per position. The Training screen uses the saved contributor plan; the vault does not infer attribution. Before assignment, fees accrue to the launch creator. Assignment affects future collections only, never existing credits, and incurs no second protocol deduction. Agent recipients are resolved at collection, and already credited fees never move when the NFT or execution wallet changes. Integer rounding is conserved in the reward remainder (and within the agent creator allocation).
 
-Trading fees bypass both the old fee hook and the asset revenue router: no second treasury or rewards deduction. Workflow escrow payments and other asset revenues keep their separate accounting paths. Token ownership alone does not create a dividend entitlement.
+Trading fees bypass both the old fee hook and the asset revenue router: no second treasury or rewards deduction. Paid workflow escrow separately distributes 70% to provider/contributors, 20% treasury and 10% holder rewards. Contributor royalties are included in the 70%, with no second router fee. Other asset revenues keep their separate accounting paths. Token ownership alone does not create a dividend entitlement.
 
 ## Configuration and operation
 
@@ -21,7 +21,7 @@ Trading fees bypass both the old fee hook and the asset revenue router: no secon
 3. Configure agent/model/companion factories with `configureLiquidityVault(treasury, basketRewards)`. Configure games with `configureLiquidity(poolManager, positionManager, permit2, treasury, basketRewards)`. These calls are owner-only and irreversible.
 4. As basket owner, call `setLiquidityFactory(factory, true)` for each audited factory. Its canonical vault can then admit the currencies of newly registered positions automatically. Governance-disabled currencies stay disabled.
 5. Use `scripts/check-web3-production.mjs` to verify factory/vault/position-manager/treasury/basket bindings and admission. Vault addresses are discovered from factory getters, not duplicated in environment variables. Public deployment addresses belong in `config/protocol.local.env`; GitHub uses `BONZAI_PROTOCOL_CONFIG_ENV` as documented in `PROTOCOL_CONFIGURATION.md`.
-6. Anyone may call `collect(positionId)`, then `claim(currency, beneficiary)` and `flushRewards(currency)`. Claim callers cannot redirect funds. Reward deposits invoke the basket's accounting methods rather than transferring unaccounted tokens. A failing beneficiary or disabled reward currency does not block fee collection; its credit remains retryable.
+6. Anyone may call `collect(positionId)`, then `claim(currency, beneficiary)` and `flushRewards(currency)`. Permissionless claim callers cannot redirect funds. A beneficiary can use `claimTo(currency, recipient)` to recover their own credit to another wallet, including when their contract rejects native currency. Markets → selected asset → trading-fee controls expose that receiving address. Reward deposits invoke the basket's accounting methods rather than transferring unaccounted tokens. A failing beneficiary or disabled reward currency does not block fee collection; its credit remains retryable.
 
 Game issuance now requires an explicit ETH liquidity contribution, at least 0.01 ETH, shown before the wallet transaction. Model minimum liquidity remains configurable. Agent issuance spends the existing reserved 1 ETH through its NVDA adapter.
 

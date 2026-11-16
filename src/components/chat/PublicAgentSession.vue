@@ -1,7 +1,7 @@
 <template>
   <section class="public-session" aria-label="Public X session">
     <header class="public-session__heading">
-      <div><span class="bz-eyebrow">ONE AGENT · MANY CONVERSATIONS</span><h3 class="fira-sans-condensed-black-italic">Meet the world.</h3><p>{{ agent.name }} can answer mentions with locally generated media and workflow results.</p></div>
+      <div><span class="bz-eyebrow">CUSTOMER DELIVERY</span><h3 class="fira-sans-condensed-black-italic">Deliver with your team.</h3><p>{{ agent.name }} can receive requests on X and work with colleagues. Team deliverables return here for your review.</p></div>
       <span class="public-session__status"><span :class="{ 'is-live': session?.settings.enabled }"></span>{{ session?.settings.enabled ? 'Listening on X' : 'Public session paused' }}</span>
     </header>
     <p v-if="!desktop" class="bz-notice" role="status">Open BonzAI Desktop to connect X and run public sessions on this device.</p>
@@ -17,10 +17,11 @@
         <label>Public persona<textarea v-model="form.persona" class="textarea" rows="4" maxlength="2000" placeholder="Describe how your agent introduces itself and speaks in public." required></textarea></label>
         <p class="public-session__hint">This persona and public mentions are its context. Your roleplay chats, profile and company memory stay separate.</p>
         <fieldset><legend>Reply capabilities</legend><div class="public-session__media"><label v-for="item in media" :key="item.id"><input type="checkbox" :value="item.id" v-model="form.media" /><span class="material-symbols-outlined" aria-hidden="true">{{ item.icon }}</span>{{ item.label }}</label></div></fieldset>
-        <fieldset><legend>Agentic workflows</legend><label v-for="workflow in assigned" :key="workflow.id" class="public-session__workflow"><input type="checkbox" :value="workflow.id" v-model="form.workflows" :disabled="workflowChatMode(workflow) === 'interactive'" /><span>{{ workflow.name }}<small v-if="workflowChatMode(workflow) === 'interactive'">Needs its interactive workspace</small></span></label>
-          <p v-if="!assigned.length" class="public-session__hint">No available workflows were found. Refresh the workflow catalog.</p>
+        <fieldset><legend>Team workflows</legend><label v-for="workflow in assigned" :key="workflow.teamId" class="public-session__workflow"><input type="checkbox" :value="{teamId:workflow.teamId,workflowId:workflow.id}" v-model="form.teamRoutes" /><span>{{ workflow.teamName }}<small>{{ workflow.name }}</small></span></label>
+          <p v-if="!assigned.length" class="public-session__hint">Add this agent to a workflow team to enable customer deliveries.</p>
+          <p class="public-session__hint">Team results always require your review before publication. Enable one team per workflow.</p>
         </fieldset>
-        <div class="public-session__limits"><label>Daily generation limit<input class="input bz-metric" v-model.number="form.dailyLimit" type="number" min="1" max="50" /></label><label>Publication<select v-model="form.automatic" class="input"><option :value="false">Review every reply</option><option :value="true">Automatic replies</option></select></label></div>
+        <div class="public-session__limits"><label>Daily generation limit · 0 = unlimited<input class="input bz-metric" v-model.number="form.dailyLimit" type="number" min="0" max="50" /></label><label>Publication<select v-model="form.automatic" class="input"><option :value="false">Review every reply</option><option :value="true">Automatic replies</option></select></label></div>
         <label class="public-session__check"><input type="checkbox" v-model="form.platformApproved" /><span>I have X’s written approval for this AI reply bot and have labelled the account as automated.</span></label>
         <a class="public-session__hint" href="https://help.x.com/en/rules-and-policies/x-automation" target="_blank" rel="noopener noreferrer">X automation requirements ↗</a>
         <label class="public-session__check"><input type="checkbox" v-model="form.enabled" /><span>Listen for new mentions and generate replies on this device.</span></label>
@@ -34,11 +35,12 @@
         <article v-for="request in requests" :key="request.id" class="public-session__request">
           <header><a :href="`https://x.com/i/status/${request.post_id}`" target="_blank" rel="noopener noreferrer">View mention ↗</a><span class="public-session__request-status">{{ statusLabel(request.status) }}</span></header>
           <p class="public-session__mention">{{ request.text }}</p>
-          <ChatWorkflowResult v-if="request.result" :result="request.result" />
+          <ChatWorkflowResult v-if="request.result?.version" :result="request.result" />
           <label v-if="request.status === 'review'">Reply text<textarea class="textarea" rows="2" :value="edits[request.id] ?? replyPreview(request.result)" @input="edits[request.id] = $event.target.value" maxlength="260"></textarea><small>Up to 130 characters, leaving room for X’s weighted character count.</small><button v-if="edits[request.id] !== undefined" class="bz-btn bz-btn--secondary" :disabled="busy" @click="editReply(request)">Save reply text</button></label>
           <p v-if="request.error" role="status">{{ request.error }}</p>
           <p v-if="request.status === 'unknown'" class="bz-notice">Check the X account before dismissing this request. BonzAI will not post it again automatically.</p>
           <div class="public-session__actions">
+            <button v-if="request.result?.teamTask" class="bz-btn bz-btn--secondary" @click="openTeam(request.result.teamTask.companyId)">Open team task</button>
             <button v-if="request.status === 'review'" class="bz-btn bz-btn--primary" :disabled="busy || edits[request.id] !== undefined || !session?.settings.enabled || !session?.settings.platformApproved" @click="act('publicPublish', request.id)">Publish reply on X</button>
             <button v-if="request.status === 'failed'" class="bz-btn bz-btn--secondary" :disabled="busy || !session?.settings.enabled" @click="act('publicRetry', request.id)">Retry generation</button>
             <button v-if="['pending','review','failed','unknown'].includes(request.status)" class="bz-btn bz-btn--ghost" :disabled="busy" @click="act('publicDismiss', request.id)">Dismiss</button>
@@ -52,26 +54,31 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import ChatWorkflowResult from './ChatWorkflowResult.vue';
-import { getAgentWorkflowIds } from '../../services/agentWorkflows.js';
+import * as company from '../../services/company.service.js';
 import { workflowChatMode } from '../../services/chat/capabilities.js';
 import { tickPublicSessions } from '../../services/chat/publicRuntime.js';
 import { publicReplyText } from '../../services/social/xClient.js';
 const props = defineProps({ agent: { type: Object, required: true }, catalog: { type: Array, default: () => [] } });
 const api = window.electronAPI?.social;
+const openTeam = companyId => window.dispatchEvent(new CustomEvent('bonzai:open-company', { detail: { companyId } }));
 const desktop = Boolean(api?.publicList);
 const session = ref(null), requests = ref([]), error = ref(''), clientId = ref(''), busy = ref(false);
-const defaults = () => ({ persona: '', media: ['image', 'audio'], workflows: [], dailyLimit: 5, automatic: false, platformApproved: false, enabled: false });
+const defaults = () => ({ persona: '', media: ['image', 'audio'], workflows: [], teamRoutes: [], dailyLimit: 0, automatic: true, platformApproved: false, enabled: false });
 const form = reactive(defaults());
 const edits = reactive({});
 const replyPreview = result => { try { return publicReplyText(result); } catch { return result.replyText || result.text || result.title; } };
 const editReply = request => work(async () => { await api.publicEdit(request.id, edits[request.id]); delete edits[request.id]; });
 const media = [{ id: 'image', label: 'Images', icon: 'image' }, { id: 'audio', label: 'Voice', icon: 'graphic_eq' }, { id: 'music', label: 'Music', icon: 'music_note' }, { id: 'video', label: 'Video', icon: 'movie' }];
-const assigned = computed(() => props.catalog.filter(item => getAgentWorkflowIds(props.agent, props.catalog).includes(item.id)));
-const statusLabel = status => ({ pending: 'Queued', generating: 'Generating locally', review: 'Ready for review', preparing: 'Preparing media', publishing: 'Publishing', posted: 'Published', failed: 'Generation failed', skipped: 'Dismissed', unknown: 'Check X account' })[status] || status;
+const memberTeams = ref([]);
+const assigned = computed(() => memberTeams.value.flatMap(charter => { const skill = props.catalog.find(item => item.id === charter.workspace?.executionWorkflowId); return skill ? [{...skill, teamId:charter.id, teamName:charter.name}] : []; }));
+const statusLabel = status => ({ waiting_team: 'Working with team', pending: 'Queued', generating: 'Generating locally', review: 'Ready for review', preparing: 'Preparing media', publishing: 'Publishing', posted: 'Published', failed: 'Generation failed', skipped: 'Dismissed', unknown: 'Check X account' })[status] || status;
 async function refresh(loadForm = false) {
   if (!desktop) return;
   try {
     const agentId = props.agent.id;
+    const charters = await Promise.all((await company.listCompanies()).map(item => company.getCompany(item.id)));
+    if (props.agent.id !== agentId) return;
+    memberTeams.value = charters.filter(charter => Object.values(charter?.roles || {}).some(role => role.companion === agentId));
     const [sessions, inbox, config] = await Promise.all([api.publicList(), api.publicRequests(agentId), api.xClient()]);
     if (props.agent.id !== agentId) return;
     session.value = sessions.find(item => item.agent_id === agentId) || null;
@@ -81,7 +88,7 @@ async function refresh(loadForm = false) {
 }
 async function work(fn) { busy.value = true; error.value = ''; try { await fn(); await refresh(); } catch (e) { error.value = e.message; } finally { busy.value = false; } }
 const connect = () => work(async () => { await api.xClient(clientId.value); const result = await api.oauthStart({ platform: 'x', companionId: props.agent.id }); if (!result.success) throw new Error(result.error); await api.publicConfigure(props.agent.id, { ...form, enabled: false }); });
-const save = () => work(async () => { await api.publicConfigure(props.agent.id, JSON.parse(JSON.stringify(form))); tickPublicSessions().catch(() => {}); });
+const save = () => work(async () => { if (new Set(form.teamRoutes.map(item => item.workflowId)).size !== form.teamRoutes.length) throw new Error('Choose one team for each workflow.'); await api.publicConfigure(props.agent.id, JSON.parse(JSON.stringify(form))); tickPublicSessions().catch(() => {}); });
 const pause = () => work(async () => { await api.publicPause(props.agent.id); form.enabled = false; });
 const act = (method, id) => work(() => api[method](id));
 const onError = event => { if (event.detail.agentId === props.agent.id) error.value = event.detail.message; };

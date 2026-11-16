@@ -580,3 +580,25 @@ export const gmaoMaintenanceEvents = sqliteTable("gmao_maintenance_events", {
   recordId: text("record_id").notNull().references(() => gmaoMaintenanceRecords.id), kind: text("kind").notNull(),
   evidence: text("evidence", {mode:"json"}).notNull(), happenedAt: integer("happened_at").notNull(),
 });
+
+export const gmaoCaseRecords = sqliteTable("gmao_case_records", {
+  id: text("id").primaryKey(), companyId: text("company_id").notNull(),
+  workOrderId: text("work_order_id").references(() => gmaoWorkOrders.id),
+  siteId: text("site_id").references(() => gmaoSites.id), kind: text("kind").notNull(),
+  data: text("data", {mode:"json"}).notNull(), sourceId: text("source_id"),
+  revision: integer("revision").notNull().default(1), ...timestamps,
+});
+export const gmaoCaseReferences = sqliteTable("gmao_case_references", {
+  id: text("id").primaryKey(), companyId: text("company_id").notNull(),
+  recordId: text("record_id").notNull().references(() => gmaoCaseRecords.id),
+  scope: text("scope").notNull(), type: text("type").notNull(), value: text("value").notNull(),
+});
+export const gmaoCaseEvents = sqliteTable("gmao_case_events", {
+  id: text("id").primaryKey(), companyId: text("company_id").notNull(),
+  recordId: text("record_id").notNull().references(() => gmaoCaseRecords.id),
+  data: text("data", {mode:"json"}).notNull(), createdAt: integer("created_at").notNull(),
+});
+export const companyIntakeBatches = sqliteTable("company_intake_batches", {
+  id: text("id").primaryKey(), companyId: text("company_id").notNull(),
+  data: text("data", {mode:"json"}).notNull(), ...timestamps,
+});

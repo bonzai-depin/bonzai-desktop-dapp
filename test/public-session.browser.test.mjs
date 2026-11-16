@@ -11,6 +11,7 @@ test('public session renders review, failures and opt-in controls across themes 
     await page.route('**/*', async route => {
       const request = new URL(route.request().url());
       if (request.origin !== origin) { external.push(request.href); return route.abort(); }
+      if (request.pathname.endsWith('/company.service.js')) return route.fulfill({contentType:'application/javascript',body:`export const listCompanies=async()=>[{id:'team'}];export const getCompany=async()=>({id:'team',name:'Meditation Studio',roles:{CEO:{companion:'fixture'}},workspace:{executionWorkflowId:'meditation-forge-v1.0.0'}});`});
       if (request.pathname.endsWith('/publicRuntime.js')) return route.fulfill({ contentType: 'application/javascript', body: 'export async function tickPublicSessions() {}' });
       return route.continue();
     });
@@ -32,7 +33,7 @@ test('public session renders review, failures and opt-in controls across themes 
       const { default: Component } = await import('/src/components/chat/PublicAgentSession.vue');
       createApp(Component, { agent: { id: 'fixture', name: 'Aurore', assignedWorkflowIds: ['meditation-forge-v1.0.0'] }, catalog: [{ id: 'meditation-forge-v1.0.0', name: 'Meditation Forge', inputs: {} }] }).mount('#fixture');
     });
-    await page.getByRole('heading', { name: 'Meet the world.' }).waitFor();
+    await page.getByRole('heading', { name: 'Deliver with your team.' }).waitFor();
     await page.getByRole('button', { name: 'Publish reply on X' }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Publish reply on X' }).isDisabled(), true);
     assert.equal(await page.locator('audio').count(), 1);

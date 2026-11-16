@@ -10,10 +10,18 @@ The generation history record is the source of the file, model and parameters. N
 - Wallet confirmation uses the contract fee. If a submitted transaction cannot be confirmed, the dialog blocks blind retry and directs the user to the wallet/explorer. A failure to update local history after confirmation is a warning, not a failed mint. The receipt remains visible until Done.
 - Smart-agent portrait generation records provenance, which is checked before personalizing a minted slot. Legacy portraits without verified provenance must be regenerated before publishing.
 
+## Public storage setup and receipts
+
+Ownership → Web3 Guide → Decentralized Storage accepts the user's Pinata JWT. No `VITE_PINATA_*` secrets are compiled into the renderer. Desktop uses the existing encrypted credential vault in Electron main and fixed Pinata destinations; no filesystem path is accepted by upload IPC. Web keeps credentials and receipts in tab memory only. Storage setup does not require a wallet or stake. Credential permissions and provider quota are checked by Pinata at upload time.
+
+Uploads require explicit publication consent in the guide; Mint reviews public publication of content, prompt and metadata. The app accepts non-empty files up to 512 MiB and JSON metadata up to 8 MiB. Receipts expose CID and gateway URL; Desktop retains the last 100 unique CIDs locally. A receipt-write failure does not turn a successful remote upload into a failed upload. Forget Credentials removes authentication, not public pins or third-party copies. Keep pinning funded: IPFS is not a perpetual-storage promise.
+
+Mint access offers direct links to wallet connection, staking steps and storage setup. The local mint record stores the actual recipient and CID. Disabling discoverability means not listed, not private. A training manifest does not upload weights. Model-token launch recovery verifies the confirmed factory event and original NFT identity without resending liquidity.
+
 ## Verification
 
-`node --test test/mint-validation.test.mjs test/glb-mint.test.mjs`
+`node --test test/mint-validation.test.mjs test/glb-mint.test.mjs test/public-storage.test.mjs`
 
-With a local renderer on `BONZAI_UI_URL`: `node --test test/mint-dialog.browser.test.mjs test/glb-export.browser.test.mjs`.
+With a local renderer on `BONZAI_UI_URL`: `node --test test/mint-dialog.browser.test.mjs test/glb-export.browser.test.mjs test/protocol-guide.browser.test.mjs`.
 
 Fixtures cover license rejection before uploads, all six media payload types, retained metadata, image/audio/video/text/3D previews, and GLB export. These checks do not submit real transactions, validate live IPFS availability or establish third-party marketplace indexing. Those require a configured deployment, storage credentials and an explicitly approved transaction.

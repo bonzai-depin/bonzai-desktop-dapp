@@ -1,3 +1,4 @@
+import { agentMarketFrench } from './agent-market.js';
 import { smartWorkflowOutcomeMessages } from './smartWorkflowOutcomeMessages.js';
 import { smartWorkflowSetupMessages } from './smartWorkflowSetupMessages.js';
 import { smartWorkflowWorkspaceMessages } from './smartWorkflowWorkspaceMessages.js';
@@ -34,6 +35,26 @@ export const reviewedCatalogOverrides = {
   },
 
   fr: {
+    ...agentMarketFrench,
+    'Save Draft': 'Enregistrer le brouillon',
+    'Saved Drafts': 'Brouillons enregistrés',
+    'Open drafts': 'Ouvrir les brouillons',
+    'Delete draft': 'Supprimer le brouillon',
+    'Draft saved': 'Brouillon enregistré',
+    'Draft restored': 'Brouillon restauré',
+    'No saved drafts yet.': 'Aucun brouillon enregistré.',
+    'Create Video Prompt': 'Créer le prompt vidéo',
+    'Creating prompt…': 'Création du prompt…',
+    'Could not save this draft. Check available storage and try again.': 'Impossible d’enregistrer le brouillon. Vérifiez l’espace disponible et réessayez.',
+    'Could not open drafts. Please try again.': 'Impossible d’ouvrir les brouillons. Réessayez.',
+    'Could not restore this draft. Please try again.': 'Impossible de restaurer ce brouillon. Réessayez.',
+    'Could not delete this draft. Please try again.': 'Impossible de supprimer ce brouillon. Réessayez.',
+    'Could not create a video prompt. Please try again.': 'Impossible de créer le prompt vidéo. Réessayez.',
+    'Your inputs changed. Create a new prompt from the current scene.': 'Vos paramètres ont changé. Créez un nouveau prompt à partir de la scène actuelle.',
+    'Download the vision model before creating a prompt from an image.': 'Téléchargez le modèle de vision avant de créer un prompt à partir d’une image.',
+    'The video could not be generated reliably. Please try again with a different seed or a shorter clip.': 'La vidéo n’a pas pu être générée correctement. Réessayez avec une autre graine ou une durée plus courte.',
+    'The video could not be generated. Please try again with a different seed or a shorter clip.': 'La vidéo n’a pas pu être générée. Réessayez avec une autre graine ou une durée plus courte.',
+
     "Smart Workflows": "Workflows intelligents",
     "Build your team": "Composez votre équipe",
     "Process Analyst": "Analyse des processus",
@@ -205,7 +226,14 @@ Object.assign(reviewedCatalogOverrides.fr ||= {}, {
  'Read-only workspace':'Espace en lecture seule', 'Test activation':'Activation de test',
  'Company workspace unlocked':'Espace entreprise activé', 'View existing records':'Consulter les dossiers existants',
  'Checkout is not configured yet. You can run the demonstrations and read your existing records.':'Le paiement n’est pas encore configuré. Vous pouvez lancer les démonstrations et consulter vos dossiers existants.',
- 'Try a business workflow':'Tester un parcours métier',
+ 'Try A Workflow':'Essayer un workflow',
+ 'Run Demo':'Lancer la démo', 'Run Again':'Relancer', 'Sample data · external actions simulated':'Données fictives · actions externes simulées',
+ 'Guided Examples':'Exemples guidés', 'Demo workflow':'Workflow de démonstration',
+ 'Start With A Brief':'Définir le besoin', 'Follow The Team':'Suivre l’équipe', 'Review The Result':'Examiner le résultat',
+ 'Illustrative Example':'Exemple illustratif', 'Run a local rehearsal':'Lancer une simulation locale',
+ 'Source Answer':'Réponse source', 'characters':'caractères',
+ 'The full answer travels with the task.':'La réponse complète accompagne la tâche.',
+ 'Explore an example with sample content. No models, downloads or connected accounts are needed.':'Découvrez un exemple à partir de contenu fictif. Aucun modèle, téléchargement ou compte connecté n’est nécessaire.',
  'Creates a separate, paused demo team. No emails, portal submissions or payments are sent.':'Crée une équipe de démonstration distincte, en pause. Aucun e-mail, dépôt sur un portail ou paiement n’est envoyé.',
  'Maintenance intervention':'Intervention de maintenance', 'Invoice to payment':'De la facture au règlement',
  'Grant application to settlement':'Du dossier de prime au versement',
@@ -313,3 +341,14 @@ for (const [locale, values] of Object.entries(activityMessages)) Object.assign(r
 for (const catalog of [smartWorkflowResultsMessages, smartWorkflowDiscoveryMessages, smartWorkflowWorkspaceMessages, smartWorkflowSetupMessages, smartWorkflowOutcomeMessages]) {
   for (const [locale, messages] of Object.entries(catalog)) Object.assign(reviewedCatalogOverrides[locale] ||= {}, messages);
 }
+
+Object.assign(reviewedCatalogOverrides.fr, {
+  'Workflows home': 'Accueil des workflows',
+  'My workflows': 'Mes workflows',
+  'Include roleplay': 'Inclure le jeu de rôle',
+  'Open model': 'Choisir un modèle',
+  'Hire agent': 'Engager l’agent',
+  'Shared app model': 'Modèle partagé de l’application',
+  'Shared team connectors': 'Connecteurs partagés de l’équipe',
+  'Every agent can use this team’s connectors. External actions still require their configured approvals.': 'Chaque agent peut utiliser les connecteurs de l’équipe. Les actions externes restent soumises aux validations configurées.',
+});

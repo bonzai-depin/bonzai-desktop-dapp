@@ -17,9 +17,10 @@ Values starting with `VITE_` are included in the distributed desktop application
    public identities, not private keys. Merely setting these variables does not
    grant permissions or wire contracts; execute and verify the deployment's
    governance transactions separately.
-5. Run `npm run web3:verify:offline`, then `npm run web3:verify`. The latter reads
+5. Set `VITE_UNISWAP_V4_ROUTER_ABI_VERSION` to the verified deployed router encoding (`v1` or `v2`). `v2` adds per-hop `minHopPriceX36` to exact-output parameters; do not select it from a repository version guess.
+6. Run `npm run web3:verify:offline`, then `npm run web3:verify`. The latter reads
    chain ID, deployed bytecode and cross-contract wiring; it does not deploy.
-6. Build the application again after changing public protocol settings.
+7. Build the application again after changing public protocol settings.
 
 Vite, Hardhat and the verifier load the same file. Selected-chain addresses also
 provide the `BONZAI_*_ADDRESS` inputs used by the deployment script. Conflicting
@@ -62,14 +63,15 @@ Set credentials only for the jobs/services that need them:
 - `DEPLOYER_PRIVATE_KEY`: deployment runner only, preferably a protected GitHub
   environment with required reviewers. Never provide it to renderer builds.
 - `ETHERSCAN_API_KEY`: source verification where the selected explorer requires it.
-- Attestation signer: follow `ATTESTATION_SIGNER_SETUP.md`; the receipt producer
-  requires an independently operated verification service, not a client-supplied
-  elapsed-time claim. Do not unpause rewards just because an address is filled.
+- Skill-registration signer: follow `ATTESTATION_SIGNER_SETUP.md`. This signer is distinct from `BonzaiServiceTime.serviceTimeAttestor`. The latter requires an independently operated inference-verification service, not a client-supplied elapsed-time claim. Do not unpause provider rewards just because an address is filled.
+- Public user storage: each user configures Pinata in Ownership → Web3 Guide → Decentralized Storage. Do not add Pinata JWTs or API secrets to GitHub renderer variables. Desktop encrypts these locally; Web uses tab memory.
 - Model downloads: `HF_TOKEN`, where repository access requires it.
 - Release storage: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`; public release
   settings remain `R2_ENDPOINT`, `R2_BUCKET`, `R2_PUBLIC_URL`.
 - Platform signing/notarization: retain the existing names documented in
   `DESKTOP_RELEASES.md`. These do not belong in protocol configuration.
+
+Remove old `VITE_PINATA_*` entries from environment files and GitHub build settings; builds reject them. Operational companion provisioning scripts use private `PINATA_JWT` only. Rotate an old key if it was included in a distributed build.
 
 Do not put credentials in `VITE_*` variables. An authenticated RPC URL bundled
 into an application exposes its embedded API credentials to every recipient.
@@ -78,9 +80,9 @@ into an application exposes its embedded API credentials to every recipient.
 
 The configuration template and passing contract unit tests do not certify a
 production launch. Keep provider claims paused until independent receipt
-verification is operational. Stablecoin workflow checkout and unsupported
-training modalities require their implementations and real acceptance tests;
-address configuration alone does not implement those features.
+verification is operational. Stablecoin workflow checkout now quotes an exact output, caps USDC spend, uses bounded Permit2 allowances and funds escrow separately after the swap. It still requires a funded acceptance run against the actual configured router, USDC and agent pool. If escrow funding fails, purchased agent tokens remain in the customer wallet.
+
+Recovery views support onchain route/job discovery, alternate payout wallets, expired jobs, mutual settlement and appointed arbitration. Verify these on every packaged wallet implementation. Unsupported training modalities remain separate implementation gates; address configuration alone does not implement them.
 
 The ordinary `npm test` command runs only contract suites; Node service tests
 remain separate (`npm run test:web3`). Run with a Hardhat-supported Node version

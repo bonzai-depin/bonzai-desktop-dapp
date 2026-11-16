@@ -20,6 +20,7 @@ contract BonzaiSmartAgents is ERC721URIStorage, Ownable, ReentrancyGuard {
     uint256 public totalSupply;
     uint256 public totalReservedETH;
     uint64 public mintStart;
+    // End of the promoted drop; remaining supply stays mintable in Desktop.
     uint64 public mintEnd;
     address public immutable proceedsRecipient;
     address public launcher;
@@ -52,7 +53,7 @@ contract BonzaiSmartAgents is ERC721URIStorage, Ownable, ReentrancyGuard {
     }
     function mintSlots(uint256 quantity) external payable nonReentrant {
         require(launcher!=address(0),"Launcher not configured");
-        require(mintStart!=0&&block.timestamp>=mintStart&&block.timestamp<mintEnd,"Drop not active");
+        require(mintStart!=0&&block.timestamp>=mintStart,"Drop not active");
         require(quantity>0&&mintedBy[msg.sender]+quantity<=MAX_PER_WALLET,"Wallet mint limit");
         require(totalSupply+quantity<=MAX_SUPPLY,"Supply cap");
         require(msg.value==quantity*MINT_PRICE,"Exact mint price required");

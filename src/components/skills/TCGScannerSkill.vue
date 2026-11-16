@@ -375,7 +375,7 @@
           <span class="material-symbols-outlined" style="font-size: 18px">
             token
           </span>
-          Mint
+          Tokenize
         </button>
         <button class="bz-btn bz-btn--ghost" @click="rescan">
           <span class="material-symbols-outlined" style="font-size: 18px">

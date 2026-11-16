@@ -1,40 +1,31 @@
 <script setup>
 import './company-design.css';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { connectWithPrivy } from '../../services/web3.service.js';
 import { getAvailableAgentWorkflows } from '../../services/agentWorkflows.js';
 import { workspaceDiscovery } from '../../services/company/workspaceDiscovery.js';
 import { TEMPLATE_GROUPS, filterTemplates } from '../../services/company/templateCatalog.js';
 import { useI18n } from '../../i18n/index.js';
 import { operationText } from '../../i18n/operations.js';
 import { smartWorkflowDiscoveryMessages } from '../../i18n/smartWorkflowDiscoveryMessages.js';
-import CompanyBusinessDemo from './CompanyBusinessDemo.vue';
+import WorkflowDemo from './WorkflowDemo.vue';
 
 const emit = defineEmits(['choose-template']);
 const { locale } = useI18n();
 const text = source => smartWorkflowDiscoveryMessages[locale.value]?.[source] || operationText(source, locale.value);
-const access = ref(null), error = ref(''), busy = ref(false), order = ref(null), readOnly = ref(false), skipped = ref(false);
+const error = ref(''), skipped = ref(false);
 const catalog = ref([]), catalogLoading = ref(true), catalogError = ref(false), selectedId = ref(''), query = ref(''), category = ref('all'), expanded = ref(false), showDemo = ref(false);
-const purchaseRef = ref(null), detailRef = ref(null), demoRef = ref(null);
-const api = window.electronAPI?.workspace;
-let timer, disposed = false;
+const detailRef = ref(null), demoRef = ref(null);
+let disposed = false;
+defineExpose({ showHome: () => { skipped.value = false; }, showWorkspace: () => { skipped.value = true; } });
 const workflows = computed(() => workspaceDiscovery(catalog.value, locale.value));
 const matches = computed(() => filterTemplates(workflows.value, { category: category.value, query: query.value, locale: locale.value }));
 const visible = computed(() => expanded.value ? matches.value : matches.value.slice(0, 8));
 const featured = computed(() => ['operations', 'wellness', 'media'].map(category => workflows.value.find(w => w.category === category)).filter(Boolean));
 const selected = computed(() => workflows.value.find(item => item.id === selectedId.value) || workflows.value[0]);
 const categories = computed(() => TEMPLATE_GROUPS.filter(group => group.id === 'all' || workflows.value.some(item => item.category === group.id)));
-const canUseTemplate = computed(() => Boolean(access.value?.unlocked || access.value?.bypassed));
-const contentOpen = computed(() => (access.value?.unlocked && (!access.value?.bypassed || skipped.value)) || readOnly.value);
+const contentOpen = computed(() => skipped.value);
 watch([category, query], () => { expanded.value = false; });
 watch(selectedId, () => { showDemo.value = false; });
-async function refresh() {
-  try {
-    if (!api) throw new Error('Restart the desktop app to enable workspace activation.');
-    const status = await api.status();
-    if (!disposed) access.value = status;
-  } catch (e) { if (!disposed) error.value = e.message; }
-}
 async function loadCatalog() {
   catalogLoading.value = true; catalogError.value = false;
   try {
@@ -45,16 +36,15 @@ async function loadCatalog() {
   } catch { if (!disposed) catalogError.value = true; }
   finally { if (!disposed) catalogLoading.value = false; }
 }
-const openDemo = () => { readOnly.value = true; };
+const openDemo = () => { skipped.value = true; };
 onMounted(() => {
   window.addEventListener('bonzai:open-demo-team', openDemo);
-  refresh(); loadCatalog(); timer = setInterval(refresh, 5000);
+  loadCatalog();
 });
-onUnmounted(() => { disposed = true; clearInterval(timer); window.removeEventListener('bonzai:open-demo-team', openDemo); });
-async function chooseTemplate() {
+onUnmounted(() => { disposed = true; window.removeEventListener('bonzai:open-demo-team', openDemo); });
+async function chooseTemplate(requestedId) {
   if (!selected.value) return;
-  if (!canUseTemplate.value) { purchaseRef.value?.scrollIntoView({ block: 'center', behavior: 'auto' }); return; }
-  const id = selected.value.id;
+  const id = typeof requestedId === "string" ? requestedId : selected.value.id;
   skipped.value = true;
   await nextTick();
   emit('choose-template', id);
@@ -65,59 +55,17 @@ async function selectTemplate(id) {
   detailRef.value?.scrollIntoView({ block: 'start', behavior: 'auto' });
 }
 async function revealDemo() { showDemo.value = true; await nextTick(); demoRef.value?.scrollIntoView({ block: 'start', behavior: 'auto' }); }
-async function verify() {
-  if (!order.value) return;
-  busy.value = true; error.value = '';
-  try { const state = await api.verify(order.value); access.value = { ...access.value, ...state }; if (state.pending) error.value = 'Payment confirmation is pending. You can check again without paying again.'; }
-  catch (e) { error.value = e.message; } finally { busy.value = false; }
-}
-async function signIn() {
-  busy.value = true; error.value = '';
-  try { const result = await connectWithPrivy(); if (result?.success === false) throw new Error(result.error || 'Sign-in cancelled.'); }
-  catch (e) { error.value = e.message; } finally { busy.value = false; }
-}
-function clearCheckout() { if (confirm('Only start another checkout if the previous payment was not sent. Continue?')) { order.value = null; localStorage.removeItem('bonzai-workspace-pending-checkout'); } }
-async function checkout(method) {
-  if (busy.value || order.value || !access.value?.configured) return;
-  busy.value = true; error.value = '';
-  try {
-    const o = await api.checkout(method); order.value = { orderId: o.id };
-    // Keep the original pending order across reloads; never resend automatically.
-    localStorage.setItem('bonzai-workspace-pending-checkout', JSON.stringify(order.value));
-    if (method === 'wallet') {
-      const { getSigner, connectWallet } = await import('../../services/web3.service.js');
-      let signer;
-      try { signer = await getSigner(); }
-      catch { const connection = await connectWallet(); if (connection?.success === false) throw new Error(connection.error || 'Wallet connection cancelled.'); signer = await getSigner(); }
-      if (Number((await signer.provider.getNetwork()).chainId) !== o.chainId) throw new Error(`Switch your wallet to chain ${o.chainId} before paying.`);
-      const { Contract } = await import('ethers');
-      const signature = await signer.signMessage(o.message);
-      const token = new Contract(o.token, ['function transfer(address,uint256) returns (bool)'], signer);
-      const tx = await token.transfer(o.recipient, o.amount);
-      order.value = { orderId: o.id, signature, transactionHash: tx.hash };
-      localStorage.setItem('bonzai-workspace-pending-checkout', JSON.stringify(order.value));
-    }
-  } catch (e) { error.value = e.message; } finally { busy.value = false; }
-}
-try { order.value = JSON.parse(localStorage.getItem('bonzai-workspace-pending-checkout') || 'null'); } catch {}
-async function restore() { busy.value = true; error.value = ''; try { access.value = await api.restore(); } catch (e) { error.value = e.message; } finally { busy.value = false; } }
-async function backup() { try { await api.backup(); } catch (e) { error.value = e.message; } }
 </script>
 
 <template>
   <div v-if="contentOpen" class="workspace-content company-screen">
-    <div v-if="!access?.bypassed" class="license-strip" data-i18n-skip>
-      <span>{{ readOnly && !access?.unlocked ? $ui('Read-only workspace') : access?.test ? $ui('Test activation') : text('Smart Workflows unlocked') }}</span>
-      <button class="bz-btn bz-btn--sm" @click="access?.unlocked ? backup() : readOnly = false">{{ access?.unlocked ? $ui('Back up license') : $ui('Unlock workspace') }}</button>
-    </div>
-    <p v-if="error" class="access-error" role="alert">{{ $ui(error) }}</p>
     <slot />
   </div>
   <section v-else class="workspace-access company-screen" data-i18n-skip>
     <div class="access-inner bz-page-content">
       <header class="access-heading bz-page-header">
         <div><p class="bz-eyebrow">{{ $ui('Automate') }}</p><h1 class="bz-h1"><span class="material-symbols-outlined bz-title-icon" aria-hidden="true">automation</span>{{ text('Smart Workflows') }}</h1></div>
-        <div v-if="access?.bypassed" class="temporary-access"><button class="bz-btn bz-btn--primary" @click="skipped = true">{{ $ui('Skip') }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button></div>
+        <div class="temporary-access"><button class="bz-btn bz-btn--primary" @click="skipped = true">{{ $ui('My workflows') }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button></div>
       </header>
       <section class="workflow-showcase" :aria-label="text('Find your next workflow')">
         <div class="workflow-invitation">
@@ -131,7 +79,7 @@ async function backup() { try { await api.backup(); } catch (e) { error.value = 
             <span class="access-eyebrow">{{ $ui(selected.catalogCategory) }}</span><h2>{{ $ui(selected.catalogTitle) }}</h2><p class="preview-outcome">{{ $ui(selected.hasInstalledWorkflow ? selected.catalogOutcome : selected.catalogDescription) }}</p>
             <div class="preview-flow"><section><h3><span class="material-symbols-outlined" aria-hidden="true">input</span>{{ text('You provide') }}</h3><ul><li v-for="input in selected.catalogInputs" :key="input">{{ text(input) }}</li></ul></section><section><h3><span class="material-symbols-outlined" aria-hidden="true">task_alt</span>{{ text('You get') }}</h3><ul><li v-for="result in selected.catalogDeliverables" :key="result">{{ $ui(result) }}</li></ul></section></div>
             <details class="preview-setup"><summary>{{ text('Before you start') }}</summary><p v-if="selected.catalogSetup">{{ text(selected.catalogSetup) }}</p><p v-if="selected.catalogTools.length" class="preview-tools">{{ selected.catalogTools.map(text).join(' · ') }}</p><p>{{ text(selected.hasInstalledWorkflow ? 'Models are downloaded separately when needed. Download size and device requirements are shown before installation.' : 'Start with your files and instructions. Connect outside tools only when the work needs them.') }}</p></details>
-            <div class="preview-actions"><button class="bz-btn bz-btn--primary" @click="chooseTemplate">{{ text(canUseTemplate ? 'Use this template' : 'See unlock options') }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button><button v-if="selected.demoKind" class="bz-btn bz-btn--ghost" @click="revealDemo"><span class="material-symbols-outlined" aria-hidden="true">play_circle</span>{{ text('Try the guided demo') }}</button></div>
+            <div class="preview-actions"><button class="bz-btn bz-btn--primary" @click="chooseTemplate">{{ text('Use this template') }}<span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span></button><button class="bz-btn bz-btn--ghost" @click="revealDemo"><span class="material-symbols-outlined" aria-hidden="true">play_circle</span>{{ text('Try the guided demo') }}</button></div>
             <p class="preview-note"><span class="material-symbols-outlined" aria-hidden="true">verified_user</span>{{ text('Review before sharing or sending.') }}</p>
           </article>
       </section>
@@ -154,13 +102,7 @@ async function backup() { try { await api.backup(); } catch (e) { error.value = 
 
         </div>
       </section>
-      <div v-if="showDemo && selected?.demoKind" ref="demoRef" class="intro-demo"><CompanyBusinessDemo :key="selected.demoKind" :kinds="[selected.demoKind]" /></div>
-      <section ref="purchaseRef" class="purchase" aria-labelledby="purchase-title">
-        <div class="purchase-summary"><h2 id="purchase-title">{{ text('One unlock. All your workflows.') }}</h2><p>{{ text('Create workspaces, run tasks, review results and keep your projects organized. Personal local generation remains free.') }}</p><p class="purchase-boundary">{{ text('Your existing results remain readable and exportable without unlocking.') }}</p></div>
-        <div class="purchase-checkout"><div class="purchase-price"><strong class="bz-metric">1 ETH</strong><span>{{ $ui('Standard unlock price · one-time purchase') }}</span></div><p class="test-price">{{ $ui('Test checkout only: charged 1 USDC with a wallet or US$1 by card, not 1 ETH.') }}</p><div class="purchase-actions"><button class="bz-btn bz-btn--primary" :disabled="busy || !!order || !access?.configured" @click="checkout('card')">{{ $ui('Pay by card') }}</button><button class="bz-btn" :disabled="busy || !!order || !access?.configured" @click="checkout('wallet')">{{ $ui('Pay with wallet') }}</button><button v-if="order" class="bz-btn" :disabled="busy" @click="verify">{{ $ui('Check payment') }}</button></div><p v-if="access && !access.configured && !access.bypassed">{{ $ui('Checkout is not configured yet. You can run the demonstrations and read your existing records.') }}</p><button v-if="order" class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="busy" @click="clearCheckout">{{ $ui('Start another checkout') }}</button></div>
-      </section>
-      <p v-if="error" class="access-error" role="alert">{{ $ui(error) }}</p>
-      <footer class="access-footer"><p>{{ text('Browse now, decide later.') }}</p><div class="purchase-actions"><button class="bz-btn bz-btn--ghost" :disabled="busy" @click="signIn">{{ $ui('Sign in with email') }}</button><button class="bz-btn bz-btn--ghost" :disabled="busy || !api" @click="restore">{{ $ui('Restore license') }}</button><button v-if="!access?.bypassed" class="bz-btn bz-btn--ghost" @click="readOnly = true">{{ $ui('View existing records') }}</button></div></footer>
+      <div ref="demoRef" class="intro-demo"><WorkflowDemo :workflows="workflows" :initial-id="selected?.id" @choose-template="chooseTemplate" /></div>
     </div>
   </section>
 </template>

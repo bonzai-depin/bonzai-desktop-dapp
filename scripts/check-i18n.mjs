@@ -10,6 +10,7 @@ import { connectionMessages } from '../src/i18n/connection.js'
 import { rcDownloadMessages } from '../src/i18n/rc-downloads.js'
 import { basketMessages } from '../src/i18n/basket.js'
 import { smartAgentMessages } from '../src/i18n/smart-agents.js'
+import { meshDeviceMessages } from '../src/i18n/mesh.js'
 import { levelEditorMessages } from '../src/i18n/level-editor.js'
 import { isSafeCatalogPhrase, translationIssue } from '../src/i18n/catalogQuality.js'
 import { reviewedCatalogOverrides } from '../src/i18n/reviewed-catalog.js'
@@ -27,6 +28,7 @@ const catalogs = Object.fromEntries(supportedLocales.map(({ code }) => [code, {
   ...rcDownloadMessages[code],
   ...basketMessages[code],
   ...smartAgentMessages[code],
+  ...meshDeviceMessages[code],
   // The level editor ships EN/FR; other locales use the runtime's English fallback.
   ...(levelEditorMessages[code] || levelEditorMessages.en),
 }]))

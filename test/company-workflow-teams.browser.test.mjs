@@ -2,11 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 const url = process.env.BONZAI_UI_URL;
+async function stubWorkflowCatalog(page) {
+  // Route the module, including Vite's HMR query, rather than mutating a second
+  // untimestamped singleton that the mounted component may never import.
+  await page.route('**/src/services/agentWorkflows.js*', route => route.fulfill({contentType:'application/javascript',body:`
+    const catalog=[{id:'test-brief',name:'Research studio',description:'Prepare a source-backed research brief.',inputs:{topic:{type:'string',label:'Topic',required:true}}}];
+    export async function getAvailableAgentWorkflows(){return catalog;}
+    export function getAgentWorkflowIds(){return catalog.map(s=>s.id);}
+    export function normalizeAssignedWorkflowIds(ids){return ids;}
+  `}));
+}
 test('production view keeps worker, task and results usable at desktop and narrow widths', {skip: !url,timeout:90000}, async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true});
  try {
   const page=await browser.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',r=>new URL(r.request().url()).origin===new URL(url).origin?r.continue():r.abort());
+  await stubWorkflowCatalog(page);
   await page.goto(`${url}/src/assets/tokens.css`);
   await page.setContent('<html><head><link rel="stylesheet" href="/src/assets/tokens.css"><link rel="stylesheet" href="/src/assets/themes.css"><link rel="stylesheet" href="/src/assets/buttons.css"><style>*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bz-canvas);color:var(--bz-fg)}</style></head><body><div id="app" class="company-screen"></div></body></html>');
   await page.evaluate(async()=>{
@@ -20,7 +31,7 @@ test('production view keeps worker, task and results usable at desktop and narro
    window.fixture={charter,navigation:[]};
    createApp({render:()=>h(View,{charter,state:{issues:[]},onOpenView:view=>window.fixture.navigation.push(view)})}).use(createI18nPlugin()).mount('#app');
   });
-  await page.getByRole('heading',{name:'Research studio'}).waitFor();
+  await page.getByRole('heading',{name:'Research studio'}).waitFor({timeout:5000}).catch(async error => { throw new Error(`${error.message}\n${await page.locator('body').innerText()}\n${errors.join('\n')}`); });
   for(const width of [1440,390]) {
    await page.setViewportSize({width,height:900});
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
@@ -43,6 +54,7 @@ test('workflow setup forms a production team without sample tasks or unrelated c
  try {
   const page=await browser.newPage({viewport:{width:1200,height:900}});
   await page.route('**/*',r=>new URL(r.request().url()).origin===new URL(url).origin?r.continue():r.abort());
+  await stubWorkflowCatalog(page);
   await page.route('**/src/stores/companyStore.js*', async route => {
    const response=await route.fetch();
    await route.fulfill({response,body:(await response.text())+'\ncompanyStore.formFromTemplate=async(...args)=>{window.savedTeam=args;return {id:"new-team"};};'});
@@ -60,7 +72,6 @@ test('workflow setup forms a production team without sample tasks or unrelated c
    const {createI18nPlugin}=await import('/src/i18n/index.js');
    createApp({render:()=>h(View,{initialWorkflowId:'test-brief',onDone:id=>window.createdId=id})}).use(createI18nPlugin()).mount('#app');
   });
-  await page.getByRole('button',{name:'Next',exact:true}).click();
   await page.getByLabel('Workspace name (optional)',{exact:true}).fill('Research');
   assert.equal(await page.locator('.connector-section').count(),0);
   await page.getByRole('button',{name:'Next',exact:true}).click();

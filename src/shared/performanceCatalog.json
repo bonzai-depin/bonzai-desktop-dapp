@@ -56,17 +56,17 @@
   },
   {
     "id": "/image/turbo",
-    "label": "Image \u00b7 Klein",
+    "label": "Image \u00b7 Qwen Image 2.1 Turbo",
     "group": "Image"
   },
   {
     "id": "/image/image/turbo",
-    "label": "Image editing \u00b7 Klein",
+    "label": "Image editing \u00b7 Qwen Image 2.1 Turbo",
     "group": "Image"
   },
   {
     "id": "/image/experimental/klein-9b",
-    "label": "Image \u00b7 Klein 9B",
+    "label": "Image \u00b7 Qwen Image 2.1 Turbo",
     "group": "Image"
   },
   {
@@ -148,5 +148,20 @@
     "id": "/workflows/finger-frame/composite",
     "label": "Finger Frame \u00b7 Composite",
     "group": "Video"
+  },
+  {
+    "id": "/image/image/standard",
+    "label": "Image editing \u00b7 Qwen Image 2.1",
+    "group": "Image"
+  },
+  {
+    "id": "/image/qwen-2.1",
+    "label": "Image \u00b7 Qwen Image 2.1",
+    "group": "Image"
+  },
+  {
+    "id": "/image/sdxl",
+    "label": "Image \u00b7 SDXL",
+    "group": "Image"
   }
 ]

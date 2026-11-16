@@ -111,3 +111,18 @@ export const dayKey = (value) => {
   const d = new Date(value);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+
+// The shared editor also contains purchasing and completion fields. Only intake
+// fields belong to a new work order; lifecycle state is owned by the repository.
+export function workOrderIntakePayload(form) {
+  return {
+    title: form.title,
+    siteId: form.siteId,
+    assetId: form.assetId || null,
+    clientOiNumber: form.clientOiNumber,
+    priority: form.priority,
+    description: form.description,
+    requestKey: form.requestKey,
+    receivedAt: new Date(form.receivedAt).getTime(),
+  };
+}

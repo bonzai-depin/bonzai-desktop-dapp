@@ -1,5 +1,6 @@
 <template>
   <BzDatePicker />
+  <GenerationCelebration :show="generationToast.show" :title="generationToast.title" :description="generationToast.desc" @dismiss="generationToast.show = false" />
   <Transition name="notif">
     <div v-if="authState.isAwaitingSignature" key="auth" class="bz-notif bz-notif--warning">
       <div class="bz-notif__body">
@@ -19,15 +20,6 @@
       </div>
       <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click.stop="skillStore.updateActivity()" />
     </div>
-
-    <div v-else-if="generationToast.show" key="generation" class="bz-notif bz-notif--success">
-      <div class="bz-notif__body">
-        <span class="bz-notif__title">{{ generationToast.title }}</span>
-        <span class="bz-notif__desc">{{ generationToast.desc }}</span>
-      </div>
-      <BzCloseButton size="sm" variant="subtle" :aria-label="i18n.t('auth.dismiss')" @click="generationToast.show = false" />
-    </div>
-
 
     <span v-else key="none"></span>
   </Transition>
@@ -77,6 +69,7 @@
             <span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">{{ t.icon }}</span>
             <span class="bz-sidebar__item-label">{{ t.label }}</span>
           </button>
+          <button class="bz-sidebar__item" :class="{ 'is-active': modelMode === 'roleplay' }" title="Roleplay" aria-label="Roleplay" @click="goToCompanionChat"><span class="bz-sidebar__item-icon material-symbols-outlined" aria-hidden="true">theater_comedy</span><span class="bz-sidebar__item-label">{{ $ui('Roleplay') }}</span></button>
         </div>
 
         <div class="bz-sidebar__group">
@@ -163,7 +156,7 @@
           <span v-if="alwaysLoaded" class="bz-sidebar__model-lock material-symbols-outlined" :title="i18n.t('network.alwaysLoaded')">lock</span>
         </button>
 
-        <button v-if="systemValues?.memBudget" class="bz-sidebar__footer-action bz-sidebar__specs" @click="openSpecsModal" :title="(systemValues.memBudget / 1024**3).toFixed(0) + ' GB'">
+        <button v-if="systemValues?.memBudget" class="bz-sidebar__footer-action bz-sidebar__specs" @click="openSpecsModal" :title="$ui('Model memory budget')">
           <span class="material-symbols-outlined">memory</span>
           <span>{{ (systemValues.memBudget / 1024**3).toFixed(0) }} GB</span>
         </button>
@@ -183,6 +176,7 @@
       <GenerativeTraining v-if="modelMode == 'datasets'" key="datasets" mode="tune" initial-tab="datasets" />
       <GenerativeTraining v-if="modelMode == 'finetune'" key="finetune" mode="tune" />
       <GenerativeTraining v-if="modelMode == 'robot-train-chat'" key="robot-train-chat" mode="tune" />
+      <RoleplayView v-if="modelMode === 'roleplay'" />
       <SmartAgent v-if="modelMode == 'agent'" key="agent" />
       <ContributionOwnershipDashboard v-if="modelMode == 'economy'" key="economy" />
       <Markets v-if="modelMode == 'markets'" key="markets" />
@@ -275,7 +269,7 @@
               <div class="bz-specs-item"><span class="bz-specs-item__label">CPU Speed</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.cpuSpeed }} GHz</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">GPU</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.gpu }}</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">Total RAM</span><span class="bz-specs-item__value bz-mono">{{ (specsData.hardware.ram / 1024**3).toFixed(0) }} GB</span></div>
-              <div class="bz-specs-item bz-specs-item--highlight"><span class="bz-specs-item__label">Inference Budget</span><span class="bz-specs-item__value bz-mono" style="color:var(--bz-emerald-500)">{{ (specsData.hardware.memBudget / 1024**3).toFixed(1) }} GB</span></div>
+              <div class="bz-specs-item bz-specs-item--highlight"><span class="bz-specs-item__label" :title="$ui('Planning limit based on total RAM, not currently free memory.')">Model memory budget</span><span class="bz-specs-item__value bz-mono" style="color:var(--bz-emerald-500)">{{ (specsData.hardware.memBudget / 1024**3).toFixed(1) }} GB</span></div>
               <div v-if="specsData.hardware.vram > 0" class="bz-specs-item"><span class="bz-specs-item__label">VRAM</span><span class="bz-specs-item__value bz-mono">{{ (specsData.hardware.vram / 1024).toFixed(0) }} GB</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">OS</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.os }}</span></div>
               <div class="bz-specs-item"><span class="bz-specs-item__label">Architecture</span><span class="bz-specs-item__value bz-mono">{{ specsData.hardware.arch }}</span></div>
@@ -313,10 +307,12 @@ import Generative3D from "./components/Generative3D.vue";
 import GenerativeTraining from "./components/GenerativeTraining.vue";
 import ContributionOwnershipDashboard from "./components/ContributionOwnershipDashboard.vue";
 import Markets from "./components/Markets.vue";
+import GenerationCelebration from "./components/GenerationCelebration.vue";
 import ApplicationActivityBar from "./components/ApplicationActivityBar.vue";
 import Company from "./components/Company.vue";
 import HarnessView from "./components/HarnessView.vue";
 import ModelLicenses from "./components/ModelLicenses.vue";
+import RoleplayView from "./components/RoleplayView.vue";
 import SmartAgent from "./components/SmartAgent.vue";
 import BonzaiPulse from "./components/BonzaiPulse.vue";
 import BzCloseButton from "./components/BzCloseButton.vue";
@@ -326,6 +322,7 @@ import GenerationInspector from "./components/GenerationInspector.vue";
 import AgentJobBoard from "./components/AgentJobBoard.vue";
 import LanguageSelector from "./components/LanguageSelector.vue";
 import RewardsView from "./components/RewardsView.vue";
+import { remoteInference, refreshRemoteInference } from './stores/remoteInference.js';
 import NetworkSettings from "./components/NetworkSettings.vue";
 import MeshPresence from "./components/MeshPresence.vue";
 import FirstRunWelcome from "./components/FirstRunWelcome.vue";
@@ -355,9 +352,9 @@ const MemoryGraph = defineAsyncComponent(() => import("./components/MemoryGraph.
 
 export default {
   name: "App",
-  components: { ThemeGallery, ApplicationActivityBar, BzDatePicker,
+  components: { GenerationCelebration, ThemeGallery, ApplicationActivityBar, BzDatePicker,
     GenerativeText, GenerativeImage, GenerativeVideo, GenerativeAudio,
-    PerformanceBenchmark, Generative3D, GenerativeTraining, SmartAgent, Company, HarnessView,
+    PerformanceBenchmark, Generative3D, GenerativeTraining, RoleplayView, SmartAgent, Company, HarnessView,
     ContributionOwnershipDashboard, Markets, MemoryGraph, ModelLicenses, AgentJobBoard, LanguageSelector,
     BonzaiPulse, BzCloseButton, LlmModelPickerModal, CommandPalette,
     GenerationInspector, RewardsView, NetworkSettings, MeshPresence,
@@ -424,7 +421,7 @@ export default {
     const trainItems = computed(() => [
       { id: "tune", label: i18n.t('nav.tune'), icon: "tune" }, { id: "uncensor", label: i18n.t('nav.uncensor'), icon: "lock_open" },
     ]);
-    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "rewards", "memory", "licenses", "benchmark"]);
+    const VALID_MODES = new Set(["chat", "image", "video", "music", "game", "roleplay", "agent", "tune", "uncensor", "datasets", "finetune", "robot-train-chat", "company", ...(jobsEnabled ? ["jobs"] : []), "harness", "economy", "markets", "rewards", "memory", "licenses", "benchmark"]);
     const handleEarnAction = (id) => {
       if (id === "rewards") modelMode.value = "rewards";
       if (id === "economy") modelMode.value = "economy";
@@ -527,10 +524,9 @@ export default {
     };
 
     const goToCompanionChat = () => {
-      skillStore.requestSkillNavigation("roleplay-companion-v1.0.0");
       skillStore.clearMissedMessages();
       skillStore.updateActivity();
-      modelMode.value = "agent";
+      modelMode.value = "roleplay";
     };
 
     const showBrowseModels = () => {
@@ -538,6 +534,7 @@ export default {
     };
 
     const openBrowseModels = () => {
+      if (remoteInference.active) { showNetworkModal.value = true; return; }
       showBrowseModels();
       window.dispatchEvent(new CustomEvent("bonzai:open-browse-models"));
     };
@@ -588,6 +585,7 @@ const {
 
     const currentModelName = computed(() => modelStore.state.current?.modelname || selectPreferredModel(listAllLLMs(), modelStore.state.preferredFilename)?.name || null);
     const teamActivityTarget = ref(null);
+const onOpenCompany = event => { if (typeof event.detail?.companyId === 'string') openTeamActivity(event.detail.companyId); };
 function openTeamActivity(id) {
   teamActivityTarget.value = { id, revision: Date.now() };
   modelMode.value = 'company';
@@ -599,7 +597,7 @@ const companyModelSummary = computed(() => {
       if (!charter) return null;
       return operationText("Team settings", i18n.state.locale);
     });
-    const sidebarModelName = computed(() => companyModelSummary.value || currentModelName.value || null);
+    const sidebarModelName = computed(() => remoteInference.active ? `OpenRouter · ${remoteInference.model}` : companyModelSummary.value || currentModelName.value || null);
     const alwaysLoaded = computed(() => modelStore.state.alwaysLoaded);
 
     const showThemeGallery = ref(false);
@@ -716,6 +714,7 @@ const companyModelSummary = computed(() => {
     const handleNeedsReauth = () => { showAuthModal.value = true; };
 
     onMounted(() => {
+      refreshRemoteInference().catch(() => {});
       startPublicSessions();
       themeService.init();
       requestAnimationFrame(() => {
@@ -746,6 +745,7 @@ const companyModelSummary = computed(() => {
       initOpenClawHandler();
       window.addEventListener("bonzai:open-browse-models", showBrowseModels);
       window.addEventListener("bonzai:set-mode", onSetModeEvent);
+      window.addEventListener("bonzai:open-company", onOpenCompany);
       window.addEventListener("navigate-to-tab", onNavigateToTab);
       window.addEventListener("bonzai:hire-smart-agent", onHireSmartAgent);
       window.addEventListener("bonzai:run-agent-workflow", onRunAgentWorkflow);
@@ -786,6 +786,7 @@ const companyModelSummary = computed(() => {
       modelStore.stopListening();
       window.removeEventListener("bonzai:open-browse-models", showBrowseModels);
       window.removeEventListener("bonzai:set-mode", onSetModeEvent);
+      window.removeEventListener("bonzai:open-company", onOpenCompany);
       window.removeEventListener("navigate-to-tab", onNavigateToTab);
       window.removeEventListener("bonzai:hire-smart-agent", onHireSmartAgent);
       window.removeEventListener("bonzai:run-agent-workflow", onRunAgentWorkflow);
@@ -819,7 +820,7 @@ const companyModelSummary = computed(() => {
             generationToast.desc = i18n.t('generation.resultReady');
             generationToast.show = true;
             if (generationToastTimer) clearTimeout(generationToastTimer);
-            generationToastTimer = setTimeout(() => { generationToast.show = false; }, 6000);
+            generationToastTimer = setTimeout(() => { generationToast.show = false; }, 4000);
             break;
           }
         }

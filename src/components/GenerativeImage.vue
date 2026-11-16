@@ -6,7 +6,7 @@
       :eyebrow="$t('create.eyebrow')"
       :title="$t('create.imageTitle')"
       icon="image"
-      :modes="imageModeItems"
+      :modes="remoteMedia ? imageModeItems.filter(item => ['turbo', 'turbo_edit'].includes(item.value)).map(item => item.value === 'turbo' ? { ...item, label: 'Generate' } : item) : imageModeItems"
       :progress="workspaceProgress"
       :history-label="$t('create.history')"
       :disabled="isLoading"
@@ -26,7 +26,7 @@
       <template #panel>
         <div class="bz-image-panel">
           <DownloadRequirement category="image"
-            v-if="(showUpdateCTA && readiness.currentMode === mode) || downloads.active"
+            v-if="!remoteMedia && ((showUpdateCTA && readiness.currentMode === mode) || downloads.active)"
             :items="[...readiness.repoDetails, ...readiness.ggufNames]"
             :active="downloads.active"
                   cancellable
@@ -51,7 +51,8 @@
             </div>
           </div>
 
-          <AccessRequirements
+          <p v-if="remoteMedia" class="bz-eyebrow">OpenRouter · {{ remoteInference.mediaModels?.image }}</p>
+          <AccessRequirements v-if="!remoteMedia"
             ref="accessRef"
             level="LVL3"
             @access-changed="onAccessChanged"
@@ -94,12 +95,12 @@
             "
             shortcut-hint="⌘⏎"
             @submit="sendMessage(form.prompt)"
-          />
+          ><template #before-submit><GenerationDrafts kind="image" :controller="generationDraft" :disabled="isLoading" /></template></GenerativeInput>
         </div>
       </template>
 
       <template #historyActions>
-        <div class="bz-image-history-actions">
+        <div class="bz-image-history-actions"><RoleplayHistoryToggle v-model="includeRoleplay" />
           <button type="button" class="bz-iconbtn" title="Import history" aria-label="Import history" @click="importHistory()">
             <span class="material-symbols-outlined" aria-hidden="true">upload</span>
           </button>
@@ -121,7 +122,7 @@
 
       <template #history>
         <div
-          v-if="inferences.length"
+          v-if="reversedInferences.length"
           ref="masonryGridRef"
           class="bz-image-masonry"
           :style="{ '--bz-image-masonry-columns': masonryColumns.length }"
@@ -237,6 +238,11 @@
 </template>
 
 <script>
+import { mediaHistory, persistMediaHistory, loadMediaHistory } from '../stores/mediaHistory.js';
+import GenerationDrafts from "./generative/GenerationDrafts.vue";
+import { useGenerationDraft } from "../composables/useGenerationDraft.js";
+import { remoteMediaEnabled, remoteInference, refreshRemoteInference } from '../stores/remoteInference.js';
+import RoleplayHistoryToggle from './RoleplayHistoryToggle.vue';
 import {
   ref,
   reactive,
@@ -318,7 +324,7 @@ const WS_GEN = `${API_BASE}/generation`;
 
 export default {
   name: "GenerativeImage",
-  components: { DownloadRequirement,
+  components: { GenerationDrafts, RoleplayHistoryToggle, DownloadRequirement,
     AccessRequirements,
     MintModal,
     BonzaiPulse,
@@ -331,6 +337,8 @@ export default {
   },
   setup() {
     const { inferenceRequest } = useInferenceRouter();
+    refreshRemoteInference().catch(() => {});
+    const remoteMedia = computed(() => remoteMediaEnabled('image'));
 
     // ------------ injected from App -------
     const goAnimateToVideo = inject("goAnimateToVideo", () => {});
@@ -403,7 +411,9 @@ export default {
       { value: "4k", label: "4K", icon: "4k", title: "2160 x 4096" },
     ];
     // Use shallowRef for inferences - base64 images are large and don't need deep reactivity
-    const inferences = shallowRef([]);
+    const includeRoleplay = ref(localStorage.getItem('bonzai:history:roleplay') !== 'false');
+    watch(includeRoleplay, value => { localStorage.setItem('bonzai:history:roleplay', String(value)); displayedCount.value = 12; });
+    const inferences = mediaHistory('image');
     const hasCopy = shallowRef([]);
 
     // ------------ lazy loading pagination ----------------
@@ -467,6 +477,7 @@ export default {
       const result = [];
       // Iterate backwards to build reversed order in one pass
       for (let i = items.length - 1; i >= 0; i--) {
+        if (!includeRoleplay.value && items[i].source === 'roleplay') continue;
         const norm = normalizeInference(items[i]);
         if (norm && norm.answer?.data?.image) {
           norm._originalIndex = i;
@@ -519,7 +530,7 @@ export default {
       const data = inference?.answer?.data || {};
       const image = data.image || inference?.imageData || inference?.image || "";
       if (!image) return "";
-      if (/^data:image\//i.test(image)) return image;
+      if (/^(?:data:image\/|bonzai-blob:\/\/|https?:\/\/|file:\/\/)/i.test(image)) return image;
       const mime = data.mime_type || data.mimeType || inference?.mime_type || inference?.mimeType || sniffImageMime(image);
       return `data:${mime};base64,${image}`;
     };
@@ -624,18 +635,8 @@ export default {
       showScrollTop.value = scrollTop > 400;
     });
 
-    // Debounced persistence to avoid excessive writes
-    const persistInferences = debounce(async (data) => {
-      try {
-        // Use JSON.parse/stringify to ensure proper serialization
-        await window.electronAPI?.store?.set?.(
-          "imageInferences",
-          JSON.parse(JSON.stringify(data)),
-        );
-      } catch (e) {
-        console.error("[GenerativeImage] Failed to persist inferences:", e);
-      }
-    }, 500);
+    // Save independently of the view lifecycle.
+    const persistInferences = (data) => persistMediaHistory('image', data).catch(error => console.error('[History] Could not save image result', error));
 
     // ------------ image editing state -----
     const pickedImageName = ref("");
@@ -686,12 +687,12 @@ export default {
     );
 
     const canGenerate = computed(
-      () => !readiness.checking && readiness.ok && !readiness.authRequired && !generation.value.active,
+      () => (remoteMedia.value || (!readiness.checking && readiness.ok && !readiness.authRequired)) && !generation.value.active,
     );
 
     // Combined check: technical readiness AND access rights
     const canGenerateWithAccess = computed(
-      () => canGenerate.value && hasAccess.value,
+      () => canGenerate.value && (remoteMedia.value || hasAccess.value),
     );
 
     // ------------ generation --------------
@@ -962,6 +963,8 @@ export default {
       "sdxl",
       "sdxl_intermediate",
       "image_turbo",
+      "qwen_image_21",
+      "qwen_image_21_turbo",
       "flux_klein",
       "image_quality",
       "z_image_turbo",
@@ -1286,30 +1289,25 @@ export default {
       payload.width = w;
 
       if (isEditMode.value) {
-        // Flux Klein I2I - optimized for speed
+        // Unified Qwen Image 2.1 reference-image editing
         payload.image_base64 = uploadedImageBase64.value;
         payload.guidance_scale = 1.0;
-        payload.steps = 4;
+        payload.steps = 8;
       } else if (mode.value === "standard") {
-        // SDXL standard mode
-        payload.lora = "sdxl-lora.safetensors";
+        // Qwen Image 2.1 Standard
+        payload.steps = 25;
+        payload.guidance_scale = 4.0;
       } else if (mode.value === "turbo") {
-        // Flux Klein turbo mode - optimized for speed
-        payload.steps = 4;
+        // Shared Qwen Image 2.1 preset
+        payload.steps = 8;
+        payload.guidance_scale = 1.0;
       }
       payload.pipeline = currentPipeline.value;
 
       // Build endpoint URL
       const url = `${API_BASE}${endpointForMode()}`;
 
-      // Free GPU memory: unload local LLM + clear cached Flask models
-      try {
-        await window.electronAPI?.unloadModel?.();
-        await fetch(`${API_BASE}/memory/clear`, { method: "POST" });
-      } catch (e) {
-        console.warn("[GenerativeImage] Memory clear:", e.message);
-      }
-
+      // The device coordinator releases idle models only after this request owns the device.
       ensureGenerationSocket();
       startGeneration("image"); // Initialize generation state
       const _genStart = performance.now();
@@ -1322,11 +1320,11 @@ export default {
           const pipelineName = currentPipeline.value;
           const modelName =
             pipelineName === "image_turbo"
-              ? "flux-klein"
+              ? "qwen-image-2.1-turbo"
               : pipelineName === "image_quality"
                 ? "z-image-turbo"
                 : pipelineName === "image_standard"
-                  ? "sdxl"
+                  ? "qwen-image-2.1"
                   : pipelineName;
           const newInference = {
             question: prompt,
@@ -1335,16 +1333,19 @@ export default {
               data: response.data,
             },
             id: uuid(),
-            model: modelName,
+            model: response.data.model || modelName,
             pipeline: pipelineName,
             mode: mode.value,
             quality: quality.value,
             width: response.data.width || payload.width,
             height: response.data.height || payload.height,
             mimeType: response.data.mime_type || response.data.mimeType || sniffImageMime(response.data.image),
-            steps: payload.steps,
-            guidanceScale: payload.guidance_scale,
-            lora: payload.lora,
+            steps: response.data.steps ?? payload.steps,
+            guidanceScale: response.data.cfg ?? payload.guidance_scale,
+            sampler: response.data.sampler,
+            scheduler: response.data.scheduler,
+            lora: response.data.lora ?? payload.lora,
+            loraScale: response.data.lora_scale,
             hasReferenceImage: isEditMode.value,
             elapsedMs,
             timestamp: Date.now(),
@@ -1353,7 +1354,7 @@ export default {
           // Update shallowRef by replacing array (triggers reactivity)
           inferences.value = [...inferences.value, newInference];
           hasCopy.value = [...hasCopy.value, false];
-          // Debounced persistence
+          // Save independently of the view lifecycle.
           persistInferences([...inferences.value]);
 
           // Save to unified inference store with performance metadata
@@ -1361,9 +1362,10 @@ export default {
             pipeline: pipelineName,
             width: response.data.width || payload.width,
             height: response.data.height || payload.height,
-            steps: payload.steps,
+            steps: response.data.steps ?? payload.steps,
             elapsed: elapsedMs / 1000,
-            source: 'bonzai',
+            source: response.data.metadata?.source || 'bonzai',
+            model: response.data.model, usage: response.data.metadata?.usage,
             networkMode: _lastRoutingMode,
           });
 
@@ -1533,7 +1535,7 @@ export default {
       // Update shallowRef by replacing arrays
       inferences.value = inferences.value.filter((_, i) => i !== idx);
       hasCopy.value = hasCopy.value.filter((_, i) => i !== idx);
-      // Debounced persistence
+      // Save independently of the view lifecycle.
       persistInferences([...inferences.value]);
     };
 
@@ -1638,14 +1640,20 @@ export default {
     });
 
     // ------------ lifecycle ----------------
+    // Merge only roleplay rows so an active generation keeps its live state.
+    const refreshRoleplayHistory = async () => {
+      const rows = await window.electronAPI?.store?.get?.('imageInferences', []);
+      if (!Array.isArray(rows)) return;
+      const merged = new Map(inferences.value.map(row => [row.id, row]));
+      for (const row of rows) if (row.source === 'roleplay') merged.set(row.id, row);
+      inferences.value = [...merged.values()].sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+    };
     onMounted(async () => {
+      window.addEventListener('bonzai:roleplay-history-changed', refreshRoleplayHistory);
       ensureGenerationSocket();
       await resumeActiveDownloadIfAny();
       try {
-        const saved = await window.electronAPI?.store?.get?.(
-          "imageInferences",
-          [],
-        );
+        const saved = await loadMediaHistory('image');
         if (Array.isArray(saved)) {
           // Load into shallowRef by replacing the array
           inferences.value = saved;
@@ -1666,6 +1674,7 @@ export default {
       }
     });
     onBeforeUnmount(() => {
+      window.removeEventListener('bonzai:roleplay-history-changed', refreshRoleplayHistory);
       if (downloadsSocket.value?.connected) {
         try {
           downloadsSocket.value.disconnect();
@@ -1781,7 +1790,7 @@ export default {
           label: hasCopy[inference._originalIndex] ? "Copied" : "Reuse",
           title: "Reuse this prompt", variant: "default" },
         { id: "mint", icon: minted ? "check_circle" : "token",
-          label: minted ? "Minted" : "Mint",
+          label: minted ? "Tokenized" : "Tokenize",
           variant: minted ? "success" : "default", disabled: minted },
         { id: "edit",     icon: "edit",       label: "Edit",      variant: "warning",  disabled: !hasImage,
           title: "Edit this image with Flux Kontext" },
@@ -1821,7 +1830,12 @@ export default {
       }
     };
 
+    const generationDraft = useGenerationDraft({ form, mode, quality, uploadedImageBase64, pickedImageName });
     return {
+      generationDraft,
+      remoteMedia, remoteInference,
+      includeRoleplay,
+      reversedInferences,
       // state
       mode,
       imageModeItems,

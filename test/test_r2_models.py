@@ -9,7 +9,7 @@ from wan_adapters import WAN_ADAPTERS
 
 class ModelMirrorTest(unittest.TestCase):
     def test_every_adapter_has_a_checksummed_public_download(self):
-        for name in [a[0] for a in WAN_ADAPTERS] + ['flux-2-klein-9b-lora.safetensors', 'flux-2-klein-9b-lora-extra.safetensors', 'h3_lora.safetensors']:
+        for name in [a[0] for a in WAN_ADAPTERS] + ['qwen-image-2.1-lora.safetensors', 'h3_lora.safetensors']:
             item = model_file(name)
             self.assertEqual(item['url'], 'https://pub-c63241af101045fb837462e5c4c67e33.r2.dev/models/' + name)
             self.assertGreater(item['size'], 0)
@@ -59,7 +59,7 @@ class ModelMirrorTest(unittest.TestCase):
             sdxl = env['_plan_for']('image_standard')['single_files']
             self.assertEqual(sdxl, [model_file('sdxl-lora.safetensors')])
             klein = env['_plan_for']('image_turbo')['single_files']
-            self.assertEqual(len(klein), 3)
+            self.assertEqual(len(klein), 2)
             # Leave GGUF as fallback; do not activate the previously removed extra adapter.
             for name in ('MINIMAX_H3_TRANSFORMER_URL', 'MINIMAX_H3_TEXT_ENCODER_URL', 'MINIMAX_H3_VIDEO_VAE_URL', 'MINIMAX_H3_AUDIO_VAE_URL'):
                 env[name] = 'https://example.test/weights'

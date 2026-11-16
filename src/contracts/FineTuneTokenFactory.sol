@@ -410,7 +410,7 @@ contract FineTuneTokenFactory is Ownable, ReentrancyGuard, IERC721Receiver {
         // 11. Compute pool identity; the vault was registered with the minted position.
         poolId = keccak256(abi.encode(poolKey));
         // FineTune doesn't use live NFT lookups — pass zeros for NFT fields.
-        // Vault credits the 80/10/10 split directly; no hook or second revenue-router deduction.
+        // Vault credits the 70/20/10 split directly; no hook or second revenue-router deduction.
 
         emit ModelTokenLaunched(
             contentCollection,

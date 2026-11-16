@@ -1,3 +1,4 @@
+import * as casework from './gmaoCasework.js';
 import { createHash } from 'node:crypto';
 import { v4 as uuid } from "uuid";
 import { get } from "../connection.js";
@@ -1090,6 +1091,12 @@ export function snapshot(companyId, options = {}) {
       }
     }
   }
+  for(const item of casework.snapshot(companyId).records.filter(r=>r.kind==='blocker' && r.status==='open' && !['completed','cancelled'].includes(wos.find(w=>w.id===r.workOrderId)?.status))) {
+    obligations.push({kind:'casework_followup',workOrderId:item.workOrderId,siteId:item.siteId,title:item.reason+' · '+item.owner+' · '+item.nextAction,dueDate:item.dueDate,dueAt:Date.parse(item.dueDate+'T12:00:00Z'),status:item.dueDate<new Date(now).toISOString().slice(0,10)?'late':'pending'});
+  }
+  for(const item of casework.snapshot(companyId).records.filter(r=>r.kind==='fluid' && r.followupDate && !r.followupResolvedAt && r.leakResult!=='repaired')) {
+    obligations.push({kind:'casework_followup',recordId:item.id,workOrderId:item.workOrderId,siteId:item.siteId,title:item.circuit+' · '+item.refrigerant+' · '+item.followup,dueDate:item.followupDate,dueAt:Date.parse(item.followupDate+'T12:00:00Z'),status:item.followupDate<new Date(now).toISOString().slice(0,10)?'late':'pending'});
+  }
   obligations.sort((a, b) => (a.dueAt || 0) - (b.dueAt || 0));
   const from = options.from || now - 30 * DAY,
     to = options.to || now;
@@ -1150,6 +1157,7 @@ export function monographicSheet(companyId, assetId) {
     site,
     profile,
     regulatory,
+    casework: casework.assetHistory(companyId,{assetId}),
     updatedAt: Date.now(),
     missing: [
       "secondaryCode",

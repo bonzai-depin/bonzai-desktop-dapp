@@ -8,8 +8,8 @@ const source = fs.readFileSync(new URL('../scripts/deploy-v4-economy.js', import
 const body = source.slice(0, source.lastIndexOf('main().catch')).replace(/^import .+;\n/gm, '');
 const address = n => ethers.getAddress(ethers.zeroPadValue(ethers.toBeHex(n), 20));
 const settings = {
-  BONZAI_TOKEN_ADDRESS: address(1), BONZAI_TREASURY_ADDRESS: address(2), BONZAI_COMPANIONS_ADDRESS: address(3),
-  BONZAI_COMPANION_TOKEN_FACTORY_ADDRESS: address(4), BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS: address(5),
+  BONZAI_TOKEN_ADDRESS: address(1), BONZAI_TREASURY_ADDRESS: address(2),
+  BONZAI_FINE_TUNE_TOKEN_FACTORY_ADDRESS: address(5),
   BONZAI_UNISWAP_HOOK_ADDRESS: address(0x4044), BONZAI_COLLECTIBLES_FACTORY_ADDRESS: address(6),
   BONZAI_MINT_POOL_ADDRESS: address(7), BONZAI_SERVICE_TIME_ADDRESS: address(8), BONZAI_PROVIDER_REGISTRY_ADDRESS: address(9),
   BONZAI_USDC_ADDRESS: address(10), BONZAI_SMART_AGENTS_ADDRESS: address(11), BONZAI_AGENT_TOKEN_FACTORY_ADDRESS: address(12),
@@ -69,7 +69,7 @@ async function scenario({ frozen = false, wrongToken = false, wrongOwner = false
   return { deployments, writes, calls, error };
 }
 
-test('v4 migration rejects frozen vault, token mismatch and unauthorized wiring before deploying', async () => {
+test('v4 deployment rejects frozen vault, token mismatch and unauthorized wiring before deploying', async () => {
   for (const [options, reason] of [[{ frozen: true }, /vault is frozen/], [{ wrongToken: true }, /different BONZAI token/], [{ wrongOwner: true }, /does not own/], [{ wrongUsdc: true }, /USDC token must have 6/], [{ basketAlreadySet: true }, /already has a basket/]]) {
     const result = await scenario(options);
     assert.match(result.error?.message || '', reason);

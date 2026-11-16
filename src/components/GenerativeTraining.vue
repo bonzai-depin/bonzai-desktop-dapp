@@ -336,6 +336,11 @@
       <section class="bz-train__section">
         <h3 class="bz-train__section-title"><span class="bz-train__step-num">2</span>Method &amp; output</h3>
         <p class="bz-train__helper">Choose the modification method and the size of your exported GGUF model.</p>
+        <div v-if="abliterationBlocker" class="bz-notice bz-notice--warning" role="alert">
+          <span class="material-symbols-outlined" aria-hidden="true">build</span>
+          <span>{{ abliterationBlocker }}</span>
+          <button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="trainingInfoLoading" @click="loadTrainingInfo">{{ $ui('Refresh') }}</button>
+        </div>
         <div class="bz-train__config-row">
           <div class="bz-train__config-group">
             <label class="bz-train__label">Method</label>
@@ -371,8 +376,9 @@
       <section v-if="ablPipeline.active || ablPipeline.completed" class="bz-train__section bz-train__pipeline-section">
         <h3 class="bz-train__section-title">Abliteration Pipeline</h3>
         <div class="bz-train__stages">
+          <template v-for="(s, i) in pipelineStages" :key="s.key">
+          <svg v-if="i > 0" class="bz-train__stage-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
           <div
-            v-for="(s, i) in pipelineStages" :key="s.key"
             class="bz-train__stage"
             :class="{
               'is-running': ablPipeline.currentStage === s.key && ablPipeline.active,
@@ -389,6 +395,7 @@
             <span class="bz-train__stage-name">{{ s.name }}</span>
             <span class="bz-train__stage-desc">{{ s.desc }}</span>
           </div>
+          </template>
         </div>
         <!-- Stage detail -->
         <div v-if="ablPipeline.detail" class="bz-train__stage-detail">
@@ -484,6 +491,7 @@
         </template>
       </dl>
       <p class="bz-train__review-status" role="status">{{ runHint }}</p>
+      <GenerationDrafts :kind="mode === 'tune' ? 'training' : 'uncensor'" :controller="generationDraft" :disabled="training.active || ablPipeline.active" />
       <button v-if="mode === 'tune'" type="button" class="bz-btn bz-btn--primary" :disabled="!canStartTraining" @click="startTuneTraining"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>{{ training.active ? 'Training…' : 'Start training' }}</button>
       <button v-else type="button" class="bz-btn bz-btn--primary" :disabled="!canStartAbliteration" @click="startAbliteration"><span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>{{ ablPipeline.active ? 'Abliterating…' : 'Start uncensoring' }}</button>
       <small>Local processing. Starting a run may download the publisher’s original model weights.</small>
@@ -511,47 +519,30 @@
           <span class="material-symbols-outlined">refresh</span>
         </button>
       </div>
-      <p class="bz-train__helper">Create → review and export → validate files → Mint → issue a token. Publishing and token launch are optional, explicit actions; local creation does not require a wallet.</p>
-      <p class="bz-train__helper">Tokenize your training work and connect it to the configured market and revenue tools. Issuing a token does not itself generate revenue or grant rights to the underlying base model or dataset.</p>
       <p v-if="modelsError" class="bz-train__helper" role="alert">{{ modelsError }}</p>
       <p v-if="modelsLoading" class="bz-train__helper" role="status">Loading your model library…</p>
       <div v-if="!modelsLoading && !modelsError && visibleTrainedModels.length === 0" class="bz-train__empty">
         <span class="material-symbols-outlined" style="font-size:32px;color:var(--bz-fg-faint)">inventory_2</span>
-        <p>Your completed training artifacts will appear here, ready to review, export and optionally tokenize.</p>
+        <p>{{ mode === 'uncensor' ? 'Your completed uncensored models will appear here.' : 'Your completed checkpoints and LoRA adapters will appear here.' }}</p>
       </div>
       <div v-if="visibleTrainedModels.length" class="bz-train__model-list">
-        <div v-for="m in visibleTrainedModels" :key="m.id" class="bz-train__model-card">
-          <div class="bz-train__model-card-top">
-            <span class="skill-chip" :class="modelTypeChip(m.type)">{{ trainingArtifact(m).contentLabel }}</span><span class="skill-chip">{{ trainingArtifact(m).formatLabel }}</span>
-            <span class="bz-train__model-date bz-mono">{{ formatDate(m.created_at) }}</span>
-          </div>
-          <div class="bz-train__model-card-body">
-            <span class="bz-train__model-name">{{ m.base_model || m.filename || m.id }}</span>
-            <span v-if="m.final_loss" class="bz-train__model-loss">Loss: {{ m.final_loss.toFixed(4) }}</span>
-            <span v-if="m.nft?.tokenId" class="skill-chip skill-chip--success">
-              NFT #{{ m.nft.tokenId }}
-            </span>
-            <span v-if="m.fineTuneToken?.tokenAddress" class="skill-chip skill-chip--brand">
-              ${{ m.fineTuneToken.symbol || 'MODEL' }}
-            </span>
-            <span v-if="m.modelRegistry?.modelId" class="skill-chip skill-chip--success">
-              Registry
-            </span>
-            <span v-if="m.revenueRoute?.assetId" class="skill-chip skill-chip--brand">
-              Route
-            </span>
-            <span v-if="m.origin_record_count" class="skill-chip skill-chip--brand">
-              {{ m.origin_record_count }} origin{{ m.origin_record_count === 1 ? '' : 's' }}
-            </span>
-            <span v-if="m.data_owner_wallets?.length" class="skill-chip skill-chip--success">
-              {{ m.data_owner_wallets.length }} data owner{{ m.data_owner_wallets.length === 1 ? '' : 's' }}
-            </span>
-            <span v-if="m.filename" class="bz-mono" style="font-size:11px;color:var(--bz-fg-low)">{{ m.filename }}</span>
-          </div>
-          <div class="bz-train__model-card-actions">
-            <button class="bz-btn bz-btn--primary bz-btn--sm" @click="mintModel(m)">
-              <span class="material-symbols-outlined" style="font-size:14px">token</span> Mint
-            </button>
+        <TrainingArtifactCard v-for="m in visibleTrainedModels" :key="m.id" :model="m" :artifact="trainingArtifact(m)" :name="trainedModelName(m)" :date="formatDate(m.created_at)">
+          <template #actions>
+            <button v-if="!m.nft?.tokenId" class="bz-btn bz-btn--primary bz-btn--sm" @click="mintModel(m)"><span class="material-symbols-outlined" aria-hidden="true">token</span> Tokenize</button>
+            <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="exportModel(m)"><span class="material-symbols-outlined" aria-hidden="true">download</span> Export</button>
+            <button class="bz-iconbtn bz-iconbtn--sm" style="margin-left:auto" @click="deleteModel(m.id)" aria-label="Delete model" title="Delete model"><span class="material-symbols-outlined" aria-hidden="true">delete</span></button>
+          </template>
+            <details class="bz-train__publish-menu">
+              <summary>Model Details &amp; Publishing</summary>
+              <dl class="bz-train__artifact-details">
+                <div v-if="m.filename"><dt>File</dt><dd class="bz-mono">{{ m.filename }}</dd></div>
+                <div v-if="m.final_loss != null"><dt>Final Loss</dt><dd>{{ Number(m.final_loss).toFixed(4) }}</dd></div>
+                <div v-if="m.nft?.tokenId"><dt>Token Record</dt><dd>#{{ m.nft.tokenId }}</dd></div>
+                <div v-if="m.fineTuneToken?.tokenAddress"><dt>Model Token</dt><dd>${{ m.fineTuneToken.symbol || 'MODEL' }}</dd></div>
+                <div v-if="m.origin_record_count"><dt>Sources</dt><dd>{{ m.origin_record_count }}</dd></div>
+                <div v-if="m.data_owner_wallets?.length"><dt>Contributors</dt><dd>{{ m.data_owner_wallets.length }}</dd></div>
+              </dl>
+              <div class="bz-train__publish-actions">
             <button
               v-if="!localValidationPassed(m)"
               class="bz-btn bz-btn--ghost bz-btn--sm"
@@ -564,11 +555,13 @@
             <button
               v-if="localValidationPassed(m) && m.nft?.tokenId && !m.fineTuneToken?.tokenAddress"
               class="bz-btn bz-btn--ghost bz-btn--sm"
-              :disabled="!fineTuneTokenConfigured"
+              :disabled="!fineTuneTokenConfigured || !!m.tokenLaunchPending"
               @click="prepareTokenLaunch(m)"
             >
-              <span class="material-symbols-outlined" style="font-size:14px">rocket_launch</span> Issue token
+              <span class="material-symbols-outlined" style="font-size:14px">rocket_launch</span> Launch ERC-20
             </button>
+            <button v-if="m.tokenLaunchPending" class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="tokenLaunch.loading" @click="recoverModelLaunch(m)">Check Submitted Launch</button>
+            <a v-if="m.tokenLaunchPending" :href="`${protocolExplorer}/tx/${m.tokenLaunchPending}`" target="_blank" rel="noopener noreferrer">View Transaction ↗</a>
             <button
               v-if="m.nft?.tokenId && !m.modelRegistry?.modelId"
               class="bz-btn bz-btn--ghost bz-btn--sm"
@@ -597,18 +590,14 @@
               <span class="material-symbols-outlined" style="font-size:14px">account_tree</span> Provenance
             </button>
             <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="hubModelId = hubModelId === m.id ? '' : m.id"><span class="material-symbols-outlined">cloud_upload</span> Hugging Face</button>
-            <button class="bz-btn bz-btn--ghost bz-btn--sm" @click="exportModel(m)">
-              <span class="material-symbols-outlined" style="font-size:14px">download</span> Export
-            </button>
-            <button class="bz-iconbtn bz-iconbtn--sm" style="margin-left:auto" @click="deleteModel(m.id)" title="Delete">
-              <span class="material-symbols-outlined" style="font-size:16px">delete</span>
-            </button>
-          </div>
+              </div>
+            </details>
           <HubPublish v-if="hubModelId === m.id" :model-id="m.id" :api-base="API_BASE" @close="hubModelId = ''" />
           <div v-if="modelValidation.activeModelId === m.id && modelValidation.error" class="bz-train__contribution-alert is-error">
             {{ modelValidation.error }}
           </div>
           <div v-if="tokenLaunch.activeModelId === m.id" class="bz-train__token-launch">
+            <TokenizationProgress :steps="[{title:'Review Token',detail:'Identity and liquidity'},{title:'Wallet & Confirmation',detail:'Approve the onchain launch'},{title:'Token Ready',detail:'ERC-20 and locked pool'}]" :current="tokenLaunch.loading ? 1 : 0" :failed="!!tokenLaunch.error" />
             <div class="bz-train__token-grid">
               <input v-model="tokenLaunch.name" class="bz-train__input" placeholder="Token name" />
               <input v-model="tokenLaunch.symbol" class="bz-train__input" placeholder="Symbol" maxlength="12" />
@@ -632,7 +621,7 @@
             </p>
             <div v-if="tokenLaunch.error" class="bz-train__contribution-alert is-error">{{ tokenLaunch.error }}</div>
             <div class="bz-train__token-actions">
-              <button class="bz-btn bz-btn--primary bz-btn--sm" :disabled="tokenLaunch.loading" @click="launchModelToken(m)">
+              <button class="bz-btn bz-btn--primary bz-btn--sm" :disabled="tokenLaunch.loading || !!m.tokenLaunchPending" @click="launchModelToken(m)">
                 {{ tokenLaunch.loading ? 'Launching...' : `Launch ${m.type === 'abliteration' ? 'abliterated' : 'fine-tune'} token` }}
               </button>
               <button class="bz-btn bz-btn--ghost bz-btn--sm" :disabled="tokenLaunch.loading" @click="cancelTokenLaunch">
@@ -652,7 +641,7 @@
           >
             {{ revenueRoutePublish.error }}
           </div>
-        </div>
+        </TrainingArtifactCard>
       </div>
     </section>
 
@@ -668,9 +657,15 @@
 </template>
 
 <script setup>
+import GenerationDrafts from './generative/GenerationDrafts.vue'
+import { useGenerationDraft } from '../composables/useGenerationDraft.js'
+
+import TrainingArtifactCard from './training/TrainingArtifactCard.vue'
+import TokenizationProgress from './TokenizationProgress.vue'
 import HubPublish from './HubPublish.vue'
 import TrainingDatasetStudio from './training/TrainingDatasetStudio.vue'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { trainingErrorMessage, trainingProgressMessage } from '../services/trainingMessages.js'
 import { trainingArtifact } from '../services/trainingArtifact.js'
 import axios from 'axios'
 import { io } from 'socket.io-client'
@@ -689,6 +684,8 @@ import {
   publishDatasetFromRows,
   publishModelFromProvenance,
 } from '../services/contributionRegistry.service.js'
+import { CONFIG, ECONOMY_NETWORK_KEY } from '../config/web3.config.js'
+const protocolExplorer = CONFIG.networks[ECONOMY_NETWORK_KEY].explorer
 import { fineTuneTokenService } from '../services/fineTuneToken.service.js'
 import { bonzaiRevenueRouterService } from '../services/bonzaiRevenueRouter.service.js'
 import { i18n } from '../i18n/index.js'
@@ -786,7 +783,9 @@ const pipelineStages = [
   { key: 'distill', name: 'DISTILL', desc: 'Extracting refusal subspace via SVD' },
   { key: 'excise',  name: 'EXCISE',  desc: 'Excising refusal directions from weights' },
   { key: 'verify',  name: 'VERIFY',  desc: 'Verifying coherence and quality' },
-  { key: 'rebirth', name: 'REBIRTH', desc: 'Saving the liberated model' },
+  { key: 'rebirth', name: 'REBIRTH', desc: 'Saving the modified weights' },
+  { key: 'converting', name: 'CONVERT', desc: 'Exporting GGUF' },
+  { key: 'quantizing', name: 'QUANTIZE', desc: 'Preparing the selected precision' },
 ]
 
 /* ── Training progress ─────────────────────────────────────────── */
@@ -1041,13 +1040,13 @@ function setupSocket() {
 
   socket.on('training_progress', (data) => {
     // Abliteration pipeline stages
-    if (['summon', 'probe', 'distill', 'excise', 'verify', 'rebirth'].includes(data.stage)) {
+    if (pipelineStages.some(stage => stage.key === data.stage)) {
       ablPipeline.stage = data.stage
       ablPipeline.pct = data.progress || 0
-      ablPipeline.detail = data.detail || ''
+      ablPipeline.detail = trainingProgressMessage(data.stage, data.detail, i18n.state.locale)
       ablPipeline.currentStage = data.stage
       // Mark completed stages
-      const stageOrder = ['summon', 'probe', 'distill', 'excise', 'verify', 'rebirth']
+      const stageOrder = pipelineStages.map(stage => stage.key)
       const idx = stageOrder.indexOf(data.stage)
       for (let i = 0; i < idx; i++) {
         ablPipeline.completedStages.add(stageOrder[i])
@@ -1086,11 +1085,11 @@ function setupSocket() {
   socket.on('training_error', (data) => {
     if (ablPipeline.active) {
       ablPipeline.active = false
-      ablPipeline.error = data.error || 'Abliteration failed'
+      ablPipeline.error = trainingErrorMessage(data.error, i18n.state.locale)
       ablPipeline.errorStage = ablPipeline.currentStage
     } else {
       training.active = false
-      training.error = data.error || 'Training failed'
+      training.error = trainingErrorMessage(data.error, i18n.state.locale)
     }
   })
 }
@@ -1173,7 +1172,7 @@ async function startTuneTraining() {
     }
   } catch (err) {
     training.active = false
-    training.error = err.message
+    training.error = trainingErrorMessage(err, i18n.state.locale)
   }
 }
 
@@ -1199,7 +1198,7 @@ async function startAbliteration() {
     if (resp.status !== 202) throw new Error(resp.data?.error || 'Failed to start abliteration')
   } catch (err) {
     ablPipeline.active = false
-    ablPipeline.error = err.message
+    ablPipeline.error = trainingErrorMessage(err, i18n.state.locale)
   }
 }
 
@@ -1304,9 +1303,11 @@ async function mintModel(model) {
     inferenceId: model.id,
     content: JSON.stringify(payload, null, 2),
     contentType: 'application/json',
-    prompt: `BonzAI fine-tuned model: ${model.base_model || model.filename || model.id}`,
+    prompt: `${model.type === 'abliteration' ? 'Uncensored model' : 'Customized model'}: ${model.base_model || model.filename || model.id}`,
     generation: {
-      type: 'fine-tuned-model',
+      type: model.type === 'abliteration' ? 'abliterated-model' : 'fine-tuned-model',
+      artifactFormat: trainingArtifact(model).formatLabel,
+      modality: trainingArtifact(model).content || 'unspecified',
       license: model.license || provenance?.license,
       commercialAllowed: model.commercialAllowed,
       model: model.base_model || model.filename || model.id,
@@ -1318,6 +1319,10 @@ async function mintModel(model) {
     },
   }
   showMintModal.value = true
+}
+
+function trainedModelName(model) {
+  return [...ablitModels.value, ...llmModels.value].find(item => item.key === model.base_model)?.name || model.hf_repo?.split('/').pop() || model.base_model || model.filename || model.id
 }
 
 function localValidationPassed(model) {
@@ -1346,9 +1351,24 @@ function cancelTokenLaunch() {
   tokenLaunch.result = null
 }
 
+async function recoverModelLaunch(model) {
+  tokenLaunch.loading = true
+  tokenLaunch.activeModelId = model.id
+  tokenLaunch.error = ''
+  try {
+    const result = await fineTuneTokenService.recoverLaunch(model.nft.contractAddress, model.nft.tokenId, model.tokenLaunchPending)
+    if (result.pending) { tokenLaunch.error = 'Still awaiting confirmation. Do not launch again.'; return }
+    if (result.reverted) { updateModelEconomy(model.id, { tokenLaunchPending: null }); tokenLaunch.error = 'The launch reverted. Review before trying again.'; return }
+    updateModelEconomy(model.id, { tokenLaunchPending: null, fineTuneToken: result })
+    tokenLaunch.activeModelId = ''
+  } catch (error) { tokenLaunch.error = error.message }
+  finally { tokenLaunch.loading = false }
+}
+
 async function launchModelToken(model) {
+  if (model.tokenLaunchPending) return recoverModelLaunch(model)
   if (!model?.nft?.tokenId) {
-    tokenLaunch.error = 'Mint this trained model before launching a fine-tune token.'
+    tokenLaunch.error = 'Tokenize this model before launching a fine-tune token.'
     return
   }
   if (!fineTuneTokenConfigured.value) {
@@ -1381,7 +1401,10 @@ async function launchModelToken(model) {
         profile: { description: tokenLaunch.description.trim(), image: tokenLaunch.image },
       },
     )
-    if (!result?.success) throw new Error(result?.error || 'Fine-tune token launch failed')
+    if (!result?.success) {
+      if (result.confirmationPending && result.transactionHash) updateModelEconomy(model.id, { tokenLaunchPending: result.transactionHash })
+      throw new Error(result?.error || 'Fine-tune token launch failed')
+    }
     tokenLaunch.result = result
     updateModelEconomy(model.id, {
       fineTuneToken: {
@@ -1411,6 +1434,7 @@ async function launchModelToken(model) {
           result.poolId,
         )
         updateModelEconomy(model.id, {
+          fineTuneToken: { ...modelEconomy.value[model.id]?.fineTuneToken, contributionRouting: { mode: 'vault-registered', vaultAddress: route.vaultAddress, positionId: String(route.positionId), participants: route.participants } },
           revenueRoute: {
             assetId: route.assetId,
             vaultAddress: route.vaultAddress, positionId: route.positionId, kind: route.kind,
@@ -1497,7 +1521,7 @@ function shortHash(value) {
 async function publishTrainedModel(model) {
   if (!model?.nft?.tokenId) {
     modelRegistryPublish.activeModelId = model.id
-    modelRegistryPublish.error = 'Mint this trained model before publishing it to the registry.'
+    modelRegistryPublish.error = 'Tokenize this model before publishing it to the registry.'
     return
   }
   if (!modelRegistryReady()) {
@@ -1538,7 +1562,7 @@ async function publishTrainedModel(model) {
 async function publishModelRevenueRoute(model) {
   if (!model?.nft?.tokenId) {
     revenueRoutePublish.activeModelId = model.id
-    revenueRoutePublish.error = 'Mint this trained model before registering a revenue route.'
+    revenueRoutePublish.error = 'Tokenize this model before registering a revenue route.'
     return
   }
   if (!bonzaiRevenueRouterService.isModelFeeConfigured()) {
@@ -1555,6 +1579,7 @@ async function publishModelRevenueRoute(model) {
     const provenance = await modelProvenance(model)
     const result = await bonzaiRevenueRouterService.registerModelRevenueRoute(model, provenance)
     updateModelEconomy(model.id, {
+      fineTuneToken: { ...modelEconomy.value[model.id]?.fineTuneToken, contributionRouting: { mode: 'vault-registered', vaultAddress: result.vaultAddress, positionId: String(result.positionId), participants: result.participants } },
       revenueRoute: {
         assetId: result.assetId,
         vaultAddress: result.vaultAddress, positionId: result.positionId, kind: result.kind,
@@ -1668,6 +1693,7 @@ watch(selectedTarget, target => {
 /* ── Lifecycle ─────────────────────────────────────────────────── */
 onMounted(() => {
   setupSocket()
+  window.addEventListener('focus', loadTrainingInfo)
   modelEconomy.value = loadModelEconomy()
   contributionLedger.value = loadContributionLedger()
   loadTrainedModels()
@@ -1675,8 +1701,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('focus', loadTrainingInfo)
   if (socket) socket.disconnect()
 })
+const generationDraft = useGenerationDraft({ trainingPurpose, trainingTab, hubModelId, jsonlRows, jsonlColumns, jsonlFileName, selectedTarget, tuneConfig, ablitConfig })
 </script>
 
 <style scoped>
@@ -2340,20 +2368,11 @@ onBeforeUnmount(() => {
   transition: all var(--bz-dur-base) var(--bz-ease-out);
   position: relative;
 }
-.bz-train__stage:not(:last-child)::after {
-  content: '→';
-  position: absolute;
-  right: -12px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--bz-fg-faint);
-  font-size: 14px;
-  z-index: 2;
-}
+.bz-train__stage-arrow { width: 24px; height: 24px; flex: 0 0 24px; align-self: center; color: var(--bz-fg-mid); }
 .bz-train__stage.is-running {
   border-color: var(--bz-purple-300);
   background: var(--bz-purple-soft);
-  animation: bz-pulse 1.5s ease-in-out infinite;
+
 }
 .bz-train__stage.is-done {
   border-color: var(--bz-emerald-500);
@@ -2539,7 +2558,7 @@ onBeforeUnmount(() => {
 }
 .bz-train__model-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--bz-space-2);
 }
 .bz-train__model-card {
@@ -2556,13 +2575,16 @@ onBeforeUnmount(() => {
   border-color: var(--bz-border-strong);
 }
 .bz-train__model-card-top {
+  gap: 8px;
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 .bz-train__model-date {
   font-size: 11px;
-  color: var(--bz-fg-faint);
+  color: var(--bz-fg-mid);
+  margin-left: auto;
 }
 .bz-train__model-card-body {
   display: flex;
@@ -2570,6 +2592,7 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 .bz-train__model-name {
+  overflow-wrap: anywhere;
   font-size: var(--bz-size-body);
   font-weight: 500;
   color: var(--bz-fg);
@@ -2581,13 +2604,25 @@ onBeforeUnmount(() => {
 }
 .bz-train__model-card-actions {
   display: flex;
-  align-items: center;
-  gap: var(--bz-space-1);
+  align-items: flex-start;
+  gap: var(--bz-space-2);
   margin-top: auto;
   padding-top: var(--bz-space-2);
   border-top: 1px solid var(--bz-border);
   flex-wrap: wrap;
 }
+.bz-train__model-card-body > .bz-mono { overflow-wrap: anywhere; }
+.bz-train__publish-menu { min-width:0; border-top:1px solid var(--bz-border); padding-top:4px; }
+.bz-train__artifact-details { display:grid; gap:12px; margin:16px 0 0; font-size:13px; }
+.bz-train__artifact-details > div { display:grid; grid-template-columns:100px minmax(0,1fr); gap:12px; }
+.bz-train__artifact-details dt { color:var(--bz-fg-mid); }
+.bz-train__artifact-details dd { margin:0; overflow-wrap:anywhere; }
+.bz-train__publish-menu > p { padding: 12px 0 0; margin:0; }
+.bz-train__models-section .bz-train__section-header { margin-bottom:20px; }
+.bz-train__model-card { padding:24px; gap:16px; }
+.bz-train__publish-menu summary { cursor: pointer; padding: 10px 12px; color: var(--bz-fg-mid); font-size: var(--bz-size-meta); }
+.bz-train__publish-menu summary:focus-visible { outline: 2px solid var(--bz-accent); outline-offset: 2px; }
+.bz-train__publish-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 0 0; }
 .bz-train__token-launch {
   display: flex;
   flex-direction: column;

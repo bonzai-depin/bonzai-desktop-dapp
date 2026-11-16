@@ -193,6 +193,7 @@ describe('BONZAI LVL currency basket', function () {
     await router.connect(alice).registerRoute(source, 'ipfs://terms', [contributor.address], [10000], [0], ['skill creator']);
     const route = await router.routeIdFor(alice.address, source);
     await router.connect(payer).depositTokenRevenue(route, await usdc.getAddress(), 10000);
+    await router.forwardBasket(await basket.getAddress(), await usdc.getAddress());
     expect(await router.tokenClaimable(route, await usdc.getAddress(), contributor.address)).to.equal(8000);
     expect(await router.tokenTreasuryClaimable(await usdc.getAddress(), treasury.address)).to.equal(1000);
     expect(await basket.totalDeposited(await usdc.getAddress())).to.equal(1000);
@@ -200,6 +201,7 @@ describe('BONZAI LVL currency basket', function () {
     await router.connect(treasury).claimTokenTreasury(await usdc.getAddress(), treasury.address);
     expect(await usdc.balanceOf(await router.getAddress())).to.equal(0);
     await router.connect(payer).depositRevenue(route, { value: 10000 });
+    await router.forwardBasket(await basket.getAddress(), ethers.ZeroAddress);
     expect(await router.claimable(route, contributor.address)).to.equal(8000);
     expect(await basket.totalDeposited(ethers.ZeroAddress)).to.equal(1000);
   });
@@ -266,6 +268,43 @@ describe('BONZAI LVL currency basket', function () {
     const [token]=await factory.getAllTokens();expect(await f.basket.rewardCurrencyEnabled(token)).to.equal(true);
     await f.basket.setRewardCurrency(token,false);
     expect(await f.basket.rewardCurrencyEnabled(token)).to.equal(false);
+  });
+
+  it('keeps royalties and treasury credits available while holder deposits are temporarily disabled', async()=>{
+    const {alice,payer,treasury,contributor,basket,router,usdc}=await fixture();
+    const source=ethers.id('recoverable-route'),currency=await usdc.getAddress(),destination=await basket.getAddress();
+    await router.connect(alice).registerRoute(source,'ipfs://terms',[contributor.address],[10000],[0],['creator']);
+    const id=await router.routeIdFor(alice.address,source);
+    await basket.setRewardCurrency(currency,false);
+    await router.connect(payer).depositTokenRevenue(id,currency,10000);
+    expect(await router.getRouteIds(0,100)).to.deep.equal([id]);
+    expect(await router.getRouteCurrencies(id,0,100)).to.deep.equal([currency]);
+    expect(await router.pendingBasket(destination,currency)).to.equal(1000);
+    await expect(router.forwardBasket(destination,currency)).to.be.reverted;
+    expect(await router.pendingBasket(destination,currency)).to.equal(1000);
+    await router.pause();
+    await router.connect(contributor).claimToken(id,currency,contributor.address);
+    await router.connect(treasury).claimTokenTreasury(currency,treasury.address);
+    expect(await usdc.balanceOf(await router.getAddress())).to.equal(1000);
+    await basket.setRewardCurrency(currency,true);await router.connect(payer).forwardBasket(destination,currency);
+    expect(await router.pendingBasket(destination,currency)).to.equal(0);
+    expect(await usdc.balanceOf(await router.getAddress())).to.equal(0);
+    expect(await usdc.allowance(await router.getAddress(),destination)).to.equal(0);
+  });
+
+  it('isolates rejecting native recipients and allows only their own credits to be redirected',async()=>{
+    const {alice,payer,treasury,basket,router}=await fixture();
+    const rejector=await(await ethers.getContractFactory('MockEscrowParticipant')).deploy();await rejector.setRejectEther(true);
+    const source=ethers.id('contract-royalty');await router.connect(alice).registerRoute(source,'ipfs://terms',[await rejector.getAddress()],[10000],[0],['creator']);
+    const id=await router.routeIdFor(alice.address,source);await router.connect(payer).depositRevenue(id,{value:10000});
+    await router.pause();
+    await expect(rejector.execute(await router.getAddress(),router.interface.encodeFunctionData('claim',[id]))).to.be.revertedWith('Participant call failed');
+    expect(await router.claimable(id,await rejector.getAddress())).to.equal(8000);
+    await expect(router.connect(payer).claimTo(id,payer.address)).to.be.revertedWithCustomError(router,'NothingToClaim');
+    await expect(rejector.execute(await router.getAddress(),router.interface.encodeFunctionData('claimTo',[id,alice.address]))).to.changeEtherBalance(alice,8000);
+    await expect(router.connect(treasury).claimTreasury(treasury.address)).to.changeEtherBalance(treasury,1000);
+    await router.forwardBasket(await basket.getAddress(),ethers.ZeroAddress);
+    expect(await ethers.provider.getBalance(await router.getAddress())).to.equal(0);
   });
 
 });

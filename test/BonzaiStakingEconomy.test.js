@@ -82,7 +82,8 @@ describe("BonzAI staking-centered utility economy", function () {
     expect(aliceClaim + bobClaim).to.equal(ethers.parseEther("0.9"));
     expect(aliceClaim).to.be.gt(ethers.parseEther("0.48"));
     expect(bobClaim).to.be.gt(ethers.parseEther("0.32"));
-    expect(await ethers.provider.getBalance(treasury.address) - treasuryBefore).to.equal(ethers.parseEther("0.1"));
+    expect(await revenueRouter.nativeTreasuryClaimable(treasury.address)).to.equal(ethers.parseEther("0.1"));
+    await expect(revenueRouter.connect(treasury).claimTreasury(treasury.address)).to.changeEtherBalance(treasury, ethers.parseEther("0.1"));
   });
 
   it("isolates identical asset IDs by publisher and locks shares at registration", async function () {
@@ -120,7 +121,8 @@ describe("BonzAI staking-centered utility economy", function () {
     const source = ethers.id("dust");
     await revenueRouter.connect(alice).registerRoute(source, "uri", [alice.address,bob.address], [5000,5000], [0,0], ["trainer","data"]);
     const routeId = await revenueRouter.routeIdFor(alice.address, source);
-    await expect(revenueRouter.connect(payer).depositRevenue(routeId, {value: 103})).to.changeEtherBalance(treasury, 10);
+    await revenueRouter.connect(payer).depositRevenue(routeId, {value: 103});
+    await expect(revenueRouter.connect(treasury).claimTreasury(treasury.address)).to.changeEtherBalance(treasury, 10);
     expect(await revenueRouter.claimable(routeId, alice.address)).to.equal(51);
     expect(await revenueRouter.claimable(routeId, bob.address)).to.equal(42);
     await expect(revenueRouter.connect(alice).claim(routeId)).to.changeEtherBalance(alice, 51);

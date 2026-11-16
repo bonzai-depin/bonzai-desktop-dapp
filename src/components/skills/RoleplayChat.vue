@@ -512,7 +512,8 @@
           <div class="companion-creation-editor">
           <header v-if="managementOnly" class="agent-creation-heading">
             <span class="agent-stage-label">01 / CREATE</span>
-            <h2 class="fira-sans-condensed-black-italic">Give it a purpose.</h2>
+            <h2 class="fira-sans-condensed-black-italic">Give it a purpose</h2>
+            <p v-if="setupSlot" class="agent-slot-context">Agent #{{ setupSlot.tokenId }} · Generate → Saved automatically → Publish identity → Launch token</p>
             <p>Start with a role. Generate its identity, portrait and personality.</p>
           </header>
           <div class="field">
@@ -594,11 +595,11 @@
               </span>
             </button>
             <button
-              v-if="!managementOnly || isGenerating || customCompanion || customCompanionPrompt"
+              v-if="!isGenerating && (!managementOnly || customCompanion || customCompanionPrompt)"
               class="bz-btn bz-btn--ghost is-medium mt-2 skill-float-right"
               @click="cancelCustomCompanion"
             >
-              {{ managementOnly ? (isGenerating ? 'Stop' : 'Reset') : 'Cancel' }}
+              {{ managementOnly ? 'Reset' : 'Cancel' }}
             </button>
             </div>
           </div>
@@ -615,6 +616,7 @@
               {{ generationError }}
             </p>
           </div>
+          <button v-if="agentCreation.pendingSave && agentCreation.status === 'failed'" class="bz-btn bz-btn--primary" @click="retryAgentCompletion">Retry completion</button>
           <div v-if="managementOnly && managedCompanions.length" class="agent-saved-picker">
             <label class="agent-creation-label" for="saved-smart-agents">Your saved agents</label>
             <select id="saved-smart-agents" aria-label="Saved smart agents" :value="managementSavedCompanion?.id || ''" :disabled="isGenerating" @change="selectManagedCompanion($event.target.value)">
@@ -821,22 +823,8 @@
                     Pick
                   </button>
                   <button
-                    class="bz-btn bz-btn--primary is-medium mr-3"
-                    @click="saveCustomCompanionToStore"
-                    :disabled="isSavingCompanion || isCompanionAlreadySaved(customCompanion) || (managementOnly && !companionsLoaded)"
-                  >
-                    <span class="material-symbols-outlined mr-2">save</span>
-                    {{
-                      isSavingCompanion
-                        ? "Saving…"
-                        : isCompanionAlreadySaved(customCompanion)
-                        ? "Saved"
-                        : "Save"
-                    }}
-                  </button>
-                  <button
-                    v-if="!customCompanion.image"
                     class="bz-btn bz-btn--agent-cta is-medium"
+                    aria-label="Regenerate portrait"
                     @click="regenerateCompanionImage(customCompanion)"
                     :disabled="isRegeneratingImage"
                   >
@@ -852,7 +840,7 @@
                     <span v-else class="material-symbols-outlined mr-1">
                       image
                     </span>
-                    Portrait
+                    Regenerate portrait
                   </button>
                 </div>
 
@@ -860,23 +848,26 @@
             </div>
           </div>
           <AgentLaunchStep v-if="managementOnly"
-            :agent="managementSavedCompanion" :network="economyNetwork.name" :symbol="agentLaunchSymbol"
-            :attached="hasMintReference(managementSavedCompanion)" :owned="canIssueAgentToken(managementSavedCompanion)"
+            :agent="managementSavedCompanion || setupSlot" :network="economyNetwork.name" :symbol="agentLaunchSymbol"
+            :attached="hasMintReference(managementSavedCompanion || setupSlot)" :owned="canIssueAgentToken(managementSavedCompanion)"
             :ready="isCompanionMinted(managementSavedCompanion) && !agentNeedsPersonalization(managementSavedCompanion)"
             :token="verifiedAgentToken(managementSavedCompanion)" :pending="managementSavedCompanion?.tokenLaunchStatus === 'pending'"
-            :configured="agentLaunchConfigured" :launching="isLaunchingToken" :generating="isGenerating || isSavingCompanion"
+            :configured="agentLaunchConfigured" :launching="isLaunchingToken" :generating="isGenerating || isSavingCompanion || !managementSavedCompanion"
             :connected="!!walletAddress" :connect="connectWallet" :attach="attachGeneratedAgentSlot" :publish="publishAgentIdentity" :launch="launchCompanionToken"
             :check="refreshTokenIssuance" :start-roleplay="startGeneratedRoleplay" />
         </div>
       </div>
 
-      <div v-if="!managementOnly" class="roleplay-audience" role="group" aria-label="Session audience">
-        <button class="bz-btn" :class="sessionAudience === 'local' ? 'bz-btn--primary' : 'bz-btn--secondary'" :aria-pressed="sessionAudience === 'local'" @click="sessionAudience = 'local'"><span class="material-symbols-outlined">chat_bubble</span>One-to-one · Local</button>
-        <button class="bz-btn" :class="sessionAudience === 'x' ? 'bz-btn--primary' : 'bz-btn--secondary'" :aria-pressed="sessionAudience === 'x'" @click="sessionAudience = 'x'"><span class="material-symbols-outlined">public</span>One-to-many · X</button>
-      </div>
-      <PublicAgentSession v-if="!managementOnly && sessionAudience === 'x' && selectedCompanion" :agent="selectedCompanion" :catalog="availableWorkflows" />
-      <p v-else-if="!managementOnly && sessionAudience === 'x'" class="bz-notice">Choose a companion to configure its public session.</p>
-      <template v-if="!managementOnly && sessionAudience === 'local'">
+      <nav v-if="!managementOnly && selectedCompanion" class="roleplay-audience" aria-label="Augment your conversation">
+        <button v-for="item in [{id:'away',icon:'self_improvement',label:'Out of Office'},{id:'workflows',icon:'account_tree',label:'Smart Workflows'},{id:'social',icon:'public',label:'Social Networks'}]" :key="item.id" class="bz-btn" :class="sessionAudience === item.id ? 'bz-btn--primary' : 'bz-btn--secondary'" :aria-expanded="sessionAudience === item.id" @click="sessionAudience = sessionAudience === item.id ? 'local' : item.id"><span class="material-symbols-outlined">{{ item.icon }}</span>{{ item.label }}</button>
+      </nav>
+      <AgentTeamServices v-if="!managementOnly && sessionAudience === 'workflows' && selectedCompanion" :agent="selectedCompanion" :catalog="availableWorkflows" />
+      <HeartbeatStudio v-if="!managementOnly && sessionAudience === 'away' && selectedCompanion" :companion="selectedCompanion" section="away" v-model:config="settings.autonomous" />
+      <template v-if="!managementOnly && sessionAudience === 'social' && selectedCompanion">
+        <HeartbeatStudio :companion="selectedCompanion" section="social" v-model:config="settings.autonomous"><template #connections><details v-if="isCustomCompanion" class="roleplay-moltbook-connection"><summary>Moltbook · {{ socialConnected.moltbook ? 'Connected' : 'API key connection' }}</summary><p class="help">Account connection only. Out of Office does not publish posts or engage with feeds.</p><button v-if="socialConnected.moltbook" class="bz-btn bz-btn--sm" @click="disconnectMoltbook">Disconnect Moltbook</button><form v-else @submit.prevent="saveMoltbookCredentials"><label>Moltbook API key<input v-model="moltbookApiKey" type="password" class="input" autocomplete="off" /></label><button class="bz-btn bz-btn--sm" :disabled="!moltbookApiKey || isSavingMoltbook">{{ isSavingMoltbook ? 'Connecting…' : 'Connect Moltbook' }}</button></form></details></template></HeartbeatStudio>
+        <PublicAgentSession :agent="selectedCompanion" :catalog="availableWorkflows" />
+      </template>
+      <template v-if="!managementOnly">
       <!-- Saved Sessions & Import/Export (only shown when user has access) -->
       <div
         v-if="selectedCompanion && hasAccess"
@@ -1475,9 +1466,12 @@
               </label>
               <hr />
               <p class="media-download-intro">Images bring your scenes to life. Add voice, video or vision whenever you want.</p>
+              <label v-if="!remoteVideoEnabled" class="roleplay-h3-terms"><input type="checkbox" :checked="h3TermsAccepted" @change="acceptRoleplayH3Terms" />
+                <span>For MiniMax H3 video, I agree to the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">model license</a> and have read the <a href="https://huggingface.co/unsloth/MiniMax-H3-GGUF/blob/main/NOTICE" target="_blank" rel="noopener noreferrer">derivative notice</a>.</span>
+              </label>
               <div class="control media-selector">
                 <div v-for="media in roleplayMedia" :key="media.key" class="roleplay-media-item">
-                  <button type="button" class="media-option" :class="{ 'is-selected': settings[media.key] && isModelAvailable(media.model) }" :aria-pressed="settings[media.key] && isModelAvailable(media.model)" :disabled="!isModelAvailable(media.model)" @click="toggleMediaOption(media.key, media.model)">
+                  <button type="button" class="media-option" :class="{ 'is-selected': settings[media.key] && isModelAvailable(media.model) }" :aria-pressed="settings[media.key] && isModelAvailable(media.model)" :disabled="!isModelAvailable(media.model) || (media.key === 'enableVideo' && !remoteVideoEnabled && !h3TermsAccepted)" @click="toggleMediaOption(media.key, media.model)">
                     <span class="material-symbols-outlined media-icon" aria-hidden="true">{{ media.icon }}</span>
                     <span class="media-option-content"><strong>{{ media.name }}</strong><span class="media-option-description">{{ media.description }}</span></span>
                     <span class="media-option-state">{{ !isModelAvailable(media.model) ? media.key === 'enableImage' ? 'Recommended' : 'Optional' : settings[media.key] ? 'On' : 'Off' }}</span>
@@ -1733,7 +1727,7 @@
         </div>
       </div>
 
-      <HeartbeatStudio v-if="selectedCompanion && hasAccess" :companion="selectedCompanion" v-model:config="settings.autonomous"><template #connections><details v-if="isCustomCompanion" class="roleplay-moltbook-connection"><summary>Moltbook · {{ socialConnected.moltbook ? 'Connected' : 'API key connection' }}</summary><p class="help">Account connection only. Heartbeat does not publish posts or engage with feeds.</p><button v-if="socialConnected.moltbook" class="bz-btn bz-btn--sm" @click="disconnectMoltbook">Disconnect Moltbook</button><form v-else @submit.prevent="saveMoltbookCredentials"><label>Moltbook API key<input v-model="moltbookApiKey" type="password" class="input" autocomplete="off" /></label><button class="bz-btn bz-btn--sm" :disabled="!moltbookApiKey || isSavingMoltbook">{{ isSavingMoltbook ? 'Connecting…' : 'Connect Moltbook' }}</button></form></details></template></HeartbeatStudio>
+
 
       <!-- Start Button (gated by access level) -->
       <div class="control has-text-centered models__activity--payouts roleplay-start-panel">
@@ -1933,7 +1927,7 @@
                     ? "Setting scene..."
                     : autonomousPending
                       ? "Starting..."
-                      : autonomousModeDisplay ? "Heartbeat on" : "Heartbeat off"
+                      : autonomousModeDisplay ? "Out of Office on" : "Out of Office off"
                 }}
               </span>
             </label>
@@ -1989,7 +1983,10 @@
         </div>
       </div>
 
-      <details class="roleplay-activity-settings"><summary>Heartbeat & Social Studio</summary><HeartbeatStudio :companion="selectedCompanion" v-model:config="settings.autonomous" :active="autonomousModeDisplay" :count="skillStore.autonomousMessageCount" :generating="skillStore.isGeneratingAutonomous" in-session :busy="isInitializingSession || autonomousPending" @toggle="toggleAutonomousMode"><template #connections><details v-if="isCustomCompanion" class="roleplay-moltbook-connection"><summary>Moltbook · {{ socialConnected.moltbook ? 'Connected' : 'API key connection' }}</summary><p class="help">Account connection only. Heartbeat does not publish posts or engage with feeds.</p><button v-if="socialConnected.moltbook" class="bz-btn bz-btn--sm" @click="disconnectMoltbook">Disconnect Moltbook</button><form v-else @submit.prevent="saveMoltbookCredentials"><label>Moltbook API key<input v-model="moltbookApiKey" type="password" class="input" autocomplete="off" /></label><button class="bz-btn bz-btn--sm" :disabled="!moltbookApiKey || isSavingMoltbook">{{ isSavingMoltbook ? 'Connecting…' : 'Connect Moltbook' }}</button></form></details></template></HeartbeatStudio></details>
+      <details class="roleplay-activity-settings"><summary>Out of Office</summary><HeartbeatStudio section="away" :companion="selectedCompanion" v-model:config="settings.autonomous" :active="autonomousModeDisplay" :count="skillStore.autonomousMessageCount" :generating="skillStore.isGeneratingAutonomous" in-session :busy="isInitializingSession || autonomousPending" @toggle="toggleAutonomousMode"></HeartbeatStudio></details>
+      <details class="roleplay-activity-settings"><summary>Smart Workflows</summary><AgentTeamServices :agent="selectedCompanion" :catalog="availableWorkflows" /></details>
+      <details class="roleplay-activity-settings"><summary>Social Networks</summary><HeartbeatStudio section="social" :companion="selectedCompanion" v-model:config="settings.autonomous"><template #connections><details v-if="isCustomCompanion" class="roleplay-moltbook-connection"><summary>Moltbook · {{ socialConnected.moltbook ? 'Connected' : 'API key connection' }}</summary><p class="help">Account connection only. Out of Office does not publish posts or engage with feeds.</p><button v-if="socialConnected.moltbook" class="bz-btn bz-btn--sm" @click="disconnectMoltbook">Disconnect Moltbook</button><form v-else @submit.prevent="saveMoltbookCredentials"><label>Moltbook API key<input v-model="moltbookApiKey" type="password" class="input" autocomplete="off" /></label><button class="bz-btn bz-btn--sm" :disabled="!moltbookApiKey || isSavingMoltbook">{{ isSavingMoltbook ? 'Connecting…' : 'Connect Moltbook' }}</button></form></details></template></HeartbeatStudio><PublicAgentSession :agent="selectedCompanion" :catalog="availableWorkflows" /></details>
+
       <RelationshipJourney v-if="selectedCompanion && selectedScenario" ref="journeyPanel" :companion="selectedCompanion" :scene="selectedScenario" :track-id="settings.journeyTrackId" :disabled="isTyping || isProcessingMessage || isInitializingSession" @action="sendStoryAction($event)" />
       <!-- Chat Messages Container -->
       <div class="chat-messages-container">
@@ -2111,23 +2108,7 @@
                 </button>
               </div>
 
-              <!-- Media Generation Loader (single loader for all media) -->
-              <div
-                v-if="
-                  msg.isGenerating &&
-                  msg.content &&
-                  (msg.generatingImage ||
-                    msg.generatingAudio ||
-                    msg.generatingVideo)
-                "
-                class="media-generating mt-3"
-              >
-                <div class="typing-indicator inline">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-              </div>
+              <RoleplayMediaProgress v-if="msg.isGenerating && (msg.generatingImage || msg.generatingAudio || msg.generatingVideo)" :message="msg" />
 
               <p v-for="(error, errorIndex) in msg.mediaErrors || []" :key="errorIndex" class="bz-notice bz-notice--warning" role="status">{{ error }}</p>
               <!-- Image -->
@@ -2797,11 +2778,14 @@
 </template>
 
 <script>
+import { remoteInference, refreshRemoteInference, remoteRequirementSatisfied, remoteMediaEnabled } from "../../stores/remoteInference.js";
 import RoleplayVideoPlayer from './RoleplayVideoPlayer.vue';
+import RoleplayMediaProgress from '../roleplay/RoleplayMediaProgress.vue';
 import RelationshipJourney from '../roleplay/RelationshipJourney.vue';
 import HeartbeatStudio from '../roleplay/HeartbeatStudio.vue';
 import { loadJourneys, importJourneys } from '../../services/roleplayJourney.js';
 import AgentLaunchStep from '../AgentLaunchStep.vue';
+import AgentTeamServices from '../chat/AgentTeamServices.vue';
 import PublicAgentSession from '../chat/PublicAgentSession.vue';
 import ChatWorkflowResult from '../chat/ChatWorkflowResult.vue';
 import { CHAT_MEDIA, chatRequest, runChatCapability } from '../../services/chat/capabilities.js';
@@ -2836,6 +2820,7 @@ import {
   isDefaultSpendingProfile,
 } from "../../skills/flagship.js";
 import { useSkillStore } from "../../stores/skillStore.js";
+import { agentCreation, beginAgentCreation, updateAgentCreation } from "../../stores/agentCreation.js";
 import * as roleplayStore from "../../services/roleplayStore.service.js";
 import { themeService } from "../../services/theme.service.js";
 import { moltbookService } from "../../services/moltbook.service.js";
@@ -2899,8 +2884,8 @@ function resolveBundledAsset(defaultImage) {
 export default {
   name: "RoleplayChat",
   components: {
-    RoleplayVideoPlayer, RelationshipJourney, HeartbeatStudio,
-    AgentLaunchStep, PublicAgentSession, ChatWorkflowResult,
+    RoleplayVideoPlayer, RoleplayMediaProgress, RelationshipJourney, HeartbeatStudio,
+    AgentLaunchStep, AgentTeamServices, PublicAgentSession, ChatWorkflowResult,
     DownloadRequirement,
     BzCloseButton,
     BonzaiWaveform,
@@ -2918,6 +2903,7 @@ export default {
   },
   emits: ["charge-fee", "companion-selected", "companions-changed", "hire-agent", "start-roleplay"],
   setup(props, { emit, expose }) {
+    refreshRemoteInference().catch(() => {});
     // Skill store for autonomous mode (global state)
     const skillStore = useSkillStore();
     const economyNetwork = CONFIG.networks[ECONOMY_NETWORK_KEY];
@@ -3165,6 +3151,13 @@ export default {
         moltbook: { enabled: false },
       },
     });
+    const remoteVideoEnabled = computed(() => remoteMediaEnabled('video'));
+    const h3TermsAccepted = ref(localStorage.getItem('bonzai:minimax-h3-terms') === 'accepted');
+    const acceptRoleplayH3Terms = event => {
+      h3TermsAccepted.value = event.target.checked;
+      if (event.target.checked) localStorage.setItem('bonzai:minimax-h3-terms', 'accepted');
+      else { localStorage.removeItem('bonzai:minimax-h3-terms'); settings.value.enableVideo = false; }
+    };
     const companionPaymentsEnabled = false;
 
     // Message queue for handling messages during generation
@@ -3231,7 +3224,7 @@ export default {
       image_quality: "image_quality",
       audio_quality: "audio_quality_persona",
       video_fast: "video_fast",
-      video_quality: "video_quality",
+      video_sota: "video_sota",
       vision: "vision",
     };
 
@@ -3243,6 +3236,7 @@ export default {
 
     // Check if a specific model is available
     const isModelAvailable = (modelKey) => {
+      if (remoteInference.active && MODEL_REQUIREMENTS[modelKey]?.type === 'llm') return true;
       return modelAvailability[modelKey] === true;
     };
 
@@ -3256,7 +3250,7 @@ export default {
     const optionalSelectedModels = computed(() => {
       const optional = [];
       if (settings.value.enableAudio) optional.push("audio_quality");
-      if (settings.value.enableVideo) optional.push("video_quality");
+      if (settings.value.enableVideo) optional.push("video_sota");
       if (settings.value.enableVision) optional.push("vision");
       return optional;
     });
@@ -4306,7 +4300,7 @@ export default {
 
     // Save a generated custom companion to the store
     const saveCustomCompanionToStore = async () => {
-      if (!customCompanion.value || isSavingCompanion.value || (props.managementOnly && !companionsLoaded.value)) return;
+      if (!customCompanion.value || isSavingCompanion.value || (props.managementOnly && !companionsLoaded.value)) throw new Error("Agent is not ready to save.");
       const savedPreview = customCompanion.value;
 
       // Final age validation safeguard
@@ -4357,11 +4351,13 @@ export default {
       if (existingIdx >= 0) companions.value[existingIdx] = companionToSave;
       else companions.value.push(companionToSave);
       try {
-        await saveCompanions();
-      } catch {
+        companions.value = await roleplayStore.upsertCompanion(companionToSave);
+        emit("companions-changed", companions.value);
+        window.dispatchEvent(new CustomEvent("bonzai:agents-changed"));
+      } catch (error) {
         if (existingIdx >= 0) companions.value[existingIdx] = previous;
         else companions.value = companions.value.filter(c => c.id !== companionToSave.id);
-        return;
+        throw error;
       } finally {
         isSavingCompanion.value = false;
       }
@@ -5248,11 +5244,13 @@ export default {
         storeData.sessionKey === currentSessionKey.value
       ) {
         // Store has messages for this session - merge them
-        if (storeData.history.length > chatHistory.value.length) {
+        if (storeData.history.some(message => !chatHistory.value.some(local => local.id === message.id))) {
           console.log(
             `[Roleplay] Syncing ${storeData.history.length - chatHistory.value.length} messages from store`,
           );
-          chatHistory.value = [...storeData.history];
+          const merged = new Map(storeData.history.map(message => [message.id, message]));
+          for (const message of chatHistory.value) merged.set(message.id, message);
+          chatHistory.value = [...merged.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
           sceneState.value = { ...storeData.sceneState };
           // Sync background image and history from store
           if (storeData.backgroundImage) {
@@ -5275,13 +5273,13 @@ export default {
 
     // Watch for autonomous session changes (messages generated while viewing)
     watch(
-      () => skillStore.autonomousSession.history.length,
-      (newLen, oldLen) => {
+      () => skillStore.autonomousSession.history.map(message => message.id).join("|"),
+      (newIds, oldIds) => {
         // If store has new messages and we're viewing this session
         if (
           phase.value === "chat" &&
           skillStore.autonomousSession.sessionKey === currentSessionKey.value &&
-          newLen > chatHistory.value.length
+          newIds !== oldIds
         ) {
           syncFromStore();
         }
@@ -5499,6 +5497,8 @@ export default {
     const featuredCompanions = computed(() => featuredCompanion.value ? [featuredCompanion.value] : []);
     const focusCompanion = async (id, keyboard = false) => {
       carouselId.value = id;
+      const companion = companions.value.find(item => item.id === id);
+      if (companion && selectedCompanion.value?.id !== id) await selectCompanion(companion);
       await nextTick();
       const button = carouselButtons.value[id];
       button?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
@@ -5515,6 +5515,19 @@ export default {
     const agentLaunchConfigured = computed(() => Boolean(CONFIG.smartAgentIssuance?.contractAddress && CONFIG.smartAgentIssuance?.factoryAddress));
     const agentLaunchSymbol = computed(() => customCompanion.value?.tokenSymbol || String(customCompanion.value?.name || '').trim().split(/\s+/)[0].toUpperCase().replace(/[^A-Z0-9]/g, ''));
     const managementSavedCompanion = computed(() => customCompanion.value?.id ? companions.value.find(companion => companion.id === customCompanion.value.id) : null);
+    const setupSlot = ref(null);
+    const prepareOwnedSlot = async reference => {
+      const owned = await companionTokenService.getOwnedAgentSlots({ includeIssued: true });
+      const slot = owned.find(item => mintReferenceKey(item) === mintReferenceKey(reference));
+      if (!slot) throw new Error('Agent is no longer owned by this wallet.');
+      const existing = companions.value.find(item => mintReferenceKey(item) === mintReferenceKey(slot));
+      setupSlot.value = { ...slot, id: existing?.id || `agent-${slot.chainId}-${slot.contractAddress.toLowerCase()}-${slot.tokenId}` };
+      customCompanion.value = existing || null;
+      customCompanionPrompt.value = '';
+      generationError.value = null;
+      await nextTick();
+      document.getElementById('agent-creation-prompt')?.focus();
+    };
     const attachGeneratedAgentSlot = async tokenId => {
       const companion = managementSavedCompanion.value;
       if (!companion || hasMintReference(companion)) throw new Error('Choose a saved local agent without an attached slot.');
@@ -5531,10 +5544,11 @@ export default {
     };
     const startGeneratedRoleplay = async () => {
       const companion = managementSavedCompanion.value;
-      if (!companion) throw new Error('Save your generated agent first.');
+      if (!companion) throw new Error('Wait for your agent to finish saving.');
       emit('start-roleplay', roleplayStore.serializeCompanionData(companion));
     };
     const selectManagedCompanion = (id) => {
+      setupSlot.value = null;
       if (!id) { cancelCustomCompanion(); return; }
       const companion = managedCompanions.value.find(entry => entry.id === id);
       if (!companion) return;
@@ -5554,6 +5568,8 @@ export default {
     const featuredScenarios = computed(() => scenarios.value.length ? [scenarios.value[stageIndex.value]] : []);
     const focusStage = async (id, keyboard = false) => {
       stageId.value = id;
+      const scenario = scenarios.value.find(item => item.id === id);
+      if (scenario) selectScenario(scenario);
       await nextTick();
       stageButtons.value[id]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       if (keyboard) stageButtons.value[id]?.focus({ preventScroll: true });
@@ -6012,6 +6028,7 @@ export default {
         }
         return;
       }
+      if (option === 'enableVideo' && !remoteVideoEnabled.value && !h3TermsAccepted.value) return;
       settings.value[option] = !settings.value[option];
     };
 
@@ -6086,13 +6103,15 @@ export default {
       phase.value = "setup";
       showCustomCompanion.value = true;
     };
-    expose({ openCustomCompanion, refreshModelAvailability: checkModelAvailability });
+    expose({ openCustomCompanion, prepareOwnedSlot, refreshModelAvailability: checkModelAvailability });
 
     const openCustomScenario = () => {
       showCustomScenario.value = true;
     };
 
     const cancelCustomCompanion = () => {
+      if (agentCreation.status === "running") return;
+      setupSlot.value = null;
       companionGenerationRevision++;
       generationCancelled.value = true;
       isGenerating.value = false;
@@ -6113,9 +6132,17 @@ export default {
     };
 
     const generateCustomCompanion = async () => {
-      if (!customCompanionPrompt.value.trim() || isGenerating.value || (props.managementOnly && !canGenerateCompanion.value)) return;
-      const selectedSlot = customCompanion.value && canIssueAgentToken(customCompanion.value) && agentNeedsPersonalization(customCompanion.value)
+      if (agentCreation.status === "running" || !customCompanionPrompt.value.trim() || isGenerating.value || (props.managementOnly && !canGenerateCompanion.value)) return;
+      let selectedSlot = customCompanion.value && canIssueAgentToken(customCompanion.value) && agentNeedsPersonalization(customCompanion.value)
         ? roleplayStore.serializeCompanionData(customCompanion.value) : null;
+      if (setupSlot.value) {
+        try {
+          const owned = await companionTokenService.getOwnedAgentSlots();
+          if (!owned.some(item => mintReferenceKey(item) === mintReferenceKey(setupSlot.value))) throw new Error('Refresh My Agents before generating for this slot.');
+          selectedSlot = { ...setupSlot.value, network: ECONOMY_NETWORK_KEY, needsSetup: true };
+        } catch { generationError.value = 'This slot is no longer available for personalization. Refresh My Agents.'; return; }
+      }
+      if (!beginAgentCreation(customCompanionPrompt.value, { gender: customCompanionGender.value, style: customCompanionStyle.value })) return;
       const generationRevision = ++companionGenerationRevision;
       const isCurrentGeneration = () => generationRevision === companionGenerationRevision && !generationCancelled.value;
       isGenerating.value = true;
@@ -6144,6 +6171,7 @@ export default {
                   update.message,
                 );
                 typingStatus.value = update.message || "";
+                updateAgentCreation({ stage: typingStatus.value, ...(update.companion ? { preview: { ...update.companion } } : {}) });
 
                 // Update the preview card in real-time
                 if (update.companion) {
@@ -6190,6 +6218,7 @@ export default {
         // Age validation - reject underage companions
         const ageValidation = validateCompanionAge(result);
         if (!ageValidation.valid) {
+          updateAgentCreation({ status: "failed", stage: "Needs attention", error: ageValidation.reason });
           generationError.value = `Cannot create companion: ${ageValidation.reason}`;
           customCompanion.value = null;
           isGenerating.value = false;
@@ -6207,6 +6236,7 @@ export default {
             await import("../../skills/flagship.js");
           if (!isCurrentGeneration()) return;
           typingStatus.value = "Generating portrait...";
+          updateAgentCreation({ stage: "Generating portrait" });
 
           const imageResult = await generateCompanionPicture(result, {
             width: 768,
@@ -6236,17 +6266,33 @@ export default {
           result.isBare = true; result.needsSetup = true;
         }
         customCompanion.value = result;
+        updateAgentCreation({ preview: result, stage: "Saving agent", pendingSave: true });
+        await saveCustomCompanionToStore();
+        updateAgentCreation({ status: "completed", pendingSave: false, stage: result.image ? "Agent saved" : "Agent saved · Regenerate portrait to add an image", preview: result });
       } catch (e) {
         console.error("[Roleplay] Failed to generate companion:", e);
+        updateAgentCreation({ status: "failed", stage: "Needs attention", error: "Your agent could not be completed. Please try again." });
         if (isCurrentGeneration()) {
-          generationError.value = `Failed to generate companion: ${e.message}`;
-          customCompanion.value = null;
+          generationError.value = "Your agent could not be completed. Please try again.";
+          if (!agentCreation.preview?.name) customCompanion.value = null;
         }
       } finally {
         if (generationRevision === companionGenerationRevision) {
           isGenerating.value = false;
           typingStatus.value = "";
         }
+      }
+    };
+
+    const retryAgentCompletion = async () => {
+      if (!agentCreation.pendingSave || agentCreation.status === 'running') return;
+      customCompanion.value = agentCreation.preview;
+      updateAgentCreation({ status: 'running', stage: 'Saving agent', error: null });
+      try {
+        await saveCustomCompanionToStore();
+        updateAgentCreation({ status: 'completed', pendingSave: false, stage: 'Agent saved' });
+      } catch {
+        updateAgentCreation({ status: 'failed', stage: 'Needs attention', error: 'Your agent is ready but could not be saved. Free some storage and retry completion.' });
       }
     };
 
@@ -6558,7 +6604,8 @@ export default {
           if (idx >= 0) {
             companions.value[idx].image = imageResult.image;
             companions.value[idx].imageGeneration = imageResult.generation;
-            await saveCompanions();
+            companions.value = await roleplayStore.upsertCompanion(companions.value[idx]);
+            window.dispatchEvent(new CustomEvent("bonzai:agents-changed"));
           }
 
           // Update selected companion if it's the same
@@ -6567,9 +6614,12 @@ export default {
           }
 
           console.log(`[Roleplay] Regenerated portrait for ${companion.name}`);
+        } else {
+          generationError.value = "The portrait could not be generated. Your previous portrait is unchanged; please try again.";
         }
       } catch (e) {
         console.error("[Roleplay] Failed to regenerate companion image:", e);
+        generationError.value = "The portrait could not be updated. Please try again.";
       } finally {
         isRegeneratingImage.value = false;
         regeneratingId.value = null;
@@ -7123,7 +7173,7 @@ export default {
       // Auto-disable optional media if the model isn't available
       if (!isModelAvailable("audio_quality"))
         settings.value.enableAudio = false;
-      if (!isModelAvailable("video_quality")) settings.value.enableVideo = false;
+      if (!isModelAvailable("video_sota")) settings.value.enableVideo = false;
       if (!isModelAvailable("vision")) settings.value.enableVision = false;
 
       // Check if there's an existing session with same params
@@ -7924,7 +7974,7 @@ export default {
               : undefined),
             referenceImage: capability.pipeline === 'image' && selectedCompanion.value.image
               ? await resolvePortraitReference(selectedCompanion.value.image) : undefined,
-            mediaModes: { video: 'quality' },
+            mediaModes: { video: 'sota' },
             enabledMedia: messageContent.trim().startsWith('/') ? CHAT_MEDIA : [
               ...(settings.value.enableImage ? ['image'] : []),
               ...(settings.value.enableAudio ? ['audio'] : []),
@@ -8002,6 +8052,8 @@ export default {
           {
             updateStatus: (status) => {
               typingStatus.value = status;
+              const msg = chatHistory.value[assistantMessageIndex];
+              if (msg) msg.mediaStatus = status;
             },
             // Streaming callback - update message as content becomes available
             onProgress: (progress) => {
@@ -8009,7 +8061,10 @@ export default {
               if (!msg) return;
 
               // Update the message with new content
-              if (progress.type === "text-delta") {
+              if (progress.type === "media-status") {
+                msg.activeMedia = progress.media;
+                msg.mediaStatus = progress.message;
+              } else if (progress.type === "text-delta") {
                 msg.content = cleanMessageContent(progress.response?.response);
                 scrollToBottom();
               } else if (progress.type === "text") {
@@ -8100,6 +8155,7 @@ export default {
             msg.video = result.response.video;
 
             msg.mediaErrors = result.response.mediaErrors || [];
+            msg.videoFailure = result.response.videoFailure || null;
             // Store environment state changes in message for session recovery
             if (result.response.timeOfDay)
               msg.timeOfDay = result.response.timeOfDay;
@@ -8334,6 +8390,19 @@ export default {
       await processMessageQueue();
     };
 
+    function restoreAgentCreation(job) {
+      if (!props.managementOnly || !job.id) return;
+      isGenerating.value = job.status === 'running';
+      typingStatus.value = job.stage;
+      customCompanionPrompt.value = job.prompt;
+      customCompanionGender.value = job.inputs.gender || "female";
+      customCompanionStyle.value = job.inputs.style || "openness";
+      if (job.preview) customCompanion.value = job.preview;
+      generationError.value = job.error;
+      if (job.status === 'completed' && companionsLoaded.value) loadCompanions();
+    }
+    watch(() => ({ ...agentCreation }), restoreAgentCreation);
+
     // Load sessions, companions, scenarios, and check model availability on mount
     onMounted(async () => {
       await Promise.all([
@@ -8343,6 +8412,7 @@ export default {
         ...(!props.managementOnly ? [loadSessions(), loadScenarios()] : []),
       ]);
       if (props.managementOnly) {
+        restoreAgentCreation(agentCreation);
         await loadNFTCompanions();
         await nextTick();
         renderSpendingCharts();
@@ -8355,6 +8425,9 @@ export default {
 
       // Load NFT companions after local companions are ready
       await loadNFTCompanions();
+
+      selectedCompanion.value ||= companions.value[0] || null;
+      selectedScenario.value ||= scenarios.value[0] || null;
 
       if (props.initialCompanion) {
         selectedCompanion.value = companions.value.find(c => c.id === props.initialCompanion.id) || props.initialCompanion;
@@ -8495,7 +8568,9 @@ export default {
             // User profile is loaded globally — no per-session restore needed
 
             // Sync history and scene state
-            chatHistory.value = [...storeData.history];
+            const merged = new Map(storeData.history.map(message => [message.id, message]));
+          for (const message of chatHistory.value) merged.set(message.id, message);
+          chatHistory.value = [...merged.values()].sort((a, b) => (a.ts || 0) - (b.ts || 0));
             sceneState.value = { ...storeData.sceneState };
 
             // Enter chat phase
@@ -8525,11 +8600,7 @@ export default {
       messageAudioElements.clear();
       // Disconnect downloads socket
       disconnectDownloadsSocket();
-      if (props.managementOnly) {
-        companionGenerationRevision++;
-        generationCancelled.value = true;
-        return;
-      }
+      if (props.managementOnly || agentCreation.status === "running") return;
 
       // Always save the current session before cleanup
       // This captures any in-flight changes (background updates, partial messages, etc.)
@@ -8626,7 +8697,7 @@ export default {
       roleplayMedia: [
         { key: 'enableImage', category: 'image', model: 'image_turbo', icon: 'image', name: 'Images', description: 'Illustrate the scene' },
         { key: 'enableAudio', category: 'audio', model: 'audio_quality', icon: 'headphones', name: 'Voice', description: 'Hear your companion' },
-        { key: 'enableVideo', category: 'video', model: 'video_quality', icon: 'movie', name: 'Video', description: 'Animate key moments' },
+        { key: 'enableVideo', category: 'video', model: 'video_sota', icon: 'movie', name: 'Video', description: 'MiniMax H3 · video with native audio' },
         { key: 'enableVision', category: 'vision', model: 'vision', icon: 'visibility', name: 'Vision', description: 'Share images for context' },
       ],
       scenarioImageError, stageIndex, stageButtons, featuredScenarios, focusStage, moveStage,
@@ -8671,7 +8742,7 @@ export default {
       customScenarioPrompt,
       customScenarioMood,
       customCompanion,
-      managedCompanions,
+      managedCompanions, setupSlot,
       managementSavedCompanion,
       attachGeneratedAgentSlot,
       startGeneratedRoleplay,
@@ -8851,7 +8922,7 @@ export default {
       selectScenario,
       openCustomCompanion,
       openCustomScenario,
-      generateCustomCompanion,
+      generateCustomCompanion, agentCreation, retryAgentCompletion,
       useCustomCompanion,
       generateCustomScenario,
       useCustomScenario,
@@ -8907,7 +8978,7 @@ export default {
       modelAvailability,
       modelAvailabilityChecked,
       isModelAvailable,
-      toggleMediaOption,
+      toggleMediaOption, remoteVideoEnabled, h3TermsAccepted, acceptRoleplayH3Terms,
       canStartChat,
       requiredLLMName,
       requiredModelsForSelection,
@@ -12053,6 +12124,7 @@ button:is(.card-action-btn,
 .role-profile-field .input:focus { border-color:var(--bz-accent); }
 .role-profile-field :is(input,textarea)::placeholder { color:var(--bz-fg-mid); opacity:1; }
 @media(max-width:720px) { .role-profile-grid { grid-template-columns:1fr; } }
+.roleplay-h3-terms{display:flex;align-items:flex-start;gap:10px;margin:16px 0;font-size:13px;line-height:1.5}.roleplay-h3-terms input{flex-shrink:0;margin-top:4px}
 </style>
 
 <style scoped>
@@ -12066,6 +12138,7 @@ button:is(.card-action-btn,
 .message-header{background:transparent!important;color:var(--bz-fg)!important;padding:10px 14px!important}.message-header .skill-chip{background:var(--bz-panel)!important;color:var(--bz-fg)!important;border:1px solid var(--bz-border)!important}.action-text{color:var(--bz-fg-mid)!important;opacity:1;line-height:1.6}
 .roleplay-stage{grid-template-columns:minmax(0,1fr);border-radius:16px;min-width:0;max-width:100%;box-sizing:border-box}.roleplay-stage>*{min-width:0}.chat-phase{min-width:0;max-width:100%}.chat-messages-container{border-radius:12px}.roleplay-session-header{flex-wrap:wrap}.roleplay-session-actions{flex-wrap:wrap}.chat-input{box-sizing:border-box;min-width:0;max-width:100%}
 @media(max-width:600px){.roleplay-stage{padding:12px;gap:12px}.chat-messages{padding:16px 12px}.chat-input{padding:12px}.roleplay-session-header{gap:12px}.roleplay-session-actions{gap:8px}.chat-message{max-width:100%}}
+.roleplay-h3-terms{display:flex;align-items:flex-start;gap:10px;margin:16px 0;font-size:13px;line-height:1.5}.roleplay-h3-terms input{flex-shrink:0;margin-top:4px}
 </style>
 
 <style scoped>
@@ -12080,4 +12153,10 @@ button:is(.card-action-btn,
   .chat-phase { height: auto; min-height: 0; }
   .roleplay-stage .chat-messages-container { flex: none; height: 50vh; min-height: 260px; }
 }
+.roleplay-h3-terms{display:flex;align-items:flex-start;gap:10px;margin:16px 0;font-size:13px;line-height:1.5}.roleplay-h3-terms input{flex-shrink:0;margin-top:4px}
+</style>
+
+<style scoped>
+.is-agent-management .agent-creation-heading h2 { font:900 italic 28px/1.2 var(--bz-font-metric); margin:8px 0 12px; }
+.agent-slot-context { padding-block:8px; color:var(--bz-accent); }
 </style>

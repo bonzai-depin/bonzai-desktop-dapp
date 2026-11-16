@@ -1,3 +1,4 @@
+import { freshGenerationSeed } from './generationSeed.js';
 import { localInference } from './localInferenceCoordinator.js';
 import { beginPerformanceSample } from './performanceCapture.js';
 import { completionMetrics } from './completionMetrics.js';
@@ -552,7 +553,7 @@ async function chatUnmeasured({ messages, temperature, maxTokens, stop, tools, t
   if (stop) body.stop = stop;
   if (tools) body.tools = tools;
   if (toolChoice) body.tool_choice = toolChoice;
-  if (typeof seed === "number") body.seed = seed;
+  body.seed = freshGenerationSeed();
   if (typeof enableThinking === "boolean") {
     body.chat_template_kwargs = { enable_thinking: enableThinking };
   }
@@ -590,7 +591,7 @@ async function chatStreamUnmeasured({ messages, temperature, maxTokens, stop, se
   if (typeof temperature === "number") body.temperature = temperature;
   if (typeof maxTokens === "number") body.max_tokens = maxTokens;
   if (stop) body.stop = stop;
-  if (typeof seed === "number") body.seed = seed;
+  body.seed = freshGenerationSeed();
   if (typeof enableThinking === "boolean") {
     body.chat_template_kwargs = { enable_thinking: enableThinking };
   }

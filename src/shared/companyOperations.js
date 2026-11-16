@@ -1,7 +1,8 @@
 /** Explicit desktop capabilities shared by IPC and the preload bridge. */
 export const COMPANY_OPERATIONS = Object.freeze({
+  gmaoCasework: { reads: ['snapshot','history','assetHistory','stockMovements','partCostSummary','findMatches','previewQuote'], writes: ['saveRecord','resolveBlocker','resolveFluidFollowup','saveSiteAlias','savePricingVersion'] },
   companyWorkspace: {reads:["overview","deliverables","readDeliverable"],writes:[]},
-  companyIntake: { reads:['snapshot','readSource','readRecord'], writes:['ingest','claim','renew','extracted','finish','fail','retry','review','saveMailbox','mailboxCheckpoint'] },
+  companyIntake: { reads:['snapshot','readSource','readRecord'], writes:['importBatch','ingest','claim','renew','checkpoint','extracted','finish','fail','retry','prepareArchive','review','saveMailbox','mailboxCheckpoint'] },
   companySales: {reads:["snapshot"],writes:["saveRecord","handoff","acceptHandoff","runReview"]},
   companyGrants: { reads: ['snapshot', 'readDocument', 'portalPackage'], writes: ['saveDossier', 'advanceDossier', 'attachDocument', 'draftDocument', 'linkDocument', 'prepareBatch', 'importInstallations', 'reconcilePayment', 'recordCorrection'] },
   companyBrowser: { reads: ['inspect'], writes: ['navigate', 'interact', 'fillForm', 'uploadDocument', 'close'] },

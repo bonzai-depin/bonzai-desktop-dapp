@@ -169,11 +169,12 @@
                 </div>
 
                 <template v-else>
-                  <!-- Previous Epoch Claims -->
+                  <button v-if="epochCursor !== null && epochCursor >= 0" class="bz-btn bz-btn--ghost" :disabled="isLoading || isClaiming" @click="loadOlderEpochs">Check Older Epochs</button>
+                  <!-- Earned claims remain available indefinitely. -->
                   <div v-if="claimableEpochs.length === 0" class="bz-notice rewards-inline-notice">
                     <span class="bz-notice__icon"><span class="material-symbols-outlined">inbox</span></span>
                     <div class="bz-notice__body">
-                      <p class="bz-notice__text">No claimable epochs found. Register for the current epoch to earn rewards.</p>
+                      <p class="bz-notice__text">No rewards in the epochs checked. Earned rewards never expire; check older epochs below.</p>
                     </div>
                   </div>
 
@@ -325,6 +326,7 @@ const skillRevenueError = ref('');
 
 // Claimable epochs
 const claimableEpochs = ref([]);
+const epochCursor = ref(null);
 
 // Epoch countdown
 const epochEndTime = ref(0);
@@ -443,6 +445,7 @@ async function loadData() {
   activeLoad = request;
   const isCurrent = () => request.valid && activeLoad === request && walletAddress.value === request.address && isConnected.value;
   claimableEpochs.value = [];
+  epochCursor.value = null;
   epochEndTime.value = 0;
   unclaimedSkillRevenue.value = '0';
   skillRevenueError.value = '';
@@ -484,10 +487,10 @@ async function loadData() {
 async function loadClaimableEpochs(isCurrent) {
   const epochs = [];
   const currentEpoch = poolState.value.currentEpoch;
-  // The contract permits claims only in the immediately following epoch.
-  const checkCount = Math.min(currentEpoch, 1);
-  for (let i = 1; i <= checkCount; i++) {
-    const epochId = currentEpoch - i;
+  const start = epochCursor.value ?? currentEpoch - 1;
+  const end = Math.max(-1, start - 10);
+  for (let epochId = start; epochId > end; epochId--) {
+    if (!isCurrent()) return;
     try {
       const wasRegistered = await mintPoolService.isRegisteredForEpoch(epochId);
       if (!wasRegistered) continue;
@@ -530,7 +533,16 @@ async function loadClaimableEpochs(isCurrent) {
     }
   }
 
-  if (isCurrent()) claimableEpochs.value = epochs;
+  if (isCurrent()) {claimableEpochs.value = [...claimableEpochs.value, ...epochs];epochCursor.value = end;}
+}
+
+async function loadOlderEpochs() {
+  if(isLoading.value || isClaiming.value) return;
+  const wallet=walletAddress.value;
+  isLoading.value=true;loadError.value=null;
+  try {await loadClaimableEpochs(()=>walletAddress.value===wallet && isConnected.value);}
+  catch(e){loadError.value=e.message;}
+  finally {isLoading.value=false;}
 }
 
 async function loadSkillRevenue() {

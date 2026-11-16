@@ -1,18 +1,53 @@
 <template>
-  <label class="bz-language-picker">
-    <span class="material-symbols-outlined" aria-hidden="true">language</span>
-    <select :value="i18n.state.locale" :aria-label="i18n.t('locale.select')" @change="i18n.setLocale($event.target.value)" data-i18n-skip>
-      <option v-for="locale in i18n.supportedLocales" :key="locale.code" :value="locale.code">{{ locale.label }}</option>
-    </select>
-  </label>
+  <div class="bz-sidebar__theme-picker" role="group" :aria-label="i18n.t('locale.select')">
+    <button
+      type="button"
+      class="bz-sidebar__theme-arrow"
+      :title="i18n.t('locale.previous')"
+      :aria-label="i18n.t('locale.previous')"
+      @click="cycleLocale(-1)"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
+    </button>
+
+    <div class="bz-sidebar__theme-display" aria-live="polite">
+      <span class="material-symbols-outlined bz-language__icon" aria-hidden="true">language</span>
+      <span class="bz-sidebar__theme-name">{{ currentLocale.label }}</span>
+    </div>
+
+    <button
+      type="button"
+      class="bz-sidebar__theme-arrow"
+      :title="i18n.t('locale.next')"
+      :aria-label="i18n.t('locale.next')"
+      @click="cycleLocale(1)"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>
+    </button>
+  </div>
 </template>
+
 <script setup>
+import { computed } from 'vue'
 import { useI18n } from '../i18n/index.js'
+
 const i18n = useI18n()
+const currentLocale = computed(() => (
+  i18n.supportedLocales.find(item => item.code === i18n.state.locale) || i18n.supportedLocales[0]
+))
+
+function cycleLocale(direction) {
+  const currentIndex = i18n.supportedLocales.findIndex(item => item.code === i18n.state.locale)
+  const nextIndex = (currentIndex + direction + i18n.supportedLocales.length) % i18n.supportedLocales.length
+  i18n.setLocale(i18n.supportedLocales[nextIndex].code)
+}
 </script>
+
 <style scoped>
-.bz-language-picker { display: flex; align-items: center; gap: 8px; width: 190px; max-width: 100%; min-width: 0; flex-shrink: 0; padding: 8px 10px; box-sizing: border-box; border: 1px solid var(--bz-border); border-radius: var(--bz-r); color: var(--bz-fg); background: var(--bz-panel); }
-.bz-language-picker > span { color: var(--bz-accent); font-size: 20px; }
-.bz-language-picker select { min-width: 0; width: 100%; border: 0; background: var(--bz-panel); color: var(--bz-fg); font: inherit; font-size: 14px; padding: 4px 0; cursor: pointer; }
-.bz-language-picker:focus-within { outline: 2px solid var(--bz-accent); outline-offset: 2px; }
+.bz-language__icon {
+  min-height: 10px;
+  color: var(--bz-accent);
+  font-size: 11px;
+  line-height: 1;
+}
 </style>

@@ -14,6 +14,19 @@ const { deployMintPool } = require("./helpers/deploy");
 const BPS = 10000n;
 
 describe("BonzaiMintPool", function () {
+  it("rolls an empty holder allocation once while preserving cumulative liabilities", async function () {
+    const { mintPool, treasury, user1 } = await loadFixture(deployMintPool);
+    await mintPool.setContentContract(treasury.address);
+    await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther('2') });
+    await expect(mintPool.rollEmptyAllocation(0,0,false)).to.be.revertedWith('Invalid closed pool');
+    const deposited=await mintPool.getAllTotalDeposited();
+    await time.increase(EPOCH_DURATION);
+    await mintPool.connect(user1).rollEmptyAllocation(0,0,false);
+    expect((await mintPool.getEpochHolderDeposits(0))[0]).to.equal(0);
+    expect((await mintPool.getEpochHolderDeposits(1))[0]).to.equal(ethers.parseEther('1'));
+    expect(await mintPool.getAllTotalDeposited()).to.deep.equal(deposited);
+    await expect(mintPool.rollEmptyAllocation(0,0,false)).to.be.revertedWith('No unearned allocation');
+  });
   // ═══════════════════════════════════════════════════════════════════════════
   // HELPERS — Arbitrum-local: balance read directly on-chain, no CRE.
   // ═══════════════════════════════════════════════════════════════════════════
@@ -379,13 +392,13 @@ describe("BonzaiMintPool", function () {
       await expect(confirmUserClaim(mintPool, user1, 0)).to.emit(mintPool, "ClaimConfirmed");
     });
 
-    it("reverts when called outside the claim window", async function () {
+    it("keeps old earned epochs claimable", async function () {
       const { mintPool, token, user1 } = await loadFixture(deployMintPool);
       await token.mint(user1.address, ethers.parseEther("5000"));
       await stakeAndRegisterUser(mintPool, user1);
       await time.increase(EPOCH_DURATION);
       await time.increase(EPOCH_DURATION); // skip past the claim window
-      await expect(confirmUserClaim(mintPool, user1, 0)).to.be.revertedWith("Claim window closed");
+      await expect(confirmUserClaim(mintPool, user1, 0)).to.emit(mintPool, "ClaimConfirmed");
     });
   });
 
@@ -535,7 +548,8 @@ describe("BonzaiMintPool", function () {
     it("transfers provider's weighted share when called by ServiceTime", async function () {
       const { mintPool, treasury, user1, user3 } = await loadFixture(deployMintPool);
       // user3 = mock service-time contract for the test
-      await mintPool.setServiceTimeContract(user3.address);
+      const accounting = await (await ethers.getContractFactory('MockServiceAccounting')).deploy();
+      await mintPool.setServiceTimeContract(await accounting.getAddress());
       await mintPool.setContentContract(treasury.address);
       await mintPool.connect(treasury).depositForPool(1, { value: ethers.parseEther("2") });
 
@@ -547,7 +561,7 @@ describe("BonzaiMintPool", function () {
       const expected = (totalProvider * BigInt(providerTime)) / BigInt(totalTime);
 
       await expect(
-        mintPool.connect(user3).withdrawProviderShare(0, 1, user1.address, providerTime, totalTime)
+        accounting.withdraw(await mintPool.getAddress(), 0, 1, user1.address, providerTime, totalTime)
       ).to.changeEtherBalance(user1, expected);
     });
   });
@@ -600,39 +614,20 @@ describe("BonzaiMintPool", function () {
   // SWEEP / RECIRCULATE
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("Sweep + recirculate", function () {
-    it("sweepUnclaimed sends only the unclaimed remainder to treasury", async function () {
-      const { mintPool, user1, treasury, depositAmount, user1Amount, user2Amount } = await setupFullClaimFlow();
-      // user1 claims their share
-      await mintPool.connect(user1).claimEpoch(0, 0);
-      // Advance to claim window+1
-      await time.increase(EPOCH_DURATION);
-
-      const totalRegistered = user1Amount + user2Amount;
-      const totalProvider = (depositAmount * PROVIDER_SHARE_BPS) / BPS;
-      const holderPool = depositAmount - totalProvider;
-      const user1Share = (holderPool * user1Amount) / totalRegistered;
-      const remaining = depositAmount - user1Share; // unclaimed holder share + full provider side
-
-      await expect(mintPool.sweepUnclaimed(0))
-        .to.changeEtherBalance(treasury, remaining);
-    });
-
-    it("recirculateUnclaimed moves unclaimed funds to current epoch", async function () {
-      const { mintPool, user1, depositAmount, user1Amount, user2Amount } = await setupFullClaimFlow();
-      await mintPool.connect(user1).claimEpoch(0, 0);
-      await time.increase(EPOCH_DURATION);
-
-      const totalRegistered = user1Amount + user2Amount;
-      const totalProvider = (depositAmount * PROVIDER_SHARE_BPS) / BPS;
-      const holderPool = depositAmount - totalProvider;
-      const user1Share = (holderPool * user1Amount) / totalRegistered;
-      const unclaimedHolder = holderPool - user1Share;
-
-      await mintPool.recirculateUnclaimed(0);
-      const currentEpoch = await mintPool.currentEpoch();
-      const recirculated = await mintPool.getEpochHolderDeposits(currentEpoch);
-      expect(recirculated[0]).to.equal(unclaimedHolder);
-    });
+  describe("Non-expiring rewards", function () {
+    for (const action of ['sweepUnclaimed', 'recirculateUnclaimed']) {
+      it(`prevents ${action} from confiscating a late holder claim`, async function () {
+        const { mintPool, user1, user2, depositAmount, user1Amount, user2Amount, stakingVault } = await setupFullClaimFlow();
+        await mintPool.connect(user1).claimEpoch(0, 0);
+        await time.increase(EPOCH_DURATION * 10);
+        await expect(mintPool[action](0)).to.be.revertedWith('Earned rewards never expire');
+        await mintPool.pause();
+        const vault = await ethers.getContractAt('BonzaiStakingVault', await mintPool.stakingVault());
+        await vault.connect(user2).unstake(user2Amount);
+        const holderPool = depositAmount - depositAmount * PROVIDER_SHARE_BPS / BPS;
+        const share = holderPool * user2Amount / (user1Amount + user2Amount);
+        await expect(mintPool.connect(user2).claimEpoch(0, 0)).to.changeEtherBalance(user2, share);
+      });
+    }
   });
 });

@@ -13,6 +13,7 @@ const operationalApi = Object.fromEntries(Object.entries(COMPANY_OPERATIONS).map
 }]));
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  publicStorage: Object.fromEntries(['status', 'receipts', 'configure', 'disconnect', 'upload', 'uploadMetadata'].map(method => [method, payload => ipcRenderer.invoke(`public-storage:${method}`, payload)])),
   workspace: Object.fromEntries(['status','checkout','verify','backup','restore','demo','demoOpen'].map(method => [method, (...args) => ipcRenderer.invoke('workspace:'+method,...args)])),
   onWorkspaceDemo: cb => { const h=(_e,v)=>cb(v); ipcRenderer.on('workspace:demo-progress',h); return ()=>ipcRenderer.removeListener('workspace:demo-progress',h); },
   companyRuntime: {
@@ -80,6 +81,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getLoadedModel: () => ipcRenderer.invoke("model-get-loaded"),
   completionBudget: (prompt, maxTokens) => ipcRenderer.invoke('model-completion-budget', { prompt, maxTokens }),
   llamaRuntimeStatus: () => ipcRenderer.invoke("llama-runtime-status"),
+  inferenceQueueSnapshot: () => ipcRenderer.invoke('inference-queue-snapshot'),
+  onInferenceQueueChanged: callback => {
+    const handler = (_event, record) => callback(record);
+    ipcRenderer.on('inference-queue-changed', handler);
+    return () => ipcRenderer.removeListener('inference-queue-changed', handler);
+  },
   localExecutionStatus: () => ipcRenderer.invoke("local-execution-status"),
   broadcastModelState: () => ipcRenderer.invoke("broadcast-model-state"),
   llamaGetRpcPeers: () => ipcRenderer.invoke("llama-get-rpc-peers"),
@@ -90,6 +97,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     const handler = (_event, model) => cb(model);
     ipcRenderer.on("model-changed", handler);
     return () => ipcRenderer.removeListener("model-changed", handler);
+  },
+  openRouter: {
+    status: () => ipcRenderer.invoke('openrouter:status'),
+    models: () => ipcRenderer.invoke('openrouter:models'),
+    mediaModels: category => ipcRenderer.invoke('openrouter:media-models', category),
+    videoJobs: () => ipcRenderer.invoke('openrouter:video-jobs'),
+    resumeVideo: id => ipcRenderer.invoke('openrouter:resume-video', id),
+    account: () => ipcRenderer.invoke('openrouter:account'),
+    connect: key => ipcRenderer.invoke('openrouter:connect', key),
+    configure: input => ipcRenderer.invoke('openrouter:configure', input),
+    disconnect: () => ipcRenderer.invoke('openrouter:disconnect'),
+    onChanged: cb => { const h = (_event, state) => cb(state); ipcRenderer.on('openrouter:changed', h); return () => ipcRenderer.removeListener('openrouter:changed', h); },
   },
   chat: (userMessage, options = {}) => ipcRenderer.invoke("model-chat", { message: userMessage, ...options }),
   resetChat: () => ipcRenderer.invoke("model-reset-chat"),
@@ -527,9 +546,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * tagged with `streamId` so concurrent ticks (or Generative Text) do
    * not interleave.
    */
-  zhcChatStream: ({ streamId, prompt, temperature, maxTokens, enableThinking }) =>
+  zhcChatStream: ({ streamId, prompt, temperature, maxTokens, enableThinking, model }) =>
     ipcRenderer.invoke("zhc-chat-stream", {
-      streamId, message: prompt, temperature, maxTokens, enableThinking, isolated: true,
+      streamId, message: prompt, temperature, maxTokens, enableThinking, model, isolated: true,
     }),
   /**
    * Subscribe to ZHC stream tokens. The callback receives `{ streamId, chunk }`.
@@ -649,6 +668,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("agent-save-audio", defaultName, sourcePath),
   saveVideo: (defaultName, sourcePath) =>
     ipcRenderer.invoke("agent-save-video", defaultName, sourcePath),
+  mediaProduction: {
+    prepare: (input) => ipcRenderer.invoke('media-production:prepare', input),
+    probe: (source) => ipcRenderer.invoke('media-production:probe', source),
+    compose: (input) => ipcRenderer.invoke('media-production:compose', input),
+  },
   exportMeditationVideo: (payload) =>
     ipcRenderer.invoke("meditation-export-video", payload),
   // File existence check (for media validation)
@@ -769,6 +793,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("p2p-inference", { peerId, request }),
   agentWorkerPublish: (descriptor, binding) => ipcRenderer.invoke('agent-worker-publish', descriptor, binding),
   agentWorkerUnpublish: key => ipcRenderer.invoke('agent-worker-unpublish', key),
+  agentServiceAssets: () => ipcRenderer.invoke('agent-service-assets'),
+  agentServiceAssetInspect: (id) => ipcRenderer.invoke('agent-service-asset-inspect', id),
+  agentServiceAssetUse: (binding,asset,prompt) => ipcRenderer.invoke('agent-service-asset-use', binding,asset,prompt),
   agentWorkerRuns: () => ipcRenderer.invoke('agent-worker-runs'),
   agentWorkerPeers: () => ipcRenderer.invoke('agent-worker-peers'),
   agentWorkerStoreMedia: (artifact, base64) => ipcRenderer.invoke('agent-worker-store-media', artifact, base64),
@@ -801,6 +828,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
    * @returns {Promise<{ok: boolean, peers: Array<{peerId: string, multiaddrs: string[], discoveredAt: number, free: boolean}>}>}
    */
   p2pLANPeers: () => ipcRenderer.invoke("p2p-lan-peers"),
+
+  /**
+   * Linked devices: the user's own computers, paired once with a code.
+   * Linking is the only way to grant another device access to this one's compute.
+   */
+  mesh: {
+    state: () => ipcRenderer.invoke("mesh-state"),
+    invite: () => ipcRenderer.invoke("mesh-invite"),
+    cancelInvite: () => ipcRenderer.invoke("mesh-invite-cancel"),
+    join: (code) => ipcRenderer.invoke("mesh-join", code),
+    unlink: (peerId) => ipcRenderer.invoke("mesh-unlink", peerId),
+    updateSettings: (patch) => ipcRenderer.invoke("mesh-settings", patch),
+  },
 
   /**
    * Route an inference request — automatically sends to selected provider (LAN/remote)
@@ -947,6 +987,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     publicEdit: (id, text) => ipcRenderer.invoke('social:public-edit', id, text),
     publicPoll: (agentId) => ipcRenderer.invoke('social:public-poll', agentId),
     publicClaim: (id) => ipcRenderer.invoke('social:public-claim', id),
+    publicTeam: (id, task) => ipcRenderer.invoke('social:public-team', id, task),
+    publicTeamResult: (id) => ipcRenderer.invoke('social:public-team-result', id),
     publicComplete: (id, result, error) => ipcRenderer.invoke('social:public-complete', id, result, error),
     publicDismiss: (id) => ipcRenderer.invoke('social:public-dismiss', id),
     publicRetry: (id) => ipcRenderer.invoke('social:public-retry', id),

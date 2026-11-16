@@ -1,3 +1,4 @@
+import { podcastStudio, musicVideoForge, mangaToAnime, MEDIA_TEAM_ROLES } from '../../skills/mediaProduction.js';
 import { PAPERASSE_TEMPLATES } from "./paperasseTeams.js";
 /**
  * BonzAI Company — Vertical Templates
@@ -782,6 +783,17 @@ export const TEMPLATES = {
   },
 };
 
+for (const skill of [podcastStudio, musicVideoForge, mangaToAnime]) {
+  const companions = { CEO: 'james', 'Producer:text': 'aurore', 'Producer:audio': 'damon', 'Producer:music': 'damon', 'Producer:image': 'sakura', 'Producer:video': 'zara' };
+  TEMPLATES[skill.id] = { id: skill.id, version: '1.0', name: skill.name, vertical: 'media', summary: skill.description,
+    badgeIcon: 'movie', skillPacks: [], hybridRoles: [], intakeQuestions: [], initialGoals: [],
+    defaultRoles: Object.fromEntries(MEDIA_TEAM_ROLES[skill.id].map(role => [role, { companion: companions[role], grantedSkills: [] }])),
+    vetoOverrides: Object.fromEntries(['text', 'image', 'audio', 'music', 'video'].map(type => [`produce.${type}`, VETO_MODES.AUTO])),
+    treasuryDefaults: { currency: 'USD', reserveFloor: 0, perHeartbeatSpendCap: 0 },
+    missionTemplate: answers => `${skill.description} ${answers.currentWorkflow || ''} Produce only requested local drafts. The coordinator directs the writer and media specialists in order. Save each stage and assemble the finished result. Publication and payments require separate approval.`,
+  };
+}
+
 export function getTemplate(id) {
   return TEMPLATES[id] || null;
 }
@@ -822,7 +834,7 @@ export function applyTemplate(templateId, answers = {}, ownerOverrides = {}) {
     businessType: answers.businessType,
     currentWorkflow: answers.currentWorkflow,
   });
-  const selectedRoleKeys = new Set(ownerOverrides.roleKeys || (t.paperasse ? Object.keys(t.defaultRoles) : workspace.recommendedRoles));
+  const selectedRoleKeys = new Set(ownerOverrides.roleKeys || (t.paperasse || MEDIA_TEAM_ROLES[t.id] ? Object.keys(t.defaultRoles) : workspace.recommendedRoles));
 
   const resolved = resolvePacks(t.skillPacks);
   const isDemo = ownerOverrides.demoMode === true;

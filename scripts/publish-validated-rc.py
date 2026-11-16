@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish an explicitly unsigned RC from already verified hosted installers."""
+"""Publish explicitly approved unsigned releases from verified hosted installers."""
 import base64
 import importlib.util
 import json
@@ -17,7 +17,7 @@ spec.loader.exec_module(hosting)
 
 
 def validate_manifest(rows, sha, run_id, public, expected_count, version):
-    prefix = public.rstrip('/') + f'/releases/test-builds/{sha}/'
+    prefix = public.rstrip('/') + '/releases/'
     if not isinstance(rows, list) or len(rows) != expected_count:
         raise ValueError('Unexpected installer count')
     for row in rows:
@@ -42,7 +42,9 @@ def main():
     repo = os.environ['GITHUB_REPOSITORY']
     tag, sha = os.environ['RELEASE_TAG'], os.environ['SOURCE_SHA']
     public = os.environ['R2_PUBLIC_URL'].rstrip('/')
-    if not re.fullmatch(r'v\d+\.\d+\.\d+-rc\.\d+', tag) or not re.fullmatch(r'[a-f0-9]{40}', sha):
+    stable = os.environ.get('ALLOW_STABLE_RELEASE') == 'true'
+    pattern = r'v\d+\.\d+\.\d+' if stable else r'v\d+\.\d+\.\d+-rc\.\d+'
+    if not re.fullmatch(pattern, tag) or not re.fullmatch(r'[a-f0-9]{40}', sha):
         raise ValueError('A full source SHA and vX.Y.Z-rc.N tag are required')
     if os.environ.get('ALLOW_UNSIGNED_MACOS') != 'true':
         raise ValueError('Explicit unsigned macOS RC approval is required')
@@ -64,7 +66,7 @@ def main():
         logs = subprocess.check_output(['gh', 'run', 'view', run_id, '--repo', repo, '--log'], text=True)
         if hosting.checkout_revision(logs) != sha:
             raise ValueError('Native builds do not share the release revision')
-        request = urllib.request.Request(public + f'/releases/test-builds/{sha}/run-{run_id}.json',
+        request = urllib.request.Request(public + f'/releases/manifests/{sha}/run-{run_id}.json',
                                          headers={'User-Agent': 'BonzAI-RC-Publisher'})
         with urllib.request.urlopen(request, timeout=60) as response:
             manifest = validate_manifest(json.load(response), sha, run_id, public, count, version)
@@ -80,7 +82,7 @@ def main():
     if existing.returncode == 0 and existing.stdout.strip() != sha:
         raise ValueError('Release tag already points to another revision')
     notes = Path(f'.github/release-notes/{tag}.md').read_text()
-    notes += '\n## Download the RC\n\n**macOS: unsigned and not notarized. Windows: unsigned.**\n\n'
+    notes += '\n## Downloads\n\n**macOS: unsigned and not notarized. Windows: unsigned.**\n\n'
     for row in rows:
         notes += f"- [{row['name']}]({row['url']}) — SHA-256 `{row['sha256']}`\n"
     notes += f'\nBuilt from `{sha}`. Each hosted installer was downloaded and verified against its build checksum.\n'
@@ -89,8 +91,8 @@ def main():
         (folder/'notes.md').write_text(notes)
         (folder/'installers.json').write_text(json.dumps(rows, indent=2) + '\n')
         (folder/'SHA256SUMS').write_text(''.join(f"{row['sha256']}  {row['name']}\n" for row in rows))
-        subprocess.run(['gh', 'release', 'create', tag, '--repo', repo, '--target', sha, '--prerelease',
-                        '--title', f'BonzAI v{version.split("-rc.")[0]} RC', '--notes-file', str(folder/'notes.md'),
+        subprocess.run(['gh', 'release', 'create', tag, '--repo', repo, '--target', sha, *([] if stable else ['--prerelease']),
+                        '--title', f'BonzAI v{version}' + ('' if stable else ' RC'), '--notes-file', str(folder/'notes.md'),
                         str(folder/'installers.json'), str(folder/'SHA256SUMS')], check=True)
 
 

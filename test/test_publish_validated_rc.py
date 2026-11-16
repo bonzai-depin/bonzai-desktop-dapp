@@ -10,7 +10,7 @@ class ReleaseManifestTests(unittest.TestCase):
     def row(self):
         name = 'BonzAI-4.0.1-rc.1-arm64.dmg'
         return dict(name=name, source_sha='a'*40, source_run='123', sha256='b'*64, bytes=100,
-                    url='https://public.example/releases/test-builds/'+'a'*40+'/'+name)
+                    url='https://public.example/releases/'+name)
 
     def validate(self, rows):
         return rc.validate_manifest(rows, 'a'*40, '123', 'https://public.example', 1, '4.0.1-rc.1')

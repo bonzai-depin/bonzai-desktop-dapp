@@ -1,4 +1,5 @@
 import './scripts/load-protocol-config.mjs';
+import { privateStorageBuildGuard } from './scripts/private-storage-build-guard.mjs';
 import { defineConfig } from "vite";
 import VuePlugin from "@vitejs/plugin-vue";
 import tsconfigPaths from "vite-tsconfig-paths";
@@ -7,6 +8,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 // https://vitejs.dev/config
 export default defineConfig({
   plugins: [
+    privateStorageBuildGuard(),
     VuePlugin(),
     tsconfigPaths(),
     nodePolyfills({
@@ -20,6 +22,21 @@ export default defineConfig({
     include: [
       '@reown/appkit',
       '@reown/appkit-adapter-ethers',
+      '@reown/appkit/vue',
+      '@reown/appkit/networks',
+      '@reown/appkit-scaffold-ui',
+      '@reown/appkit-scaffold-ui/w3m-modal',
+      '@reown/appkit-scaffold-ui/send',
+      '@reown/appkit-scaffold-ui/receive',
+      '@reown/appkit-scaffold-ui/embedded-wallet',
+      '@reown/appkit-scaffold-ui/email',
+      '@reown/appkit-scaffold-ui/socials',
+      '@reown/appkit-scaffold-ui/swaps',
+      '@reown/appkit-scaffold-ui/onramp',
+      '@reown/appkit-scaffold-ui/transactions',
+      '@reown/appkit-scaffold-ui/pay-with-exchange',
+      '@reown/appkit-scaffold-ui/reown-authentication/data-capture',
+      '@reown/appkit-pay',
     ],
   },
   build: {

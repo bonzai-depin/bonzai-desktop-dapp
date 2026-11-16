@@ -204,9 +204,9 @@ const commandGroups = [
   {
     title: "Generation",
     items: [
-      { name: "!bonzai generate image <prompt>", desc: "Fast image generation with FLUX Klein." },
+      { name: "!bonzai generate image <prompt>", desc: "Fast image generation with Qwen Image 2.1 Turbo." },
       { name: "!bonzai generate image_quality <prompt>", desc: "Quality image generation with Z-Image Turbo." },
-      { name: "!bonzai generate image_standard <prompt>", desc: "Standard SDXL image generation." },
+      { name: "!bonzai generate image_standard <prompt>", desc: "Standard Qwen Image 2.1 generation." },
       { name: "!bonzai generate video <prompt>", desc: "Video generation with LTX-2." },
       { name: "!bonzai generate audio <text>", desc: "Fast TTS." },
       { name: "!bonzai generate audio_quality <text>", desc: "Quality Chatterbox V3 TTS." },

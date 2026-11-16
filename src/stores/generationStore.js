@@ -4,6 +4,7 @@
  * This allows progress bars to persist when users switch between tabs.
  */
 
+import { userFacingError } from '../services/userFacingError.js';
 import { reactive, readonly } from 'vue';
 import { io } from 'socket.io-client';
 import { getHttpErrorMessage } from '../services/auth.service.js';
@@ -171,16 +172,19 @@ export const ensureGenerationSocket = () => {
     gen.active = false;
 
     // Release global lock
-    if (state.globalLock.lockedBy === modality) {
-      state.globalLock.isLocked = false;
-      state.globalLock.lockedBy = null;
-      state.globalLock.startedAt = null;
-    }
+    releaseGlobalLock(modality);
 
     // Clean up mapping after a delay to allow final UI update
     setTimeout(() => {
       delete state._idToModality[generation_id];
     }, 1000);
+  });
+
+  genSocket.on('inference_queue', ({ path, stage }) => {
+    const modality = path?.split('/')[1];
+    const job = state[modality];
+    if (!job?.active || job.id || stage === 'finished') return;
+    job.stage = stage === 'queued' ? 'queued' : 'loading';
   });
 
   genSocket.on('gen_error', ({ generation_id, error }) => {
@@ -190,16 +194,12 @@ export const ensureGenerationSocket = () => {
     const gen = state[modality];
     if (gen.id && generation_id && gen.id !== generation_id) return;
 
-    gen.error = error || 'Unknown error';
+    gen.error = userFacingError(error);
     gen.stage = 'error';
     gen.active = false;
 
     // Release global lock
-    if (state.globalLock.lockedBy === modality) {
-      state.globalLock.isLocked = false;
-      state.globalLock.lockedBy = null;
-      state.globalLock.startedAt = null;
-    }
+    releaseGlobalLock(modality);
 
     // Clean up mapping
     setTimeout(() => {
@@ -218,7 +218,7 @@ export const ensureGenerationSocket = () => {
  * Check if a generation can be started (global lock not held)
  */
 export const canStartGeneration = () => {
-  return !state.globalLock.isLocked;
+  return !['image', 'video', 'audio', 'text', '3d'].some(key => state[key].active);
 };
 
 /**
@@ -236,17 +236,14 @@ export const getLockedGeneration = () => {
 /**
  * Start tracking a new generation for a specific modality.
  * Call this before making the HTTP request.
- * Returns false if another generation is already in progress.
+ * The coordinator serializes device use; concurrent modalities are tracked while queued.
  */
 export const startGeneration = (modality, generationId = null) => {
   if (!state[modality]) return false;
 
-  // Check global lock - only one generation at a time
-  if (state.globalLock.isLocked && state.globalLock.lockedBy !== modality) {
-    console.warn(`[generationStore] Cannot start ${modality} - ${state.globalLock.lockedBy} generation already in progress`);
-    return false;
-  }
-
+  // The server owns scheduling. A different modality may wait in its queue;
+  // rejecting tracking here left that request running with no visible progress.
+  const waiting = Object.values(state).some(job => job?.active);
   // Acquire global lock
   state.globalLock.isLocked = true;
   state.globalLock.lockedBy = modality;
@@ -255,9 +252,10 @@ export const startGeneration = (modality, generationId = null) => {
   // Reset state for new generation
   Object.assign(state[modality], {
     id: generationId,
+    startedAt: Date.now(),
     active: true,
     error: null,
-    stage: 'starting',
+    stage: waiting ? 'queued' : 'starting',
     pct: 0,
     blocked: false,
   });
@@ -275,13 +273,11 @@ export const startGeneration = (modality, generationId = null) => {
  * Release the global generation lock
  */
 const releaseGlobalLock = (modality = null) => {
-  // Only release if the requesting modality holds the lock (or force release)
-  if (modality && state.globalLock.lockedBy !== modality) {
-    return;
-  }
-  state.globalLock.isLocked = false;
-  state.globalLock.lockedBy = null;
-  state.globalLock.startedAt = null;
+  // Completing one queued modality must not mark another running task idle.
+  const active = ['image', 'video', 'audio', 'text', '3d'].find(key => state[key].active);
+  state.globalLock.isLocked = Boolean(active);
+  state.globalLock.lockedBy = active || null;
+  state.globalLock.startedAt = active ? state[active].startedAt || Date.now() : null;
 };
 
 /**
@@ -324,7 +320,7 @@ export const setError = (modality, error, statusCode = null) => {
       finalError = getHttpErrorMessage(statusCode, error);
     }
 
-    state[modality].error = finalError;
+    state[modality].error = userFacingError(finalError);
     state[modality].stage = 'error';
     state[modality].active = false;
     releaseGlobalLock(modality);

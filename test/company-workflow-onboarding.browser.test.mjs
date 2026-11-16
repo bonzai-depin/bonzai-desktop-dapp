@@ -31,7 +31,6 @@ test('personal workflow setup needs no business identity and keeps the promised 
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } }); await prepare(page);
     await mount(page, 'CompanyIntakeWizard', { initialTemplateId: meditation.id });
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
     assert.equal(await page.getByLabel('Workspace name (optional)', { exact: true }).inputValue(), '');
     assert.equal(await page.getByRole('button', { name: 'Next', exact: true }).isEnabled(), true);
     assert.equal(await page.getByLabel('Business name *', { exact: true }).count(), 0);
@@ -68,7 +67,6 @@ test('operational workflow setup still requires company context and preserves it
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } }); await prepare(page);
     await mount(page, 'CompanyIntakeWizard', { initialTemplateId: 'hvac_gmao' });
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
     assert.equal(await page.getByRole('button', { name: 'Next', exact: true }).isDisabled(), true);
     await page.getByLabel('Business name *', { exact: true }).fill('CFE');
     await page.getByRole('button', { name: 'Next', exact: true }).click();

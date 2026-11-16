@@ -97,7 +97,10 @@ describe('Smart-agent reserved NVDA launch',function(){
   await expect(f.agents.connect(f.buyer).issueToken(1,1,(await time.latest())-1)).to.be.revertedWith('Invalid execution bounds');
   await expect(f.agents.setLauncher(await f.swapper.getAddress())).to.be.reverted;
   await expect(f.factory.launch(1,'Rose','ROSE','ipfs://portrait',f.wallet.address,1,(await time.latest())+30,{value:ETH('1')})).to.be.revertedWith('Only slot contract');
-  await time.increase(4000);await expect(f.mint()).to.be.revertedWith('Drop not active');
+  await time.increase(4000);await f.mint();
+  expect(await f.agents.totalSupply()).to.equal(2);
+  expect(await f.agents.reserveOf(2)).to.equal(ETH('1'));
+  await f.mint();await expect(f.mint()).to.be.revertedWith('Wallet mint limit');
  });
  it('encodes exact-input Universal Router NVDA purchase and rejects insufficient output',async()=>{
   const f=await loadFixture(fixture),Router=await ethers.getContractFactory('MockAgentRouter'),router=await Router.deploy();
@@ -128,8 +131,8 @@ describe('Minted worker to paid delivery integration', function () {
   await escrow.connect(f.wallet).acceptJob(id);
   await escrow.connect(f.wallet).submitWork(id, ethers.id('delivered meditation'));
   await escrow.connect(f.other).approveWork(id);
-  expect(await escrow.tokenWithdrawable(await token.getAddress(), f.wallet.address)).to.equal(ETH('97.5'));
-  expect(await basket.totalDeposited(await token.getAddress())).to.equal(ETH('1.25'));
+  expect(await escrow.tokenWithdrawable(await token.getAddress(), f.wallet.address)).to.equal(ETH('70'));
+  expect(await basket.totalDeposited(await token.getAddress())).to.equal(ETH('10'));
   await escrow.connect(f.wallet).withdrawTokenPayments(await token.getAddress(), f.wallet.address);
   expect(await escrow.tokenWithdrawable(await token.getAddress(), f.wallet.address)).to.equal(0);
   expect((await escrow.jobs(id)).status).to.equal(4);

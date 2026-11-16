@@ -1,0 +1,59 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+const url=process.env.BONZAI_UI_URL;
+async function mount(page){
+ await page.route('**/*',r=>new URL(r.request().url()).origin===new URL(url).origin?r.continue():r.abort());
+ await page.goto(`${url}/src/assets/tokens.css`);
+ await page.setContent(`<html><head>${['tokens','themes','buttons','fields','page-layout'].map(x=>`<link rel="stylesheet" href="/src/assets/${x}.css">`).join('')}<link rel="stylesheet" href="/src/assets/fonts/fonts.css"><style>.bz-modal-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;background:#0008;backdrop-filter:blur(8px)}.bz-modal{background:var(--bz-panel);border:1px solid var(--bz-border);border-radius:var(--bz-r-lg);box-shadow:0 24px 80px #0005}.bz-modal__header{display:flex;align-items:center;justify-content:space-between;padding:24px;border-bottom:1px solid var(--bz-border);gap:16px}*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bz-canvas);color:var(--bz-fg);font-family:var(--bz-font-body)}</style></head><body><div id="app"></div></body></html>`);
+ await page.evaluate(async()=>{
+  const source=await(await fetch('/src/components/AgentWorkersPanel.vue')).text();const runtime=source.match(/from ["']([^"']*\/vue\.js(?:\?[^"']*)?)["']/)[1];
+  const {createApp,h,reactive}=await import(runtime);const {default:Panel}=await import('/src/components/AgentWorkersPanel.vue');const {createI18nPlugin,i18n}=await import('/src/i18n/index.js');i18n.setLocale('en');
+  const protocol=await(await fetch('/src/services/agentWorkerProtocol.js')).text();const {ethers}=await import(protocol.match(/from ["']([^"']*\/ethers\.js(?:\?[^"']*)?)["']/)[1]);const {CONFIG}=await import('/src/config/web3.config.js');const {web3Service}=await import('/src/services/web3.service.js');const {serviceOffer}=await import('/src/services/agentServiceOffer.js');const {workerGrantMessage}=await import('/src/services/agentWorkerProtocol.js');
+  const owner=ethers.Wallet.createRandom(),collection='0x1111111111111111111111111111111111111111',token='0x2222222222222222222222222222222222222222';
+  CONFIG.smartAgentIssuance.contractAddress=collection;CONFIG.smartAgentIssuance.factoryAddress=collection;CONFIG.contributionEconomy.jobEscrowAddress=collection;
+  const contract=new ethers.Interface(['function ownerOf(uint256) view returns(address)','function getAgentWallet(uint256) view returns(address)','function controlEpoch(uint256) view returns(uint256)','function socialToken(uint256) view returns(address)','function socialTokenFactory() view returns(address)','function owner() view returns(address)','function platformBps() view returns(uint256)','function contributionBps() view returns(uint256)','function treasuryBps() view returns(uint256)','function holderBps() view returns(uint256)','function ACCEPT_WINDOW() view returns(uint256)','function DELIVERY_WINDOW() view returns(uint256)','function REVIEW_WINDOW() view returns(uint256)','function DISPUTE_WINDOW() view returns(uint256)','function getToken(uint256) view returns(address)','function companionContract() view returns(address)','function decimals() view returns(uint8)','function symbol() view returns(string)']);
+  web3Service.getProvider=async()=>({getNetwork:async()=>({chainId:BigInt(CONFIG.contributionEconomy.chainId)}),call:async(tx)=>{const method=contract.parseTransaction({data:tx.data}).name;const values={ownerOf:owner.address,getAgentWallet:owner.address,controlEpoch:1,socialToken:token,socialTokenFactory:collection,owner:collection,platformBps:3000,treasuryBps:2000,holderBps:1000,contributionBps:250,getToken:token,companionContract:collection,decimals:18,symbol:'EXPERT'};if(method==='ownerOf' && String(contract.parseTransaction({data:tx.data}).args[0])==='4' && window.assetTransferred) values.ownerOf=collection;return contract.encodeFunctionResult(method,[values[method]??86400]);}});
+  web3Service.state=reactive({...web3Service.state,walletAddress:owner.address});
+  const asset={chainId:CONFIG.contributionEconomy.chainId,collection,tokenId:'4',title:'Compressor diagnostics · field evidence',kind:'text',digest:ethers.id('source'),use:'knowledge',license:'Use in the approved task; cite the original. No redistribution.'};
+  const offer=serviceOffer({title:'Refrigeration Specialist',outcome:'A cited diagnosis and an actionable maintenance plan grounded in original field experience.',price:'125',assets:[asset]});
+  const grant={version:1,chainId:asset.chainId,collection,tokenId:'1',epoch:'1',peerId:'fixture-peer',name:'Jin Chen',capabilities:['text'],workflows:[],expiresAt:Date.now()+86400000,offer};
+  const descriptor={grant,signature:await owner.signMessage(workerGrantMessage(grant))};const store=new Map();
+  window.electronAPI={store:{get:async(k,f)=>k==='roleplayCompanions'?[{id:'jin',name:'Jin Chen',isCustom:true,chainId:asset.chainId,contractAddress:collection,tokenId:'1',tokenAddress:token}]:store.get(k)??f,set:async(k,v)=>store.set(k,structuredClone(v))},agentWorkerPeers:async()=>['fixture-peer'],agentWorkerRuns:async()=>[],p2pHealth:async()=>({workers:[descriptor]}),agentJobsList:async()=>[],agentServiceAssets:async()=>[{id:'asset',contentType:'text',chainId:asset.chainId,collection,tokenId:'4'}],agentServiceAssetInspect:async()=>({...asset,id:'asset',uses:['knowledge','delivery']})};
+  web3Service.switchNetwork=async()=>{};web3Service.getBrowserProvider=async()=>({getSigner:async()=>owner});
+  window.electronAPI.p2pLocalPeerId=async()=>({peerId:'fixture-peer'});window.electronAPI.agentWorkerPublish=async(descriptor,binding)=>{window.publishedService={descriptor,binding};};
+  window.testServiceRuntime=async()=>{
+    const modelAsset={...asset,tokenId:'5',title:'Specialized checkpoint',kind:'checkpoint',digest:ethers.id('model'),use:'model'};
+    const bundle=serviceOffer({...offer,assets:[asset,modelAsset]});const calls=[];
+    window.electronAPI.chat=async()=>{throw new Error('Unexpected default or remote model');};window.electronAPI.agentServiceAssetUse=async(binding,asset,prompt)=>{calls.push({binding,asset,prompt});return {text:asset.use==='model'?'Pinned model answer':'Compressor checks from licensed reference'};};
+    const {executeWorkerCapability}=await import('/src/services/agentWorkerRuntime.js');const result=await executeWorkerCapability({agentId:'jin',offer:bundle,assets:bundle.assets.map(a=>({id:a.use==='model'?'model':'asset',key:`${a.chainId}:${a.collection}:${a.tokenId}`}))},{worker:`${asset.chainId}:${collection}:1`,capability:'text',input:{prompt:'Diagnose compressor'},job:{terms:{outcome:'Return a prioritized action plan.'}},requestId:'test'});return {calls,result};
+  };
+  window.savedDraft=()=>store.get('agentServiceDraft:jin');window.marketI18n=i18n;
+  createApp({render:()=>h(Panel,{companyId:'test-team'})}).use(createI18nPlugin()).mount('#app');
+ });
+}
+test('market shows licensed expertise, pins payment to the offer and keeps drafts private across themes and sizes',{skip:!url,timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true,channel:'chrome'});try{
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',e=>errors.push(e.message));await mount(page);
+  await page.getByRole('button',{name:'Find agents',exact:true}).click();await page.locator('.worker-choice').click();await page.locator('.service-package').waitFor();
+  assert.match(await page.locator('.service-package').innerText(),/No redistribution/);
+  await page.locator('.worker-request textarea').fill('Find the cause of this compressor pressure drop.');await page.getByRole('button',{name:'Hire for this job'}).click();
+  await page.locator('.hire-package').waitFor().catch(async e=>{throw new Error(e.message+'\n'+await page.locator('.hire-modal').innerText());});assert.equal(await page.locator('.hire-modal input[inputmode=decimal]').inputValue(),'125');assert.ok(await page.locator('.hire-modal input[inputmode=decimal]').getAttribute('readonly')!==null);
+  await page.locator('.hire-modal textarea').fill('Diagnose the supplied readings with citations; return a prioritized plan.');await page.getByRole('button',{name:'Review job',exact:true}).click();await page.getByRole('button',{name:'Fund job',exact:true}).waitFor();
+  assert.match(await page.locator('.hire-terms').innerText(),/20%/);assert.match(await page.locator('.hire-terms').innerText(),/10%/);
+  await page.getByRole('button',{name:'Close hiring'}).click();
+  await page.evaluate(()=>{window.assetTransferred=true;});await page.getByRole('button',{name:'Hire for this job'}).click();await page.locator('.hire-error').filter({hasText:'no longer owns an asset'}).waitFor();assert.equal(await page.getByRole('button',{name:'Review job',exact:true}).count(),0);await page.getByRole('button',{name:'Close hiring'}).click();await page.evaluate(()=>{window.assetTransferred=false;});
+  await page.getByRole('button',{name:'Offer My Agent',exact:true}).click();await page.locator('.service-editor').waitFor();await page.locator('.service-editor select').first().selectOption('jin');
+  await page.locator('.service-asset-choice').click();await page.getByLabel('License terms',{exact:true}).fill('Task use only; cite source.');await page.getByLabel('Service title',{exact:true}).fill('Cooling expert');await page.getByLabel('Price per job · agent tokens',{exact:true}).fill('125');await page.getByLabel('What the customer receives',{exact:true}).fill('A cited diagnosis.');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();assert.equal((await page.evaluate(()=>window.savedDraft())).assets[0].id,'asset');
+  await page.getByText('Draft saved on this device.',{exact:true}).waitFor();
+  await page.evaluate(()=>window.marketI18n.setLocale('fr'));
+  await page.getByRole('button',{name:'Enregistrer le brouillon',exact:true}).waitFor();
+  await page.evaluate(()=>window.marketI18n.setLocale('en'));
+  for(const theme of ['waveform','light','default']) for(const width of [1440,800,390]) {await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));const fit=await page.locator('.service-editor').evaluate(el=>el.scrollWidth<=el.clientWidth);assert.ok(fit);}
+  await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.documentElement.dataset.theme='waveform';document.querySelector('.service-editor form').scrollTop=0;window.scrollTo(0,0);});await page.waitForTimeout(250);assert.equal(await page.locator('.service-editor').count(),1);await page.screenshot({path:'/tmp/bonzai-agent-service-editor.png'});
+  const runtime=await page.evaluate(()=>window.testServiceRuntime());assert.equal(runtime.result.payload,'Pinned model answer');assert.equal(runtime.result.serviceCitations.length,1);assert.match(runtime.calls.find(c=>c.asset.use==='model').prompt,/Compressor checks/);assert.match(runtime.calls.find(c=>c.asset.use==='model').prompt,/Return a prioritized action plan/);
+  await page.locator('.service-editor input[type=checkbox]').check();await page.getByRole('button',{name:'Sign and offer service'}).click();await page.locator('.service-editor').waitFor({state:'hidden'});const published=await page.evaluate(()=>window.publishedService);assert.equal(published.descriptor.grant.offer.title,'Cooling expert');assert.equal(published.binding.assets[0].id,'asset');assert.doesNotMatch(JSON.stringify(published.descriptor),/Compressor checks|localPath/);
+  await page.keyboard.press('Escape');await page.locator('.service-editor').waitFor({state:'hidden'});await page.screenshot({path:'/tmp/bonzai-agent-market.png',fullPage:true});assert.deepEqual(errors,[]);
+ }finally{await browser.close();}
+});

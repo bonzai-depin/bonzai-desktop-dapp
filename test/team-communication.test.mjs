@@ -38,7 +38,7 @@ test("Independent teams exchange attributed requests and scoped results", async 
               "workflowExecution.js":
                 'export async function executeCompanyWorkflow() { throw new Error("Workflow runtime is covered separately"); }',
               "smartAgentJobs.service.js":
-                'export async function actOnSmartAgentJob() { throw new Error("No network actions in fixture"); } export const withdrawAgentJobPayment = actOnSmartAgentJob;',
+                'export async function actOnSmartAgentJob() { throw new Error("No network actions in fixture"); } export const withdrawAgentJobPayment = actOnSmartAgentJob; export const fetchSmartAgentJob = actOnSmartAgentJob;',
             };
             builder.onResolve({ filter: /\.js$/ }, (args) =>
               Object.hasOwn(stubs, path.basename(args.path))

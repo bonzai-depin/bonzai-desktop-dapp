@@ -1,4 +1,5 @@
 import { randomBytes, generateKeyPairSync, createPrivateKey, createPublicKey } from 'node:crypto';
+import { isMeshPrivateStoreKey } from '../meshDevices.js';
 
 const PREFIX = 'wallet-credential:v1:';
 const MASTER_LEGACY_KEY = 'bonzai-agent-master-secret';
@@ -9,7 +10,8 @@ const OWS_KINDS = new Set(['passphrase', 'apiKey']);
 
 // Generic preferences must never be a second path to read/write wallet secrets.
 export function assertPublicStoreKey(key) {
-  if (typeof key !== 'string' || !key || key === MASTER_LEGACY_KEY
+  if (typeof key !== 'string' || !key || key === 'openrouter-secret'
+      || key.startsWith('openrouter-secret.') || key === 'openrouter' || key.startsWith('openrouter.') || key === MASTER_LEGACY_KEY
       || key.startsWith(`${MASTER_LEGACY_KEY}.`) || key === ATTESTATION_LEGACY_KEY
       || key.startsWith(`${ATTESTATION_LEGACY_KEY}.`) || key === PRIVY_LEGACY_KEY
       || key.startsWith(`${PRIVY_LEGACY_KEY}.`) || key.startsWith('agent-wallet-')
@@ -17,6 +19,8 @@ export function assertPublicStoreKey(key) {
       || key.startsWith(PREFIX)) {
     throw new Error('Wallet credentials require the secure credential API');
   }
+  // The device identity and the linked-device list are changed only by pairing.
+  if (isMeshPrivateStoreKey(key)) throw new Error('Linked devices are managed through the device linking API');
 }
 
 const identity = value => {

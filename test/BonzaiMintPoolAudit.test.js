@@ -8,7 +8,9 @@ describe('MintPool release accounting regressions', function () {
   async function funded() {
     const fixture = await deployMintPool();
     const { mintPool, treasury, user3 } = fixture;
-    await mintPool.setServiceTimeContract(user3.address);
+    const accounting = await (await ethers.getContractFactory('MockServiceAccounting')).deploy();
+    await mintPool.setServiceTimeContract(await accounting.getAddress());
+    fixture.accounting = accounting;
     await mintPool.setContentContract(treasury.address);
     await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther('2') });
     return fixture;
@@ -22,34 +24,43 @@ describe('MintPool release accounting regressions', function () {
   });
 
   for (const settle of ['sweepUnclaimed', 'recirculateUnclaimed']) {
-    it(`cannot pay an old provider from later deposits after ${settle}`, async function () {
-      const { mintPool, treasury, user1, user3 } = await loadFixture(funded);
-      await time.increase(EPOCH_DURATION * 2);
-      await mintPool[settle](0);
+    it(`preserves old provider liabilities when governance calls ${settle}`, async function () {
+      const { mintPool, treasury, user1, accounting } = await loadFixture(funded);
+      await time.increase(EPOCH_DURATION * 20);
+      await expect(mintPool[settle](0)).to.be.revertedWith('Earned rewards never expire');
       await mintPool.connect(treasury).depositForPool(0, { value: ethers.parseEther('3') });
-      await expect(mintPool.connect(user3).withdrawProviderShare(0, 0, user1.address, 1, 1))
-        .to.be.revertedWith('Claim window closed');
+      await expect(accounting.withdraw(await mintPool.getAddress(), 0, 0, user1.address, 1, 1))
+        .to.changeEtherBalance(user1, ethers.parseEther('1'));
+      expect((await mintPool.getEpochProviderDeposits(await mintPool.currentEpoch()))[0]).to.equal(ethers.parseEther('1.5'));
     });
   }
 
   it('never pays more than an epoch provider allocation', async function () {
-    const { mintPool, user1, user3 } = await loadFixture(funded);
+    const { mintPool, user1, accounting } = await loadFixture(funded);
     await time.increase(EPOCH_DURATION);
-    await mintPool.connect(user3).withdrawProviderShare(0, 0, user1.address, 1, 1);
-    await expect(mintPool.connect(user3).withdrawProviderShare(0, 0, user1.address, 1, 1))
+    await accounting.withdraw(await mintPool.getAddress(), 0, 0, user1.address, 1, 1);
+    await expect(accounting.withdraw(await mintPool.getAddress(), 0, 0, user1.address, 1, 1))
       .to.be.revertedWith('Provider pool exhausted');
   });
 
-  it('recirculation preserves liabilities and permits withdrawal of only surplus', async function () {
+  it('preserves old liabilities and permits withdrawal of only unsolicited surplus', async function () {
     const { mintPool, owner, treasury } = await loadFixture(funded);
     const before = await mintPool.getAllTotalDeposited();
     await time.increase(EPOCH_DURATION * 2);
-    await mintPool.recirculateUnclaimed(0);
+    await expect(mintPool.recirculateUnclaimed(0)).to.be.revertedWith('Earned rewards never expire');
     expect(await mintPool.getAllTotalDeposited()).to.deep.equal(before);
     await owner.sendTransaction({ to: await mintPool.getAddress(), value: 1234n });
     await expect(mintPool.withdrawETH()).to.changeEtherBalance(treasury, 1234n);
     expect(await ethers.provider.getBalance(await mintPool.getAddress())).to.equal(ethers.parseEther('2'));
     await expect(mintPool.withdrawETH()).to.be.revertedWith('No surplus ETH to withdraw');
+  });
+
+  it('does not allow governance to replace trusted accounting or bind an EOA', async function () {
+    const { mintPool, user1, accounting } = await loadFixture(funded);
+    await expect(mintPool.setServiceTimeContract(user1.address)).to.be.revertedWith('ServiceTime is immutable');
+    const other = await (await ethers.getContractFactory('MockServiceAccounting')).deploy();
+    await expect(mintPool.setServiceTimeContract(await other.getAddress())).to.be.revertedWith('ServiceTime is immutable');
+    await mintPool.setServiceTimeContract(await accounting.getAddress());
   });
 
   for (const batch of [false, true]) {
@@ -140,6 +151,6 @@ describe('MintPool release accounting regressions', function () {
     await expect(vault.connect(user1).unstake(balance)).to.be.revertedWithCustomError(vault, 'StakeStillLocked');
     await time.setNextBlockTimestamp(claimDeadline);
     await vault.connect(user1).unstake(balance);
-    await expect(pool.connect(user1).confirmClaim(0)).to.be.revertedWith('Claim window closed');
+    await expect(pool.connect(user1).confirmClaim(0)).to.emit(pool, 'ClaimConfirmed');
   });
 });

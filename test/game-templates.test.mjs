@@ -95,12 +95,12 @@ test('adding instant levels to a project keeps one hero that stays visible in ev
   assert.equal(project.levels.length, 2);
   const { game, root, run } = await play(project);
   const player = game.actors.get('player').object, shown = node => { for (let n = node; n; n = n.parent) if (!n.visible) return false; return true; };
-  assert.equal(player.parent, root, 'the hero is not a child of a level that gets hidden');
+  assert.equal(shown(player), true, 'the hero is visible in the first level');
   const portal = project.levels[0].placements.find(placement => placement.role === 'goal');
   player.position.set(portal.position.x, portal.position.y, portal.position.z);
   run(0.1);
   assert.equal(game.activeLevelId, second.id);
-  assert.equal(shown(player), true);
+  assert.equal(shown(player), true, 'the hero moves with the active level instead of hiding with the old one');
   assert.equal(game.phase, 'running');
   assert.deepEqual(player.position.toArray().map(v => +v.toFixed(3)), [second.entry.x, second.entry.y, second.entry.z].map(v => +v.toFixed(3)));
 });

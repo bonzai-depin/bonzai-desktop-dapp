@@ -21,7 +21,7 @@ export function chunkText(text, limit = 12000) {
   if (pending.trim()) chunks.push(pending);
   return chunks;
 }
-export async function extractIntakeFile(file) {
+export async function extractIntakeFile(file, options = {}) {
   if (file.size > 30 * 1024 * 1024)
     throw new Error("Import files up to 30 MB. Split larger documents.");
   if (/\.docx$/i.test(file.name)) {
@@ -104,7 +104,7 @@ export async function extractIntakeFile(file) {
       throw new Error("The spreadsheet contains no data rows.");
     return chunks;
   }
-  return chunkText(await extractLocalText(file, { requireComplete: true }));
+  return chunkText(await extractLocalText(file, { requireComplete: true, ...options }));
 }
 export async function importIntakeFile(companyId, file, metadata = {}) {
   const api = window.electronAPI?.db;

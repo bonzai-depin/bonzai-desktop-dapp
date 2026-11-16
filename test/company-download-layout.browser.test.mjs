@@ -19,7 +19,7 @@ async function mountTeam(page) {
       installed: new Set(), downloads: [], cancellations: [], progressListeners: new Set(), pending: new Map(),
       mode: 'hold', inferenceCalls: [],
     };
-    const agents = [{ id: 'download-worker', name: 'James Whitmore', assignedWorkflowIds: ['team-download-workflow'] }];
+    const agents = [{ id: 'download-worker', isCustom: true, name: 'James Whitmore', assignedWorkflowIds: ['team-download-workflow'] }];
     const forbiddenInference = name => () => { fixture.inferenceCalls.push(name); throw new Error('The download fixture must not start inference'); };
     window.electronAPI = {
       store: { get: async () => [] },

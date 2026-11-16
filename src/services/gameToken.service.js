@@ -1,3 +1,4 @@
+import { confirmedReceipt } from './transactionReceipt.js';
 import { ethers } from "ethers";
 import { CONFIG, ECONOMY_NETWORK_KEY } from "../config/web3.config.js";
 import { getSigner, getProvider, switchNetwork } from "./web3.service.js";
@@ -49,6 +50,7 @@ export async function issueGameToken({
   if (liquidity <= 0n) throw new Error("Review and enter the ETH amount for permanently locked game liquidity.");
   await switchNetwork(ECONOMY_NETWORK_KEY);
   const signer = await getSigner();
+  const reviewedWallet = await signer.getAddress();
   const registryAddress = CONFIG.gameRegistry.contractAddress;
   if (!ethers.isAddress(registryAddress)) {
     throw new Error("Game registry is not deployed on the active economy chain");
@@ -69,8 +71,9 @@ export async function issueGameToken({
       manifestHash,
       metadataURI,
     );
-    await registration.wait();
+    await confirmedReceipt(registration);
   }
+  if ((await (await getSigner()).getAddress()).toLowerCase() !== reviewedWallet.toLowerCase()) throw new Error('Wallet changed. Review game issuance again.');
   const transaction = await factory.issue(
     collectible,
     collectibleTokenId,
@@ -79,13 +82,14 @@ export async function issueGameToken({
     metadataURI,
     { value: liquidity },
   );
-  const receipt = await transaction.wait();
+  const receipt = await confirmedReceipt(transaction);
   const event = receipt.logs
+    .filter(log => log.address?.toLowerCase() === requireFactory().toLowerCase())
     .map((log) => {
       try { return factory.interface.parseLog(log); } catch { return null; }
     })
     .find((entry) => entry?.name === "GameTokenIssued");
-  if (!event) throw new Error("Game token issuance event was not emitted");
+  if (!event) throw Object.assign(new Error('Issuance confirmed but its token could not be read. Check this transaction before retrying.'), { transactionHash: receipt.hash, confirmationPending: true });
   return {
     tokenAddress: event.args.token,
     transactionHash: receipt.hash,
@@ -124,4 +128,17 @@ export async function getGameTokenInfo(address) {
     totalSupply: totalSupply.toString(),
     kind: "game",
   };
+}
+
+export async function recoverGameIssuance(collectible, collectibleTokenId, transactionHash) {
+  if (!ethers.isAddress(collectible)) throw new Error('Invalid game collectible address');
+  const provider = await getProvider(ECONOMY_NETWORK_KEY);
+  const receipt = await provider.getTransactionReceipt(transactionHash);
+  if (!receipt) return { pending: true };
+  if (Number(receipt.status) === 0) return { reverted: true };
+  const factory = new ethers.Contract(requireFactory(), ABI, provider);
+  const key = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address', 'uint256'], [collectible, collectibleTokenId]));
+  const tokenAddress = await factory.tokenForCollectible(key);
+  if (tokenAddress === ethers.ZeroAddress) return { registeredOnly: true };
+  return { tokenAddress, transactionHash: receipt.hash, chainId: CONFIG.gameTokenFactory.chainId };
 }

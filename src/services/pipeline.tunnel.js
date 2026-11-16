@@ -37,19 +37,31 @@ function bridgeTCPToStream(socket, stream) {
   // TCP → libp2p: push TCP data into a pushable iterable piped to stream.sink
   const outgoing = pushable({ objectMode: false });
 
+  // The stream can end first (peer refused or went away) while the socket
+  // still has buffered data; drop it instead of pushing onto a closed queue.
+  let ended = false;
+  const endOutgoing = () => {
+    if (ended) return;
+    ended = true;
+    outgoing.end();
+  };
+
   socket.on('data', (chunk) => {
+    if (ended) return;
     bytesOut += chunk.length;
     outgoing.push(new Uint8Array(chunk));
   });
 
-  socket.on('end', () => outgoing.end());
-  socket.on('error', () => outgoing.end());
-  socket.on('close', () => outgoing.end());
+  socket.on('end', endOutgoing);
+  socket.on('error', endOutgoing);
+  socket.on('close', endOutgoing);
 
   // Pipe the pushable into the libp2p stream sink (don't await — runs in background)
   pipe(outgoing, stream.sink).catch((e) => {
+    endOutgoing();
     if (!socket.destroyed) {
       console.error('[Pipeline Tunnel] Sink pipe error:', e.message);
+      socket.destroy();
     }
   });
 
@@ -88,26 +100,47 @@ function bridgeTCPToStream(socket, stream) {
  */
 export async function createRPCTunnel(p2pNode, remotePeerId) {
   let tcpServer = null;
-  let bridge = null;
   let closed = false;
+  const bridges = [];
+  const streams = new Set();
+  const sockets = new Set();
 
-  // Open libp2p stream to remote peer's RPC tunnel handler
-  const { stream } = await p2pNode.openRawStream(remotePeerId, PROTOCOLS.RPC_TUNNEL);
+  // Fail now, not at model load, if the peer cannot be reached or does not
+  // offer the tunnel at all. A peer that offers it but refuses this device
+  // resets the stream instead; callers check lending status beforehand.
+  const probe = await p2pNode.openRawStream(remotePeerId, PROTOCOLS.RPC_TUNNEL);
+  try { await probe.stream.close(); } catch {}
 
-  // Create local TCP server that llama-server will connect to
-  // llama.cpp's RPC client opens one persistent TCP connection per rpc-server
-  tcpServer = net.createServer((socket) => {
+  // Local TCP server that llama-server connects to. llama.cpp opens several
+  // connections per rpc-server (device probe, then one per backend), so each
+  // TCP connection gets its own libp2p stream.
+  tcpServer = net.createServer(async (socket) => {
     if (closed) {
       socket.destroy();
       return;
     }
-
-    console.log(`[Pipeline Tunnel] llama-server connected to local proxy`);
-    bridge = bridgeTCPToStream(socket, stream);
-
-    socket.on('close', () => {
-      console.log('[Pipeline Tunnel] llama-server disconnected from local proxy');
-    });
+    socket.pause();
+    socket.on('error', () => {});
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    try {
+      const { stream } = await p2pNode.openRawStream(remotePeerId, PROTOCOLS.RPC_TUNNEL);
+      if (closed || socket.destroyed) {
+        try { await stream.close(); } catch {}
+        socket.destroy();
+        return;
+      }
+      streams.add(stream);
+      socket.on('close', () => {
+        streams.delete(stream);
+        try { stream.close(); } catch {}
+      });
+      bridges.push(bridgeTCPToStream(socket, stream));
+      socket.resume();
+    } catch (e) {
+      console.error('[Pipeline Tunnel] Could not open stream to peer:', e.message);
+      socket.destroy();
+    }
   });
 
   // Listen on dynamic port bound to localhost only
@@ -126,8 +159,8 @@ export async function createRPCTunnel(p2pNode, remotePeerId) {
 
     stats() {
       return {
-        bytesIn: bridge?.bytesIn() || 0,
-        bytesOut: bridge?.bytesOut() || 0,
+        bytesIn: bridges.reduce((sum, bridge) => sum + bridge.bytesIn(), 0),
+        bytesOut: bridges.reduce((sum, bridge) => sum + bridge.bytesOut(), 0),
         active: !closed,
       };
     },
@@ -140,8 +173,13 @@ export async function createRPCTunnel(p2pNode, remotePeerId) {
         `[Pipeline Tunnel] Closing tunnel to ${remotePeerId.slice(0, 12)}...` +
         ` (in: ${(stats.bytesIn / 1024).toFixed(1)} KB, out: ${(stats.bytesOut / 1024).toFixed(1)} KB)`
       );
-      try { await stream.close(); } catch {}
+      for (const stream of streams) {
+        try { await stream.close(); } catch {}
+      }
+      streams.clear();
       if (tcpServer) {
+        for (const socket of sockets) socket.destroy();
+        sockets.clear();
         tcpServer.close();
         tcpServer = null;
       }
@@ -159,10 +197,22 @@ export async function createRPCTunnel(p2pNode, remotePeerId) {
  *
  * @param {BonzaiP2PNode} p2pNode - The libp2p node instance
  * @param {number} rpcServerPort - Local rpc-server TCP port (default: 50052)
+ * @param {object} [options]
+ * @param {(peerId: string) => boolean} [options.authorize] - Decides, per
+ *   stream, whether this peer may use the local rpc-server. Required: an
+ *   rpc-server executes whatever tensor work it is sent.
  */
-export async function registerRPCTunnelHandler(p2pNode, rpcServerPort = 50052) {
+export async function registerRPCTunnelHandler(p2pNode, rpcServerPort = 50052, { authorize } = {}) {
+  if (typeof authorize !== 'function') throw new Error('An authorize function is required for the RPC tunnel.');
   await p2pNode.registerRawProtocolHandler(PROTOCOLS.RPC_TUNNEL, ({ stream, connection }) => {
     const remotePeer = connection.remotePeer.toString();
+    let allowed = false;
+    try { allowed = authorize(remotePeer) === true; } catch { allowed = false; }
+    if (!allowed) {
+      console.warn(`[Pipeline Tunnel] Refused tunnel from ${remotePeer.slice(0, 12)}...`);
+      try { stream.abort(new Error('not_authorized')); } catch {}
+      return;
+    }
     console.log(`[Pipeline Tunnel] Incoming tunnel from ${remotePeer.slice(0, 12)}...`);
 
     // Connect to local rpc-server

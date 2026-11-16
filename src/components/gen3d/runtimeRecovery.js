@@ -18,6 +18,20 @@ export function generatedThreeAPI(THREE) {
     return value;
   };
   return { ...THREE,
+    // Construction helpers return complete scene objects. Some generated code
+    // treats them as geometry; clone the complete assembly instead of handing
+    // it to Mesh.updateMorphTargets (which expects geometry.morphAttributes).
+    // Never mutate the shared helper result or Three's global constructors.
+    Mesh: class extends THREE.Mesh {
+      constructor(geometry, material) {
+        if (geometry?.isObject3D) {
+          const object = geometry.clone(true);
+          if (material != null) object.traverse(child => { if (child.isMesh) child.material = material; });
+          return object;
+        }
+        super(geometry, material);
+      }
+    },
     // Generated instancing code often uses Object3D-style rotations on Matrix4.
     // Compose a local rotation instead of resetting its existing translation
     // (makeRotationY would scatter every instance back at the origin).

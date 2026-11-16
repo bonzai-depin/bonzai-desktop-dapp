@@ -14,3 +14,8 @@ regexes = [
   '''bonzai-contribution-ledger-v1''',
   '''(?:GameToken|CompanionToken|FineTuneToken) is ERC20, ERC20Burnable''',
 ]
+
+[[allowlists]]
+description = "Generated translation identifier for the Chorus password field label, not a credential"
+regexTarget = "secret"
+regexes = ['''^ops_eb8680bf7329$''']

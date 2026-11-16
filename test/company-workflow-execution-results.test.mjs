@@ -155,3 +155,29 @@ test('worker output shares normalization but never writes into a company catalog
   assert.match(incomplete.text, /Useful answer/);
   assert.doesNotMatch(incomplete.error, /saved/i);
 });
+
+
+test('prompt workflows cannot report empty or failed worker output as a completed delivery', async () => {
+  for (const creation of [null, { pipeline: 'text', payload: '' }, { pipeline: 'text', payload: '   ' }, { pipeline: 'text', payload: 'Partial draft', ok: false }, { pipeline: 'text', payload: 'Partial draft', status: 'pending' }]) {
+    for (const workerExecution of [false, true]) {
+      const sample = fixture(null, {
+        catalog: async () => [{ id: 'fixture-workflow', name: 'Prompt workflow' }],
+        service: async () => ({ validateSkillInputs: () => ({ valid: true, normalizedInputs: {} }), prepareSkillExecution: () => ({ taskPrompt: 'Make a report' }) }),
+        create: async () => creation,
+      });
+      const output = await sample.run({ workerExecution });
+      assert.equal(output.ok, false);
+      assert.equal(output.status, 'requires_input');
+      assert.equal(sample.calls.saved.length, 0);
+    }
+  }
+});
+
+test('asynchronous workflow receipts are not deliverables', async () => {
+  for (const status of ['pending', 'queued', 'running', 'processing', 'rejected', 'unknown', 'unsupported']) {
+    const sample = fixture({ status, id: 'job', message: 'Accepted by provider' });
+    const output = await sample.run();
+    assert.equal(output.ok, false, status);
+    assert.equal(sample.calls.saved.length, 0, status);
+  }
+});

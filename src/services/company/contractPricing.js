@@ -50,6 +50,7 @@ export function validatePricingProfile(
   input,
   { confirmed = false, now = Date.now() } = {},
 ) {
+  if (input?.id === 'contract') return validateCustomProfile(input, {confirmed,now});
   if (
     !confirmed ||
     !String(input?.validatedBy || "").trim() ||
@@ -81,6 +82,7 @@ export function validatePricingProfile(
 }
 
 export function calculateContractQuote(input, profile, asset) {
+  if (profile?.id === 'contract') return calculateCustomQuote(input,profile,asset);
   if (
     profile?.id !== "cctp_25_004" ||
     profile.version !== 1 ||
@@ -155,4 +157,39 @@ export function calculateContractQuote(input, profile, asset) {
     formula:
       "Pièces ≤ franchise : inclus ; sinon (pièces − franchise) × K + main-d’œuvre au-delà de 8 h + levage selon validation ; déplacement inclus.",
   };
+}
+
+function validateCustomProfile(input,{confirmed,now}) {
+  if (!confirmed || !String(input.validatedBy||'').trim() || !String(input.reference||'').trim()) throw new Error('Validez le profil avec son responsable et sa référence contractuelle.');
+  const date=v=>typeof v==='string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v;
+  if(!date(input.effectiveFrom)||!date(input.effectiveUntil)||input.effectiveFrom>input.effectiveUntil) throw new Error('Période tarifaire invalide.');
+  if(!Number.isInteger(input.version)||input.version<1) throw new Error('Numéro de version requis.');
+  if(!Number.isFinite(input.coefficient)||input.coefficient<=0||input.coefficient>100) throw new Error('Coefficient invalide.');
+  if(!Number.isFinite(input.includedLaborHours)||input.includedLaborHours<0||input.includedLaborHours>1000) throw new Error('Heures incluses invalides.');
+  if(typeof input.travelIncluded!=='boolean' || !['included','billable'].includes(input.accessAboveThreshold) || typeof input.allIncludedBelowThreshold!=='boolean') throw new Error('Précisez les inclusions contractuelles.');
+  if(!Number.isFinite(input.vatRate)||input.vatRate<0||input.vatRate>100) throw new Error('TVA contractuelle invalide.');
+  if(!Array.isArray(input.rules)||!input.rules.length||input.rules.length>100) throw new Error('Ajoutez les catégories tarifaires.');
+  const ids=new Set();
+  const rules=input.rules.map(r=>{
+    if(!String(r.id||'').trim()||ids.has(r.id)||!String(r.label||'').trim()||!String(r.section||'').trim()||!Number.isSafeInteger(r.thresholdCents)||r.thresholdCents<0) throw new Error('Catégorie ou franchise invalide.');
+    ids.add(r.id);return {id:r.id,label:r.label,section:r.section,domain:r.domain||null,thresholdCents:r.thresholdCents};
+  });
+  return {id:'contract',version:input.version,reference:input.reference.trim(),validatedBy:input.validatedBy.trim(),validatedAt:now,effectiveFrom:input.effectiveFrom,effectiveUntil:input.effectiveUntil,coefficient:input.coefficient,includedLaborHours:input.includedLaborHours,travelIncluded:input.travelIncluded,accessAboveThreshold:input.accessAboveThreshold,allIncludedBelowThreshold:input.allIncludedBelowThreshold,vatRate:input.vatRate,rules};
+}
+function calculateCustomQuote(input,profile,asset) {
+  validateCustomProfile(profile,{confirmed:true,now:profile.validatedAt});
+  const date=input.pricingDate||input.date;
+  if(!date||date<profile.effectiveFrom||date>profile.effectiveUntil) throw new Error('Ce profil ne couvre pas la date de l’intervention.');
+  const rule=profile.rules.find(r=>r.id===input.pricingCategory);
+  if(!rule || !asset || rule.section!==asset.technicalSection || (rule.domain && rule.domain!==asset.domainCode)) throw new Error('La catégorie tarifaire ne correspond pas à l’équipement.');
+  for(const k of ['partsCents','laborCents','travelCents','accessCents']) if(!Number.isSafeInteger(input[k])||input[k]<0) throw new Error('Renseignez chaque coût HT, y compris les montants nuls.');
+  const hours=Number(input.laborHours);
+  if(input.laborHours==null||!Number.isFinite(hours)||hours<0||(input.laborCents>0&&hours===0)) throw new Error('Main-d’œuvre et heures incohérentes.');
+  const included=profile.allIncludedBelowThreshold && input.partsCents<=rule.thresholdCents;
+  const includedLaborCents=included?input.laborCents:Math.round(input.laborCents*Math.min(1,profile.includedLaborHours/(hours||1)));
+  const chargeablePartsCents=Math.max(0,input.partsCents-rule.thresholdCents), partsAfterCoefficientCents=Math.round(chargeablePartsCents*profile.coefficient);
+  const subtotalCents=included?0:partsAfterCoefficientCents+input.laborCents-includedLaborCents+(profile.travelIncluded?0:input.travelCents)+(profile.accessAboveThreshold==='included'?0:input.accessCents);
+  const vatCents=Math.round(subtotalCents*profile.vatRate/100);
+  if(!Number.isSafeInteger(subtotalCents+vatCents)) throw new Error('Montant hors limites.');
+  return {...input,coefficient:profile.coefficient,franchiseCents:rule.thresholdCents,chargeablePartsCents,partsAfterCoefficientCents,includedLaborCents,subtotalCents,vatCents,vatRate:profile.vatRate,totalCents:subtotalCents+vatCents,contractTerms:{...rule,includedLaborHours:profile.includedLaborHours,travelIncluded:profile.travelIncluded,profileVersion:profile.version,reference:profile.reference,effectiveFrom:profile.effectiveFrom,effectiveUntil:profile.effectiveUntil},formula:'Profil contractuel validé, version '+profile.version};
 }

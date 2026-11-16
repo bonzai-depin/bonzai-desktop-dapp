@@ -39,6 +39,28 @@ class ArtifactByteValidation(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_pending_token_launch_survives_reload_without_overwriting_model_metadata(self):
+        function = next(node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'update_trained_model_economy')
+        function.decorator_list = []
+        payload = {'tokenLaunchPending': '0x' + 'a' * 64}
+        namespace = {
+            '_training_record_path': lambda category, model_id: self.root / category / model_id,
+            'request': type('Request', (), {'get_json': lambda self, silent: payload})(),
+            'jsonify': lambda value: value, '_json_sanitize': lambda value: value,
+            '_read_json_file': lambda path, fallback: json.loads(path.read_text()),
+            '_write_json_file': lambda path, value: path.write_text(json.dumps(value)),
+            'datetime': datetime,
+        }
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), 'exec'), namespace)
+        handler = namespace['update_trained_model_economy']
+        self.assertEqual(handler('test-model')[1], 200)
+        saved = json.loads((self.model / 'metadata.json').read_text())
+        self.assertEqual(saved['economy']['tokenLaunchPending'], payload['tokenLaunchPending'])
+        self.assertEqual(saved['type'], 'llm_lora')
+        payload['tokenLaunchPending'] = None
+        self.assertEqual(handler('test-model')[1], 200)
+        self.assertIsNone(json.loads((self.model / 'metadata.json').read_text())['economy']['tokenLaunchPending'])
+
     def test_same_size_different_weights_have_distinct_validation_hashes(self):
         artifact = self.model / 'model.gguf'
         artifact.write_bytes(b'GGUFaaaa')

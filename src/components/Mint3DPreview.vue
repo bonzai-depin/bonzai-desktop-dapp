@@ -22,4 +22,4 @@ watch([viewer,()=>props.code],async([instance,code])=>{
 });
 onBeforeUnmount(()=>revision++);
 </script>
-<template><ThreeViewer ref="viewer" :enable-physics="false" presentation="studio" /></template>
+<template><ThreeViewer ref="viewer" :enable-physics="false" :hideUI="true" presentation="studio" /></template>

@@ -1,3 +1,6 @@
+import { mediaCategory } from './main/openrouterMedia.js';
+import { createOpenRouter } from './main/openrouter.js';
+import { createMediaProduction } from './main/mediaProduction.js';
 import { localInference, startInferenceBroker } from './services/localInferenceCoordinator.js';
 import { createScenarioRunner } from './main/performance/scenarioRunner.js';
 import { fingerprintFile, localRequest, validateScenarioOutput } from './main/performance/scenarioTransport.js';
@@ -10,6 +13,8 @@ import { COMPANY_OAUTH_PROVIDERS } from './shared/companyOAuth.js';
 import * as companyConnectorsRepo from './main/db/repos/connectors.js';
 import { refreshMailToken } from './main/connectors/mailOAuth.js';
 import { assertMailReadRequest } from './shared/mailIntake.js';
+import { createAgentServiceAssets } from './main/agentServiceAssets.js';
+import { mintsList as serviceMintsList } from './main/db/repos/web3.js';
 import { createAgentWorkerHost } from './main/agentWorkerHost.js';
 import { exportWorker3D } from './main/worker3dExport.js';
 import { createWorkerJournal } from './main/workerJournal.js';
@@ -33,6 +38,7 @@ import { financeAuthHeaders } from "./main/connectors/financeAuth.js";
 import { assertBraveSearchRequest, braveSearchHeaders, braveValidationRequest } from "./main/connectors/braveSearch.js";
 import { qwen38ContextPlan, completionBudget, isQwen38LowMtp, LOW_MTP_CONTEXT } from './main/modelContext.js';
 import { socialCredentialVault, credentialStatus } from './main/social/credentials.js';
+import { createPublicStorage } from './main/publicStorage.js';
 import { createChorusClient } from './main/connectors/chorus.js';
 import { registerXChannel, createXTransport } from './main/social/xChannel.js';
 import { pause as pausePublicSession } from './main/db/repos/publicSessions.js';
@@ -57,6 +63,8 @@ import {
 } from "electron";
 import Store from "electron-store";
 import { createWalletCredentialStore, assertPublicStoreKey } from "./main/security/walletCredentials.js";
+import { createMeshDevices } from "./main/meshDevices.js";
+import { createMeshController } from "./main/meshController.js";
 import { resolveDevelopmentPython } from "./main/pythonRuntime.js";
 import { waitForServer } from "./main/serverReadiness.js";
 import os from "os";
@@ -931,6 +939,22 @@ const workerRuntimeCommand = (name, args) => {
   if (!companyRuntime) throw new Error('Local worker runtime is starting.');
   return companyRuntime.command(name, args);
 };
+const agentServiceAssets = createAgentServiceAssets({
+  mints: () => serviceMintsList({limit:1000}), store, trainedRoot: () => path.join(MODEL_DIR, 'trained'),
+  outputRoots: () => [path.join(MODEL_DIR, 'files'), app.getPath('temp')], blobs:workerBlobs,
+  chat: async (source, prompt) => {
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 64000) throw new Error('The service brief is too large.');
+    const pool = await _getPool();
+    const modelKey = `service:${source.digest}`;
+    pool.registerModelPath(modelKey, source.file, source.size, {ctxSize:8192, parallelSlots:1});
+    const text = await pool.chat({modelKey, messages:[{role:'user',content:prompt}], maxTokens:4096});
+    recordLifetimeTokenUsage({messages:[{role:'user',content:prompt}],output:text});
+    return text;
+  },
+});
+ipcMain.handle('agent-service-assets', () => agentServiceAssets.list());
+ipcMain.handle('agent-service-asset-inspect', (_event,id) => agentServiceAssets.inspect(id));
+ipcMain.handle('agent-service-asset-use', (_event,binding,asset,prompt) => agentServiceAssets.use(binding,asset,prompt));
 const agentWorkerHost = createAgentWorkerHost({
   journal: createWorkerJournal(() => getWorkerDatabase().db, store),
   store, peerId: () => getP2PNode().getPeerId(), mode: () => store.get('p2p.networkMode', 'local'),
@@ -943,11 +967,36 @@ const agentWorkerHost = createAgentWorkerHost({
     const glb = await exportWorker3D(output.payload, { BrowserWindow,
       url: VITE_DEV_SERVER_URL ? new URL('worker-3d-runtime.html', VITE_DEV_SERVER_URL).href : null,
       file: path.join(__dirname, '../renderer/main_window/worker-3d-runtime.html') });
-    return { text: output.payload, artifacts: [{ pipeline: '3d', payload: `data:model/gltf-binary;base64,${glb}`, meta: { payloadEncoding: 'base64' } }] };
+    return { text: output.payload, serviceCitations:output.serviceCitations, artifacts: [{ pipeline: '3d', payload: `data:model/gltf-binary;base64,${glb}`, meta: { payloadEncoding: 'base64' } }] };
   },
   media: createWorkerMedia({ blobs: workerBlobs, roots: () => [path.join(MODEL_DIR, 'files'), app.getPath('temp')], trainedRoot: () => path.join(MODEL_DIR, 'trained') }),
 });
 const walletCredentialStore = createWalletCredentialStore({ store, safeStorage });
+const openRouter = createOpenRouter({ store, safeStorage, inspectImage: (bytes) => nativeImage.createFromBuffer(bytes).getSize(), saveMedia: async (bytes, ext, mimeType) => {
+  const saved = workerBlobs.write(bytes, ext, { mimeType, source: 'openrouter' });
+  const info = await mediaProduction.probe(saved.path);
+  return { path: saved.path, url: `bonzai-blob://${saved.id}.${ext}`, duration: info.durationSeconds };
+} });
+const notifyOpenRouter = () => {
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('openrouter:changed', openRouter.status());
+};
+ipcMain.handle('openrouter:status', () => openRouter.status());
+ipcMain.handle('openrouter:models', () => openRouter.models());
+ipcMain.handle('openrouter:media-models', (_event, category) => openRouter.media.catalogue(category));
+ipcMain.handle('openrouter:video-jobs', () => openRouter.media.jobs());
+ipcMain.handle('openrouter:resume-video', (_event, id) => openRouter.media.resume(id));
+ipcMain.handle('openrouter:account', () => openRouter.account());
+ipcMain.handle('openrouter:connect', async (_event, key) => { const result = await openRouter.connect(key); notifyOpenRouter(); return result; });
+ipcMain.handle('openrouter:configure', async (_event, input) => { const result = await openRouter.configure(input); notifyOpenRouter(); return result; });
+ipcMain.handle('openrouter:disconnect', () => { const result = openRouter.disconnect(); notifyOpenRouter(); return result; });
+
+const publicStorage = createPublicStorage({ store, safeStorage });
+for (const method of ['status', 'receipts', 'configure', 'disconnect', 'upload', 'uploadMetadata']) {
+  ipcMain.handle(`public-storage:${method}`, (event, payload) => {
+    if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !isTrustedRendererUrl(event.senderFrame.url)) throw new Error('Storage requires the BonzAI application.');
+    return publicStorage[method](payload);
+  });
+}
 ipcMain.handle("wallet-credentials:available", () => walletCredentialStore.ensureAvailable());
 ipcMain.handle("ows:credential-ensure-passphrase", (_event, companionId) => walletCredentialStore.ensureOWSPassphrase(companionId));
 ipcMain.handle("skill-attestation:credential-get", () => walletCredentialStore.readAttestationKey());
@@ -1680,6 +1729,7 @@ ipcMain.handle("store-has", (_event, key) => { assertPublicStoreKey(key); return
 ipcMain.handle("store-set", (_event, key, value) => {
   assertPublicStoreKey(key);
   store.set(key, value);
+  if (key === "p2p.networkMode") notifyOpenRouter();
   return true;
 });
 ipcMain.handle("store-delete", (_event, key) => {
@@ -1713,6 +1763,29 @@ function requireAuthLevel(minLevel) {
 // Provider concurrency: one consumer request at a time
 let _providerBusy = false;
 
+// Linked devices: the user's own computers, paired once with a code.
+const meshDevices = createMeshDevices({ store, secureStorage: safeStorage });
+const meshController = createMeshController({
+  devices: meshDevices,
+  node: () => getP2PNode(),
+  systemInformation: () => systemInformation(),
+  version: () => app.getVersion(),
+  networkMode: () => store.get("p2p.networkMode", "local"),
+  startRpcServer: (port) => startRpcServer(port),
+  rpcServerRunning: () => !!rpcServerProcess && rpcServerProcess.exitCode === null,
+  notify: (activity) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("mesh-activity", { ts: Date.now(), ...activity });
+  },
+});
+// A pooled model's tunnels end with its llama-server process.
+llamaServer.onExit(() => { meshController.releasePool().catch(() => {}); });
+ipcMain.handle("mesh-state", () => meshController.state());
+ipcMain.handle("mesh-invite", () => meshController.invite());
+ipcMain.handle("mesh-invite-cancel", () => meshController.cancelInvite());
+ipcMain.handle("mesh-join", (_event, code) => meshController.join(code));
+ipcMain.handle("mesh-unlink", (_event, peerId) => meshController.unlink(String(peerId || "")));
+ipcMain.handle("mesh-settings", (_event, patch) => meshController.updateSettings(patch));
+
 /**
  * Start the P2P node for distributed inference
  * @param {Object} options Configuration options
@@ -1735,7 +1808,9 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
       };
     }
 
-    const peerId = await startP2PNode(options);
+    // The stored identity keeps this device recognizable to linked devices.
+    const identity = await meshController.identity();
+    const peerId = await startP2PNode({ ...options, identity });
 
     // Register inference handler that routes to local servers (only once)
     const startedNode = getP2PNode();
@@ -1904,6 +1979,9 @@ ipcMain.handle("p2p-start", async (_event, options = {}) => {
         mainWindow.webContents.send("lan-peer-discovered", { peerId: discoveredPeerId, lanIP });
       }
     };
+
+    try { await meshController.attach(); }
+    catch (err) { console.warn("[P2P] linked-device protocols failed to start:", err.message); }
 
     startedNode._onNetworkEvent = (activity) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -2247,15 +2325,11 @@ ipcMain.handle("p2p-shard-metadata", async (_event, { modelPath }) => {
   }
 });
 
-// Shard provider mode: spawn local rpc-server and register tunnel handler
-ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
-  if (rpcServerProcess && !rpcServerProcess.killed) {
-    return { ok: false, error: "rpc-server already running" };
-  }
+// Spawn the local llama.cpp rpc-server. It binds to loopback only: remote
+// devices reach it exclusively through the authorized libp2p tunnel.
+async function startRpcServer(rpcPort = 50052) {
+  if (rpcServerProcess && rpcServerProcess.exitCode === null) return { ok: true, rpcPort, alreadyRunning: true };
 
-  const rpcPort = options.port || 50052;
-
-  // Find rpc-server binary
   const platform = { darwin: "macos", win32: "windows", linux: "linux" }[process.platform] || process.platform;
   const arch = process.arch;
   const ext = process.platform === "win32" ? ".exe" : "";
@@ -2269,7 +2343,7 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
     process.resourcesPath ? path.join(process.resourcesPath, "server", "llama-runtime", `${platform}-${arch}`, binName) : null,
   ].filter(Boolean);
 
-  let binPath = searchPaths.find(p => fs.existsSync(p));
+  const binPath = searchPaths.find(p => fs.existsSync(p));
   if (!binPath) {
     return { ok: false, error: `rpc-server binary not found at: ${searchPaths.join(', ')}` };
   }
@@ -2281,35 +2355,52 @@ ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
     } catch {}
   }
 
-  console.log(`[Pipeline Shard] Starting rpc-server on port ${rpcPort}...`);
-  rpcServerProcess = child_process.spawn(binPath, ["-p", String(rpcPort)], {
+  console.log(`[Pipeline Shard] Starting rpc-server on 127.0.0.1:${rpcPort}...`);
+  const child = child_process.spawn(binPath, ["-H", "127.0.0.1", "-p", String(rpcPort)], {
     stdio: ["ignore", "pipe", "pipe"],
   });
+  rpcServerProcess = child;
 
-  rpcServerProcess.stdout.on("data", (d) => {
+  child.stdout.on("data", (d) => {
     const line = d.toString().trim();
     if (line) console.log(`[rpc-server] ${line}`);
   });
-  rpcServerProcess.stderr.on("data", (d) => {
+  child.stderr.on("data", (d) => {
     const line = d.toString().trim();
     if (line) console.log(`[rpc-server:err] ${line}`);
   });
-  rpcServerProcess.on("exit", (code) => {
+  child.on("error", (err) => {
+    console.warn(`[Pipeline Shard] rpc-server failed: ${err.message}`);
+    if (rpcServerProcess === child) rpcServerProcess = null;
+  });
+  child.on("exit", (code) => {
     console.log(`[Pipeline Shard] rpc-server exited with code ${code}`);
-    rpcServerProcess = null;
+    if (rpcServerProcess === child) rpcServerProcess = null;
   });
 
-  // Register libp2p tunnel handler to bridge incoming streams to rpc-server
+  return { ok: true, rpcPort };
+}
+
+// Shard provider mode: spawn local rpc-server and register tunnel handler
+ipcMain.handle("p2p-shard-start", async (_event, options = {}) => {
+  const rpcPort = options.port || 50052;
+  const result = await startRpcServer(rpcPort);
+  if (!result.ok) return result;
+
+  // Bridge incoming libp2p streams to rpc-server. Every stream is checked:
+  // linked devices that this device lends to, or anyone while in Provider mode.
   const node = getP2PNode();
   if (node?.isStarted) {
     const { registerRPCTunnelHandler } = await getPipelineTunnel();
-    await registerRPCTunnelHandler(node, rpcPort);
+    await registerRPCTunnelHandler(node, rpcPort, { authorize: meshController.authorizeTunnel });
   }
 
   return { ok: true, rpcPort };
 });
 
 ipcMain.handle("p2p-shard-stop", async () => {
+  // Leaving Provider mode must not cut off linked devices this device lends to.
+  if (await meshController.ensureLending()) return { ok: true, keptForLinkedDevices: true };
   if (rpcServerProcess && !rpcServerProcess.killed) {
     rpcServerProcess.kill("SIGTERM");
     await new Promise((r) => setTimeout(r, 1000));
@@ -2631,6 +2722,15 @@ async function ensureLocalLLMReady() {
 
 ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
   try {
+    if (openRouter.active()) {
+      // Each media category is opt-in; unselected categories remain explicitly local.
+      const category = mediaCategory(pipeline);
+      if (category && openRouter.status().mediaModels?.[category]) {
+        try { return { ok: true, remote: true, result: await openRouter.media.generate(pipeline, params) }; }
+        catch (error) { return { ok: false, code: 'openrouter_error', error: error.message }; }
+      }
+      return { useLocal: true, transport: category ? 'local-media' : 'openrouter' };
+    }
     const networkMode = store.get("p2p.networkMode", "local");
 
     // ── LOCAL or PROVIDER mode: always local ──
@@ -2710,6 +2810,7 @@ ipcMain.handle("inference-request", async (event, { pipeline, params }) => {
           epsilon: store.get("p2p.pipeline.epsilon", 8),
           localTest: store.get("p2p.pipeline.localTest", false),
           selectedProviders: Array.isArray(selectedProvidersList) ? selectedProvidersList : [],
+          linkedPeerIds: meshController.linkedPeerIds(),
         };
 
         const result = await runPipelineInference({
@@ -3937,6 +4038,11 @@ function runFfmpeg(args) {
   });
 }
 
+const mediaProduction = createMediaProduction({ directory: path.join(app.getPath('userData'), 'media-productions'), ffmpeg: resolveFfmpegPath });
+ipcMain.handle('media-production:prepare', (_event, input) => mediaProduction.prepare(input));
+ipcMain.handle('media-production:probe', (_event, source) => mediaProduction.probe(source));
+ipcMain.handle('media-production:compose', (_event, input) => mediaProduction.compose(input));
+
 ipcMain.handle("meditation-export-video", async (_event, payload = {}) => {
   const defaultName = payload.defaultName || "bonzai-meditation.mp4";
   const { canceled, filePath } = await dialog.showSaveDialog({
@@ -4541,6 +4647,12 @@ ipcMain.handle("model-delete", deleteModel);
 ipcMain.handle("model-load", loadModel);
 ipcMain.handle("model-ensure", ensureModel);
 ipcMain.handle("model-unload", unloadModel);
+ipcMain.handle('inference-queue-snapshot', () => localInference.snapshot());
+localInference.subscribe(record => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('inference-queue-changed', record);
+  }
+});
 ipcMain.handle("model-chat", chat);
 ipcMain.handle("model-chat-stream", chatStream);
 ipcMain.handle("zhc-chat-stream", chatStreamStateless);
@@ -4553,12 +4665,14 @@ ipcMain.handle("model-abort-chat-stream", (event) => {
 ipcMain.handle("model-chat-vision", chatWithVision);
 ipcMain.handle("model-reset-chat", () => {
   chatHistory = [];
+  remoteChatHistory = [];
   console.log("[LLM] Chat history reset");
   return true;
 });
 ipcMain.handle("model-set-system-prompt", (_event, prompt) => {
   currentSystemPrompt = (prompt && typeof prompt === "string") ? prompt : null;
   chatHistory = [];
+  remoteChatHistory = [];
   return true;
 });
 ipcMain.handle("model-check-mmproj", checkMmproj);
@@ -4807,7 +4921,14 @@ const createWindow = async () => {
   if (VITE_DEV_SERVER_URL) {
     // Wait for Vite dev server to be ready before loading
     await waitForViteServer(VITE_DEV_SERVER_URL);
-    await mainWindow.loadURL(VITE_DEV_SERVER_URL);
+    try {
+      await mainWindow.loadURL(VITE_DEV_SERVER_URL);
+    } catch (error) {
+      // Dependency optimization can replace the initial navigation with a reload.
+      // Electron reports that superseded navigation as ERR_ABORTED.
+      if (error.code !== 'ERR_ABORTED' && error.errno !== -3) throw error;
+      console.info('[Startup] Initial navigation superseded by development reload');
+    }
   } else {
     await mainWindow.loadFile(
       path.join(__dirname, "../renderer/main_window/index.html")
@@ -5497,6 +5618,7 @@ function getLocalIP() {
 
 // Cached system info — refreshed periodically
 let _cachedSystemInfo = null;
+let _systemInfoLoading = false;
 
 async function systemInformation() {
   // Instant result from os module (never fails, never hangs)
@@ -5529,7 +5651,9 @@ async function systemInformation() {
 
   // Fetch detailed info in background (si.mem, si.graphics, si.cpu, si.osInfo)
   // Only once — subsequent calls use cache + live os.freemem()
-  if (!_cachedSystemInfo) {
+  if (!_cachedSystemInfo && !_systemInfoLoading) {
+    _systemInfoLoading = true;
+    const probeStartedAt = performance.now();
     (async () => {
       try {
         const [mem, gfx, cpu, osInfo] = await Promise.all([
@@ -5554,9 +5678,11 @@ async function systemInformation() {
           _cachedSystemInfo.arch = osInfo.arch;
           _cachedSystemInfo.platform = osInfo.platform;
         }
-        console.log("[SystemInfo] Detailed info cached:", _cachedSystemInfo.gpu, _cachedSystemInfo.cpu);
+        console.log(`[Startup] Hardware probe ready in ${Math.round(performance.now() - probeStartedAt)}ms:`, _cachedSystemInfo.gpu, _cachedSystemInfo.cpu);
       } catch (e) {
         console.warn("[SystemInfo] Background fetch failed:", e.message);
+      } finally {
+        _systemInfoLoading = false;
       }
     })();
   }
@@ -6392,6 +6518,7 @@ function resolveModelName(filename) {
  * @returns {{ ok: boolean, port?: number, filename?: string, error?: string }}
  */
 async function ensureModel(_event, modelOrKey) {
+  if (openRouter.active()) return { ok: true, remote: true, model: openRouter.status().model };
   try {
     let spec = null;
 
@@ -6506,6 +6633,10 @@ async function ensureModel(_event, modelOrKey) {
 }
 
 async function loadModel(_event, currentModel) {
+  if (!localInference.ownsDevice()) {
+    const spec = typeof currentModel === 'object' ? structuredClone(currentModel) : currentModel;
+    return localInference.run('llm', () => loadModel(_event, spec), { title: 'Loading language model' });
+  }
   // Normalize string model keys to object form (e.g. from openclaw passing "llm_llama_3_1_8b")
   if (typeof currentModel === "string") {
     currentModel = { filename: currentModel };
@@ -6661,7 +6792,7 @@ async function loadModel(_event, currentModel) {
 
   // Launch llama-server.
   const resourcesPath = app.isPackaged ? process.resourcesPath : null;
-  const { port } = await llamaServer.startModel({
+  const launchSpec = {
     modelPath,
     mmprojPath,
     draftPath,
@@ -6675,7 +6806,28 @@ async function loadModel(_event, currentModel) {
     specType: currentModel.specType || null,
     specDraftNMax: currentModel.specDraftNMax || null,
     mtp: currentModel.mtp === true,
-  }, { resourcesPath });
+  };
+  // A model too large for this device borrows memory from linked devices.
+  // llama.cpp places layers by the memory each device reports, so no manual
+  // split is passed. Models that fit stay entirely local.
+  let meshPool = null;
+  try {
+    meshPool = await meshController.preparePool({ filesizeBytes: currentModel.filesizeBytes, localBudget: sysInfo.memBudget });
+  } catch (err) {
+    console.warn("[LLM] Linked-device pooling unavailable:", err.message);
+  }
+  let port;
+  if (meshPool) {
+    console.log(`[LLM] Pooling memory with ${meshPool.devices.map(d => d.name).join(", ")}`);
+    try {
+      ({ port } = await llamaServer.startModel({ ...launchSpec, rpcPeers: meshPool.rpcPeers }, { resourcesPath }));
+    } catch (err) {
+      console.warn(`[LLM] Pooled start failed (${err.message}); loading on this device only.`);
+      await meshController.releasePool();
+      meshPool = null;
+    }
+  }
+  if (!meshPool) ({ port } = await llamaServer.startModel(launchSpec, { resourcesPath }));
 
   currentLoadedModel = {
     ...currentModel,
@@ -6766,14 +6918,14 @@ function checkModel(_event, modelname) {
       return false; // Needs merge
     }
 
-    console.error(`[Multi-Part Check] Missing merged file and only ${existingParts.length}/${multiPart.totalParts} parts`);
+    // Missing catalogue entries are availability state, not startup failures.
     return false;
   }
 
   // Single file check
   const modelPath = path.join(MODEL_DIR, normalizedName);
   if (!fs.existsSync(modelPath)) {
-    console.error("Model file not found:", modelPath);
+    // Catalogue availability checks routinely encounter models not installed locally.
     return false;
   }
   return true;
@@ -6853,7 +7005,7 @@ function recordLifetimeTokenUsage({ messages = [], output = "", usage = null } =
  * "request exceeds the available context size" once history grows.
  */
 function _buildMessages(userMessage, opts = {}) {
-  const ctxSize = llamaServer.getActiveSpec()?.ctxSize || currentLoadedModel?.context || lastLoadedSpec?.ctxSize || 4096;
+  const ctxSize = opts.ctxSize || llamaServer.getActiveSpec()?.ctxSize || currentLoadedModel?.context || lastLoadedSpec?.ctxSize || 4096;
   const maxTokens = opts.maxTokens || 2048;
   const systemTokens = _estTokens(currentSystemPrompt || "");
   const userTokens = _estTokens(userMessage || "");
@@ -6862,10 +7014,11 @@ function _buildMessages(userMessage, opts = {}) {
   // tokenizer.
   const budget = Math.max(0, ctxSize - systemTokens - userTokens - maxTokens - 256);
 
+  const history = opts.history || chatHistory;
   const trimmed = [];
   let used = 0;
-  for (let i = chatHistory.length - 1; i >= 0; i--) {
-    const m = chatHistory[i];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
     const cost = _estTokens(m.content);
     if (used + cost > budget) break;
     used += cost;
@@ -6886,7 +7039,50 @@ function _buildMessages(userMessage, opts = {}) {
   return msgs;
 }
 
+let remoteChatHistory = [];
+async function remoteChat(event, input, streaming = false) {
+  const opts = typeof input === 'string' ? { message: input } : input;
+  const message = opts.message;
+  const remoteModel = (await openRouter.models()).find(m => m.id === openRouter.status().model);
+  const maxTokens = Math.min(opts.maxTokens || 2048, openRouter.status().maxTokens);
+  const messages = opts.isolated ? [{ role: 'user', content: message }] : _buildMessages(message, { maxTokens, ctxSize: remoteModel?.context || 4096, history: remoteChatHistory });
+  const ctrl = new AbortController();
+  const key = opts.streamId || event?.sender?.id;
+  if (streaming) _setChatAbort(key, ctrl);
+  try {
+    const result = await openRouter.complete({ messages, maxTokens, temperature: opts.temperature, signal: ctrl.signal,
+      onToken: streaming ? chunk => {
+        if (!event.sender.isDestroyed()) event.sender.send(opts.streamId ? 'zhc-chat-token' : 'chat-token', opts.streamId ? { streamId: opts.streamId, chunk } : chunk);
+      } : undefined,
+    });
+    // OpenRouter usage is user-funded; never report it as local savings or provider service time.
+    if (!opts.isolated) remoteChatHistory.push({ role: 'user', content: message }, { role: 'assistant', content: result.text });
+    return opts.returnMetadata ? result : result.text;
+  } finally { if (streaming) _clearChatAbort(key, ctrl); }
+}
+
+// Keep model selection, loading, generation and history updates in one device lease.
+// Capture the requested model before waiting: another queued caller may select its own.
+function runLLMRequest(input, operation, signal) {
+  const spec = input?.model || currentLoadedModel || lastLoadedSpec;
+  const selected = spec ? structuredClone(spec) : null;
+  const requestedSystemPrompt = input?.systemPrompt ?? currentSystemPrompt;
+  return localInference.run('llm', async () => {
+    const history = input?.isolated ? [...chatHistory] : null;
+    const systemPrompt = currentSystemPrompt;
+    try {
+      if (selected) await loadModel(null, selected);
+      currentSystemPrompt = requestedSystemPrompt;
+      return await operation();
+    } finally {
+      if (history) { chatHistory = history; currentSystemPrompt = systemPrompt; }
+    }
+  }, { title: input?.taskLabel || 'Generating text', activityId: input?.activityId, signal, metadata: { prompt: typeof input === 'string' ? input : input?.message, model: selected?.name || selected?.filename, maxTokens: input?.maxTokens, temperature: input?.temperature, seed: input?.seed } });
+}
+
 async function chat(_event, input) {
+  if (openRouter.active() && !input?.localOnly) return remoteChat(_event, input);
+  if (!localInference.ownsDevice()) return runLLMRequest(input, () => chat(_event, { ...(typeof input === 'string' ? { message: input } : input), localOnly: true }));
   if (!llamaServer.isRunning()) {
     const ready = await ensureLocalLLMReady();
     if (!ready) throw new Error("Model not loaded");
@@ -6945,27 +7141,41 @@ async function chat(_event, input) {
 const _chatAbortControllers = new Map();
 
 function _setChatAbort(key, ctrl) {
-  if (ctrl) {
-    const old = _chatAbortControllers.get(key);
-    if (old && !old.signal.aborted) {
-      try { old.abort(); } catch { /* stale controller already settled */ }
-    }
-    _chatAbortControllers.set(key, ctrl);
-  } else {
-    _chatAbortControllers.delete(key);
-  }
+  // Multiple requests from one renderer must never cancel one another.
+  if (!ctrl) return;
+  const controllers = _chatAbortControllers.get(key) || new Set();
+  controllers.add(ctrl);
+  _chatAbortControllers.set(key, controllers);
+}
+
+function _clearChatAbort(key, ctrl) {
+  const controllers = _chatAbortControllers.get(key);
+  controllers?.delete(ctrl);
+  if (!controllers?.size) _chatAbortControllers.delete(key);
 }
 
 function _abortChat(key) {
-  const ctrl = _chatAbortControllers.get(key);
-  if (ctrl && !ctrl.signal.aborted) {
-    ctrl.abort();
-    return true;
-  }
-  return false;
+  // Legacy callers target the oldest outstanding request for this renderer.
+  const ctrl = _chatAbortControllers.get(key)?.values().next().value;
+  if (!ctrl || ctrl.signal.aborted) return false;
+  ctrl.abort();
+  return true;
 }
 
-async function chatStreamStateless(event, input) {
+async function runQueuedStream(event, input, operation) {
+  const key = input?.streamId || event.sender.id;
+  const ctrl = new AbortController();
+  _setChatAbort(key, ctrl);
+  try {
+    return await runLLMRequest(input, () => operation(ctrl), ctrl.signal);
+  } finally {
+    _clearChatAbort(key, ctrl);
+  }
+}
+
+async function chatStreamStateless(event, input, requestController) {
+  if (!requestController && openRouter.active() && !input?.localOnly) return remoteChat(event, { ...input, isolated: true }, true);
+  if (!localInference.ownsDevice()) return runQueuedStream(event, input, ctrl => chatStreamStateless(event, input, ctrl));
   if (!llamaServer.isRunning()) {
     const ready = await ensureLocalLLMReady();
     if (!ready) throw new Error("Model not loaded");
@@ -6984,7 +7194,7 @@ async function chatStreamStateless(event, input) {
   if (!input?.isolated && currentSystemPrompt) messages.push({ role: "system", content: currentSystemPrompt });
   messages.push({ role: "user", content: userMessage });
 
-  const ctrl = new AbortController();
+  const ctrl = requestController || new AbortController();
   _setChatAbort(streamId, ctrl);
   try {
     const res = await llamaServer.chatStream(
@@ -7010,11 +7220,13 @@ async function chatStreamStateless(event, input) {
     }
     throw err;
   } finally {
-    _setChatAbort(streamId, null);
+    _clearChatAbort(streamId, ctrl);
   }
 }
 
-async function chatStream(event, input) {
+async function chatStream(event, input, requestController) {
+  if (!requestController && openRouter.active() && !input?.localOnly) return remoteChat(event, input, true);
+  if (!localInference.ownsDevice()) return runQueuedStream(event, input, ctrl => chatStream(event, input, ctrl));
   if (!llamaServer.isRunning()) {
     const ready = await ensureLocalLLMReady();
     if (!ready) throw new Error("Model not loaded");
@@ -7041,7 +7253,7 @@ async function chatStream(event, input) {
 
   const win = BrowserWindow.fromWebContents(event.sender);
   const key = event.sender.id;
-  const ctrl = new AbortController();
+  const ctrl = requestController || new AbortController();
   _setChatAbort(key, ctrl);
 
   try {
@@ -7080,7 +7292,7 @@ async function chatStream(event, input) {
     }
     throw err;
   } finally {
-    _setChatAbort(key, null);
+    _clearChatAbort(key, ctrl);
   }
 }
 
@@ -7091,6 +7303,7 @@ function assertModelIdle() {
 }
 
 async function unloadModel(_event, { force } = {}) {
+  if (!localInference.ownsDevice()) return localInference.run('llm', () => unloadModel(_event, { force }), { title: 'Unloading language model' });
   assertModelIdle();
   // "Always loaded" guard: skip unload unless forced (hot-swap) or user-initiated
   if (!force && alwaysLoadedEnabled && llamaServer.isRunning()) {
@@ -7120,6 +7333,11 @@ async function unloadModel(_event, { force } = {}) {
 // as a fallback path for models that have no GGUF mmproj (e.g. Qwen3-VL on
 // Python stack).
 async function chatWithVision(_event, { message, imageBase64 }) {
+  if (openRouter.active()) {
+    const result = await openRouter.complete({ messages: [{ role: 'user', content: [{ type: 'text', text: message }, { type: 'image_url', image_url: { url: imageBase64 } }] }] });
+    return result.text;
+  }
+  if (!localInference.ownsDevice()) return runLLMRequest({}, () => chatWithVision(_event, { message, imageBase64 }));
   if (!llamaServer.isRunning()) {
     throw new Error("Model not loaded. Load a multimodal GGUF (with mmproj) first.");
   }
