@@ -15,6 +15,7 @@ import { SUPPLIER_SOURCING_MANIFEST } from "./supplierSourcing.js";
 
 export const SKILL_CATEGORIES = [
   "grants",       // evidence-backed grant applications and settlement
+  "tenders",      // public tender watch and response preparation
   "browser",      // supervised local portal interactions
   "comms",        // SMS / voice / email / WhatsApp / chat
   "billing",      // invoicing / payments / subscriptions / payouts

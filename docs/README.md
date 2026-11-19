@@ -14,6 +14,7 @@ This directory contains concise references for implemented BonzAI systems. Publi
 | [MiniMax H3](MINIMAX_H3.md) | Hybrid INT8/W4 and GGUF loading, MPS execution, sampling and validation |
 | [Video enhancement](VIDEO_ENHANCEMENT.md) | SeedVR2 setup, endpoint controls, downloads, output validation and legacy fallback |
 | [Company finance](COMPANY_FINANCE.md) | Paperasse teams, Qonto/Stripe capabilities, local evidence and verification |
+| [Chorus Pro invoicing and public tenders](PUBLIC_MARKETS.md) | What Chorus Pro and BOAMP allow, credentials, invoice status, tender search, response approval and deposit receipts |
 | [CMMS casework and archive acceptance](CMMS_CASEWORK.md) | Historical imports, field evidence, equipment outcomes, parts, refrigerants and versioned contract pricing |
 | [Workflow acceptance](WORKFLOW_ACCEPTANCE.md) | User acceptance cases, outcome evidence, failure recovery and release sign-off |
 | [BonzAI Company](BONZAI_BACK_OFFICE.md) | Company rooms, work records, artifacts, connectors, and local persistence |

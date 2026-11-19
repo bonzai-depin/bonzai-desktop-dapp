@@ -32,6 +32,7 @@ export const WORKER_ROLE_PROFILES = {
   InvoicingSpecialist: 'finance', PaymentsSpecialist: 'finance', AccountingSpecialist: 'finance', BillingController: 'finance',
   ProcessAnalyst: 'planning', GeneralCounsel: 'documents', RnDLead: 'planning',
   PurchasingManager: 'purchasing', MaintenanceContractManager: 'documents',
+  TenderAnalyst: 'documents', BidManager: 'documents',
   MaintenancePlanner: 'operations', DispatchCoordinator: 'operations', QHSEManager: 'documents', DocumentController: 'documents',
   FieldTech: 'operations', Packer: 'operations',
   'Producer:text': 'communication', 'Producer:skill': 'coding',

@@ -6,6 +6,8 @@ import { workspaceLicense, registerWorkspaceIpc } from '../workspace/ipc.js';
 import { needsWorkspaceLicense } from '../workspace/license.js';
 import * as companyWorkspace from '../db/repos/companyWorkspace.js';
 import * as companyGrants from '../db/repos/companyGrants.js';
+import * as companyTenders from '../db/repos/companyTenders.js';
+import { createTenderWorkspace } from '../connectors/publicTenders.js';
 import { createCompanyBrowser } from '../companyBrowser.js';
 import path from 'node:path';
 import {get} from '../db/connection.js';
@@ -94,6 +96,7 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential, owner
     for (const row of get().db.prepare("SELECT id FROM companies WHERE status='active'").all()) {
       try {
         if (companyGrants.runReminders(row.id).length) { broadcast('db:companyGrants:changed',{companyId:row.id}); broadcast('db:issues:changed',{companyId:row.id}); }
+        if (companyTenders.runReminders(row.id).length) { broadcast('db:companyTenders:changed',{companyId:row.id}); broadcast('db:issues:changed',{companyId:row.id}); }
         if (recordOperations.runReminders(row.id).length) {
           broadcast('db:recordOperations:changed',{companyId:row.id});
           broadcast('db:issues:changed',{companyId:row.id});
@@ -166,17 +169,18 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential, owner
     const blob=blobStore.write(await fs.promises.readFile(file),ext,{source:'company-grant',sourceId:companyId});
     return companyGrants.persist(companyId,'document',{label:input.label || path.basename(file),...context,validUntil:input.validUntil || null,documentType:String(input.documentType || '').trim(),blob_id:blob.id,ext});
   }};
+  const tenders = createTenderWorkspace({repo:companyTenders,blobs:blobStore,dialog,audit:auditRepo});
   const intake = {...companyIntake, importBatch: async (companyId, options={}) => {
     const choice=await dialog.showOpenDialog({title:'Importer les documents',properties: options.folder ? ['openDirectory'] : ['openFile','multiSelections']});
     if(choice.canceled) return null;
     return importBatch(companyId,choice.filePaths,{mode:options.mode,onProgress:()=>broadcast('db:companyIntake:changed',{companyId})});
   }};
-  const operationalRepos = { gmaoCasework, companyWorkspace, companyIntake:intake, companySales, companyGrants:grants, companyBrowser:browser, recordOperations:{...recordOperations,...recordDelivery}, companyBilling: companyBillingRepo, gmaoMaintenance: maintenanceRepo, purchasing: purchasingRepo };
+  const operationalRepos = { gmaoCasework, companyWorkspace, companyIntake:intake, companySales, companyGrants:grants, companyTenders:tenders, companyBrowser:browser, recordOperations:{...recordOperations,...recordDelivery}, companyBilling: companyBillingRepo, gmaoMaintenance: maintenanceRepo, purchasing: purchasingRepo };
   for (const [namespace, methods] of Object.entries(COMPANY_OPERATIONS)) {
     const repo = operationalRepos[namespace];
     for (const method of [...methods.reads, ...methods.writes]) {
       ipcMain.handle(`db:${namespace}:${method}`, async (_event, companyId, ...args) => {
-        if (['companyBrowser','companyGrants'].includes(namespace) && !(_event.sender.getURL().startsWith('file:') || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(_event.sender.getURL()))) throw new Error('Use the local BonzAI workspace.');
+        if (['companyBrowser','companyGrants','companyTenders'].includes(namespace) && !(_event.sender.getURL().startsWith('file:') || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(_event.sender.getURL()))) throw new Error('Use the local BonzAI workspace.');
         if (typeof repo[method] !== 'function') throw new Error(`Operational action unavailable: ${namespace}.${method}`);
         try {
           return await repo[method](companyId, ...args);
@@ -200,7 +204,7 @@ export function registerDbIpc({ connectorRequest, readConnectorCredential, owner
             }
             broadcast('db:gmao:changed', { companyId });
             broadcast('db:audit:changed', { companyId });
-            if (namespace === 'companyIntake' || ['recordCorrection', 'importInstallations', 'saveRequest', 'reportDefect', 'runReview', 'preparePayment', 'prepareReportTask', 'runReminders'].includes(method)) {
+            if (namespace === 'companyIntake' || ['recordCorrection', 'importInstallations', 'saveRequest', 'reportDefect', 'runReview', 'preparePayment', 'prepareReportTask', 'runReminders', 'startResponse'].includes(method)) {
               broadcast('db:issues:changed', { companyId });
             }
           }

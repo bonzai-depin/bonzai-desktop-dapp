@@ -5,6 +5,8 @@ export const COMPANY_OPERATIONS = Object.freeze({
   companyIntake: { reads:['snapshot','readSource','readRecord'], writes:['importBatch','ingest','claim','renew','checkpoint','extracted','finish','fail','retry','prepareArchive','review','saveMailbox','mailboxCheckpoint'] },
   companySales: {reads:["snapshot"],writes:["saveRecord","handoff","acceptHandoff","runReview"]},
   companyGrants: { reads: ['snapshot', 'readDocument', 'portalPackage'], writes: ['saveDossier', 'advanceDossier', 'attachDocument', 'draftDocument', 'linkDocument', 'prepareBatch', 'importInstallations', 'reconcilePayment', 'recordCorrection'] },
+  // approveResponse, recordDeposit, recordOutcome, reviewDocument and exportPackage are owner-only: never agent actions.
+  companyTenders: { reads: ['snapshot', 'readDocument', 'approvalPreview'], writes: ['searchNotices', 'saveNotice', 'dismissNotice', 'startResponse', 'saveResponse', 'prepareResponse', 'requestReview', 'draftDocument', 'attachDocument', 'reviewDocument', 'approveResponse', 'exportPackage', 'recordDeposit', 'recordOutcome'] },
   companyBrowser: { reads: ['inspect'], writes: ['navigate', 'interact', 'fillForm', 'uploadDocument', 'close'] },
   recordOperations: {
     reads: ['snapshot', 'partsForOrders', 'messageTarget', 'listSharedEvidence', 'readSharedEvidence'],
@@ -82,4 +84,4 @@ export const COMPANY_OPERATIONS = Object.freeze({
 });
 
 export const isOperationalTable = (name) =>
-  /^(?:gmao_|company_billing_|company_grants_|company_sales_|company_intake_|purchasing_)[a-z_]+$/.test(name);
+  /^(?:gmao_|company_billing_|company_grants_|company_tenders_|company_sales_|company_intake_|purchasing_)[a-z_]+$/.test(name);

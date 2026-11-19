@@ -377,7 +377,10 @@
                 }}</span>
               </h4>
               <p class="billing-help" v-if="selected.chorus?.externalStatus">
-                {{ ui("État reçu") }} · {{ selected.chorus.externalStatus }}
+                {{ ui("État reçu") }} · <b>{{ chorusStageLabel(selected.chorus.externalStatus) }}</b> · {{ selected.chorus.externalStatus }}
+              </p>
+              <p class="billing-help" v-if="chorusStage(selected.chorus?.externalStatus) === 'paymentOrdered'">
+                {{ i18n.t('chorusStatus.paymentNote') }}
               </p>
               <p
                 class="billing-error"
@@ -1431,6 +1434,8 @@ import {
 } from "../../services/company/billingDomain.js";
 import { billingText } from "../../services/company/billingText.js";
 import { i18n } from "../../i18n/index.js";
+import { chorusStage } from "../../shared/chorusStatus.js";
+const chorusStageLabel = (code) => i18n.t(`chorusStatus.${chorusStage(code)}`);
 const props = defineProps({
   companyId: { type: String, required: true },
   gmaoData: { type: Object, default: () => ({}) },

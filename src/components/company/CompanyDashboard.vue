@@ -91,6 +91,7 @@
       <CompanyLiveFeed v-else-if="active === 'activity'" :charter="charter" :state="state" :export-message="auditExportMessage" @export-audit="exportAuditTrail" @open-view="openChannelByKey" @open-result="openWorkResult" />
       <CompanyGettingStarted v-else-if="active === 'getting-started'" :key="charter.id" :charter="charter" :views="primaryViews" :state="state" @open-view="openChannelByKey" />
       <CompanySales v-else-if="active === 'sales'" :key="charter.id" :company-id="charter.id" />
+      <CompanyTenders v-else-if="active === 'tenders'" ref="tendersWorkspace" :key="charter.id" :company-id="charter.id" />
       <CompanyGrants v-else-if="active === 'grants'" ref="grantsWorkspace" :key="charter.id" :company-id="charter.id" @open-intake="openCompanyIntake" />
       <CompanyBilling v-else-if="active === 'billing'" ref="billingWorkspace" :key="charter.id" :company-id="charter.id" :gmao-data="state.gmao" @open-work-order="openOperationalWorkOrder" @open-task="openOperationalTask" />
       <CompanyPurchasing v-else-if="active === 'purchasing'" ref="purchasingWorkspace" :key="charter.id" :company-id="charter.id" @open-chat="openChannelByKey('command')" @open-task="openOperationalTask" />
@@ -1204,6 +1205,7 @@ import { canonicalWorkerModelKey } from "../../services/company/workerModels.js"
 import CompanyOperationalFiles from "./CompanyOperationalFiles.vue";
 import CompanyGettingStarted from "./CompanyGettingStarted.vue";
 import CompanyGrants from "./CompanyGrants.vue";
+import CompanyTenders from "./CompanyTenders.vue";
 import CompanyBilling from "./CompanyBilling.vue";
 import CompanySales from './CompanySales.vue';
 import CompanyPurchasing from "./CompanyPurchasing.vue";
@@ -1223,7 +1225,7 @@ import { buildWorkspaceBlueprint, hydrateWorkspaceChannels } from "../../service
 export default {
   name: "CompanyDashboard",
   components: {
-    CompanyHiredSpecialists, CompanyTeamStatus, CompanyBackgroundSettings, DownloadRequirement, CompanyWorkflowStudio, CompanyWorkerModel, CompanyToday, CompanyOperationalFiles, CompanySales, CompanyGettingStarted, CompanyGrants, CompanyBilling, CompanyPurchasing, CompanyInbox, CompanyDeliverableLibrary, CompanyMarkdown, CompanyQuestion, CompanyMission,
+    CompanyHiredSpecialists, CompanyTeamStatus, CompanyBackgroundSettings, DownloadRequirement, CompanyWorkflowStudio, CompanyWorkerModel, CompanyToday, CompanyOperationalFiles, CompanySales, CompanyGettingStarted, CompanyGrants, CompanyTenders, CompanyBilling, CompanyPurchasing, CompanyInbox, CompanyDeliverableLibrary, CompanyMarkdown, CompanyQuestion, CompanyMission,
     CompanyWorkflowProgress, CompanyTaskReview, AgentWorkersPanel, SmartAgentJobsPanel, SmartAgentHireModal, BzCloseButton, BonzaiDataTable, BonzaiEmptyState, CompanyArtifactPreview, CompanyConnectors, CompanyLiveFeed, CompanyGoalRoom, CompanyPlanning, CompanyGmao },
   props: {
     charter: { type: Object, required: true },
@@ -2007,6 +2009,7 @@ export default {
       workflowStudio.value?.focusTask();
     }
     const grantsWorkspace = ref(null);
+    const tendersWorkspace = ref(null);
     async function openChannelByKey(target) {
       const key = typeof target === 'object' ? target.view : target;
       if (key === 'studio' && target?.issueId) {
@@ -2021,6 +2024,7 @@ export default {
       await nextTick();
       if (key === 'studio' && target?.issueId) workflowStudio.value?.focusTask();
       if (key === 'grants' && target?.section) grantsWorkspace.value?.openSection(target.section);
+      if (key === 'tenders' && target?.section) tendersWorkspace.value?.openSection(target.section);
       if (key === 'purchasing' && target?.section) purchasingWorkspace.value?.openSection?.(target.section);
     }
     async function startPartsInvoice(parts) {
@@ -2509,7 +2513,7 @@ export default {
       workspaceRoot, teamDockStyle, teamVeilStyle, hoveredCommand, showCommandLabel,
       inboxReview, inboxWorkspace, openCompanyIntake, operationalWorkspace, billingWorkspace, purchasingWorkspace, taskReview, exportMessage, openOperationalTask, openOperationalWorkOrder, openOperationalRecord, startPartsInvoice,
       taskProgress, store, active, studioOpened, workflowStudio, activeChannel, gmaoView, gmaoClientId, subtabs, primaryViews, activeSection, hasMaintenance,
-      grantsWorkspace, currentChannel, domainViews, issueWorkspace, moveIssueWorkspace, openChannel, openChannelByKey, manual,
+      grantsWorkspace, tendersWorkspace, currentChannel, domainViews, issueWorkspace, moveIssueWorkspace, openChannel, openChannelByKey, manual,
       isFullscreen,
       charterDraft, charterBusy, charterError, charterSaved, teamSettingsSection, teamSettingsSections, companyDisplayName, saveCharter, resetCharterDraft,
       state: displayState,

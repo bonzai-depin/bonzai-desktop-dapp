@@ -6,6 +6,7 @@ export const TEMPLATE_GROUPS = [
   { id: 'sales', label: 'Sales & customer relations', frLabel: 'Ventes et relation client', icon: 'handshake', description: 'Qualify enquiries, prepare proposals and follow up with customers.', frDescription: 'Qualifier les demandes, préparer les devis et suivre les clients.' },
   { id: 'finance', label: 'Billing & cash flow', frLabel: 'Facturation et trésorerie', icon: 'receipt_long', description: 'Prepare invoices, follow up on payments and monitor cash flow.', frDescription: 'Préparer les factures, relancer les paiements et suivre la trésorerie.' },
   { id: 'grants', label: 'Grants & incentives', frLabel: 'Aides et primes', icon: 'account_balance', description: 'Prepare applications, manage evidence and track settlements.', frDescription: 'Préparer les dossiers, gérer les justificatifs et suivre les versements.' },
+  { id: 'tenders', label: 'Public tenders', frLabel: 'Marchés publics', icon: 'gavel', description: 'Watch public notices, prepare responses and keep deposit receipts.', frDescription: 'Surveiller les avis, préparer les réponses et conserver les accusés de dépôt.' },
   { id: 'accounting', label: 'Accounting & tax', frLabel: 'Comptabilité et fiscalité', icon: 'calculate', description: 'Organize accounts and prepare evidence for financial professionals.', frDescription: 'Organiser les comptes et préparer les pièces pour les professionnels.' },
   { id: 'compliance', label: 'Legal & audit', frLabel: 'Juridique et audit', icon: 'fact_check', description: 'Review evidence, identify exceptions and prepare professional handoffs.', frDescription: 'Contrôler les pièces, relever les anomalies et préparer les dossiers professionnels.' },
   { id: 'property', label: 'Property & hospitality', frLabel: 'Immobilier et hébergement', icon: 'apartment', description: 'Coordinate properties, guest stays, maintenance and owner reporting.', frDescription: 'Coordonner les logements, les séjours, l’entretien et les rapports propriétaires.' },
@@ -19,6 +20,7 @@ export const TEMPLATE_GROUPS = [
 const definitions = [
   ['hvac_gmao', 'operations', 'Computerized Maintenance Management System', 'Equipment, preventive visits, work orders and service evidence.', 'Gestion de maintenance assistée par ordinateur (GMAO)', 'Équipements, visites préventives, interventions et preuves du service fait.'],
   ['government_grants','grants','Grants And Incentives','Eligibility, reusable documents, portal applications and payments.','Aides et primes','Éligibilité, pièces réutilisables, dépôts sur les portails et versements.'],
+  ['public_markets','tenders','Public Tenders','Notice watch, response drafting, owner approval and deposit receipts.','Marchés publics','Veille des avis, rédaction des réponses, validation et accusés de dépôt.'],
   ['purchasing_team', 'purchasing', 'Purchasing', 'Supplier requests, quotations, orders and receipts.', 'Achats', 'Demandes fournisseurs, devis, commandes et réceptions.'],
   ['sales_team', 'sales', 'Sales', 'Prospect qualification, proposals and customer follow-up.', 'Ventes', 'Qualification des prospects, propositions et suivi client.'],
   ['leads', 'sales', 'Lead Follow-Up', 'A daily queue of prospects, draft replies and meeting requests.', 'Suivi des prospects', 'File quotidienne des prospects, brouillons de réponse et demandes de rendez-vous.'],
@@ -41,6 +43,7 @@ export const TEMPLATE_PRESENTATION = Object.fromEntries(definitions.map(([id, ca
 const BUSINESS_DELIVERABLES = {
   hvac_gmao: [['Scheduled work orders', 'Intervention reports', 'Service evidence'], ['Interventions planifiées', 'Rapports d’intervention', 'Preuves du service fait']],
   government_grants: [['Application dossier', 'Eligibility evidence', 'Settlement tracking'], ['Dossier de demande', 'Justificatifs d’éligibilité', 'Suivi des versements']],
+  public_markets: [['Watched notices', 'Drafted response package', 'Approval and deposit receipt'], ['Avis suivis', 'Dossier de réponse rédigé', 'Validation et accusé de dépôt']],
   purchasing_team: [['Supplier comparisons', 'Purchase orders', 'Delivery and margin tracking'], ['Comparatifs fournisseurs', 'Commandes fournisseurs', 'Suivi des livraisons et des marges']],
   sales_team: [['Qualified opportunities', 'Draft proposals', 'Customer follow-up'], ['Opportunités qualifiées', 'Propositions commerciales', 'Suivi des clients']],
   leads: [['Prospect queue', 'Draft replies', 'Meeting requests'], ['File de prospects', 'Brouillons de réponse', 'Demandes de rendez-vous']],

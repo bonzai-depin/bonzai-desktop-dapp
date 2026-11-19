@@ -24,6 +24,8 @@ const ROLE_TITLES = {
   GeneralCounsel: "Legal and compliance",
   DocumentController: "Document management",
   PurchasingManager: "Purchasing manager",
+  TenderAnalyst: "Tender watch",
+  BidManager: "Bid manager",
   ContractManager: "Contract manager",
   MaintenancePlanner: "Maintenance planner",
   FieldTechnician: "Field technician",

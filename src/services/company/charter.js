@@ -412,6 +412,16 @@ export const ROLE_LIBRARY = {
     allowedActions: ['team.directory','team.readConversation','team.requestWork','team.reply','team.readProcurement','team.updateProcurement'],
     budgetPct: 0, reportsTo: 'CEO', teamMax: 3, inheritable: true, kind: 'digital',
   },
+  TenderAnalyst: {
+    description: 'Public tender watch: search published notices with the terms the owner approves, keep the relevant ones and explain the fit, the deadline and the missing prerequisites. Never contacts a buyer.',
+    allowedActions: ['team.directory','team.readConversation','team.requestWork','team.reply'],
+    budgetPct: 0, reportsTo: 'CEO', teamMax: 2, inheritable: true, kind: 'digital',
+  },
+  BidManager: {
+    description: 'Tender responses: read the consultation file, draft each required piece from company documents and memory, list what is missing and hand the complete package to the owner. Approval and deposit belong to the owner.',
+    allowedActions: ['team.directory','team.readConversation','team.requestWork','team.reply'],
+    budgetPct: 0, reportsTo: 'CEO', teamMax: 3, inheritable: true, kind: 'digital',
+  },
   MaintenanceContractManager: {
     description: "Responsable de contrat HVAC. Supervise le périmètre, les SLA P0–P3, les réunions, les risques et le registre hebdomadaire.",
     allowedActions: ["gmao.bootstrap", "gmao.evaluateSla", "gmao.runAutomation", "gmao.exportWeeklyRegister", "gmao.notifyClient", "assignWorkload", "recordPerformance"],

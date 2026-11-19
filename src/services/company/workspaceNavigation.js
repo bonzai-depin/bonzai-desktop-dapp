@@ -7,6 +7,7 @@ export const workspaceViews = [
   ['studio','Workflow','auto_awesome'],
   ['getting-started','Getting started','help_outline'],
   ['grants','Grant dossiers','account_balance'],
+  ['tenders','Public tenders','gavel'],
   ['sales','Customers & sales','handshake'],
   ['command', 'Chat', 'chat_bubble'],
   ['issues', 'Backlog', 'checklist'], ['activity', 'Activity', 'graphic_eq'],
@@ -73,7 +74,8 @@ export function resolveWorkspaceDestination(key, channels = [], maintenance = fa
   const purchasing = channels.some(item => item.key === 'purchasing-room' || item.view === 'purchasing');
   const finance = channels.some(item => item.key === 'cash' || item.key === 'receivables');
   const grants = channels.some(item => (item.view || item.value) === 'grants');
-  const fallback = workflow ? viewByValue('studio') : grants ? viewByValue('grants') : maintenance ? maintenanceViews[0] : purchasing ? viewByValue('purchasing') : domainWorkspaceViews(channels)[0] || viewByValue(finance && supportsBilling(channels) ? 'billing' : 'command');
+  const tenders = channels.some(item => (item.view || item.value) === 'tenders');
+  const fallback = workflow ? viewByValue('studio') : grants ? viewByValue('grants') : tenders ? viewByValue('tenders') : maintenance ? maintenanceViews[0] : purchasing ? viewByValue('purchasing') : domainWorkspaceViews(channels)[0] || viewByValue(finance && supportsBilling(channels) ? 'billing' : 'command');
   if (!key) return workflow ? viewByValue('studio') : maintenance ? maintenanceViews[0] : viewByValue('overview');
   // These legacy destinations create goals through CEO planning. Native
   // workflows instead collect their inputs and execute explicit tasks.
@@ -130,6 +132,7 @@ export function workspaceNavigation(channels, state = {}, charter = {}) {
     ...(workflow ? [{ ...viewByValue('studio'), section: 'studio' }] : []),
     ...(channels.some(c=>['revenue','pipeline'].includes(c.key)||c.view==='sales') ? [{...viewByValue('sales'),section:'sales'}] : []),
     ...(channels.some(item => (item.view || item.value) === 'grants') ? [{...viewByValue('grants'),section:'grants'}] : []),
+    ...(channels.some(item => (item.view || item.value) === 'tenders') ? [{...viewByValue('tenders'),section:'tenders'}] : []),
     ...(maintenance ? maintenanceViews.slice(0, 5).map(view => ({ ...view, section: view.key })) : []),
     ...(purchasing ? [{ ...viewByValue('purchasing'), section: 'purchasing' }] : []),
     ...(!maintenance && !purchasing ? domainWorkspaceViews(channels).map(view => ({ ...view, badge: (state.issues || []).filter(issue => workInDomain(issue, view.key) && !['done', 'cancelled'].includes(issue.status)).length || null })) : []),

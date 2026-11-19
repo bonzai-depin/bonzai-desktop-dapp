@@ -15,6 +15,7 @@ const channel = (key, label, icon, view, description, options = {}) => ({
 
 const PROFILE_BLUEPRINTS = Object.freeze({
   grants: {label:"Grants and incentives",roles:["CEO","DocumentController","CFO"],channels:[channel("grants","Grant dossiers","account_balance","grants","Applications, documents and receipts."),channel("grants-chat","Chat","chat_bubble","command","Instructions and team coordination."),CORE_CHANNELS.approvals,CORE_CHANNELS.results]},
+  tenders: {label:"Public tenders",roles:["CEO","TenderAnalyst","BidManager","DocumentController","CFO"],channels:[channel("tenders","Public tenders","gavel","tenders","Notices, responses and deposit receipts."),channel("tenders-chat","Chat","chat_bubble","command","Instructions and team coordination."),CORE_CHANNELS.approvals,CORE_CHANNELS.results]},
   purchasing: {label:"Purchasing", roles:["CEO","PurchasingManager","CFO"], channels:[channel("purchasing-room","Purchasing","forum","command","Supplier requests and purchasing work."),CORE_CHANNELS.work,CORE_CHANNELS.approvals,CORE_CHANNELS.results]},
   general: {
     label: "Business operations",
@@ -75,6 +76,7 @@ const PROFILE_BLUEPRINTS = Object.freeze({
 
 const TEMPLATE_PROFILES = Object.freeze({
   government_grants: "grants",
+  public_markets: "tenders",
   hvac_residential: "hvac",
   purchasing_team: "purchasing",
   sales_team: "revenue",

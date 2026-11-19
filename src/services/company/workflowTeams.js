@@ -98,6 +98,7 @@ const CATEGORY_ALIASES = { healthcare: 'wellness', education: 'research', housin
 const TAG_CATEGORIES = [
   ['collectibles', ['tcg', 'collector', 'collectibles', 'grading']],
   ['grants', ['grants', 'grant', 'cee', 'incentives']],
+  ['tenders', ['tenders', 'tender', 'public-procurement', 'boamp']],
   ['accounting', ['accounting', 'tax', 'bookkeeping']],
   ['purchasing', ['purchasing', 'procurement', 'logistics', 'inventory']],
   ['sales', ['sales', 'crm', 'leads']],

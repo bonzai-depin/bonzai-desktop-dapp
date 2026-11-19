@@ -8,6 +8,7 @@ export const COMPANY_BRIEF_STARTERS = Object.freeze([
 
 export const COMPANY_WORKSPACE_PLANS = Object.freeze({
   grants:{id:'grants',templateId:'government_grants',title:'Grants and incentives',outcome:'Eligibility, documents, portal receipts and payments.',businessType:'Government grants',workspaceProfile:'grants',connectors:[],goals:['Review official eligibility rules for the installation territory','Prepare the document checklist and reuse valid company evidence','Prepare the first application for owner review','Track requests for complements and reconcile confirmed payments']},
+  tenders:{id:'tenders',templateId:'public_markets',title:'Public tenders',outcome:'Watched notices, drafted responses, approvals and deposit receipts.',businessType:'Public tenders',workspaceProfile:'tenders',connectors:[],goals:['Agree the search terms and territories to watch','Keep the relevant notices and explain the fit','Draft the first response from company documents','Hand the complete package to the owner for approval']},
   hvac: {
     id: "hvac",
     templateId: "hvac_residential",
@@ -59,6 +60,7 @@ export const COMPANY_WORKSPACE_PLANS = Object.freeze({
 export function classifyCompanyBrief(value) {
   const text = String(value || "").toLowerCase();
   if (/\bcee\b|bar-th-|grant|subvention|prime.*(edf|energie|énergie)|aides? (publiques?|financières?)|agir ?plus/.test(text)) return 'grants';
+  if (/appels? d[’']offres?|march[ée]s? publics?|public (tender|procurement|market)|\bboamp\b|\bdume\b|\btenders?\b/.test(text)) return 'tenders';
   if (/hvac|gmao|climatisation|ventilation|maintenance|technicien|intervention|ordre de travail|service fait|préventi|preventi|sla/.test(text)) return "hvac";
   if (/invoice|payment|paid|cash|quickbooks|stripe|overdue|receivable/.test(text)) return "collections";
   if (/lead|sales|prospect|crm|hubspot|proposal|pipeline/.test(text)) return "leads";

@@ -5,6 +5,7 @@ import { smartWorkflowWorkspaceMessages } from './smartWorkflowWorkspaceMessages
 import { smartWorkflowResultsMessages } from './smartWorkflowResultsMessages.js';
 import { smartWorkflowDiscoveryMessages } from './smartWorkflowDiscoveryMessages.js';
 import { activityMessages } from './activity.js';
+import { publicMarketPhrases } from './public-markets.js';
 import {companyWorkspaceMessages} from './companyWorkspaceMessages.js';
 import { demoGuide } from '../services/company/demoGuide.js';
 // Reviewed corrections for the legacy exact-phrase catalog. These are applied by
@@ -335,6 +336,8 @@ Object.assign(reviewedCatalogOverrides.fr, {
 });
 
 for (const [locale,messages] of Object.entries(companyWorkspaceMessages)) Object.assign(reviewedCatalogOverrides[locale],messages);
+
+for (const [locale, values] of Object.entries(publicMarketPhrases)) Object.assign(reviewedCatalogOverrides[locale] ||= {}, values);
 
 for (const [locale, values] of Object.entries(activityMessages)) Object.assign(reviewedCatalogOverrides[locale] ||= {}, values);
 

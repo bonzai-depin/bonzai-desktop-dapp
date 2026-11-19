@@ -1,6 +1,6 @@
 /** Add the local record tools to existing business roles, preserving user policy. */
 export function operationalCharter(charter) {
-  if (charter.template?.id === 'government_grants') return {...charter, operationalVersion:4};
+  if (['government_grants','public_markets'].includes(charter.template?.id)) return {...charter, operationalVersion:4};
   if (charter.operationalVersion >= 4) return charter;
   const needsBaseTools = !charter.operationalVersion;
   const purchasingStaffed = Boolean(

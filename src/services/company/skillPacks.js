@@ -10,6 +10,7 @@
 import { connectorsForSkills } from "./skillManifests.js";
 
 export const SKILL_PACKS = {
+  public_markets: {id:"public_markets",name:"Public tenders",skills:["skill.local_tenders","skill.team_communication"]},
   government_grants: {id:"government_grants",name:"Grants and incentives",skills:["skill.local_grants","skill.local_browser","skill.team_communication"]},
   paperasse_finance: { id: "paperasse_finance", name: "French finance operations", description: "Financial evidence and approval-gated invoicing for Paperasse teams.", skills: ["skill.finance_reconciliation", "skill.qonto_finance", "skill.qonto_invoicing", "skill.stripe_finance", "skill.stripe_invoicing", "skill.stripe_checkout", "skill.stripe_subscriptions"] },
   smb_back_office: {

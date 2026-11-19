@@ -3,6 +3,12 @@ import { PAPERASSE_TEMPLATES } from './paperasseTeams.js';
 import { inferWorkspaceProfile } from './workspaceBlueprints.js';
 // Each link is resolved by the same router as the command bar.
 const steps = {
+ tenders: [
+ ['Find notices',{view:'tenders',section:'search'},'Search published public notices by keyword, department and contract type. Only the terms you type are sent, to the public BOAMP open data service. Keep the notices worth answering.'],
+ ['Prepare a response',{view:'tenders',section:'responses'},'Start a response from a kept notice. Record the buyer platform and deadline, select the required pieces, attach the consultation file and your company documents. The team drafts the missing pieces from your records.'],
+ ['Review and approve',{view:'tenders',section:'responses'},'Read every draft and mark it reviewed. Approval shows the exact files and the buyer they are for; any later change cancels it.'],
+ ['Deposit and keep the receipt',{view:'tenders',section:'responses'},'Export the approved package, deposit it yourself on the buyer platform, then attach the platform receipt and record its reference. BonzAI never deposits a bid.'],
+ ],
  grants: [
  ['Company documents',{view:'grants',section:'documents'},'Add reusable company documents once. Choose a document type and expiry date; leave beneficiary blank only for company-wide documents.'],
  ['First application',{view:'grants',section:'new'},'Create an application with beneficiary, territory and installation reference. Verify the official scheme and rule version before approving eligibility.'],
@@ -45,6 +51,7 @@ const steps = {
 const PROFILE_OUTCOMES = {
  hvac:['Scheduled work orders','Intervention reports and acceptance evidence','Parts and invoices linked to the intervention'],
  purchasing:['Supplier comparisons and approved orders','Stock movements and delivery evidence','Delivered-cost and margin assessment'],
+ tenders:['Watched notices with deadlines','Drafted and reviewed response packages','Approvals and deposit receipts'],
  grants:['Applications with eligibility evidence','Submission receipts and correction history','Award decisions and payment reconciliation'],
  finance:['Reconciled records and exceptions','Reports with supporting calculations','Documents prepared for professional review'],
  hospitality:['Property readiness checklists','Guest correspondence for review','Maintenance and turnover reports'],
@@ -108,6 +115,11 @@ export const TEAM_FAQ = [
 ];
 
 export const BUSINESS_FAQ = {
+ tenders: [
+  ['Does the team submit the bid?', 'No. Buyer platforms offer no programmatic deposit. The team drafts the package; you review it, approve the exact files and recipient, deposit on the buyer platform and record the receipt.', {view:'tenders',section:'responses'}],
+  ['What leaves this device during a search?', 'The keywords, departments and contract type you typed, sent to the public BOAMP open data service. No company record, document or credential is sent. Each search is listed in Activity.', {view:'tenders',section:'search'}],
+  ['Can I trust a drafted technical proposal?', 'Treat it as a first draft. It uses your documents and memory and marks gaps "[to confirm]". Check every reference, certification, price and commitment before marking it reviewed.', {view:'tenders',section:'responses'}],
+ ],
  grants: [
   ['Which documents can I reuse?', 'Company identity and qualification documents can be reused while valid. Beneficiary identity, tax records, signed quotes, invoices and attestations belong to the individual application. Check expiry dates before each submission.', 'grants'],
   ['How do I process a large backlog?', 'Import installation files through Files & email, using stable installation references and scheme identifiers. Prepare each page, resolve missing documents and track exceptions. Keep portal receipts and payment evidence per application; importing rows does not submit them.', 'grants'],

@@ -32,7 +32,7 @@ export function consumeOwnerApproval(companyId, pendingId, action) {
 /** Capability assignment is not authority to spend, publish or change external records. */
 export function requiresOwnerApproval(action = {}) {
   const operational = OPERATIONAL_ACTIONS[action.type];
-  if (operational) return !operational.read && !['grants.prepareBatch','grants.saveDossier','grants.draftDocument','purchasing.saveRequest','purchasing.saveRfq','purchasing.runReview','billing.saveInvoice','records.prepareMessage','records.runReminders'].includes(action.type);
+  if (operational) return !operational.read && !['grants.prepareBatch','grants.saveDossier','grants.draftDocument','tenders.saveNotice','tenders.dismissNotice','tenders.startResponse','tenders.saveResponse','tenders.prepareResponse','tenders.requestReview','tenders.draftDocument','purchasing.saveRequest','purchasing.saveRfq','purchasing.runReview','billing.saveInvoice','records.prepareMessage','records.runReminders'].includes(action.type);
   // Addressed team messages stay on this device; shared record mutations need review.
   if (action.type === 'team.updateProcurement') return true;
   if (EXTERNAL_ACTIONS.has(action.type)) return true;

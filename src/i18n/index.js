@@ -11,9 +11,10 @@ import { rcDownloadMessages } from './rc-downloads.js'
 import { basketMessages } from './basket.js'
 import { smartAgentMessages } from './smart-agents.js'
 import { meshDeviceMessages } from './mesh.js'
+import { publicMarketMessages } from './public-markets.js'
 
 for (const locale of supportedLocales.map(item => item.code)) {
-  messages[locale] = { ...messages[locale], ...teamExchangeMessages[locale], ...featureMessages[locale], ...rcShellMessages[locale], ...rcWorkflowMessages[locale], ...rcLicenseMessages[locale], ...rcTrainingMessages[locale], ...connectionMessages[locale], ...rcDownloadMessages[locale], ...basketMessages[locale], ...smartAgentMessages[locale], ...meshDeviceMessages[locale], ...levelEditorMessages[locale] }
+  messages[locale] = { ...messages[locale], ...teamExchangeMessages[locale], ...featureMessages[locale], ...rcShellMessages[locale], ...rcWorkflowMessages[locale], ...rcLicenseMessages[locale], ...rcTrainingMessages[locale], ...connectionMessages[locale], ...rcDownloadMessages[locale], ...basketMessages[locale], ...smartAgentMessages[locale], ...meshDeviceMessages[locale], ...publicMarketMessages[locale], ...levelEditorMessages[locale] }
 }
 
 const STORAGE_KEY = 'bonzai.locale'
